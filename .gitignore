@@ -2,6 +2,7 @@
 /backend/bin/
 /frontend/node_modules/
 /frontend/dist/
+/frontend/_shots_*/
 *.log
 .env*
 !.env.example
@@ -14,3 +15,7 @@
 *.swo
 backend/tmp/
 backend/migrations/*.tmp
+/screenshots/
+*.png
+!docs/**/*.png
+backend/cmd/server/projctx.go.bak
