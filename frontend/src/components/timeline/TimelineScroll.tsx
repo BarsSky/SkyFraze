@@ -100,6 +100,25 @@ export function TimelineScroll({ events, selectedIndex, onSelect, assetUrlByEven
     return () => cancelAnimationFrame(raf)
   }, [eventMeta.length])
 
+  // Immersive: когда пользователь скроллит в timeline (events.length > 0),
+  // скрываем заголовок/header чтобы максимум viewport был под timeline.
+  // Простая логика: если scrollY > 200 — header уменьшается до 48px, иначе полный.
+  const [compact, setCompact] = useState(false)
+  useEffect(() => {
+    const onScroll = () => setCompact(window.scrollY > 200)
+    window.addEventListener('scroll', onScroll, { passive: true })
+    onScroll()
+    return () => window.removeEventListener('scroll', onScroll)
+  }, [])
+  useEffect(() => {
+    // CSS variable for header height — applied on :root via documentElement
+    if (compact) {
+      document.documentElement.style.setProperty('--header-height', '48px')
+    } else {
+      document.documentElement.style.removeProperty('--header-height')
+    }
+  }, [compact])
+
   // IntersectionObserver: обновляет activeIdx когда секция входит в viewport
   useEffect(() => {
     const root = containerRef.current
@@ -160,7 +179,13 @@ export function TimelineScroll({ events, selectedIndex, onSelect, assetUrlByEven
   }))
 
   return (
-    <div ref={containerRef} style={{ position: 'relative' }}>
+    <div
+      ref={containerRef}
+      style={{
+        position: 'relative',
+        scrollSnapType: 'y proximity',     // мягкий scroll-snap — не ломает обычный скролл
+      }}
+    >
       {/* Side rail (sticky) */}
       <SideRail total={events?.length ?? 0} active={activeIdx} progress={scrollProgress} />
 
@@ -233,13 +258,16 @@ function EventSection({
   phase?: number
 }) {
   const ref = useRef<HTMLElement>(null)
-  // Progressive reveal: phase растёт по мере того, как пользователь скроллит
-  // секцию в viewport. Используем `phase` для transform + opacity + blur.
-  // phase ≈ 0 → скрыто, phase ≈ 0.5 → раскрывается, phase ≈ 1 → полностью видно.
+  // Progressive reveal: phase рассчитывается родителем через scrollspy.
+  // Используем phase для transform + opacity + blur — каждая секция реагирует
+  // на расстояние от центра viewport. phase ≈ 0 → контент вне viewport,
+  // phase ≈ 0.5 → раскрывается, phase ≈ 1 → полностью видно.
   const phase = Math.min(1, Math.max(0, phaseProp ?? ev.phase ?? 0))
-  const transform = `translateY(${(1 - phase) * 60}px) scale(${0.92 + phase * 0.08})`
-  const opacity = Math.pow(phase, 1.2)
-  const blur = (1 - phase) * 6
+  // Чуть более плавная кривая: phase ** 0.7 даёт чуть менее агрессивный fade-out
+  const easedPhase = Math.pow(phase, 0.7)
+  const transform = `translateY(${(1 - easedPhase) * 80}px) scale(${0.94 + easedPhase * 0.06})`
+  const opacity = Math.pow(easedPhase, 0.85)
+  const blur = (1 - easedPhase) * 4
 
   return (
     <section
@@ -248,7 +276,9 @@ function EventSection({
       data-idx={idx}
       style={{
         position: 'relative',
-        minHeight: '70vh',           // компактнее чем 100vh — больше секций помещается на экран
+        minHeight: '55vh',                   // scroll-snap-points вместо длинных секций — каждый кадр точно в viewport
+        scrollSnapAlign: 'center',
+        scrollSnapStop: 'always',
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
