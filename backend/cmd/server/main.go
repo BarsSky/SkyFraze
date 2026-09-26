@@ -8,10 +8,16 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+	chimw "github.com/go-chi/chi/v5/middleware"
+
+	"github.com/skyfraze/backend/internal/auth"
 	"github.com/skyfraze/backend/internal/platform"
+	"github.com/skyfraze/backend/internal/store"
 )
 
 //go:embed migrations/*.sql
@@ -44,27 +50,42 @@ func main() {
 	}
 	logger.Info("migrations applied")
 
-	// минимальный mux — health/ready пока без бизнес-роутеров
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+	st := store.New(pool)
+	authSvc := auth.New(st, cfg.JWTSecret)
+	authH := auth.NewHandler(authSvc, st, logger)
+
+	r := chi.NewRouter()
+	r.Use(chimw.RequestID)
+	r.Use(chimw.Recoverer)
+	r.Use(corsMiddleware(cfg.CORSOrigins))
+
+	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"status":"ok"}`))
 	})
-	mux.HandleFunc("GET /ready", func(w http.ResponseWriter, r *http.Request) {
+	r.Get("/ready", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 		defer cancel()
 		if err := pool.Ping(ctx); err != nil {
 			http.Error(w, "db not ready", http.StatusServiceUnavailable)
 			return
 		}
-		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"status":"ready"}`))
+	})
+
+	r.Route("/api/auth", func(r chi.Router) {
+		r.Post("/register", authH.Register)
+		r.Post("/login", authH.Login)
+		r.Post("/refresh", authH.Refresh)
+		r.Group(func(r chi.Router) {
+			r.Use(authSvc.WithUser)
+			r.Get("/me", authH.Me)
+		})
 	})
 
 	srv := &http.Server{
 		Addr:              cfg.Listen,
-		Handler:           withRequestID(mux),
+		Handler:           r,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -90,17 +111,32 @@ func main() {
 	logger.Info("server stopped")
 }
 
-// withRequestID — minimal middleware: ставит X-Request-ID в контекст и response.
-func withRequestID(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		rid := r.Header.Get("X-Request-ID")
-		if rid == "" {
-			rid = randomID()
+// corsMiddleware — простой CORS-middleware для dev (allow из env).
+func corsMiddleware(origins string) func(http.Handler) http.Handler {
+	allowed := map[string]bool{}
+	for _, o := range strings.Split(origins, ",") {
+		o = strings.TrimSpace(o)
+		if o != "" {
+			allowed[o] = true
 		}
-		w.Header().Set("X-Request-ID", rid)
-		ctx := platform.WithRequestID(r.Context(), rid)
-		next.ServeHTTP(w, r.WithContext(ctx))
-	})
+	}
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			origin := r.Header.Get("Origin")
+			if allowed[origin] {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Set("Access-Control-Allow-Credentials", "true")
+				w.Header().Set("Vary", "Origin")
+			}
+			w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type,Authorization,X-Request-ID")
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 func randomID() string {
