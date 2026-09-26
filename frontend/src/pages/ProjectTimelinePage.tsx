@@ -16,6 +16,7 @@ export function ProjectTimelinePage() {
   const [assets, setAssets] = useState<Asset[]>([])
   const [selected, setSelected] = useState<YMap | null>(null)
   const [selectedIdx, setSelectedIdx] = useState<number>(0)
+  const [eventsCount, setEventsCount] = useState<number>(-1) // -1 = loading, 0+ = loaded
 
   const collab = useCollab(projectId)
   const events = collab?.events
@@ -28,6 +29,18 @@ export function ProjectTimelinePage() {
     if (!projectId) return
     listAssets(projectId).then(setAssets).catch(() => setAssets([]))
   }, [projectId])
+
+  // Следим за длиной Y.Array → переключаем empty-state ↔ full timeline
+  useEffect(() => {
+    if (!events) {
+      setEventsCount(-1)
+      return
+    }
+    const update = () => setEventsCount(events.length)
+    update()
+    events.observe(update)
+    return () => events.unobserve(update)
+  }, [events])
 
   // Точки для 3D-сцены: только если есть реальные события.
   // Когда событий нет — пустой массив (Scene ничего не рендерит, мы показываем
@@ -127,7 +140,7 @@ export function ProjectTimelinePage() {
 
       {/* 3D-сцена показывается только если есть хотя бы 1 событие.
           Иначе — empty-state CTA вместо фейковых сфер. */}
-      {events && events.length > 0 ? (
+      {eventsCount > 0 ? (
         <div style={{ marginBottom: 12 }}>
           <Scene
             scrollIndex={idx}
@@ -136,13 +149,13 @@ export function ProjectTimelinePage() {
             label={selected ? eventTitle(selected) || '(без названия)' : 'прокрутите для пролёта между событиями'}
           />
         </div>
-      ) : (
+      ) : eventsCount === 0 ? (
         <EmptyState onAdd={onAddEvent} />
-      )}
+      ) : null}
 
       {/* Scrollytelling timeline — primary view */}
-      {!events && <p className="muted">Подключение к realtime-серверу…</p>}
-      {events && (
+      {eventsCount === -1 && <p className="muted">Подключение к realtime-серверу…</p>}
+      {events && eventsCount !== -1 && (
         <TimelineScroll
           events={events}
           selectedIndex={selectedIdx}

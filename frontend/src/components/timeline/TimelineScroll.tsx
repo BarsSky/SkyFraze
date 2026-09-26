@@ -47,6 +47,7 @@ export function TimelineScroll({ events, selectedIndex, onSelect, assetUrlByEven
   const [activeIdx, setActiveIdx] = useState(0)
   const [eventMeta, setEventMeta] = useState<Array<{ id: string; title: string; body: string }>>([])
   const [scrollProgress, setScrollProgress] = useState(0)
+  const [phases, setPhases] = useState<number[]>([])
 
   // Считываем title/body из Y.Map → state, чтобы React мог рендерить и без перерендера каждого Y.update.
   useEffect(() => {
@@ -73,6 +74,31 @@ export function TimelineScroll({ events, selectedIndex, onSelect, assetUrlByEven
       events.toArray().forEach((m: YMap) => m.unobserveDeep(update))
     }
   }, [events])
+
+  // Scroll-driven phase: для каждой секции считаем 0..1 в зависимости от её позиции в viewport.
+  // 0 = выше центра экрана, 1 = ниже. Простой scrollspy через requestAnimationFrame.
+  useEffect(() => {
+    const root = containerRef.current
+    if (!root) return
+    let raf = 0
+    const tick = () => {
+      const winH = window.innerHeight
+      const winCenter = window.scrollY + winH / 2
+      const sections = Array.from(root.querySelectorAll<HTMLElement>('[data-event-section]'))
+      const next: number[] = []
+      for (const s of sections) {
+        const top = s.offsetTop
+        const h = s.offsetHeight
+        const center = top + h / 2
+        const dist = Math.abs(winCenter - center) / Math.max(1, h)
+        next.push(Math.max(0, 1 - dist))
+      }
+      setPhases(next)
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [eventMeta.length])
 
   // IntersectionObserver: обновляет activeIdx когда секция входит в viewport
   useEffect(() => {
@@ -128,7 +154,7 @@ export function TimelineScroll({ events, selectedIndex, onSelect, assetUrlByEven
     id: m.id,
     title: m.title,
     body: m.body,
-    phase: 0,
+    phase: phases[i] ?? 0,
     isActive: i === activeIdx,
     isSelected: i === selectedIndex,
   }))
@@ -147,6 +173,7 @@ export function TimelineScroll({ events, selectedIndex, onSelect, assetUrlByEven
           ev={ev}
           onSelect={() => onSelect(i)}
           assetUrl={assetUrlByEventId?.[ev.id]}
+          phase={ev.phase}
         />
       ))}
 
@@ -196,15 +223,24 @@ export function TimelineScroll({ events, selectedIndex, onSelect, assetUrlByEven
 // ─────────────────────────────────────────────────────────────────────────────
 
 function EventSection({
-  idx, total, ev, onSelect, assetUrl,
+  idx, total, ev, onSelect, assetUrl, phase: phaseProp,
 }: {
   idx: number
   total: number
   ev: EventLite
   onSelect: () => void
   assetUrl?: string
+  phase?: number
 }) {
   const ref = useRef<HTMLElement>(null)
+  // Progressive reveal: phase растёт по мере того, как пользователь скроллит
+  // секцию в viewport. Используем `phase` для transform + opacity + blur.
+  // phase ≈ 0 → скрыто, phase ≈ 0.5 → раскрывается, phase ≈ 1 → полностью видно.
+  const phase = Math.min(1, Math.max(0, phaseProp ?? ev.phase ?? 0))
+  const transform = `translateY(${(1 - phase) * 60}px) scale(${0.92 + phase * 0.08})`
+  const opacity = Math.pow(phase, 1.2)
+  const blur = (1 - phase) * 6
+
   return (
     <section
       ref={ref}
@@ -212,13 +248,15 @@ function EventSection({
       data-idx={idx}
       style={{
         position: 'relative',
-        minHeight: '100vh',
+        minHeight: '70vh',           // компактнее чем 100vh — больше секций помещается на экран
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
         overflow: 'hidden',
         padding: '0 16px',
+        // Mark this section as scroll-driven — child elements react to phase
+        ['--phase' as any]: phase,
       }}
     >
       {/* Full-bleed background (illustration OR asset image) */}
@@ -305,10 +343,11 @@ function EventSection({
         backdropFilter: 'blur(14px) saturate(140%)',
         WebkitBackdropFilter: 'blur(14px) saturate(140%)',
         boxShadow: '0 30px 80px -20px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.04)',
-        transform: ev.isActive ? 'translateY(0) scale(1)' : 'translateY(40px) scale(0.96)',
-        opacity: ev.isActive ? 1 : 0.4,
-        transition: 'opacity 0.7s var(--sw-easing, ease-out), transform 0.9s var(--sw-easing, cubic-bezier(0.16, 1, 0.3, 1))',
-        willChange: 'transform, opacity',
+        transform: `translateY(${(1 - phase) * 60}px) scale(${0.94 + phase * 0.06})`,
+        opacity: Math.max(0.25, Math.pow(phase, 0.9)),
+        filter: phase < 0.95 ? `blur(${(1 - phase) * 6}px)` : 'none',
+        transition: 'opacity 0.6s var(--sw-easing, ease-out), transform 0.7s var(--sw-easing, cubic-bezier(0.16, 1, 0.3, 1)), filter 0.4s ease-out',
+        willChange: 'transform, opacity, filter',
       }}>
         <div style={{
           fontSize: 11,
