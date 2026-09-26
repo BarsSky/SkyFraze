@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"embed"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -13,9 +14,13 @@ import (
 	"github.com/skyfraze/backend/internal/platform"
 )
 
+//go:embed migrations/*.sql
+var migrationsFS embed.FS
+
 func main() {
 	logger := platform.NewLogger(os.Getenv("APP_ENV"))
 	slog.SetDefault(logger)
+	platform.SetMigrationsFS(migrationsFS)
 
 	cfg, err := platform.LoadConfig()
 	if err != nil {
@@ -32,6 +37,12 @@ func main() {
 		os.Exit(1)
 	}
 	defer pool.Close()
+
+	if err := platform.RunMigrations(ctx, pool); err != nil {
+		logger.Error("migrations", "err", err)
+		os.Exit(1)
+	}
+	logger.Info("migrations applied")
 
 	// минимальный mux — health/ready пока без бизнес-роутеров
 	mux := http.NewServeMux()
