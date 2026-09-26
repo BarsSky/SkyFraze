@@ -59,12 +59,27 @@ export function ProjectsPage() {
       <div className="list">
         {list.length === 0 && <p className="muted">Нет проектов. Создайте первый.</p>}
         {list.map((p) => (
-          <div key={p.id} className="card row" style={{ justifyContent: 'space-between' }}>
-            <div>
-              <h3 style={{ margin: 0 }}><Link to={`/projects/${p.id}`}>{p.title}</Link></h3>
-              <p className="muted" style={{ margin: 0 }}>{p.description || <em>без описания</em>}</p>
+          <div key={p.id} className="card row" style={{ justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+            <div style={{ minWidth: 0, flex: '1 1 240px' }}>
+              <h3 style={{
+                margin: 0,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}>
+                <Link to={`/projects/${p.id}`}>{p.title}</Link>
+              </h3>
+              <p className="muted" style={{
+                margin: 0,
+                overflow: 'hidden',
+                display: '-webkit-box',
+                WebkitLineClamp: 2,
+                WebkitBoxOrient: 'vertical',
+              }}>
+                {p.description || <em>без описания</em>}
+              </p>
             </div>
-            <div className="row">
+            <div className="row" style={{ flexWrap: 'wrap' }}>
               <Link to={`/projects/${p.id}/settings`}><button className="secondary">Участники</button></Link>
               <button className="secondary" onClick={() => onDelete(p.id)}>Удалить</button>
             </div>
