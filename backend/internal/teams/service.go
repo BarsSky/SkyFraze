@@ -70,7 +70,7 @@ func (s *Service) Invite(ctx context.Context, actorID, projectID uuid.UUID, emai
 }
 
 // Accept — пользователь (по userID) принимает приглашение по токену.
-func (s *Service) Accept(ctx context.Context, userID uuid.UUID, token string) (*store.TeamMember, error) {
+func (s *Service) Accept(ctx context.Context, userID uuid.UUID, token string) (*store.MembershipLite, error) {
 	inv, err := s.store.GetInvitationByToken(ctx, token)
 	if err != nil {
 		return nil, ErrInvitationGone

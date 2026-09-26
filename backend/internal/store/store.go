@@ -1,9 +1,5 @@
 // Package store — единая точка доступа к Postgres.
-// Содержит типизированные запросы для всех сущностей MVP.
-// Использует pgx-native scanning для type-safety без codegen.
-//
-// Соглашение: каждый query возвращает либо (*T, error), либо ([]T, error).
-// Сканирование через pgx.CollectRows + RowToStructByName.
+// Типизированные pgx-queries. Поля имеют db-теги для точного маппинга на snake_case колонки.
 package store
 
 import (
@@ -16,7 +12,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Store — обёртка над пулом, владеет всем CRUD по доменным таблицам.
 type Store struct {
 	Pool *pgxpool.Pool
 }
@@ -25,17 +20,15 @@ func New(pool *pgxpool.Pool) *Store {
 	return &Store{Pool: pool}
 }
 
-// ErrNotFound — запись не найдена.
 var ErrNotFound = errors.New("not found")
 
-// qOne — query + scan one struct.
 func qOne[T any](ctx context.Context, pool *pgxpool.Pool, sql string, args ...any) (*T, error) {
 	rows, err := pool.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	collected, err := pgx.CollectRows(rows, pgx.RowToStructByName[T])
+	collected, err := pgx.CollectRows(rows, pgx.RowToStructByNameLax[T])
 	if err != nil {
 		return nil, err
 	}
@@ -45,25 +38,24 @@ func qOne[T any](ctx context.Context, pool *pgxpool.Pool, sql string, args ...an
 	return &collected[0], nil
 }
 
-// qAll — query + scan all structs.
 func qAll[T any](ctx context.Context, pool *pgxpool.Pool, sql string, args ...any) ([]T, error) {
 	rows, err := pool.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	return pgx.CollectRows(rows, pgx.RowToStructByName[T])
+	return pgx.CollectRows(rows, pgx.RowToStructByNameLax[T])
 }
 
 // ========================== Users ==========================
 
 type User struct {
-	ID           uuid.UUID `json:"id"`
-	Email        string    `json:"email"`
-	PasswordHash string    `json:"-"`
-	DisplayName  string    `json:"display_name"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID           uuid.UUID `db:"id" json:"id"`
+	Email        string    `db:"email" json:"email"`
+	PasswordHash string    `db:"password_hash" json:"-"`
+	DisplayName  string    `db:"display_name" json:"display_name"`
+	CreatedAt    time.Time `db:"created_at" json:"created_at"`
+	UpdatedAt    time.Time `db:"updated_at" json:"updated_at"`
 }
 
 func (s *Store) CreateUser(ctx context.Context, email, hash, name string) (*User, error) {
@@ -88,12 +80,12 @@ func (s *Store) GetUserByID(ctx context.Context, id uuid.UUID) (*User, error) {
 // ========================== Projects ==========================
 
 type Project struct {
-	ID          uuid.UUID `json:"id"`
-	OwnerID     uuid.UUID `json:"owner_id"`
-	Title       string    `json:"title"`
-	Description string    `json:"description"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID          uuid.UUID `db:"id" json:"id"`
+	OwnerID     uuid.UUID `db:"owner_id" json:"owner_id"`
+	Title       string    `db:"title" json:"title"`
+	Description string    `db:"description" json:"description"`
+	CreatedAt   time.Time `db:"created_at" json:"created_at"`
+	UpdatedAt   time.Time `db:"updated_at" json:"updated_at"`
 }
 
 func (s *Store) CreateProject(ctx context.Context, ownerID uuid.UUID, title, desc string) (*Project, error) {
@@ -139,13 +131,22 @@ const (
 	RoleViewer Role = "viewer"
 )
 
+// TeamMember — для ListMembers (с JOIN users). Для простого membership используется MembershipLite.
 type TeamMember struct {
-	ProjectID   uuid.UUID `json:"project_id"`
-	UserID      uuid.UUID `json:"user_id"`
-	Role        Role      `json:"role"`
-	AddedAt     time.Time `json:"added_at"`
-	Email       string    `json:"email,omitempty"`
-	DisplayName string    `json:"display_name,omitempty"`
+	ProjectID   uuid.UUID `db:"project_id" json:"project_id"`
+	UserID      uuid.UUID `db:"user_id" json:"user_id"`
+	Role        Role      `db:"role" json:"role"`
+	AddedAt     time.Time `db:"added_at" json:"added_at"`
+	Email       string    `db:"email" json:"email,omitempty"`
+	DisplayName string    `db:"display_name" json:"display_name,omitempty"`
+}
+
+// MembershipLite — то, что возвращает GetMembership (без JOIN).
+type MembershipLite struct {
+	ProjectID uuid.UUID `db:"project_id" json:"project_id"`
+	UserID    uuid.UUID `db:"user_id" json:"user_id"`
+	Role      Role      `db:"role" json:"role"`
+	AddedAt   time.Time `db:"added_at" json:"added_at"`
 }
 
 func (s *Store) AddMembership(ctx context.Context, projectID, userID uuid.UUID, role Role) error {
@@ -156,8 +157,8 @@ func (s *Store) AddMembership(ctx context.Context, projectID, userID uuid.UUID, 
 	return err
 }
 
-func (s *Store) GetMembership(ctx context.Context, projectID, userID uuid.UUID) (*TeamMember, error) {
-	return qOne[TeamMember](ctx, s.Pool,
+func (s *Store) GetMembership(ctx context.Context, projectID, userID uuid.UUID) (*MembershipLite, error) {
+	return qOne[MembershipLite](ctx, s.Pool,
 		`SELECT project_id, user_id, role, added_at
 		   FROM team_memberships WHERE project_id=$1 AND user_id=$2`,
 		projectID, userID)
@@ -182,15 +183,15 @@ func (s *Store) RemoveMembership(ctx context.Context, projectID, userID uuid.UUI
 // ========================== Invitations ==========================
 
 type Invitation struct {
-	ID         uuid.UUID  `json:"id"`
-	ProjectID  uuid.UUID  `json:"project_id"`
-	Email      string     `json:"email"`
-	Role       Role       `json:"role"`
-	Token      string     `json:"token"`
-	InvitedBy  uuid.UUID  `json:"invited_by"`
-	ExpiresAt  time.Time  `json:"expires_at"`
-	AcceptedAt *time.Time `json:"accepted_at,omitempty"`
-	CreatedAt  time.Time  `json:"created_at"`
+	ID         uuid.UUID  `db:"id" json:"id"`
+	ProjectID  uuid.UUID  `db:"project_id" json:"project_id"`
+	Email      string     `db:"email" json:"email"`
+	Role       Role       `db:"role" json:"role"`
+	Token      string     `db:"token" json:"token"`
+	InvitedBy  uuid.UUID  `db:"invited_by" json:"invited_by"`
+	ExpiresAt  time.Time  `db:"expires_at" json:"expires_at"`
+	AcceptedAt *time.Time `db:"accepted_at" json:"accepted_at,omitempty"`
+	CreatedAt  time.Time  `db:"created_at" json:"created_at"`
 }
 
 func (s *Store) CreateInvitation(ctx context.Context, inv *Invitation) error {
@@ -223,16 +224,16 @@ func (s *Store) ListPendingInvitations(ctx context.Context, projectID uuid.UUID)
 // ========================== Events / Timeline ==========================
 
 type Event struct {
-	ID        uuid.UUID  `json:"id"`
-	ProjectID uuid.UUID  `json:"project_id"`
-	Position  int        `json:"position"`
-	Title     string     `json:"title"`
-	Body      string     `json:"body"`
-	EventDate *time.Time `json:"event_date,omitempty"`
-	YjsState  []byte     `json:"-"`
-	CreatedBy *uuid.UUID `json:"created_by,omitempty"`
-	CreatedAt time.Time  `json:"created_at"`
-	UpdatedAt time.Time  `json:"updated_at"`
+	ID        uuid.UUID  `db:"id" json:"id"`
+	ProjectID uuid.UUID  `db:"project_id" json:"project_id"`
+	Position  int        `db:"position" json:"position"`
+	Title     string     `db:"title" json:"title"`
+	Body      string     `db:"body" json:"body"`
+	EventDate *time.Time `db:"event_date" json:"event_date,omitempty"`
+	YjsState  []byte     `db:"yjs_state" json:"-"`
+	CreatedBy *uuid.UUID `db:"created_by" json:"created_by,omitempty"`
+	CreatedAt time.Time  `db:"created_at" json:"created_at"`
+	UpdatedAt time.Time  `db:"updated_at" json:"updated_at"`
 }
 
 func (s *Store) GetYjsState(ctx context.Context, projectID uuid.UUID) ([]byte, error) {
@@ -256,7 +257,6 @@ func (s *Store) SaveYjsState(ctx context.Context, projectID uuid.UUID, state []b
 		`SELECT owner_id FROM projects WHERE id=$1`, projectID).Scan(&ownerID); err != nil {
 		return err
 	}
-	// создаём "anchor"-event только если в проекте ещё нет ни одного события
 	var exists bool
 	if err := s.Pool.QueryRow(ctx,
 		`SELECT EXISTS(SELECT 1 FROM events WHERE project_id=$1)`, projectID).Scan(&exists); err != nil {
@@ -287,17 +287,17 @@ func (s *Store) ListEvents(ctx context.Context, projectID uuid.UUID) ([]Event, e
 // ========================== Assets ==========================
 
 type Asset struct {
-	ID        uuid.UUID `json:"id"`
-	ProjectID uuid.UUID `json:"project_id"`
-	OwnerID   uuid.UUID `json:"owner_id"`
-	Filename  string    `json:"filename"`
-	Mime      string    `json:"mime"`
-	Size      int64     `json:"size"`
-	S3Key     string    `json:"s3_key"`
-	Kind      string    `json:"kind"`
-	Width     *int      `json:"width,omitempty"`
-	Height    *int      `json:"height,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
+	ID        uuid.UUID `db:"id" json:"id"`
+	ProjectID uuid.UUID `db:"project_id" json:"project_id"`
+	OwnerID   uuid.UUID `db:"owner_id" json:"owner_id"`
+	Filename  string    `db:"filename" json:"filename"`
+	Mime      string    `db:"mime" json:"mime"`
+	Size      int64     `db:"size" json:"size"`
+	S3Key     string    `db:"s3_key" json:"s3_key"`
+	Kind      string    `db:"kind" json:"kind"`
+	Width     *int      `db:"width" json:"width,omitempty"`
+	Height    *int      `db:"height" json:"height,omitempty"`
+	CreatedAt time.Time `db:"created_at" json:"created_at"`
 }
 
 func (s *Store) CreateAsset(ctx context.Context, a *Asset) error {
@@ -323,14 +323,14 @@ func (s *Store) ListAssets(ctx context.Context, projectID uuid.UUID) ([]Asset, e
 // ========================== Sessions (refresh tokens) ==========================
 
 type Session struct {
-	ID               uuid.UUID  `json:"id"`
-	UserID           uuid.UUID  `json:"user_id"`
-	RefreshTokenHash string     `json:"-"`
-	UserAgent        string     `json:"user_agent"`
-	IP               string     `json:"ip"`
-	ExpiresAt        time.Time  `json:"expires_at"`
-	RevokedAt        *time.Time `json:"revoked_at,omitempty"`
-	CreatedAt        time.Time  `json:"created_at"`
+	ID            uuid.UUID  `db:"id" json:"id"`
+	UserID        uuid.UUID  `db:"user_id" json:"user_id"`
+	RefreshTokenHash string  `db:"refresh_token_hash" json:"-"`
+	UserAgent     string     `db:"user_agent" json:"user_agent"`
+	IP            string     `db:"ip" json:"ip"`
+	ExpiresAt     time.Time  `db:"expires_at" json:"expires_at"`
+	RevokedAt     *time.Time `db:"revoked_at" json:"revoked_at,omitempty"`
+	CreatedAt     time.Time  `db:"created_at" json:"created_at"`
 }
 
 func (s *Store) CreateSession(ctx context.Context, sess *Session) error {

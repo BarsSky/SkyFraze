@@ -54,14 +54,28 @@ export function ProjectSettingsPage() {
 
       <div className="card">
         <h3>Пригласить</h3>
-        <form onSubmit={onInvite} className="row" style={{ alignItems: 'flex-end' }}>
-          <div style={{ flex: 1 }}>
-            <label className="muted">Email</label>
-            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+        <form onSubmit={onInvite} className="row" style={{ alignItems: 'flex-end', flexWrap: 'wrap', gap: 12 }}>
+          <div style={{ flex: '1 1 220px', minWidth: 200 }}>
+            <label className="muted" style={{ display: 'block', marginBottom: 4 }}>Email</label>
+            <input
+              placeholder="email@example.com"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+            />
           </div>
           <div>
-            <label className="muted">Роль</label>
-            <select value={role} onChange={(e) => setRole(e.target.value as 'editor' | 'viewer')} style={{ background: '#0d1117', color: '#e6edf3', border: '1px solid #30363d', borderRadius: 6, padding: 8 }}>
+            <label className="muted" style={{ display: 'block', marginBottom: 4 }}>Роль</label>
+            <select
+              value={role}
+              onChange={(e) => setRole(e.target.value as 'editor' | 'viewer')}
+              style={{
+                background: '#0d1117', color: '#e6edf3',
+                border: '1px solid #30363d', borderRadius: 6, padding: '8px 10px',
+                minWidth: 110,
+              }}
+            >
               <option value="editor">editor</option>
               <option value="viewer">viewer</option>
             </select>

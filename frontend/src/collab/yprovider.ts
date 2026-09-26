@@ -34,10 +34,24 @@ export function useCollab(projectId: string): CollabHandle | null {
     const ws = new WebSocket(wsUrl + '?token=' + encodeURIComponent(useAuthStore.getState().accessToken ?? ''))
     ws.binaryType = 'arraybuffer'
 
-    ws.onopen = () => {
-      // отправим текущее состояние как апдейт
+    ws.onopen = async () => {
+      // 1) подтянем снапшот из REST — гарантированно восстановимся после рестарта
+      try {
+        const resp = await fetch(`/api/projects/${projectId}/events/state`, {
+          headers: { Accept: 'application/octet-stream' },
+        })
+        if (resp.ok) {
+          const buf = await resp.arrayBuffer()
+          if (buf.byteLength > 0) {
+            Y.applyUpdate(doc, new Uint8Array(buf), 'remote')
+          }
+        }
+      } catch {
+        /* ignore — WS relay всё равно дошлёт */
+      }
+      // 2) отправим локальные изменения (которых нет в снапшоте) на сервер
       const update = Y.encodeStateAsUpdate(doc)
-      ws.send(update)
+      if (update.byteLength > 0) ws.send(update)
     }
     ws.onmessage = (ev) => {
       if (ev.data instanceof ArrayBuffer) {

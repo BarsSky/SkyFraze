@@ -80,14 +80,14 @@ func (s *Service) Delete(ctx context.Context, userID, projectID uuid.UUID) error
 }
 
 // requireMember — обёртка: получает membership, проверяет минимальную роль.
-func (s *Service) requireMember(ctx context.Context, userID, projectID uuid.UUID, minRole store.Role) (*store.TeamMember, error) {
+func (s *Service) requireMember(ctx context.Context, userID, projectID uuid.UUID, minRole store.Role) (*store.MembershipLite, error) {
 	m, err := s.store.GetMembership(ctx, projectID, userID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			// owner проекта — всегда член команды
 			p, perr := s.store.GetProject(ctx, projectID)
 			if perr == nil && p.OwnerID == userID {
-				return &store.TeamMember{ProjectID: projectID, UserID: userID, Role: store.RoleOwner}, nil
+				return &store.MembershipLite{ProjectID: projectID, UserID: userID, Role: store.RoleOwner}, nil
 			}
 			return nil, ErrForbidden
 		}
