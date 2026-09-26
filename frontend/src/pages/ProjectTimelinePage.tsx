@@ -29,22 +29,20 @@ export function ProjectTimelinePage() {
     listAssets(projectId).then(setAssets).catch(() => setAssets([]))
   }, [projectId])
 
-  // Default placeholder points (когда событий нет)
-  const defaultPoints = useMemo(
-    () => [-3, -1, 1, 3].map((x) => ({ x, y: 0, z: 0 })),
-    []
-  )
+  // Точки для 3D-сцены: только если есть реальные события.
+  // Когда событий нет — пустой массив (Scene ничего не рендерит, мы показываем
+  // большой empty-state CTA вместо дефолтных "фейковых" сфер).
   const points = useMemo(() => {
-    if (!events || events.length === 0) return defaultPoints
-    const n = Math.max(1, events.length)
+    if (!events || events.length === 0) return []
+    const n = events.length
     return Array.from({ length: n }).map((_, i) => ({
       x: ((i - (n - 1) / 2) * 6) / Math.max(1, n),
       y: Math.sin(i * 0.7) * 0.4,
       z: 0,
     }))
-  }, [events, defaultPoints])
+  }, [events])
 
-  const totalSteps = Math.max(1, points.length - 1)
+  const totalSteps = Math.max(0, points.length - 1)
   const idx = useScrub(totalSteps)
 
   // Маппинг event.id → URL первого ассета для использования в иллюстрации
@@ -127,15 +125,20 @@ export function ProjectTimelinePage() {
         </div>
       </div>
 
-      {/* Небольшой 3D hero scene — уменьшенная сцена над timeline, не доминирует */}
-      <div style={{ marginBottom: 12 }}>
-        <Scene
-          scrollIndex={idx}
-          points={points}
-          selected={selectedIdx}
-          label={selected ? eventTitle(selected) || '(без названия)' : (events && events.length ? 'прокрутите для пролёта' : 'нет событий — нажмите + Событие')}
-        />
-      </div>
+      {/* 3D-сцена показывается только если есть хотя бы 1 событие.
+          Иначе — empty-state CTA вместо фейковых сфер. */}
+      {events && events.length > 0 ? (
+        <div style={{ marginBottom: 12 }}>
+          <Scene
+            scrollIndex={idx}
+            points={points}
+            selected={selectedIdx}
+            label={selected ? eventTitle(selected) || '(без названия)' : 'прокрутите для пролёта между событиями'}
+          />
+        </div>
+      ) : (
+        <EmptyState onAdd={onAddEvent} />
+      )}
 
       {/* Scrollytelling timeline — primary view */}
       {!events && <p className="muted">Подключение к realtime-серверу…</p>}
@@ -230,6 +233,50 @@ function AssetList({ assets, selected }: { assets: Asset[]; selected: YMap }) {
           </span>
         </div>
       ))}
+    </div>
+  )
+}
+
+/**
+ * Empty-state CTA — крупная карточка с понятным призывом добавить первое событие.
+ * Не показывает 3D-сцену с фейковыми сферами.
+ */
+function EmptyState({ onAdd }: { onAdd: () => void }) {
+  return (
+    <div style={{
+      marginBottom: 16,
+      padding: '48px 24px',
+      border: '2px dashed #30363d',
+      borderRadius: 12,
+      background: 'rgba(13, 17, 23, 0.4)',
+      textAlign: 'center',
+    }}>
+      <div style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: 64, height: 64,
+        borderRadius: '50%',
+        background: '#161b22',
+        border: '1px solid #30363d',
+        margin: '0 auto 16px',
+        fontSize: 32,
+        color: '#58a6ff',
+      }}>
+        +
+      </div>
+      <h3 style={{ margin: '0 0 8px', fontSize: 22, fontWeight: 600 }}>
+        Timeline пока пуст
+      </h3>
+      <p className="muted" style={{ margin: '0 0 20px', maxWidth: 460, marginLeft: 'auto', marginRight: 'auto' }}>
+        Добавьте первое событие сюжета — заголовок и описание. По мере добавления событий появится 3D-сцена с маркерами и прокручиваемая timeline с фоновыми иллюстрациями.
+      </p>
+      <button onClick={onAdd} style={{ fontSize: 15, padding: '10px 22px' }}>
+        + Добавить первое событие
+      </button>
+      <p className="muted" style={{ marginTop: 12, fontSize: 12 }}>
+        Ассеты (скетчи, картинки, PDF) можно будет прикрепить к каждому событию после создания
+      </p>
     </div>
   )
 }

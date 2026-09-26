@@ -16,11 +16,19 @@ interface SceneProps {
  * Three.js-сцена: «диорама» из N-светящихся маркеров на Catmull-Rom spline,
  * камера плавно интерполируется по точкам по scrollIndex (scroll-scrubbed).
  * Адаптировано под концепцию scroll-world (scroll → camera flight), но без AI-генерации.
+ *
+ * Если points пустой (0 событий) — возвращает null (родитель должен показать empty-state).
+ * Если только 1 точка — рендерит 1 маркер без сплайна.
  */
 export function Scene({ scrollIndex, points, label, selected }: SceneProps) {
   const ref = useRef<HTMLCanvasElement>(null)
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null)
   const camIndexRef = useRef(scrollIndex)
+
+  // Если точек нет — не рендерим ничего (не должно быть "фейковых" дефолтных сфер).
+  if (!points || points.length === 0) {
+    return null
+  }
 
   useEffect(() => {
     if (!ref.current) return
@@ -39,12 +47,9 @@ export function Scene({ scrollIndex, points, label, selected }: SceneProps) {
 
     const camera = new THREE.PerspectiveCamera(55, width / height, 0.1, 100)
 
-    const allPoints = points.length >= 2 ? points : [
-      { x: -3, y: 0, z: 0 },
-      { x: -1, y: 0, z: 0 },
-      { x: 1, y: 0, z: 0 },
-      { x: 3, y: 0, z: 0 },
-    ]
+    // Для 1 точки spline не строим — рендерим только 1 маркер.
+    // Для 2+ точек используем их напрямую (больше НЕТ дефолтных "фейковых" сфер).
+    const allPoints = points
 
     // маркеры событий — сферы разных цветов
     const colors = [0x58a6ff, 0x3fb950, 0xd29922, 0xf85149, 0xa371f7, 0x39c5cf, 0xff7b72]
@@ -76,18 +81,22 @@ export function Scene({ scrollIndex, points, label, selected }: SceneProps) {
       return { mesh: m, glow, base: i }
     })
 
-    // spline-кривая (Catmull-Rom)
-    const curve = new THREE.CatmullRomCurve3(
-      allPoints.map((p) => new THREE.Vector3(p.x, p.y, p.z)),
-      false,
-      'catmullrom',
-      0.5
-    )
-    const tube = new THREE.Mesh(
-      new THREE.TubeGeometry(curve, 96, 0.06, 8, false),
-      new THREE.MeshBasicMaterial({ color: 0x30363d })
-    )
-    scene.add(tube)
+    let tube: THREE.Mesh | null = null
+    // spline-кривая (Catmull-Rom) — только если >= 2 точек
+    if (allPoints.length >= 2) {
+      const curve = new THREE.CatmullRomCurve3(
+        allPoints.map((p) => new THREE.Vector3(p.x, p.y, p.z)),
+        false,
+        'catmullrom',
+        0.5
+      )
+      const tubeMesh = new THREE.Mesh(
+        new THREE.TubeGeometry(curve, 96, 0.06, 8, false),
+        new THREE.MeshBasicMaterial({ color: 0x30363d })
+      )
+      tube = tubeMesh
+      scene.add(tubeMesh)
+    }
 
     // звёздный фон (мелкие точки на дальнем плане)
     const starGeom = new THREE.BufferGeometry()
@@ -126,6 +135,23 @@ export function Scene({ scrollIndex, points, label, selected }: SceneProps) {
 
     let raf = 0
     const start = performance.now()
+
+    // spline-кривая (Catmull-Rom) — только если >= 2 точек
+    if (allPoints.length >= 2) {
+      const curve = new THREE.CatmullRomCurve3(
+        allPoints.map((p) => new THREE.Vector3(p.x, p.y, p.z)),
+        false,
+        'catmullrom',
+        0.5
+      )
+      const tubeMesh = new THREE.Mesh(
+        new THREE.TubeGeometry(curve, 96, 0.06, 8, false),
+        new THREE.MeshBasicMaterial({ color: 0x30363d })
+      )
+      tube = tubeMesh
+      scene.add(tubeMesh)
+    }
+
     const tick = () => {
       const t = performance.now()
       // плавная интерполяция scrollIndex
@@ -168,7 +194,7 @@ export function Scene({ scrollIndex, points, label, selected }: SceneProps) {
       window.removeEventListener('resize', onResize)
       renderer.dispose()
       spheres.forEach((s) => { s.mesh.geometry.dispose(); s.glow.geometry.dispose() })
-      tube.geometry.dispose()
+      tube?.geometry.dispose()
       starGeom.dispose()
       rendererRef.current = null
     }
