@@ -15,9 +15,15 @@ import (
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 
+	"github.com/skyfraze/backend/internal/assets"
 	"github.com/skyfraze/backend/internal/auth"
+	"github.com/skyfraze/backend/internal/collab"
+	"github.com/skyfraze/backend/internal/events"
 	"github.com/skyfraze/backend/internal/platform"
+	"github.com/skyfraze/backend/internal/projects"
+	"github.com/skyfraze/backend/internal/storage"
 	"github.com/skyfraze/backend/internal/store"
+	"github.com/skyfraze/backend/internal/teams"
 )
 
 //go:embed migrations/*.sql
@@ -50,29 +56,55 @@ func main() {
 	}
 	logger.Info("migrations applied")
 
+	// --- services ---
 	st := store.New(pool)
+
 	authSvc := auth.New(st, cfg.JWTSecret)
 	authH := auth.NewHandler(authSvc, st, logger)
 
+	projSvc := projects.New(st)
+	projH := projects.NewHandler(projSvc, logger)
+
+	objStore, err := storage.NewLocal(cfg.StorageDir)
+	if err != nil {
+		logger.Error("storage init", "err", err)
+		os.Exit(1)
+	}
+	assetsSvc := assets.New(st, objStore, projSvc)
+	assetsH := assets.NewHandler(assetsSvc, logger)
+
+	evSvc := events.New(st, projSvc)
+	evH := events.NewHandler(evSvc, logger)
+
+	teamsSvc := teams.New(st, projSvc)
+	teamsH := teams.NewHandler(teamsSvc, logger)
+
+	collabHub := collab.NewHub(logger, cfg.JWTSecret, evSvc)
+	go collabHub.Run(ctx)
+
+	// --- router ---
 	r := chi.NewRouter()
 	r.Use(chimw.RequestID)
 	r.Use(chimw.Recoverer)
 	r.Use(corsMiddleware(cfg.CORSOrigins))
+	r.Use(chimw.Compress(5))
 
-	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
+	// health
+	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"status":"ok"}`))
 	})
 	r.Get("/ready", func(w http.ResponseWriter, r *http.Request) {
-		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
-		defer cancel()
-		if err := pool.Ping(ctx); err != nil {
+		pctx, pcancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer pcancel()
+		if err := pool.Ping(pctx); err != nil {
 			http.Error(w, "db not ready", http.StatusServiceUnavailable)
 			return
 		}
 		w.Write([]byte(`{"status":"ready"}`))
 	})
 
+	// auth
 	r.Route("/api/auth", func(r chi.Router) {
 		r.Post("/register", authH.Register)
 		r.Post("/login", authH.Login)
@@ -83,16 +115,36 @@ func main() {
 		})
 	})
 
+	// projects
+	r.Mount("/api/projects", projH.Routes(authSvc))
+
+	// под-ресурсы проектов: монтируем один общий sub-router с chi.Route
+	r.Route("/api/projects/{id}", func(r chi.Router) {
+		r.Use(authSvc.WithUser)
+		r.Get("/members", teamsH.Members(authSvc))
+		r.Post("/invitations", teamsH.Invite(authSvc))
+		r.Get("/invitations", teamsH.ListInvitations(authSvc))
+		r.Get("/events/state", evH.GetState(authSvc))
+		r.Put("/events/state", evH.PutState(authSvc))
+		r.Get("/events", evH.List(authSvc))
+		r.Post("/assets", assetsH.Upload(authSvc))
+		r.Get("/assets", assetsH.List(authSvc))
+	})
+
+	// global invitation acceptance
+	r.With(authSvc.WithUser).Post("/api/invitations/{token}/accept", teamsH.Accept())
+
+	// assets download (per-asset id)
+	r.Get("/api/assets/{id}", assetsH.Download(authSvc))
+
 	srv := &http.Server{
 		Addr:              cfg.Listen,
 		Handler:           r,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	// graceful shutdown
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
-
 	go func() {
 		logger.Info("server starting", "addr", cfg.Listen)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -111,7 +163,7 @@ func main() {
 	logger.Info("server stopped")
 }
 
-// corsMiddleware — простой CORS-middleware для dev (allow из env).
+// corsMiddleware — dev CORS через env.
 func corsMiddleware(origins string) func(http.Handler) http.Handler {
 	allowed := map[string]bool{}
 	for _, o := range strings.Split(origins, ",") {
@@ -137,15 +189,4 @@ func corsMiddleware(origins string) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
-}
-
-func randomID() string {
-	// простой request id — в проде заменить на UUID; для MVP достаточно
-	const hex = "0123456789abcdef"
-	b := make([]byte, 16)
-	for i := range b {
-		b[i] = hex[time.Now().UnixNano()%16]
-		time.Sleep(time.Nanosecond)
-	}
-	return string(b)
 }
