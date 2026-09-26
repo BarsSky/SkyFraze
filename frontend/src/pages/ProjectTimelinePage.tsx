@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom'
 import { Scene } from '../components/timeline/Scene'
 import { useScrub } from '../components/timeline/ScrubController'
 import { EventCard } from '../components/timeline/EventCard'
+import { TimelineScroll } from '../components/timeline/TimelineScroll'
 import { useCollab, yAddEvent, type YMap } from '../collab/yprovider'
 import { listAssets, uploadAsset, assetUrl, type Asset } from '../api/assets'
 import type { Project } from '../api/projects'
@@ -28,7 +29,7 @@ export function ProjectTimelinePage() {
     listAssets(projectId).then(setAssets).catch(() => setAssets([]))
   }, [projectId])
 
-  // Дефолтные точки, чтобы сцена не была пустой до подключения Yjs
+  // Default placeholder points (когда событий нет)
   const defaultPoints = useMemo(
     () => [-3, -1, 1, 3].map((x) => ({ x, y: 0, z: 0 })),
     []
@@ -46,12 +47,31 @@ export function ProjectTimelinePage() {
   const totalSteps = Math.max(1, points.length - 1)
   const idx = useScrub(totalSteps)
 
+  // Маппинг event.id → URL первого ассета для использования в иллюстрации
+  const assetUrlByEventId = useMemo(() => {
+    const map: Record<string, string> = {}
+    if (!events) return map
+    events.forEach((m) => {
+      const eventId = (m.get('id') as string) ?? ''
+      const attached = ((m.get('assets') as string[] | undefined) ?? [])
+      if (attached.length > 0) {
+        map[eventId] = assetUrl(attached[0])
+      }
+    })
+    return map
+  }, [events, assets])
+
   function onAddEvent() {
     if (!events) return
     const m = yAddEvent(events)
     setSelected(m)
     setSelectedIdx(events.length - 1)
-    setTimeout(() => window.scrollTo({ top: (events.length - 1) * window.innerHeight, behavior: 'smooth' }), 50)
+    setTimeout(() => {
+      // scroll к новой секции
+      const idx = events.length - 1
+      const target = document.querySelector<HTMLElement>(`[data-event-section][data-idx="${idx}"]`)
+      target?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }, 100)
   }
 
   async function onUploadAsset(file: File) {
@@ -66,73 +86,127 @@ export function ProjectTimelinePage() {
     }
   }
 
+  function handleSelectEvent(idx: number) {
+    if (!events) return
+    const arr = events.toArray()
+    setSelected(arr[idx] ?? null)
+    setSelectedIdx(idx)
+    // прокрутить к редактору выбранного события (если есть)
+    setTimeout(() => {
+      const editor = document.querySelector<HTMLElement>(`[data-editor-section][data-idx="${idx}"]`)
+      editor?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }, 50)
+  }
+
   const eventTitle = (m: YMap): string => ((m.get('title') as string | undefined) ?? '').trim()
 
   return (
-    <div style={{ maxWidth: 1100, margin: '0 auto', padding: '0 12px' }}>
-      <div className="row" style={{ justifyContent: 'space-between', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
-        <h2 style={{ margin: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+    <div style={{ maxWidth: 1200, margin: '0 auto', padding: '0 12px' }}>
+      {/* Hero header */}
+      <div className="row" style={{ justifyContent: 'space-between', marginBottom: 12, flexWrap: 'wrap', gap: 8, padding: '12px 0' }}>
+        <h2 style={{
+          margin: 0,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+          maxWidth: '100%',
+          flex: '1 1 200px',
+        }}>
           {project?.title ?? 'Timeline'}
         </h2>
         <div className="row" style={{ flexWrap: 'wrap', gap: 8 }}>
-          <Link to={`/projects/${projectId}/settings`}><button className="secondary">Участники</button></Link>
-          <Link to="/projects"><button className="secondary">К проектам</button></Link>
-          <button onClick={onAddEvent} disabled={!events}>+ Событие</button>
+          <Link to={`/projects/${projectId}/settings`}>
+            <button className="secondary">Участники</button>
+          </Link>
+          <Link to="/projects">
+            <button className="secondary">К проектам</button>
+          </Link>
+          <button onClick={onAddEvent} disabled={!events}>
+            + Событие
+          </button>
         </div>
       </div>
 
-      <Scene
-        scrollIndex={idx}
-        points={points}
-        selected={selectedIdx}
-        label={selected ? eventTitle(selected) || '(без названия)' : (events && events.length ? 'прокрутите для пролёта' : 'нет событий — нажмите + Событие')}
-      />
-
-      <div style={{ marginTop: 24 }}>
-        {!events && <p className="muted">Подключение к realtime-серверу…</p>}
-        {events && events.length === 0 && (
-          <p className="muted">Нет событий. Нажмите «+ Событие», чтобы начать.</p>
-        )}
-        {events && events.toArray().map((m, i) => {
-          const title = eventTitle(m) || '(без названия)'
-          const body = (m.get('body') as string | undefined) ?? ''
-          return (
-            <section key={(m.get('id') as string | undefined) ?? i} style={{ minHeight: '50vh', padding: '12px 0' }}>
-              <div className="row" style={{ justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
-                <h3 style={{ margin: 0 }}>{i + 1}. {title}</h3>
-                <button
-                  className="secondary"
-                  onClick={() => { setSelected(selected === m ? null : m); setSelectedIdx(i) }}
-                >
-                  {selected === m ? 'закрыть' : 'редактировать'}
-                </button>
-              </div>
-              <div className="card">
-                <p style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{body || <em className="muted">пусто</em>}</p>
-              </div>
-              {selected === m && (
-                <div className="card">
-                  <EventCard
-                    ymap={m}
-                    onTitleChange={(v) => m.set('title', v)}
-                    onBodyChange={(v) => m.set('body', v)}
-                  />
-                  <h4 style={{ marginTop: 16 }}>Ассеты (скетчи, картинки, PDF)</h4>
-                  <input
-                    type="file"
-                    accept="image/*,.pdf,.svg"
-                    onChange={(e) => {
-                      const f = e.target.files?.[0]
-                      if (f) void onUploadAsset(f)
-                    }}
-                  />
-                  <AssetList assets={assets} selected={m} />
-                </div>
-              )}
-            </section>
-          )
-        })}
+      {/* Небольшой 3D hero scene — уменьшенная сцена над timeline, не доминирует */}
+      <div style={{ marginBottom: 12 }}>
+        <Scene
+          scrollIndex={idx}
+          points={points}
+          selected={selectedIdx}
+          label={selected ? eventTitle(selected) || '(без названия)' : (events && events.length ? 'прокрутите для пролёта' : 'нет событий — нажмите + Событие')}
+        />
       </div>
+
+      {/* Scrollytelling timeline — primary view */}
+      {!events && <p className="muted">Подключение к realtime-серверу…</p>}
+      {events && (
+        <TimelineScroll
+          events={events}
+          selectedIndex={selectedIdx}
+          onSelect={handleSelectEvent}
+          assetUrlByEventId={assetUrlByEventId}
+        />
+      )}
+
+      {/* Editor panels — по одному для каждого события, sticky после timeline */}
+      {events && events.length > 0 && (
+        <section style={{ padding: '40px 12px', borderTop: '1px solid #30363d', marginTop: 40 }}>
+          <h3 style={{ margin: '0 0 24px 0', color: '#7d8590', textTransform: 'uppercase', letterSpacing: 2, fontSize: 13 }}>
+            Редакторы
+          </h3>
+          {events.toArray().map((m, i: number) => {
+            const title = eventTitle(m) || `Событие ${i + 1}`
+            const body = (m.get('body') as string | undefined) ?? ''
+            return (
+              <article
+                key={(m.get('id') as string | undefined) ?? i}
+                data-editor-section
+                data-idx={i}
+                style={{
+                  marginBottom: 24,
+                  padding: 16,
+                  background: '#161b22',
+                  border: selectedIdx === i ? '1px solid #58a6ff' : '1px solid #30363d',
+                  borderRadius: 8,
+                }}
+              >
+                <div className="row" style={{ justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+                  <strong style={{ color: '#7d8590', fontSize: 13 }}>#{i + 1} {title}</strong>
+                  <button
+                    className="secondary"
+                    onClick={() => {
+                      setSelected(selectedIdx === i ? null : m)
+                      if (selectedIdx !== i) setSelectedIdx(i)
+                    }}
+                  >
+                    {selectedIdx === i ? 'закрыть' : 'редактировать'}
+                  </button>
+                </div>
+                <p style={{ whiteSpace: 'pre-wrap', margin: 0, color: '#c9d1d9' }}>{body || <em className="muted">пусто</em>}</p>
+                {selected === m && (
+                  <div style={{ marginTop: 12 }}>
+                    <EventCard
+                      ymap={m}
+                      onTitleChange={(v) => m.set('title', v)}
+                      onBodyChange={(v) => m.set('body', v)}
+                    />
+                    <h4 style={{ marginTop: 16, fontSize: 14 }}>Ассеты (скетчи, картинки, PDF)</h4>
+                    <input
+                      type="file"
+                      accept="image/*,.pdf,.svg"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0]
+                        if (f) void onUploadAsset(f)
+                      }}
+                    />
+                    <AssetList assets={assets} selected={m} />
+                  </div>
+                )}
+              </article>
+            )
+          })}
+        </section>
+      )}
     </div>
   )
 }
