@@ -150,12 +150,43 @@ export function TimelineScroll({ events, selectedIndex, onSelect, assetUrlByEven
         />
       ))}
 
-      {/* Bottom fade-out */}
-      <div style={{
-        height: '40vh',
-        background: 'linear-gradient(to bottom, transparent, var(--bg))',
-        pointerEvents: 'none',
-      }} />
+      {/* Finale — scroll-world style CTA at the end */}
+      <section style={{
+        position: 'relative',
+        minHeight: '70vh',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        textAlign: 'center',
+        padding: '60px 24px',
+        background: 'radial-gradient(ellipse at center, rgba(88,166,255,0.06) 0%, transparent 70%)',
+      }}>
+        <div style={{
+          fontSize: 12,
+          color: '#79c0ff',
+          letterSpacing: 4,
+          textTransform: 'uppercase',
+          marginBottom: 16,
+          fontWeight: 600,
+        }}>
+          Конец хронологии
+        </div>
+        <h2 style={{
+          margin: 0,
+          marginBottom: 12,
+          fontSize: 'clamp(28px, 4vw, 48px)',
+          fontWeight: 800,
+          color: '#fff',
+          fontFamily: 'var(--sw-font-display)',
+          letterSpacing: '-0.02em',
+        }}>
+          2214 — Новая эра
+        </h2>
+        <p className="muted" style={{ maxWidth: 520, fontSize: 16 }}>
+          События из романа «Абсолютное оружие» Андрея Ливадного. Используйте эту временную линию как шаблон для собственного сценария.
+        </p>
+      </section>
     </div>
   )
 }
@@ -183,9 +214,11 @@ function EventSection({
         position: 'relative',
         minHeight: '100vh',
         display: 'flex',
+        flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
         overflow: 'hidden',
+        padding: '0 16px',
       }}
     >
       {/* Full-bleed background (illustration OR asset image) */}
@@ -264,47 +297,52 @@ function EventSection({
         position: 'relative',
         zIndex: 1,
         maxWidth: 720,
-        width: 'calc(100% - 80px)',
-        padding: '32px 36px',
-        background: 'rgba(13, 17, 23, 0.78)',
-        border: '1px solid #30363d',
-        borderRadius: 12,
-        backdropFilter: 'blur(8px)',
-        WebkitBackdropFilter: 'blur(8px)',
-        transform: ev.isActive ? 'translateY(0) scale(1)' : 'translateY(20px) scale(0.98)',
-        opacity: ev.isActive ? 1 : 0.6,
-        transition: 'all 0.5s cubic-bezier(0.16, 1, 0.3, 1)',
-        marginTop: '12vh',
-        marginBottom: '8vh',
+        width: 'calc(100% - 32px)',
+        padding: 'clamp(24px, 4vw, 40px) clamp(24px, 5vw, 48px)',
+        background: 'rgba(10, 13, 24, 0.72)',
+        border: '1px solid rgba(255,255,255,0.06)',
+        borderRadius: 16,
+        backdropFilter: 'blur(14px) saturate(140%)',
+        WebkitBackdropFilter: 'blur(14px) saturate(140%)',
+        boxShadow: '0 30px 80px -20px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.04)',
+        transform: ev.isActive ? 'translateY(0) scale(1)' : 'translateY(40px) scale(0.96)',
+        opacity: ev.isActive ? 1 : 0.4,
+        transition: 'opacity 0.7s var(--sw-easing, ease-out), transform 0.9s var(--sw-easing, cubic-bezier(0.16, 1, 0.3, 1))',
+        willChange: 'transform, opacity',
       }}>
         <div style={{
           fontSize: 11,
-          color: '#58a6ff',
-          letterSpacing: 3,
+          color: '#79c0ff',
+          letterSpacing: 4,
           textTransform: 'uppercase',
-          marginBottom: 8,
+          marginBottom: 12,
           fontWeight: 600,
+          fontFamily: 'var(--sw-font-display)',
         }}>
-          Событие {String(idx + 1).padStart(2, '0')}
+          Событие {String(idx + 1).padStart(2, '0')} из {String(total).padStart(2, '0')}
         </div>
         <h2 style={{
           margin: 0,
-          marginBottom: 16,
-          fontSize: 'clamp(22px, 4vw, 38px)',
-          lineHeight: 1.15,
-          fontWeight: 700,
+          marginBottom: 20,
+          fontSize: 'clamp(26px, 5vw, 56px)',
+          lineHeight: 1.05,
+          fontWeight: 800,
           color: '#fff',
+          fontFamily: 'var(--sw-font-display)',
+          letterSpacing: '-0.02em',
+          textShadow: '0 2px 30px rgba(0,0,0,0.5)',
         }}>
           {ev.title || `Событие ${idx + 1}`}
         </h2>
         <div style={{
-          color: '#c9d1d9',
-          fontSize: 16,
-          lineHeight: 1.6,
+          color: '#d0d7de',
+          fontSize: 'clamp(15px, 1.3vw, 18px)',
+          lineHeight: 1.7,
           whiteSpace: 'pre-wrap',
           maxHeight: '40vh',
           overflow: 'hidden',
           position: 'relative',
+          fontFamily: 'var(--sw-font-body)',
         }}>
           {ev.body || <em style={{ opacity: 0.5 }}>Пусто — нажмите редактировать</em>}
           {/* Fade-out gradient at bottom of long text */}

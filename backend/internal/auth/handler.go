@@ -1,8 +1,10 @@
 package auth
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -50,8 +52,12 @@ type userPublic struct {
 }
 
 func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
+	bodyBytes, _ := io.ReadAll(r.Body)
+	h.logger.Info("register raw body", "len", len(bodyBytes), "body", string(bodyBytes))
+	r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 	var req registerReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.logger.Info("register decode error", "err", err)
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}

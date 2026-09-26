@@ -87,7 +87,15 @@ func main() {
 	r.Use(chimw.RequestID)
 	r.Use(chimw.Recoverer)
 	r.Use(corsMiddleware(cfg.CORSOrigins))
-	r.Use(chimw.Compress(5))
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			cl := r.ContentLength
+			method := r.Method
+			uri := r.URL.Path
+			logger.Info("request", "method", method, "uri", uri, "content-length", cl)
+			next.ServeHTTP(w, r)
+		})
+	})
 
 	// health
 	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {

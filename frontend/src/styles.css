@@ -10,6 +10,16 @@
   --success: #3fb950;
   --radius: 6px;
   --space: 12px;
+
+  /* scroll-world inspired theme — per-scene accents + smoother cinematic feel */
+  --sw-bg: #0a0d18;          /* deep cinematic dark */
+  --sw-ink: #f5ede0;          /* warm cream foreground (was dark on dark) */
+  --sw-ink-soft: #6a6072;
+  --sw-accent: #58a6ff;
+  --sw-font-display: 'Helvetica Neue', 'Inter', system-ui, sans-serif;
+  --sw-font-body: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --sw-easing: cubic-bezier(0.16, 1, 0.3, 1);
+  --sw-dwell: 0.6;             /* 0..1 — controls section-dwell feel */
 }
 
 @keyframes fadeInUp {
