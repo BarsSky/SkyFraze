@@ -1,0 +1,16 @@
+/vendor/
+/backend/bin/
+/frontend/node_modules/
+/frontend/dist/
+*.log
+.env*
+!.env.example
+/backend/.tmp/
+/coverage/
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+backend/tmp/
+backend/migrations/*.tmp

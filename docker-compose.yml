@@ -1,0 +1,28 @@
+# SkyFraze docker-compose stack
+#
+# NOTE (2026-09-26): MinIO/S3-совместимое хранилище вынесено в Phase 2 — образ minio/minio
+# недоступен в текущем docker registry. MVP использует filesystem ObjectStore
+# (через интерфейс internal/storage.ObjectStore). Когда registry станет доступен
+# или выйдем на self-hosted MinIO — поменять только реализацию MinioStore,
+# контракт не меняется.
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: skyfraze-postgres
+    environment:
+      POSTGRES_USER: skyfraze
+      POSTGRES_PASSWORD: skyfraze_dev
+      POSTGRES_DB: skyfraze
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U skyfraze -d skyfraze"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  pgdata: {}
