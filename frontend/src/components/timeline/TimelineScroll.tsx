@@ -202,6 +202,19 @@ export function TimelineScroll({ events, selectedIndex, onSelect, assetUrlByEven
         />
       ))}
 
+      {/* Cross-section gradient — between events for smooth scroll-flow */}
+      <div
+        aria-hidden
+        style={{
+          position: 'absolute',
+          inset: 0,
+          pointerEvents: 'none',
+          background:
+            'linear-gradient(to bottom, rgba(10,13,24,0.5) 0%, transparent 8%, transparent 92%, rgba(10,13,24,0.5) 100%)',
+          zIndex: 0,
+        }}
+      />
+
       {/* Finale — scroll-world style CTA at the end */}
       <section style={{
         position: 'relative',
@@ -276,9 +289,9 @@ function EventSection({
       data-idx={idx}
       style={{
         position: 'relative',
-        minHeight: '55vh',                   // scroll-snap-points вместо длинных секций — каждый кадр точно в viewport
+        minHeight: '55vh',
         scrollSnapAlign: 'center',
-        scrollSnapStop: 'always',
+        scrollSnapStop: 'normal',             // snap только при естественной остановке скролла — не блокирует быструю прокрутку
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
