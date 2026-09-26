@@ -1,0 +1,9 @@
+# Build context exclusions для backend
+.git
+.gitignore
+*.test
+*.out
+bin/
+.tmp/
+README.md
+docs/

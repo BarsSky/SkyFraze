@@ -1,28 +1,96 @@
-# SkyFraze docker-compose stack
+# SkyFraze — production stack.
 #
-# NOTE (2026-09-26): MinIO/S3-совместимое хранилище вынесено в Phase 2 — образ minio/minio
-# недоступен в текущем docker registry. MVP использует filesystem ObjectStore
-# (через интерфейс internal/storage.ObjectStore). Когда registry станет доступен
-# или выйдем на self-hosted MinIO — поменять только реализацию MinioStore,
-# контракт не меняется.
+#   postgres  → данные (users/projects/events/assets/sessions)
+#   backend   → Go API + Yjs WebSocket relay
+#   frontend  → nginx + SPA + reverse-proxy /api → backend
+#
+# Запуск:
+#   docker compose up --build
+#   открыть http://localhost
+#
+# Health-checks и depends_on с condition: service_healthy гарантируют,
+# что backend стартует после postgres, а frontend — после backend.
 
 services:
   postgres:
     image: postgres:15-alpine
     container_name: skyfraze-postgres
+    restart: unless-stopped
     environment:
       POSTGRES_USER: skyfraze
       POSTGRES_PASSWORD: skyfraze_dev
       POSTGRES_DB: skyfraze
-    ports:
-      - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    ports:
+      # наружу не публикуем в проде, но удобно для локального dev
+      - "5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U skyfraze -d skyfraze"]
       interval: 5s
       timeout: 3s
+      retries: 10
+    networks:
+      - skyfraze-net
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: skyfraze-backend:latest
+    container_name: skyfraze-backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://skyfraze:skyfraze_dev@postgres:5432/skyfraze?sslmode=disable
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env or env}
+      STORAGE_DIR: /app/storage
+      CORS_ORIGINS: http://localhost
+      LISTEN: ":8080"
+      APP_ENV: production
+    volumes:
+      # uploaded assets persist between container restarts
+      - assets:/app/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
+      interval: 10s
+      timeout: 3s
       retries: 5
+      start_period: 15s
+    networks:
+      - skyfraze-net
+    # expose port только при необходимости прямого доступа к API
+    expose:
+      - "8080"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: skyfraze-frontend:latest
+    container_name: skyfraze-frontend
+    restart: unless-stopped
+    ports:
+      # публичный порт — UI
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    networks:
+      - skyfraze-net
 
 volumes:
-  pgdata: {}
+  pgdata:
+  assets:
+
+networks:
+  skyfraze-net:
+    driver: bridge

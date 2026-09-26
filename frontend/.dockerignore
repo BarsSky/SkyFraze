@@ -1,0 +1,10 @@
+# Build context exclusions для frontend
+node_modules
+dist
+.git
+.gitignore
+*.log
+_shots_*
+tests/diag-*
+.env*
+.vite/
