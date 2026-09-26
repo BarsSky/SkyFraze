@@ -4,6 +4,7 @@ import { RegisterPage } from '../pages/RegisterPage'
 import { ProjectsPage } from '../pages/ProjectsPage'
 import { ProjectTimelinePage } from '../pages/ProjectTimelinePage'
 import { ProjectSettingsPage } from '../pages/ProjectSettingsPage'
+import { AcceptInvitation } from '../pages/AcceptInvitation'
 import { RequireAuth } from '../components/RequireAuth'
 import { Header } from '../components/Header'
 
@@ -42,6 +43,17 @@ export function App() {
               <div className="layout">
                 <Header />
                 <main><ProjectSettingsPage /></main>
+              </div>
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/invitations/:token"
+          element={
+            <RequireAuth>
+              <div className="layout">
+                <Header />
+                <main><AcceptInvitation /></main>
               </div>
             </RequireAuth>
           }
