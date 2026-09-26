@@ -35,20 +35,24 @@ export const useAuthStore = create<AuthState>()(
       bootstrap: async () => {
         const state = get()
         if (state.ready) return
-        // если есть refresh-токен, но нет access — обменять
+        // если есть refresh-токен, но нет access — обменять (НЕ ставим ready до конца)
         if (state.refreshToken && !state.accessToken) {
           try {
             const r = await ky.post('/api/auth/refresh', {
               json: { refresh: state.refreshToken },
             }).json<{ access: string; refresh: string }>()
-            set({ accessToken: r.access, refreshToken: r.refresh, ready: true })
+            const u = await ky.get('/api/auth/me', {
+              headers: { Authorization: `Bearer ${r.access}` },
+            }).json<UserPublic>().catch(() => null)
+            set({ accessToken: r.access, refreshToken: r.refresh, user: u ?? state.user, ready: true })
             return
           } catch {
+            // refresh протух — чистим
             set({ refreshToken: null, accessToken: null, user: null, ready: true })
             return
           }
         }
-        // если есть access-токен — проверить через /me
+        // есть access — проверим через /me, и если невалиден — refresh
         if (state.accessToken) {
           try {
             const u = await ky.get('/api/auth/me', {
@@ -57,16 +61,12 @@ export const useAuthStore = create<AuthState>()(
             set({ user: u, ready: true })
             return
           } catch {
-            // возможно протух — пробуем refresh
             if (state.refreshToken) {
               try {
                 const r = await ky.post('/api/auth/refresh', {
                   json: { refresh: state.refreshToken },
                 }).json<{ access: string; refresh: string }>()
-                const u = await ky.get('/api/auth/me', {
-                  headers: { Authorization: `Bearer ${r.access}` },
-                }).json<UserPublic>()
-                set({ accessToken: r.access, refreshToken: r.refresh, user: u, ready: true })
+                set({ accessToken: r.access, refreshToken: r.refresh, ready: true })
                 return
               } catch {
                 set({ refreshToken: null, accessToken: null, user: null, ready: true })
@@ -82,7 +82,13 @@ export const useAuthStore = create<AuthState>()(
     }),
     {
       name: 'skyfraze-auth',
-      partialize: (s) => ({ refreshToken: s.refreshToken, user: s.user }),
+      // accessToken персистится: при reload нужен немедленный токен для REST/WS,
+      // иначе первая пачка запросов уйдёт с 401 (refresh отрабатывает async через bootstrap)
+      partialize: (s) => ({
+        accessToken: s.accessToken,
+        refreshToken: s.refreshToken,
+        user: s.user,
+      }),
     },
   ),
 )

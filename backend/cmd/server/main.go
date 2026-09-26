@@ -118,6 +118,14 @@ func main() {
 	// projects
 	r.Mount("/api/projects", projH.Routes(authSvc))
 
+	// WebSocket collab endpoint — должен быть смонтирован ОТДЕЛЬНО,
+	// потому что chi.Mount + chi.URLParam вместе работают неудобно.
+	// Прямой chi.Handle даёт корректный upgrade без auth-конфликтов middleware.
+	r.HandleFunc("/api/projects/{projectID}/collab", func(w http.ResponseWriter, r *http.Request) {
+		// chi.URLParam уже парсится — WS-handler читает URL.Path через projectIDFromPath
+		collabHub.HandleWS(w, r)
+	})
+
 	// под-ресурсы проектов: монтируем один общий sub-router с chi.Route
 	r.Route("/api/projects/{id}", func(r chi.Router) {
 		r.Use(authSvc.WithUser)
@@ -125,6 +133,7 @@ func main() {
 		r.Post("/invitations", teamsH.Invite(authSvc))
 		r.Get("/invitations", teamsH.ListInvitations(authSvc))
 		r.Get("/events/state", evH.GetState(authSvc))
+		r.Post("/events/state", evH.PutState(authSvc))
 		r.Put("/events/state", evH.PutState(authSvc))
 		r.Get("/events", evH.List(authSvc))
 		r.Post("/assets", assetsH.Upload(authSvc))

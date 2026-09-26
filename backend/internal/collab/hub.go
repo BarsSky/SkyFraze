@@ -147,6 +147,10 @@ func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 	go c.reader(h)
 }
 
+// upgraderForTests возвращает Upgrader для интеграционных тестов.
+// Не используется в production — main.go регистрирует HandleWS напрямую.
+func (h *Hub) Upgrader() websocket.Upgrader { return h.upgrader }
+
 func (h *Hub) addClient(conn *websocket.Conn, userID, projectID uuid.UUID) *client {
 	room := h.getOrCreate(projectID)
 	c := &client{
@@ -155,6 +159,7 @@ func (h *Hub) addClient(conn *websocket.Conn, userID, projectID uuid.UUID) *clie
 		userID:    userID,
 		projectID: projectID,
 		room:      room,
+		closed:    make(chan struct{}),
 	}
 	room.mu.Lock()
 	room.clients[c] = struct{}{}
