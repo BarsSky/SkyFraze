@@ -73,8 +73,11 @@ services:
     container_name: skyfraze-frontend
     restart: unless-stopped
     ports:
-      # публичный порт — UI
+      # публичный порт — UI.
+      # 80 — дефолтный для HTTP, удобно для localhost.
+      # 5173 — алиас для совместимости с dev-режимом (где Vite слушал на 5173).
       - "80:80"
+      - "5173:80"
     depends_on:
       backend:
         condition: service_healthy
