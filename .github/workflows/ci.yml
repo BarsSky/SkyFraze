@@ -1,0 +1,64 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend-test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: skyfraze
+          POSTGRES_PASSWORD: skyfraze_dev
+          POSTGRES_DB: skyfraze_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U skyfraze -d skyfraze_test"
+          --health-interval 5s --health-timeout 3s --health-retries 5
+    env:
+      TEST_DATABASE_URL: postgres://skyfraze:skyfraze_dev@localhost:5432/skyfraze_test?sslmode=disable
+      JWT_SECRET: test-secret-for-ci
+      STORAGE_DIR: /tmp/skyfraze-storage
+      LISTEN: ":8181"
+      CORS_ORIGINS: http://localhost:5173
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.25', cache-dependency-path: backend/go.sum }
+      - run: cd backend && go mod download
+      - run: cd backend && go vet ./...
+      - run: cd backend && go test ./...
+
+  frontend-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: 'npm', cache-dependency-path: frontend/package-lock.json }
+      - run: cd frontend && npm ci --no-audit --no-fund
+      - run: cd frontend && npx tsc --noEmit
+      - run: cd frontend && npx vitest run
+
+  build:
+    needs: [backend-test, frontend-test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.25', cache-dependency-path: backend/go.sum }
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - run: cd backend && go build -o bin/server ./cmd/server
+      - run: cd frontend && npm ci --no-audit --no-fund && npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: skyfraze-build
+          path: |
+            backend/bin/server
+            frontend/dist
