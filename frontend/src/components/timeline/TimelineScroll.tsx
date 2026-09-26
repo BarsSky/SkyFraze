@@ -51,8 +51,8 @@ export function TimelineScroll({ events, selectedIndex, onSelect, assetUrlByEven
   // Считываем title/body из Y.Map → state, чтобы React мог рендерить и без перерендера каждого Y.update.
   useEffect(() => {
     if (!events) return
-    const arr = events.toArray()
     const update = () => {
+      const arr = events.toArray()
       setEventMeta(
         arr.map((m: YMap) => ({
           id: (m.get('id') as string) ?? crypto.randomUUID(),
@@ -62,9 +62,15 @@ export function TimelineScroll({ events, selectedIndex, onSelect, assetUrlByEven
       )
     }
     update()
-    arr.forEach((m: YMap) => m.observeDeep(update))
+    // Следим за добавлением/удалением событий в array, чтобы пере-обсервить новые maps
+    const onArrChange = () => {
+      events.toArray().forEach((m: YMap) => m.observeDeep(update))
+      update()
+    }
+    events.observe(onArrChange)
     return () => {
-      arr.forEach((m: YMap) => m.unobserveDeep(update))
+      events.unobserve(onArrChange)
+      events.toArray().forEach((m: YMap) => m.unobserveDeep(update))
     }
   }, [events])
 
