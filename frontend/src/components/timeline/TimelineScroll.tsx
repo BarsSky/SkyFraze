@@ -5,6 +5,7 @@ import type { YArray, YMap } from '../../collab/yprovider'
 
 interface EventLite {
   id: string
+  parentId: string | null
   title: string
   body: string
   phase: number // 0..1 — scroll progress для каждого события
@@ -45,7 +46,12 @@ interface Props {
 export function TimelineScroll({ events, selectedIndex, onSelect, assetUrlByEventId }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [activeIdx, setActiveIdx] = useState(0)
-  const [eventMeta, setEventMeta] = useState<Array<{ id: string; title: string; body: string }>>([])
+  const [eventMeta, setEventMeta] = useState<Array<{
+    id: string
+    parentId: string | null
+    title: string
+    body: string
+  }>>([])
   const [scrollProgress, setScrollProgress] = useState(0)
   const [phases, setPhases] = useState<number[]>([])
 
@@ -57,6 +63,7 @@ export function TimelineScroll({ events, selectedIndex, onSelect, assetUrlByEven
       setEventMeta(
         arr.map((m: YMap) => ({
           id: (m.get('id') as string) ?? crypto.randomUUID(),
+          parentId: ((m.get('parent_id') as string | null | undefined) ?? null) as string | null,
           title: ((m.get('title') as string) ?? '').trim(),
           body: ((m.get('body') as string) ?? '').trim(),
         }))
@@ -181,6 +188,7 @@ export function TimelineScroll({ events, selectedIndex, onSelect, assetUrlByEven
 
   const lit: EventLite[] = eventMeta.map((m, i) => ({
     id: m.id,
+    parentId: m.parentId,
     title: m.title,
     body: m.body,
     phase: phases[i] ?? 0,
@@ -196,21 +204,35 @@ export function TimelineScroll({ events, selectedIndex, onSelect, assetUrlByEven
         scrollSnapType: 'y proximity',     // мягкий scroll-snap — не ломает обычный скролл
       }}
     >
-      {/* Side rail (sticky) */}
-      <SideRail total={events?.length ?? 0} active={activeIdx} progress={scrollProgress} />
+      {/* Side rail (sticky) — hierarchical tree navigation */}
+      <SideRail events={lit} active={activeIdx} progress={scrollProgress} onJump={onSelect} />
 
-      {/* Sections */}
-      {lit.map((ev, i) => (
-        <EventSection
-          key={ev.id}
-          idx={i}
-          total={events.length}
-          ev={ev}
-          onSelect={() => onSelect(i)}
-          assetUrl={assetUrlByEventId?.[ev.id]}
-          phase={ev.phase}
-        />
-      ))}
+      {/* Sections — рендерим только TOP-LEVEL events, sub-events внутри как nested контент */}
+      {(() => {
+        const topLevel: Array<{ ev: EventLite; i: number; children: Array<{ ev: EventLite; i: number }> }> = []
+        for (let i = 0; i < lit.length; i++) {
+          if (lit[i].parentId === null) {
+            const children: Array<{ ev: EventLite; i: number }> = []
+            for (let j = 0; j < lit.length; j++) {
+              if (lit[j].parentId === lit[i].id) children.push({ ev: lit[j], i: j })
+            }
+            topLevel.push({ ev: lit[i], i, children })
+          }
+        }
+        return topLevel.map(({ ev, i, children }) => (
+          <TopLevelSection
+            key={ev.id}
+            idx={i}
+            total={topLevel.length}
+            ev={ev}
+            children={children}
+            assetUrlByEventId={assetUrlByEventId}
+            onSelect={onSelect}
+            allEvents={lit}
+            allEventIdsByIdx={(idx) => lit[idx]?.id}
+          />
+        ))
+      })()}
 
       {/* Cross-section gradient — between events for smooth scroll-flow */}
       <div
@@ -480,11 +502,230 @@ function EventSection({
   )
 }
 
+// MainEventCard — большая карточка top-level события, видна в TopLevelSection.
+function MainEventCard({
+  ev, idx, total, phase, onSelect, assetUrl,
+}: {
+  ev: EventLite
+  idx: number
+  total: number
+  phase: number
+  onSelect: () => void
+  assetUrl?: string
+}) {
+  const easedPhase = Math.pow(Math.max(0, Math.min(1, phase)), 0.5)
+  const opacity = Math.max(0.7, easedPhase)
+  const transform = `translateY(${24 * (1 - easedPhase)}px) scale(${0.99 + easedPhase * 0.01})`
+  return (
+    <div
+      onClick={onSelect}
+      style={{
+        position: 'relative',
+        padding: 'clamp(24px, 4vw, 40px) clamp(24px, 5vw, 48px)',
+        background: 'rgba(10, 13, 24, 0.72)',
+        border: '1px solid rgba(255,255,255,0.06)',
+        borderRadius: 16,
+        backdropFilter: 'blur(14px) saturate(140%)',
+        WebkitBackdropFilter: 'blur(14px) saturate(140%)',
+        boxShadow: '0 30px 80px -20px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.04)',
+        transform,
+        opacity,
+        transition: 'opacity 0.5s, transform 0.5s',
+        cursor: 'pointer',
+      }}
+    >
+      <div style={{
+        fontSize: 11, color: '#79c0ff', letterSpacing: 4, textTransform: 'uppercase',
+        marginBottom: 12, fontWeight: 600,
+      }}>
+        Глава {String(idx + 1).padStart(2, '0')} из {String(total).padStart(2, '0')}
+      </div>
+      <h2 style={{
+        margin: 0, marginBottom: 20,
+        fontSize: 'clamp(26px, 5vw, 56px)', lineHeight: 1.05,
+        fontWeight: 800, color: '#fff',
+        fontFamily: 'var(--sw-font-display)',
+        letterSpacing: '-0.02em',
+        textShadow: '0 2px 30px rgba(0,0,0,0.5)',
+      }}>
+        {ev.title || `Событие ${idx + 1}`}
+      </h2>
+      {ev.body && (
+        <p style={{
+          margin: 0, color: '#d0d7de',
+          fontSize: 'clamp(15px, 1.3vw, 18px)', lineHeight: 1.7,
+          whiteSpace: 'pre-wrap', fontFamily: 'var(--sw-font-body)',
+        }}>
+          {ev.body}
+        </p>
+      )}
+    </div>
+  )
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
-// SideRail — вертикальная timeline-rail слева с точками для каждого события
+// TopLevelSection — обёртка вокруг top-level event со встроенными sub-events.
+// Рендерится как scroll-snap кадр; sub-events идут ВНУТРИ одной большой секции
+// (не отдельные snap-кадры), чтобы пользователь плавно скроллил по ним
+// внутри одной "главы" прежде чем переключиться на следующую.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function SideRail({ total, active, progress }: { total: number; active: number; progress: number }) {
+function TopLevelSection({
+  idx, total, ev, children, assetUrlByEventId, onSelect, allEvents, allEventIdsByIdx,
+}: {
+  idx: number
+  total: number
+  ev: EventLite
+  children: Array<{ ev: EventLite; i: number }>
+  assetUrlByEventId?: Record<string, string>
+  onSelect: (idx: number) => void
+  allEvents: EventLite[]
+  allEventIdsByIdx: (i: number) => string | undefined
+}) {
+  return (
+    <section
+      data-event-section
+      data-idx={idx}
+      style={{
+        position: 'relative',
+        minHeight: `calc(60vh + ${children.length * 22}vh)`,
+        scrollSnapAlign: 'center',
+        scrollSnapStop: 'normal',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        padding: '8vh 16px 12vh',
+        gap: 24,
+      }}
+    >
+      {/* Главный header события */}
+      <div
+        data-event-section-main
+        style={{
+          width: '100%',
+          maxWidth: 720,
+        }}
+      >
+        <MainEventCard ev={ev} idx={idx} total={total} phase={ev.phase} onSelect={() => onSelect(idx)} assetUrl={assetUrlByEventId?.[ev.id]} />
+      </div>
+
+      {/* Sub-events: nested timeline внутри этой же секции (дерево вниз) */}
+      {children.length > 0 && (
+        <div
+          aria-label={`Sub-events of ${ev.title}`}
+          style={{
+            width: '100%',
+            maxWidth: 720,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 14,
+            paddingLeft: 18,
+            borderLeft: '2px solid rgba(88,166,255,0.18)',
+            position: 'relative',
+          }}
+        >
+          {children.map(({ ev: c, i }) => (
+            <SubEventCard
+              key={c.id}
+              ev={c}
+              idx={i}
+              total={allEvents.length}
+              phase={c.phase}
+              onSelect={() => onSelect(i)}
+              assetUrl={assetUrlByEventId?.[c.id]}
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function SubEventCard({
+  ev, idx, total, phase, onSelect, assetUrl,
+}: {
+  ev: EventLite
+  idx: number
+  total: number
+  phase: number
+  onSelect: () => void
+  assetUrl?: string
+}) {
+  const easedPhase = Math.pow(phase, 0.5)
+  const opacity = Math.max(0.7, easedPhase)
+  const transform = `translateX(${20 * (1 - easedPhase)}px)`
+  return (
+    <div
+      data-subevent
+      data-idx={idx}
+      onClick={onSelect}
+      style={{
+        position: 'relative',
+        padding: '14px 18px',
+        background: 'rgba(22, 27, 34, 0.7)',
+        border: '1px solid rgba(255,255,255,0.06)',
+        borderRadius: 8,
+        cursor: 'pointer',
+        transform,
+        opacity,
+        transition: 'opacity 0.4s, transform 0.4s',
+      }}
+    >
+      {/* Dot on the line */}
+      <span
+        aria-hidden
+        style={{
+          position: 'absolute',
+          left: -25,
+          top: 20,
+          width: 10,
+          height: 10,
+          borderRadius: '50%',
+          background: ev.isActive ? '#79c0ff' : '#484f58',
+          boxShadow: ev.isActive ? '0 0 8px #79c0ff' : 'none',
+        }}
+      />
+      <div style={{ fontSize: 11, color: '#79c0ff', letterSpacing: 2, textTransform: 'uppercase', marginBottom: 4, fontWeight: 600 }}>
+        Подсобытие
+      </div>
+      <h3 style={{ margin: 0, marginBottom: 6, fontSize: 18, fontWeight: 700, color: '#fff' }}>
+        {ev.title}
+      </h3>
+      {ev.body && (
+        <p style={{ margin: 0, fontSize: 13, color: '#c9d1d9', lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>
+          {ev.body}
+        </p>
+      )}
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SideRail — hierarchical tree navigation слева
+// ─────────────────────────────────────────────────────────────────────────────
+
+function SideRail({
+  events, active, progress, onJump,
+}: {
+  events: EventLite[]
+  active: number
+  progress: number
+  onJump: (idx: number) => void
+}) {
+  const [expanded, setExpanded] = useState<Record<string, boolean>>(() => {
+    // По умолчанию все главы раскрыты (sub-events видны), но пользователь может свернуть
+    const init: Record<string, boolean> = {}
+    for (const e of events) {
+      if (e.parentId === null) init[e.id] = true
+    }
+    return init
+  })
+  const topLevel = events.filter((e) => e.parentId === null)
+  const topCount = topLevel.length
+  const scrollTo = (idx: number) => {
+    const target = document.querySelector<HTMLElement>(`[data-event-section][data-idx="${idx}"]`)
+    target?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
   return (
     <>
       {/* Progress fill (vertical line that grows as user scrolls) */}
@@ -492,9 +733,9 @@ function SideRail({ total, active, progress }: { total: number; active: number; 
         aria-hidden
         style={{
           position: 'fixed',
-          top: '20vh',
-          bottom: '20vh',
-          left: 36,
+          top: '15vh',
+          bottom: '15vh',
+          left: 24,
           width: 2,
           background: '#21262d',
           zIndex: 5,
@@ -513,46 +754,129 @@ function SideRail({ total, active, progress }: { total: number; active: number; 
         />
       </div>
 
-      {/* Dots — one per event, clickable to jump to that event */}
+      {/* Tree navigation — vertical, hierarchical */}
       <nav
         aria-label="Timeline events"
         style={{
           position: 'fixed',
-          top: '50%',
-          left: 22,
-          transform: 'translateY(-50%)',
+          top: '15vh',
+          bottom: '15vh',
+          left: 8,
           zIndex: 6,
           display: 'flex',
           flexDirection: 'column',
-          gap: 18,
+          gap: 4,
+          overflowY: 'auto',
+          padding: '4px 6px',
+          maxHeight: '70vh',
+          scrollbarWidth: 'none',
         }}
       >
-        {Array.from({ length: total }).map((_, i) => {
-          const isActive = i === active
-          const distance = Math.abs(i - active)
+        {topLevel.map((top) => {
+          const isActive = top.isActive
+          const isExpanded = expanded[top.id] ?? true
+          const subs = events.filter((e) => e.parentId === top.id)
           return (
-            <button
-              key={i}
-              type="button"
-              title={`К событию ${i + 1}`}
-              onClick={() => {
-                const target = document.querySelector<HTMLElement>(`[data-event-section][data-idx="${i}"]`)
-                target?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-              }}
-              style={{
-                width: isActive ? 16 : 10,
-                height: isActive ? 16 : 10,
-                borderRadius: '50%',
-                background: isActive ? '#58a6ff' : distance <= 1 ? '#3fb950' : '#30363d',
-                border: 'none',
-                cursor: 'pointer',
-                padding: 0,
-                boxShadow: isActive ? '0 0 12px #58a6ff' : 'none',
-                transition: 'all 0.2s',
-              }}
-            />
+            <div key={top.id} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              {/* Main dot + collapse toggle */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <button
+                  type="button"
+                  title={top.title || `Event ${top.id.slice(0, 6)}`}
+                  onClick={() => scrollTo(events.indexOf(top))}
+                  style={{
+                    width: isActive ? 14 : 10,
+                    height: isActive ? 14 : 10,
+                    borderRadius: '50%',
+                    background: isActive ? '#58a6ff' : '#3fb950',
+                    border: 'none',
+                    cursor: 'pointer',
+                    padding: 0,
+                    boxShadow: isActive ? '0 0 10px #58a6ff' : 'none',
+                    transition: 'all 0.2s',
+                    flexShrink: 0,
+                  }}
+                />
+                {subs.length > 0 && (
+                  <button
+                    type="button"
+                    title={isExpanded ? 'Свернуть' : 'Развернуть'}
+                    onClick={() => setExpanded((p) => ({ ...p, [top.id]: !p[top.id] }))}
+                    style={{
+                      width: 14,
+                      height: 14,
+                      background: 'transparent',
+                      border: '1px solid #30363d',
+                      borderRadius: 3,
+                      color: '#7d8590',
+                      cursor: 'pointer',
+                      fontSize: 10,
+                      lineHeight: 1,
+                      padding: 0,
+                      flexShrink: 0,
+                    }}
+                  >
+                    {isExpanded ? '−' : '+'}
+                  </button>
+                )}
+                {isActive && (
+                  <span style={{
+                    color: '#fff', fontSize: 11, marginLeft: 2,
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    maxWidth: 120,
+                  }}>
+                    {top.title.slice(0, 14)}
+                  </span>
+                )}
+              </div>
+              {/* Sub-event dots (indented) */}
+              {isExpanded && subs.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 2, paddingLeft: 18 }}>
+                  {subs.map((sub) => {
+                    const subActive = sub.isActive
+                    return (
+                      <button
+                        key={sub.id}
+                        type="button"
+                        title={sub.title}
+                        onClick={() => scrollTo(events.indexOf(sub))}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 4,
+                          background: 'transparent',
+                          border: 'none',
+                          cursor: 'pointer',
+                          padding: 0,
+                          color: subActive ? '#79c0ff' : '#7d8590',
+                          fontSize: 11,
+                        }}
+                      >
+                        <span style={{
+                          width: 6, height: 6, borderRadius: '50%',
+                          background: subActive ? '#79c0ff' : '#484f58',
+                          flexShrink: 0,
+                        }} />
+                        <span style={{
+                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                          maxWidth: 110,
+                        }}>
+                          {sub.title.slice(0, 18)}
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
           )
         })}
+        <div style={{ flex: 1 }} />
+        {topCount > 0 && (
+          <div style={{ color: '#484f58', fontSize: 10, marginTop: 4, textAlign: 'left', paddingLeft: 4 }}>
+            {topCount} глав
+          </div>
+        )}
       </nav>
     </>
   )
