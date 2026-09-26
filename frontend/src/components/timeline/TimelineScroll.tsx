@@ -76,22 +76,32 @@ export function TimelineScroll({ events, selectedIndex, onSelect, assetUrlByEven
   }, [events])
 
   // Scroll-driven phase: для каждой секции считаем 0..1 в зависимости от её позиции в viewport.
-  // 0 = выше центра экрана, 1 = ниже. Простой scrollspy через requestAnimationFrame.
+  // Прощающий расчёт: phase=1 когда секция хоть частично в viewport,
+  // phase=0 только когда полностью за пределами. Минимум blur/scale.
   useEffect(() => {
     const root = containerRef.current
     if (!root) return
     let raf = 0
     const tick = () => {
+      const winTop = window.scrollY
       const winH = window.innerHeight
-      const winCenter = window.scrollY + winH / 2
+      const winBottom = winTop + winH
       const sections = Array.from(root.querySelectorAll<HTMLElement>('[data-event-section]'))
       const next: number[] = []
       for (const s of sections) {
         const top = s.offsetTop
         const h = s.offsetHeight
-        const center = top + h / 2
-        const dist = Math.abs(winCenter - center) / Math.max(1, h)
-        next.push(Math.max(0, 1 - dist))
+        const bottom = top + h
+        // Проверяем, в viewport ли секция
+        if (bottom < winTop || top > winBottom) {
+          next.push(0)  // полностью за пределами viewport
+        } else {
+          // Считаем долю секции в viewport (0..1)
+          const visibleTop = Math.max(top, winTop)
+          const visibleBottom = Math.min(bottom, winBottom)
+          const visibleFrac = Math.min(1, (visibleBottom - visibleTop) / h)
+          next.push(visibleFrac)
+        }
       }
       setPhases(next)
       raf = requestAnimationFrame(tick)
@@ -272,15 +282,13 @@ function EventSection({
 }) {
   const ref = useRef<HTMLElement>(null)
   // Progressive reveal: phase рассчитывается родителем через scrollspy.
-  // Используем phase для transform + opacity + blur — каждая секция реагирует
-  // на расстояние от центра viewport. phase ≈ 0 → контент вне viewport,
-  // phase ≈ 0.5 → раскрывается, phase ≈ 1 → полностью видно.
+  // Делаем ОЧЕНЬ ПРОЩАЮЩИМ: phase ≈ 1 когда секция в viewport,
+  // phase ≈ 0 только когда полностью out. Минимальный fade для красоты.
   const phase = Math.min(1, Math.max(0, phaseProp ?? ev.phase ?? 0))
-  // Чуть более плавная кривая: phase ** 0.7 даёт чуть менее агрессивный fade-out
-  const easedPhase = Math.pow(phase, 0.7)
-  const transform = `translateY(${(1 - easedPhase) * 80}px) scale(${0.94 + easedPhase * 0.06})`
-  const opacity = Math.pow(easedPhase, 0.85)
-  const blur = (1 - easedPhase) * 4
+  const easedPhase = Math.pow(phase, 0.4)  // резкий подъём к 1 — большая часть вьюпорта = full visible
+  const transform = `translateY(${(1 - easedPhase) * 24}px) scale(${0.99 + easedPhase * 0.01})`
+  const opacity = Math.max(0.7, Math.pow(easedPhase, 0.5))  // минимум 70% opacity — текст всегда читаем
+  const blur = 0  // БЕЗ blur — контент всегда чёткий, как в scroll-world (там тоже нет blur на активной сцене)
 
   return (
     <section
