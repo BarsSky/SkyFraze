@@ -98,7 +98,10 @@ log "git submodule update --init --recursive"
 git submodule update --init --recursive >>"$LOG_FILE" 2>&1 || log "предупреждение: сабмодули не обновились"
 
 # ── пересборка и перезапуск ─────────────────────────────────────────────────
-log "docker compose -f $COMPOSE_FILE up -d --build"
+# Версия и коммит передаются в сборку: их показывает админка в разделе «Обновление».
+export SKYFRAZE_VERSION="$(git describe --tags --always 2>/dev/null || echo dev)"
+export SKYFRAZE_COMMIT="$(git rev-parse --short HEAD)"
+log "docker compose -f $COMPOSE_FILE up -d --build (версия $SKYFRAZE_VERSION, коммит $SKYFRAZE_COMMIT)"
 docker compose -f "$COMPOSE_FILE" up -d --build >>"$LOG_FILE" 2>&1 || fail "docker compose up не удался"
 
 # ── проверка, что поднялось ─────────────────────────────────────────────────

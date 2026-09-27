@@ -286,6 +286,51 @@ docker compose -f docker-compose.prod.yml down      # остановить (да
 cd frontend && DEPLOY_URL=http://192.168.13.66 npx tsx tests/deployed-smoke.ts
 ```
 
+### Обновление стенда из GitHub
+
+Раздел **«Обновление»** в `/admin` показывает текущую версию и последний релиз репозитория,
+умеет проверять обновления и оставлять заявку на применение.
+
+Как это устроено (и почему не «кнопка с docker.sock»):
+
+```
+админка  ──POST /api/admin/update──►  update-state/request.json   (общий каталог с хостом)
+                                              │
+systemd skyfraze-update.path замечает файл ───┘
+        │
+        └─► deploy/skyfraze-update.sh: git fetch → checkout тега → docker compose up -d --build
+                     │
+                     └─► update-state/status.json + update.log ──► админка показывает прогресс
+```
+
+Приложение работает в контейнере, а исходники и compose — на хосте, поэтому пересборку
+делает хост: веб-процессу не нужен `docker.sock` (это был бы root на хосте).
+
+```bash
+# 1. Источник релизов (в .env на сервере)
+UPDATE_REPO=BarsSky/SkyFraze     # owner/name; пусто → раздел скажет, что источник не настроен
+# UPDATE_TOKEN=...               # только для приватного репозитория / лимитов API
+UPDATE_CHANNEL=stable            # stable игнорирует предрелизы
+
+# 2. Применятель: скрипт + systemd-юниты (один раз, на хосте)
+sudo bash deploy/install-update-units.sh /путь/к/проекту
+
+# 3. Проверить вручную, не дожидаясь админки
+sudo deploy/skyfraze-update.sh            # до последнего тега
+sudo deploy/skyfraze-update.sh v0.2.1     # до конкретной версии
+tail -f update-state/update.log
+```
+
+Требование к установке: каталог проекта должен быть **git-клоном** (`.env` и `update-state/`
+в `.gitignore`, поэтому обновление их не трогает). Если стенд разворачивался копированием
+файлов — один раз инициализируйте репозиторий:
+
+```bash
+cd /путь/к/проекту
+git init -b master && git remote add origin https://github.com/BarsSky/SkyFraze.git
+git fetch --tags origin && git checkout -f -B master origin/master
+```
+
 ## Архитектура
 
 ```
