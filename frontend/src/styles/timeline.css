@@ -404,7 +404,10 @@
   }
   .sf-copy {
     left: clamp(16px, 5vw, 32px); right: clamp(16px, 5vw, 32px);
-    top: auto; bottom: calc(clamp(74px, 16dvh, 132px) + env(safe-area-inset-bottom));
+    /* vh, а не dvh: в браузерах без поддержки динамических единиц (старые мобильные
+       Safari/Chrome) объявление с dvh отбрасывается целиком, панель теряла нижнюю
+       привязку и уезжала за экран — оставался только фон стадии. */
+    top: auto; bottom: calc(clamp(74px, 16vh, 132px) + env(safe-area-inset-bottom));
     transform: none; width: auto; max-width: 560px; max-height: 66vh;
   }
   .sf-copy__title { font-size: clamp(1.7rem, 7vw, 2.5rem); }
@@ -423,8 +426,15 @@
   .sf-copy__next-row { min-height: 34px; }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .sf-pt { display: none; }
+/* Там, где динамические единицы поддерживаются, отступ считаем по фактической
+   видимой высоте: адресная строка мобильных браузеров её меняет. */
+@supports (height: 100dvh) {
+  @media (max-width: 860px) {
+    .sf-copy { bottom: calc(clamp(74px, 16dvh, 132px) + env(safe-area-inset-bottom)); }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {  .sf-pt { display: none; }
   .sf-hint i::after { animation: none; }
   .sf-scene__inner { will-change: auto; }
   .sf-btn:hover:not(:disabled) { transform: none; }

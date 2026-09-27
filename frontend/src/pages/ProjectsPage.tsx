@@ -4,6 +4,7 @@ import { listProjects, createProject, deleteProject, type Project } from '../api
 import { setPublication } from '../api/feed'
 import { exportProject, importProject } from '../api/transfer'
 import { ErrorBanner } from '../components/ErrorBanner'
+import { copyText } from '../lib/clipboard'
 import { useAuthStore } from '../store/auth'
 
 export function ProjectsPage() {
@@ -207,7 +208,15 @@ export function ProjectsPage() {
                     <button
                       type="button"
                       className="secondary"
-                      onClick={() => void navigator.clipboard?.writeText(publicLink(p))}
+                      onClick={() => {
+                        void copyText(publicLink(p)).then((done) =>
+                          setNote(
+                            done
+                              ? 'Ссылка скопирована в буфер обмена'
+                              : `Скопируйте ссылку вручную: ${publicLink(p)}`,
+                          ),
+                        )
+                      }}
                     >
                       скопировать
                     </button>

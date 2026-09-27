@@ -2,6 +2,7 @@ import * as Y from 'yjs'
 import { useEffect, useState } from 'react'
 import { useAuthStore } from '../store/auth'
 import { buildEventTree } from './eventTree'
+import { randomId } from '../lib/uuid'
 import { getEventState, listEventRows, putEventState, syncEventTree, type FlatEventNode } from '../api/events'
 
 export type YArray = Y.Array<Y.Map<unknown>>
@@ -287,7 +288,7 @@ export function yAddEvent(
   opts: NewEventOptions = {},
 ): YMap {
   const m = new Y.Map<unknown>()
-  m.set('id', crypto.randomUUID())
+  m.set('id', randomId())
   m.set('title', title)
   m.set('body', body)
   m.set('created_at', new Date().toISOString())
@@ -305,7 +306,7 @@ export function yAddEvent(
 export function yEventId(m: YMap): string {
   const cur = m.get('id')
   if (typeof cur === 'string' && cur.length > 0) return cur
-  const id = crypto.randomUUID()
+  const id = randomId()
   m.set('id', id)
   return id
 }
@@ -322,7 +323,7 @@ export function yEnsureEventIds(events: YArray): number {
   for (const m of events.toArray() as YMap[]) {
     const cur = m.get('id')
     if (typeof cur !== 'string' || cur.length === 0) {
-      m.set('id', crypto.randomUUID())
+      m.set('id', randomId())
       fixed++
     }
   }
