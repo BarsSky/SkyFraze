@@ -55,6 +55,29 @@ func (s *Service) List(ctx context.Context, userID uuid.UUID) ([]store.Project, 
 	return s.store.ListProjectsForUser(ctx, userID)
 }
 
+// RequireViewer — чтение проекта: любая роль (owner/editor/viewer).
+func (s *Service) RequireViewer(ctx context.Context, userID, projectID uuid.UUID) error {
+	_, err := s.requireMember(ctx, userID, projectID, store.RoleViewer)
+	return err
+}
+
+// RequireEditor — запись в проект: owner/editor. Viewer получает ErrForbidden.
+// Используется там, где нет собственного «роль-зависимого» метода (например,
+// запись CRDT-снапшота или CRUD событий).
+func (s *Service) RequireEditor(ctx context.Context, userID, projectID uuid.UUID) error {
+	_, err := s.requireMember(ctx, userID, projectID, store.RoleEditor)
+	return err
+}
+
+// Role возвращает роль пользователя в проекте (для аудита/ответов API).
+func (s *Service) Role(ctx context.Context, userID, projectID uuid.UUID) (store.Role, error) {
+	m, err := s.requireMember(ctx, userID, projectID, store.RoleViewer)
+	if err != nil {
+		return "", err
+	}
+	return m.Role, nil
+}
+
 // Update — только owner/editor.
 func (s *Service) Update(ctx context.Context, userID, projectID uuid.UUID, title, desc string) error {
 	m, err := s.requireMember(ctx, userID, projectID, store.RoleEditor)

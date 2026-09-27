@@ -31,14 +31,17 @@ type updateReq struct {
 	Description string `json:"description"`
 }
 
+// Routes — коллекция проектов. CRUD одиночного проекта (/api/projects/{id})
+// регистрируется в cmd/server/main.go внутри param-поддерева chi: там же живут
+// под-ресурсы (members/invitations/events/assets). Регистрировать Get/Update/Delete
+// и здесь нельзя — этот роутер смонтирован через Mount(), и param-ветка
+// /api/projects/{id} его перекрывает (иначе получаются недостижимые дубликаты,
+// из-за которых GET /api/projects/{id} раньше отдавал 404).
 func (h *Handler) Routes(authSvc *auth.Service) http.Handler {
 	r := chi.NewRouter()
 	r.Use(authSvc.WithUser)
 	r.Get("/", h.List)
 	r.Post("/", h.Create)
-	r.Get("/{id}", h.Get)
-	r.Put("/{id}", h.Update)
-	r.Delete("/{id}", h.Delete)
 	return r
 }
 

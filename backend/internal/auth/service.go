@@ -22,16 +22,91 @@ var (
 	ErrSessionRevoked   = errors.New("session revoked")
 	ErrSessionExpired   = errors.New("session expired")
 	ErrInvalidRefresh   = errors.New("invalid refresh token")
+	// ErrRegistrationClosed — регистрация только по заявке: прямой /register
+	// запрещён, но заявку принять можно (POST /api/auth/registration-requests).
+	ErrRegistrationClosed = errors.New("registration is by request only")
+	// ErrRequestPending — заявка есть и ещё не рассмотрена.
+	ErrRequestPending = errors.New("registration request is pending")
+	// ErrRequestRejected — заявку отклонили.
+	ErrRequestRejected = errors.New("registration request was rejected")
 )
 
 // Service — фасад auth-операций.
 type Service struct {
-	store  *store.Store
-	secret string
+	store       *store.Store
+	secret      string
+	adminEmails map[string]bool
 }
 
 func New(s *store.Store, secret string) *Service {
-	return &Service{store: s, secret: secret}
+	return &Service{store: s, secret: secret, adminEmails: map[string]bool{}}
+}
+
+// SetAdminEmails — администраторы, назначенные развёртыванием (env ADMIN_EMAILS).
+// Права выдаются и при старте (SyncConfiguredAdmins), и в момент входа/регистрации:
+// админ может появиться уже после развёртывания.
+func (s *Service) SetAdminEmails(emails []string) {
+	m := map[string]bool{}
+	for _, e := range emails {
+		e = strings.ToLower(strings.TrimSpace(e))
+		if e != "" {
+			m[e] = true
+		}
+	}
+	s.adminEmails = m
+}
+
+// AdminEmails — настроенный список (для логов/диагностики).
+func (s *Service) AdminEmails() []string {
+	out := make([]string, 0, len(s.adminEmails))
+	for e := range s.adminEmails {
+		out = append(out, e)
+	}
+	return out
+}
+
+// IsConfiguredAdmin — входит ли email в ADMIN_EMAILS.
+func (s *Service) IsConfiguredAdmin(email string) bool {
+	return s.adminEmails[strings.ToLower(strings.TrimSpace(email))]
+}
+
+// SyncConfiguredAdmins проставляет права уже зарегистрированным админам.
+func (s *Service) SyncConfiguredAdmins(ctx context.Context) int {
+	n := 0
+	for email := range s.adminEmails {
+		if err := s.store.SetUserAdmin(ctx, email, true); err == nil {
+			n++
+		}
+	}
+	return n
+}
+
+// GrantConfiguredAdmin выдаёт права администратора, если email задан развёртыванием.
+// Возвращает true, если права были выданы сейчас.
+func (s *Service) GrantConfiguredAdmin(ctx context.Context, u *store.User) bool {
+	if u == nil || u.IsAdmin || !s.IsConfiguredAdmin(u.Email) {
+		return false
+	}
+	if err := s.store.SetUserAdmin(ctx, u.Email, true); err != nil {
+		return false
+	}
+	u.IsAdmin = true
+	return true
+}
+
+// RegistrationMode — как на инсталляции пускают новых пользователей.
+// Дефолт — «по заявке»: открытая регистрация должна быть осознанным решением.
+func (s *Service) RegistrationMode(ctx context.Context) string {
+	mode, err := s.store.GetSetting(ctx, store.SettingRegistrationMode)
+	if err != nil || (mode != store.RegistrationModeOpen && mode != store.RegistrationModeRequest) {
+		return store.RegistrationModeRequest
+	}
+	return mode
+}
+
+// IsOpenRegistration — можно ли регистрироваться напрямую.
+func (s *Service) IsOpenRegistration(ctx context.Context) bool {
+	return s.RegistrationMode(ctx) == store.RegistrationModeOpen
 }
 
 // Tokens — пара токенов после успешного login/refresh.
@@ -42,26 +117,44 @@ type Tokens struct {
 	RefreshExp  time.Time
 }
 
-func (s *Service) Register(ctx context.Context, email, password, displayName string) (*store.User, *Tokens, error) {
-	email = strings.TrimSpace(strings.ToLower(email))
-	displayName = strings.TrimSpace(displayName)
+// RegistrationInfo — режим регистрации и признак «инсталляция ещё пустая».
+// Публичная ручка /api/auth/config отдаёт это форме регистрации: при пустой
+// инсталляции показываем обычную форму, иначе — заявку.
+func (s *Service) RegistrationInfo(ctx context.Context) (mode string, bootstrap bool) {
+	mode = s.RegistrationMode(ctx)
+	users, err := s.store.CountUsers(ctx)
+	if err != nil {
+		return mode, false
+	}
+	return mode, users == 0
+}
 
-	// Проверим, что email не занят — для скорости (без race-condition уникального индекса)
-	if _, err := s.store.GetUserByEmail(ctx, email); err == nil {
-		return nil, nil, ErrEmailTaken
-	} else if !errors.Is(err, store.ErrNotFound) && !errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil, fmt.Errorf("check email: %w", err)
+// Register — прямая регистрация.
+//
+// Разрешена, если выполняется хотя бы одно условие:
+//   - режим открытый (решение администратора в /admin);
+//   - инсталляция пустая — первый аккаунт создаёт саму возможность управлять
+//     развёртыванием (иначе при режиме «по заявке» одобрять заявки было бы некому);
+//   - email входит в ADMIN_EMAILS: это администратор, назначенный развёртыванием,
+//     и он должен уметь завести себе аккаунт независимо от режима.
+//
+// Во всех остальных случаях — ErrRegistrationClosed, а форма предлагает заявку.
+func (s *Service) Register(ctx context.Context, email, password, displayName string) (*store.User, *Tokens, error) {
+	if !s.IsOpenRegistration(ctx) && !s.IsConfiguredAdmin(email) {
+		users, err := s.store.CountUsers(ctx)
+		if err != nil {
+			return nil, nil, fmt.Errorf("count users: %w", err)
+		}
+		if users > 0 {
+			return nil, nil, ErrRegistrationClosed
+		}
 	}
 
-	hash, err := HashPassword(password)
+	u, err := s.createUser(ctx, email, password, displayName)
 	if err != nil {
 		return nil, nil, err
 	}
-
-	u, err := s.store.CreateUser(ctx, email, hash, displayName)
-	if err != nil {
-		return nil, nil, fmt.Errorf("create user: %w", err)
-	}
+	s.GrantConfiguredAdmin(ctx, u)
 
 	tok, err := s.issueTokens(ctx, u.ID, "")
 	if err != nil {
@@ -70,20 +163,98 @@ func (s *Service) Register(ctx context.Context, email, password, displayName str
 	return u, tok, nil
 }
 
+// createUser — общая часть регистрации и одобрения заявки: проверка занятости
+// email, хэш пароля и (при необходимости) выдача прав администратора.
+func (s *Service) createUser(ctx context.Context, email, password, displayName string) (*store.User, error) {
+	email = strings.TrimSpace(strings.ToLower(email))
+	displayName = strings.TrimSpace(displayName)
+
+	if _, err := s.store.GetUserByEmail(ctx, email); err == nil {
+		return nil, ErrEmailTaken
+	} else if !errors.Is(err, store.ErrNotFound) && !errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("check email: %w", err)
+	}
+
+	hash, err := HashPassword(password)
+	if err != nil {
+		return nil, err
+	}
+
+	admins, err := s.store.CountAdmins(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("count admins: %w", err)
+	}
+	u, err := s.store.CreateUserWithHash(ctx, email, hash, displayName, admins == 0)
+	if err != nil {
+		return nil, fmt.Errorf("create user: %w", err)
+	}
+	return u, nil
+}
+
+// SubmitRegistrationRequest — приём заявки (режим «по заявке»).
+// Пароль хэшируется сразу: одобрение создаст аккаунт с ним, без почтовых ссылок.
+func (s *Service) SubmitRegistrationRequest(ctx context.Context, email, password, displayName, message string) (*store.RegistrationRequest, error) {
+	email = strings.TrimSpace(strings.ToLower(email))
+	displayName = strings.TrimSpace(displayName)
+	if email == "" || password == "" || displayName == "" {
+		return nil, ErrInvalidCreds
+	}
+	if _, err := s.store.GetUserByEmail(ctx, email); err == nil {
+		return nil, ErrEmailTaken
+	} else if !errors.Is(err, store.ErrNotFound) && !errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("check email: %w", err)
+	}
+	hash, err := HashPassword(password)
+	if err != nil {
+		return nil, err
+	}
+	return s.store.CreateRegistrationRequest(ctx, email, displayName, hash, strings.TrimSpace(message))
+}
+
+// Login. Если пользователя нет, но есть его заявка — сообщаем об этом: человек
+// ввёл те же данные, что и при заявке, значит это не утечка, а объяснение.
 func (s *Service) Login(ctx context.Context, email, password string) (*store.User, *Tokens, error) {
 	email = strings.TrimSpace(strings.ToLower(email))
 	u, err := s.store.GetUserByEmail(ctx, email)
 	if err != nil {
+		if err := s.explainMissingAccount(ctx, email, password); err != nil {
+			return nil, nil, err
+		}
 		return nil, nil, ErrInvalidCreds
 	}
 	if err := VerifyPassword(u.PasswordHash, password); err != nil {
 		return nil, nil, ErrInvalidCreds
 	}
+	// Даже при наличии аккаунта незакрытая заявка означает, что доступ ещё не дан.
+	if req, err := s.store.GetPendingRegistrationRequest(ctx, email); err == nil && req != nil {
+		return nil, nil, ErrRequestPending
+	}
+	s.GrantConfiguredAdmin(ctx, u)
 	tok, err := s.issueTokens(ctx, u.ID, "")
 	if err != nil {
 		return nil, nil, err
 	}
 	return u, tok, nil
+}
+
+// explainMissingAccount различает «заявка ждёт решения» и «заявку отклонили».
+// Проверка пароля обязательна: без неё по одному email можно было бы узнать,
+// кто подавал заявку.
+func (s *Service) explainMissingAccount(ctx context.Context, email, password string) error {
+	req, err := s.store.GetLatestRegistrationRequest(ctx, email)
+	if err != nil || req == nil {
+		return nil
+	}
+	if err := VerifyPassword(req.PasswordHash, password); err != nil {
+		return nil
+	}
+	switch req.Status {
+	case "pending":
+		return ErrRequestPending
+	case "rejected":
+		return ErrRequestRejected
+	}
+	return nil
 }
 
 // Refresh — обменивает refresh на новую пару, отзывая старую сессию.

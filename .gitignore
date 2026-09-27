@@ -1,13 +1,33 @@
+# ── зависимости и сборка ──────────────────────────────────────────────────
 /vendor/
 /backend/bin/
 /frontend/node_modules/
 /frontend/dist/
-/frontend/_shots_*/
-*.log
-.env*
-!.env.example
 /backend/.tmp/
 /coverage/
+
+# ── секреты и локальные настройки ────────────────────────────────────────
+.env*
+!.env.example
+
+# ── артефакты тестов и аудита ────────────────────────────────────────────
+/_audit_out/
+/_audit_shots/
+/_galactic_shots/
+/_shots_*/
+/_route_shots/
+/_admin_shots/
+/_transfer_shots/
+/_mobile_diag/
+/frontend/_shots_*/
+/screenshots/
+*.log
+
+# ── состояние механизма обновления (лежит на хосте, не в репозитории) ────
+/update-state/
+/backend/update-state/
+
+# ── системное ────────────────────────────────────────────────────────────
 .DS_Store
 .idea/
 .vscode/
@@ -15,7 +35,8 @@
 *.swo
 backend/tmp/
 backend/migrations/*.tmp
-/screenshots/
+backend/cmd/server/projctx.go.bak
+
+# Скриншоты в документации — часть репозитория, остальные PNG не коммитим
 *.png
 !docs/**/*.png
-backend/cmd/server/projctx.go.bak

@@ -5,34 +5,38 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/skyfraze/backend/internal/auth"
 	"github.com/skyfraze/backend/internal/platform"
+	"github.com/skyfraze/backend/internal/platform/testdb"
 	"github.com/skyfraze/backend/internal/store"
 )
-
-func testDBURL() string {
-	if u := os.Getenv("TEST_DATABASE_URL"); u != "" {
-		return u
-	}
-	return "postgres://skyfraze:skyfraze_dev@localhost:5432/skyfraze_test?sslmode=disable"
-}
 
 func setupService(t *testing.T) (*auth.Service, *store.Store, func()) {
 	t.Helper()
 	ctx := context.Background()
-	pool, err := platform.NewDBPool(ctx, testDBURL())
-	if err != nil {
-		t.Skipf("test DB unavailable: %v", err)
-	}
-	_, _ = pool.Exec(ctx,
-		`TRUNCATE sessions, invitations, event_assets, assets, events, team_memberships, projects, users RESTART IDENTITY CASCADE`)
+	pool := testdb.Setup(t, "auth")
 
+	// Тесты здесь проверяют механику register/login/refresh, а не режим доступа:
+	// переводим инсталляцию в открытую регистрацию, иначе /register отвечает 403.
 	st := store.New(pool)
+	if err := st.SetSetting(ctx, store.SettingRegistrationMode, store.RegistrationModeOpen, uuid.Nil); err != nil {
+		t.Fatalf("registration mode: %v", err)
+	}
+	testdb.Truncate(t, pool,
+		"registration_requests", "app_settings", "project_ratings", "project_views",
+		"project_event_state", "sessions", "invitations", "event_assets", "assets",
+		"events", "team_memberships", "projects", "users")
+	// Truncate снёс и настройку — возвращаем открытый режим после очистки.
+	if err := st.SetSetting(ctx, store.SettingRegistrationMode, store.RegistrationModeOpen, uuid.Nil); err != nil {
+		t.Fatalf("registration mode: %v", err)
+	}
+
 	svc := auth.New(st, "test-secret-please-change")
 	return svc, st, func() { pool.Close() }
 }

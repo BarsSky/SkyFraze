@@ -1,14 +1,35 @@
 # SkyFraze
 
-Веб-платформа для совместной (по приглашениям) разработки сюжетов игр / кино / мультфильмов / книг.
+Веб-платформа для совместной (по приглашениям) разработки сюжетов игр / кино / мультфильмов / книг:
+проект разбивается на главы и под-события, каждое событие показывается отдельным «кадром»
+сценического таймлайна, а готовую историю можно открыть публично — с лентой, просмотрами и оценками.
+
+| Сценический таймлайн | Публичная лента |
+|---|---|
+| ![Таймлайн](docs/screenshots/timeline-light.png) | ![Лента](docs/screenshots/feed.png) |
+
+| Администрирование | На телефоне |
+|---|---|
+| ![Админка](docs/screenshots/admin.png) | ![Мобильный вид](docs/screenshots/mobile-project.png) |
 
 ## Что умеет
 
 - Проекты (сюжеты) с владельцем и командой
-- Временная линия событий (timeline) с 3D-визуализацией в браузере (Three.js + scroll-scrubbed камера по мотивам scroll-world)
+- Сценический таймлайн: fixed-стадия, скролл переключает кадры и текстовые вставки (композиция по мотивам scroll-world)
+- Каждое событие — свой кадр: глава, затем её под-события по одному развёрнуто (нумерация 01.1, 01.1.1)
+- Настраиваемый фон кадра: как у главы / свой тон / картинка из вложений события
+- Две темы: тёмная и светлая кремово-мятная (переключатель в шапке)
 - Скетчи / рисунки / ассеты-файлы (filesystem в MVP, MinIO/S3 в Phase 2)
 - Real-time совместное редактирование нарратива через Yjs (CRDT) с авто-сохранением
 - Команды с ролями owner / editor / viewer; приглашения по email или invite-токену
+- **Публичная лента** (`/feed`) и **публичная страница истории** (`/s/{slug}`): читать и
+  ставить оценки может кто угодно, править — никто, кроме команды проекта
+- Просмотры с дедупликацией (один посетитель — один просмотр в сутки) и оценки 1–5
+  (одна оценка на пользователя, автор не оценивает свою историю); сортировки ленты
+  «новые / по оценке / по просмотрам»
+- **Администрирование развёртывания**: администратор решает, пускать ли новых
+  пользователей свободно или только по заявке (по умолчанию — **по заявке**),
+  и рассматривает заявки в `/admin`
 
 ## Стек
 
@@ -19,24 +40,31 @@
 | Object storage | Filesystem (Phase 2: MinIO/S3) |
 | Real-time | Yjs (CRDT) через WebSocket (gorilla/websocket) |
 | Frontend | TypeScript, React 18, Vite, Zustand, ky |
-| 3D | Three.js |
+| Сцена таймлайна | иллюстрации/SVG-ассеты + CSS-переходы (fixed-стадия, без WebGL) |
 | CI/CD | GitHub Actions |
 | Container | docker compose (postgres + backend + nginx-served frontend) |
 
 ## Быстрый старт через Docker (production-like)
 
 ```bash
-# 1. Скопировать env-шаблон и заполнить JWT_SECRET
+# 1. Клонировать вместе с сабмодулем: в deps/scroll-world лежит референс движка
+#    прокрутки (используется как справочник по композиции, не импортируется в сборку)
+git clone --recurse-submodules https://github.com/BarsSky/SkyFraze.git
+cd SkyFraze
+
+# 2. Скопировать env-шаблон и заполнить JWT_SECRET
 cp .env.example .env
 # (на dev можно оставить дефолт, но обязательно 32+ байта в проде)
 
-# 2. Собрать и поднять весь стек
+# 3. Собрать и поднять весь стек
 docker compose up --build -d
 
-# 3. Открыть UI
+# 4. Открыть UI
 open http://localhost      # macOS
 # или xdg-open http://localhost / просто ввести в браузере
 ```
+
+Если репозиторий уже склонирован без сабмодулей: `git submodule update --init --recursive`.
 
 После `docker compose up`:
 - **Frontend** (UI + nginx proxy): http://localhost (port 80)
@@ -75,6 +103,189 @@ npm install
 npm run dev   # Vite поднимет на http://localhost:5173
 ```
 
+## Администрирование и режим регистрации
+
+По умолчанию инсталляция **закрыта**: зарегистрироваться самому нельзя, доступ выдаётся
+по заявке. Открытая регистрация — осознанное решение администратора.
+
+### Что задаётся при развёртывании
+
+```bash
+# .env (см. .env.example)
+ADMIN_EMAILS=you@example.com          # администраторы (через запятую)
+REGISTRATION_MODE=request             # request (по заявке, дефолт) | open (свободная)
+```
+
+| Переменная | Смысл |
+|---|---|
+| `ADMIN_EMAILS` | Кто администратор. Права выдаются уже зарегистрированным **и** тем, кто зарегистрируется позже (проверка при входе). Список пуст → администратором становится первый зарегистрированный пользователь (в логе будет предупреждение) |
+| `REGISTRATION_MODE` | Стартовый режим, пока администратор не поменял его в интерфейсе. После первого решения админа значение из env больше не применяется — иначе развёртывание перебивало бы решение человека |
+
+### Что делает администратор
+
+`/admin` (ссылка появляется в шапке у администратора):
+
+- переключает режим: **«По заявке»** ↔ **«Свободная»**;
+- видит заявки (на рассмотрении / одобренные / отклонённые), одобряет и отклоняет их;
+- видит список пользователей инсталляции.
+
+Администратор **не получает доступа к содержимому чужих проектов** — его зона только
+вход на инсталляцию.
+
+### Как работает заявка
+
+1. Человек заполняет форму на `/register`: имя, email, **пароль** и зачем ему доступ.
+2. Пароль сразу сохраняется хэшем, аккаунт не создаётся — заявка получает статус `pending`.
+3. До решения вход даёт понятное `403`: «заявка ещё не одобрена» (заявку можно найти по
+   email и паролю, поэтому посторонний по одному email ничего не узнает).
+4. Администратор одобряет — аккаунт создаётся, человек входит **тем паролем, который
+   указал при подаче** (почтовых ссылок не требуется). Отклонённая заявка объясняет отказ.
+
+| Метод | Путь | Доступ | Назначение |
+|---|---|---|---|
+| GET | `/api/auth/config` | аноним | текущий режим регистрации для формы |
+| POST | `/api/auth/registration-requests` | аноним | подать заявку (202) |
+| GET | `/api/admin/settings` | админ | режим, счётчики |
+| PATCH | `/api/admin/settings` | админ | `{"registration_mode":"request"\|"open"}` |
+| GET | `/api/admin/registrations?status=pending` | админ | список заявок |
+| POST | `/api/admin/registrations/{id}/approve` \| `/reject` | админ | решение |
+| GET | `/api/admin/users` | админ | пользователи инсталляции |
+
+## Публичная лента
+
+Проект попадает в ленту **только после явного действия владельца**: в списке проектов
+кнопка «Опубликовать». До этого он не виден никому, кроме команды, — в том числе по ссылке.
+
+```bash
+# публикация / снятие (только владелец проекта)
+curl -X POST http://localhost/api/projects/<id>/publication \
+  -H "Authorization: Bearer <access>" -H 'Content-Type: application/json' \
+  -d '{"is_public":true}'
+
+# лента и публичная история — без авторизации
+curl http://localhost/api/public/feed?sort=new
+curl http://localhost/api/public/stories/<slug>
+```
+
+| Что | Как |
+|---|---|
+| Лента | `GET /api/public/feed?sort=new\|rating\|views` |
+| История | `GET /api/public/stories/{slug}` (+1 просмотр, дедуп по cookie `sf_vid`) |
+| Оценка | `POST /api/public/stories/{slug}/rating` `{"stars":1..5}` (нужен вход) |
+| Снять оценку | `DELETE /api/public/stories/{slug}/rating` |
+| Публичные файлы | `GET /api/public/assets/{id}` — только для опубликованных проектов |
+| Публикация | `POST /api/projects/{id}/publication` — только владелец |
+
+Ограничения, заложенные в модель: по умолчанию всё закрыто; снятие с публикации
+закрывает и историю, и её файлы (404); ссылка `slug` не меняется между публикациями;
+публичные ручки не содержат ни одной операции записи в содержимое истории.
+
+## Ошибки в интерфейсе
+
+Сырых исключений в UI нет: любая ошибка загрузки показывается **плашкой** с объяснением
+по-человечески, кнопкой «Повторить» (для временных сбоев) и ссылкой на доступную
+страницу — «← В ленту», «Мои проекты», «К проектам». Классификация ошибок —
+`frontend/src/lib/apiError.ts` (нет связи / таймаут / 5xx / 401 / 403 / 404 / 409),
+компонент — `frontend/src/components/ErrorBanner.tsx`.
+
+Публичные запросы повторяются автоматически (`retry` в `src/api/feed.ts`), история
+получает увеличенный таймаут: ответ несёт CRDT-снапшот, а перезапуск контейнера на
+несколько секунд рвёт соединение.
+
+## Перенос проекта между стендами
+
+Проект можно целиком перевезти с одного SkyFraze на другой: в списке проектов кнопка
+**«Экспорт»** скачивает архив `*.skyfraze.zip`, а кнопка **«Импорт проекта»** на другом
+стенде создаёт из него новый проект. В архив попадает всё содержимое:
+
+| Что внутри | Зачем |
+|---|---|
+| `manifest.json` | формат, версия, название/описание, дерево событий (id, parent_id, position, depth, title, body, event_date), список вложений |
+| `state.bin` | CRDT-снапшот: тексты кадров, фон (тон/картинка), привязки вложений — то, чего нет в реляционной модели |
+| `assets/<id>` | сами файлы вложений (картинки, PDF, аудио) |
+
+```bash
+# скачать архив (нужен токен: это приватный проект)
+curl -H "Authorization: Bearer <access>" -OJ http://localhost/api/projects/<id>/export
+
+# загрузить на другом стенде — создастся новый проект у того, кто загрузил
+curl -H "Authorization: Bearer <access>" -F "file=@project.skyfraze.zip" \
+     http://other-host/api/projects/import
+```
+
+Что важно знать:
+
+- **импорт всегда создаёт новый проект** у загрузившего (владельцем становится он), и
+  никогда не пишет в существующий;
+- **идентификаторы событий и вложений сохраняются как есть** — на них ссылается
+  CRDT-снапшот, а переписать бинарный Yjs-update без парсера Yjs нельзя. Поэтому
+  повторная загрузка того же архива в ту же базу распознаётся и отклоняется (`409`
+  «этот архив уже импортирован»): удалите ранее импортированный проект или грузите на
+  другом стенде;
+- переносятся только содержимое проекта. Просмотры, оценки и публикация — это свойства
+  инсталляции, а не проекта: на новом стенде проект приезжает **закрытым**;
+- лимиты: архив до 200 МБ, один файл до 50 МБ, до 5000 событий и 500 вложений
+  (nginx пускает 256 МБ — см. `frontend/nginx.conf`);
+- экспорт доступен роли `viewer` и выше (читатель и так видит всё содержимое проекта),
+  импорт — любому вошедшему.
+
+Проект, у которого нет CRDT-снапшота (создан через API или приехал из такого архива),
+при первом открытии в редакторе засевается из реляционного дерева — иначе стадия
+считала бы его пустым.
+
+## Развёртывание на сервере
+
+Для сервера есть отдельный compose-файл — он не публикует Postgres наружу и позволяет
+задать порт UI:
+
+```bash
+# на сервере, в каталоге проекта
+cat > .env <<EOF
+JWT_SECRET=$(openssl rand -hex 32)
+ADMIN_EMAILS=you@example.com      # администратор(ы) инсталляции
+REGISTRATION_MODE=request         # по заявке (дефолт) | open
+SKYFRAZE_PORT=80                  # порт, на котором открыт UI
+CORS_ORIGINS=http://<адрес-хоста>
+EOF
+
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+Почему отдельный файл, а не `docker-compose.yml`: dev-версия публикует `5432:5432`, и на
+сервере, где уже есть системный Postgres (или mailcow), контейнер просто не поднимется
+из-за занятого порта. Для сервера база доступна только backend'у по внутренней сети.
+
+### Первый вход: как появляется администратор
+
+Инсталляция закрыта по умолчанию: чужие регистрируются только по заявке. Чтобы это не
+заблокировало развёртывание, прямая регистрация разрешена в трёх случаях:
+
+1. режим `open` — администратор так решил;
+2. **инсталляция пустая** — тот, кто зарегистрировался первым, создаёт её и становится
+   администратором (на странице регистрации так и написано: «Первый администратор»);
+3. email входит в `ADMIN_EMAILS` — администратор, назначенный развёртыванием, заводит
+   себе аккаунт независимо от режима и сразу получает права.
+
+Дальше все остальные проходят через заявку: `POST /api/auth/registration-requests`,
+решение — в `/admin`. Полный порядок работы с режимом и заявками — в разделе
+«Администрирование и режим регистрации».
+
+### Управление развёрнутым стендом
+
+```bash
+cd /path/to/skyfraze
+docker compose -f docker-compose.prod.yml ps        # статус
+docker compose -f docker-compose.prod.yml logs -f backend
+docker compose -f docker-compose.prod.yml up -d --build   # обновление после копирования новой версии
+docker compose -f docker-compose.prod.yml down      # остановить (данные в volumes остаются)
+```
+
+Проверка, что стенд жив (можно запускать с любой машины, где есть Node):
+
+```bash
+cd frontend && DEPLOY_URL=http://192.168.13.66 npx tsx tests/deployed-smoke.ts
+```
+
 ## Архитектура
 
 ```
@@ -98,33 +309,44 @@ SkyFraze/
 ├── backend/                      Go API
 │   ├── cmd/server/               main.go
 │   ├── internal/
-│   │   ├── auth/                 JWT + register/login/refresh
+│   │   ├── auth/                 JWT, register/login/refresh, режим регистрации, заявки
+│   │   ├── admin/                админка развёртывания: настройки и заявки
 │   │   ├── projects/             CRUD + ownership
 │   │   ├── teams/                invitations, roles
-│   │   ├── assets/               upload/download (filesystem)
+│   │   ├── feed/                 публичная лента: публикация, просмотры, оценки
+│   │   ├── assets/               upload/download (filesystem) + публичная отдача
 │   │   ├── events/               Yjs binary state persistence
 │   │   ├── collab/               WebSocket hub
 │   │   ├── storage/              ObjectStore interface + LocalStore
 │   │   ├── store/                typed pgx queries
 │   │   └── platform/              config, logger, db pool, migrate
-│   ├── migrations/                SQL schema
+│   ├── migrations/                SQL schema (versioned: schema_migrations, идемпотентные 0001+)
 │   ├── Dockerfile                multi-stage Go build
 │   └── .dockerignore
 ├── frontend/                     Vite + React + TypeScript
 │   ├── src/
-│   │   ├── pages/                LoginPage, ProjectsPage, ProjectTimelinePage, ...
-│   │   ├── components/            timeline (Three.js), events, teams
-│   │   ├── collab/               Yjs provider
-│   │   ├── store/                Zustand auth store
-│   │   └── api/                  REST + WS clients
+│   │   ├── pages/                LoginPage, RegisterPage, ProjectsPage, ProjectTimelinePage, FeedPage, PublicStoryPage, AdminPage, ...
+│   │   ├── components/timeline/  стадия: TimelineStage, timelineModel, publicDoc, stage/* (Sky/Scene/Copy/Route/Chips/TopBar)
+│   │   ├── components/editors/   редакторы: EditorsPanel, EventEditor, BackgroundPicker
+│   │   ├── components/           RatingStars — оценка публичной истории
+│   │   ├── styles/               tokens.css (темы), timeline.css, editors.css, feed.css
+│   │   ├── lib/                  форматирование (просмотры/оценки, русские склонения)
+│   │   ├── collab/               Yjs provider, дерево событий
+│   │   ├── store/                Zustand auth + тема
+│   │   └── api/                  REST + WS клиенты (в т.ч. api/feed.ts)
 │   ├── nginx.conf                 SPA fallback + /api proxy
 │   ├── Dockerfile                multi-stage Vite build → nginx serve
 │   └── .dockerignore
 ├── docs/
-│   └── architecture.md
-├── docker-compose.yml            postgres + backend + frontend
-├── .env / .env.example            JWT_SECRET и т.п.
-└── vendor/scroll-world-reference/  Референс для 3D-сцены (НЕ импортируется)
+│   ├── architecture.md           модель данных, инварианты, разбор частых дефектов
+│   └── screenshots/              картинки для этого README
+├── deps/scroll-world/            git-САБМОДУЛЬ oso95/scroll-world — справочник по композиции
+│                                 стадии и механике прокрутки (в сборку не входит)
+├── deploy/                       скрипты и systemd-юниты механизма обновления
+├── docker-compose.prod.yml       конфигурация для сервера (см. «Развёртывание на сервере»)
+├── docker-compose.yml            postgres + backend + frontend (локальная разработка)
+├── .env / .env.example           JWT_SECRET, ADMIN_EMAILS, REGISTRATION_MODE и т.п.
+└── vendor/scroll-world-reference/  локальная копия референса (в репозиторий не входит, /vendor/)
 ```
 
 ## Переменные окружения
@@ -132,6 +354,8 @@ SkyFraze/
 | Переменная | Назначение | Дефолт в compose |
 |---|---|---|
 | `JWT_SECRET` | секрет для подписи access/refresh токенов | обязательна (нет дефолта) |
+| `ADMIN_EMAILS` | администраторы развёртывания (через запятую) | пусто → админ = первый зарегистрированный |
+| `REGISTRATION_MODE` | стартовый режим регистрации: `request` \| `open` | `request` |
 | `DATABASE_URL` | DSN Postgres | `postgres://skyfraze:skyfraze_dev@postgres:5432/skyfraze?sslmode=disable` |
 | `CORS_ORIGINS` | comma-separated список origin для CORS | `http://localhost` |
 | `STORAGE_DIR` | директория для ассетов (filesystem) | `/app/storage` (volume) |
@@ -141,7 +365,8 @@ SkyFraze/
 ## Тесты
 
 ```bash
-# Backend unit + integration (нужна Postgres)
+# Backend unit + integration (нужна Postgres; интеграционные тесты feed
+# создают себе отдельную базу <TEST_DATABASE_URL>_feed и применяют миграции сами)
 cd backend && go test ./...
 
 # Frontend unit
@@ -149,7 +374,37 @@ cd frontend && npm test
 
 # E2E walkthrough (нужны docker + оба сервиса)
 cd frontend && npm run e2e
+
+# E2E публичной ленты: права, просмотры, оценки
+cd frontend && npx tsx tests/public-feed.ts
+
+# E2E администрирования: заявка → одобрение/отклонение → вход, режимы регистрации
+cd frontend && npx tsx tests/admin-registration.ts
 ```
+
+Основные наборы (`scrollytelling.ts`, `public-feed.ts`, `admin-registration.ts`, скилл
+`ui-visual-audit`) работают при **любом** режиме регистрации: тестовых пользователей они
+заводят через заявку с одобрением (`tests/helpers/testUser.ts`). Старые скрипты
+`tests/e2e/*` и `tests/diag-*.ts` регистрируются напрямую через `/register`, поэтому им
+нужен `REGISTRATION_MODE=open`.
+
+## Аудит панели (скилл `ui-visual-audit`)
+
+Проектный скилл (`.dsh/skills/ui-visual-audit`) проверяет **восприятие** интерфейса и
+**работу каждой заявленной возможности** на живом стенде: обрезанный текст, элементы
+вне экрана, перекрытые/недоступные контролы, мелкие цели нажатия, незагруженные
+картинки, низкий контраст, перехват кликов fixed-слоями, ошибки сети, а также матрицу
+функций (проекты, иерархия, ассеты, темы, роли/приглашения, realtime CRDT).
+
+```bash
+cd frontend
+npx tsx ../.dsh/skills/ui-visual-audit/scripts/visual-audit.ts              # визуал + функции
+ONLY_SCREENS=1 npx tsx ../.dsh/skills/ui-visual-audit/scripts/visual-audit.ts    # только визуал
+ONLY_FUNCTIONAL=1 npx tsx ../.dsh/skills/ui-visual-audit/scripts/visual-audit.ts # только функции
+```
+
+Отчёт: `_audit_out/visual-report.md` (+ `.json`) со скриншотами и указанием, какой файл
+править; код выхода 1, если есть ошибки. Тестовые проекты скилл создаёт и удаляет сам.
 
 ## Лицензия
 

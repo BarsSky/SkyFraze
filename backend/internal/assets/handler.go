@@ -120,6 +120,34 @@ func (h *Handler) Download(_ *auth.Service) http.HandlerFunc {
 	}
 }
 
+// DownloadPublic — публичная отдача файла (без авторизации).
+//
+// Нужна публичной ленте: анонимный посетитель не может тянуть /api/assets/{id}
+// (там нужен Bearer + членство), поэтому обложки и картинки истории отдаются
+// здесь — но только для опубликованных проектов (проверка внутри OpenPublic).
+func (h *Handler) DownloadPublic(_ *auth.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		aid, err := uuid.Parse(chi.URLParam(r, "id"))
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid id")
+			return
+		}
+		rc, a, err := h.svc.OpenPublic(r.Context(), aid)
+		if err != nil {
+			// Неопубликованный проект и несуществующий файл неразличимы: 404.
+			writeErr(w, http.StatusNotFound, "not found")
+			return
+		}
+		defer rc.Close()
+		w.Header().Set("Content-Type", a.Mime)
+		w.Header().Set("Content-Length", strconv.FormatInt(a.Size, 10))
+		w.Header().Set("Content-Disposition", `inline; filename="`+a.Filename+`"`)
+		// Публичные картинки можно кэшировать: контент адресуется неизменяемым id.
+		w.Header().Set("Cache-Control", "public, max-age=3600")
+		_, _ = io.Copy(w, rc)
+	}
+}
+
 func writeJSON(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

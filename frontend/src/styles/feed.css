@@ -1,0 +1,194 @@
+/* SkyFraze — публичная лента и публичная страница истории.
+   Контур доступа: только чтение. Ни один элемент здесь не даёт правок. */
+
+/* ── лента ───────────────────────────────────────────────────────────── */
+.feed { max-width: 1120px; margin: 0 auto; }
+.feed__head {
+  display: flex; flex-wrap: wrap; gap: 16px;
+  align-items: flex-end; justify-content: space-between; margin-bottom: 18px;
+}
+.feed__title { margin: 0 0 6px; font-size: 1.55rem; }
+.feed__sub { margin: 0; max-width: 60ch; }
+.feed__sorts { display: flex; gap: 6px; flex-wrap: wrap; }
+.feed__sort {
+  background: var(--bg-elev); color: var(--fg-muted);
+  border: 1px solid var(--border); border-radius: 999px;
+  padding: 7px 14px; font-size: 0.85rem; font-weight: 600; cursor: pointer;
+  transition: color 0.2s, border-color 0.2s, background 0.2s;
+}
+.feed__sort:hover { color: var(--fg); }
+.feed__sort.is-active { color: var(--bg); background: var(--accent-strong); border-color: transparent; }
+.feed__empty { text-align: left; }
+
+.feed__grid {
+  display: grid; gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+}
+.feed-card {
+  display: flex; flex-direction: column;
+  background: var(--bg-elev); border: 1px solid var(--border);
+  border-radius: 12px; overflow: hidden;
+  transition: border-color 0.2s, transform 0.2s;
+}
+.feed-card:hover { border-color: var(--fg-muted); transform: translateY(-2px); }
+.feed-card__cover {
+  display: block; aspect-ratio: 16 / 9; background: var(--bg);
+  border-bottom: 1px solid var(--border); position: relative;
+}
+.feed-card__cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.feed-card__placeholder {
+  position: absolute; inset: 0;
+  display: grid; place-items: center;
+  font-size: 2.4rem; font-weight: 700; color: var(--fg-muted);
+  background: linear-gradient(135deg,
+    color-mix(in srgb, var(--accent) 14%, var(--bg-elev)),
+    var(--bg-elev));
+}
+.feed-card__body { padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 8px; flex: 1; }
+.feed-card__title { margin: 0; font-size: 1.05rem; }
+.feed-card__desc {
+  margin: 0; font-size: 0.9rem; flex: 1;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.feed-card__meta {
+  display: flex; flex-wrap: wrap; gap: 4px 12px;
+  font-size: 0.82rem; color: var(--fg-muted);
+}
+.feed-card__author { font-weight: 600; color: var(--fg); }
+.feed-card__open { font-size: 0.9rem; font-weight: 600; }
+
+/* ── публичная страница истории ──────────────────────────────────────── */
+.pub-back { display: inline-flex; align-items: center; }
+.sf-copy__footer { margin-top: 14px; }
+.pub-meta {
+  display: flex; flex-direction: column; gap: 6px;
+  padding-top: 12px; border-top: 1px solid var(--surface-line);
+}
+.pub-meta__line { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 0.86rem; }
+.pub-meta__author { font-weight: 600; color: var(--sf-ink); }
+.pub-meta__views { color: var(--sf-ink-soft); }
+
+.pub-rating { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.pub-rating__stars { display: inline-flex; gap: 2px; }
+.pub-rating__star {
+  background: transparent; border: 0; cursor: pointer;
+  padding: 4px 2px; min-width: 26px; min-height: 32px;
+  font-size: 1.15rem; line-height: 1;
+  color: color-mix(in srgb, var(--sf-ink) 28%, transparent);
+  transition: color 0.2s, transform 0.15s;
+}
+.pub-rating__star:hover { transform: scale(1.12); }
+.pub-rating__star.is-filled { color: color-mix(in srgb, var(--sf-accent) 70%, var(--sf-ink)); }
+.pub-rating__star.is-mine { color: var(--sf-accent); }
+.pub-rating__star:disabled { opacity: 0.6; cursor: default; }
+.pub-rating__value { font-size: 0.86rem; color: var(--sf-ink-soft); }
+.pub-rating__note { font-size: 0.82rem; color: var(--sf-ink-soft); font-style: italic; }
+
+/* ── публикация в списке проектов ────────────────────────────────────── */
+.pub-badge {
+  margin-left: 8px; padding: 2px 8px; border-radius: 999px;
+  font-size: 0.72rem; font-weight: 700; letter-spacing: 0.04em;
+  color: var(--bg); background: var(--accent-strong); vertical-align: middle;
+}
+.pub-link { margin: 6px 0 0; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 0.84rem; }
+.pub-note { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+
+/* ── баннер ошибки с выходами ────────────────────────────────────────── */
+.banner {
+  display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between;
+  padding: 14px 16px; margin: 0 0 16px;
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--border));
+  border-left-width: 4px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--danger) 10%, var(--bg-elev));
+}
+.banner--notFound, .banner--forbidden, .banner--auth {
+  border-color: color-mix(in srgb, var(--fg-muted) 45%, var(--border));
+  background: var(--bg-elev);
+}
+.banner__body { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 320px; }
+.banner__title { font-size: 0.98rem; }
+.banner__hint { font-size: 0.88rem; color: var(--fg-muted); overflow-wrap: anywhere; }
+.banner__actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.banner__link {
+  display: inline-flex; align-items: center; min-height: 34px;
+  font-size: 0.9rem; font-weight: 600;
+}
+
+/* ── перенос проекта (экспорт/импорт архива) ─────────────────────────── */
+/* Кнопка импорта — это <label> со скрытым input[type=file]: так работает
+   системный диалог выбора файла без отдельного окна. */
+.pub-import {
+  display: inline-flex; align-items: center; gap: 8px;
+  cursor: pointer; position: relative;
+}
+.pub-import input[type='file'] {
+  position: absolute; width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+.pub-import:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pub-import:has(input:disabled) { opacity: 0.6; cursor: default; }
+
+/* ── админка развёртывания ───────────────────────────────────────────── */
+.admin { max-width: 880px; margin: 0 auto; }
+.admin__modes { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.admin__mode {
+  display: flex; flex-direction: column; gap: 4px; align-items: flex-start;
+  text-align: left; background: var(--bg); color: var(--fg-muted);
+  border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; cursor: pointer;
+  font-size: 0.9rem;
+}
+.admin__mode b { color: var(--fg); font-size: 0.98rem; }
+.admin__mode.is-active { border-color: var(--accent-strong); box-shadow: inset 0 0 0 1px var(--accent-strong); }
+.admin__mode.is-active b { color: var(--accent); }
+.admin__mode:disabled { opacity: 0.6; cursor: default; }
+.admin__stats { margin: 12px 0 0; font-size: 0.86rem; }
+.admin__requests, .admin__users { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 10px; }
+.admin__request {
+  display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between;
+  border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px;
+}
+.admin__request-main { min-width: 0; flex: 1 1 260px; }
+.admin__request-date { font-size: 0.82rem; margin-top: 2px; }
+.admin__request-message { margin: 6px 0 0; font-size: 0.9rem; overflow-wrap: anywhere; }
+.admin__users li {
+  display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 0.9rem;
+}
+.admin__users li:last-child { border-bottom: 0; }
+
+/* ── обновление стенда ───────────────────────────────────────────────── */
+.admin__update {
+  display: flex; flex-wrap: wrap; gap: 12px;
+  align-items: center; justify-content: space-between;
+}
+.admin__update-version { font-size: 0.95rem; }
+.admin__update-state { margin: 12px 0 0; font-size: 0.88rem; }
+.admin__update-log { margin-top: 12px; }
+.admin__update-log summary { cursor: pointer; font-size: 0.9rem; }
+.admin__update-log pre {
+  margin: 8px 0 0; padding: 12px; max-height: 280px; overflow: auto;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+  font-size: 0.8rem; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere;
+}
+
+/* ── адаптив ─────────────────────────────────────────────────────────── */
+@media (max-width: 860px) {
+  /* В стадии ссылки в панели скрыты — «Лента» должна остаться доступной */
+  .sf-topbar__actions a.pub-back {
+    display: inline-flex; align-items: center;
+    min-height: 34px; padding: 6px 12px; font-size: 0.82rem;
+  }
+  .feed__head { align-items: flex-start; }
+  .feed__grid { grid-template-columns: 1fr; }
+  .pub-rating__star { min-width: 34px; min-height: 34px; }
+  /* Мобильные цели нажатия: сортировка ленты, «Читать» и публичная ссылка
+     должны быть не меньше 34px, иначе по ним не попасть пальцем. */
+  .feed__sort { min-height: 34px; }
+  .feed-card__open,
+  .pub-link a,
+  .pub-link button {
+    display: inline-flex; align-items: center; min-height: 34px;
+  }
+}

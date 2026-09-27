@@ -1,0 +1,137 @@
+/* SkyFraze — модуль редакторов: навигатор по дереву + один активный редактор.
+   Единственное место, где меняется проект. */
+
+.ed-panel {
+  min-height: 100vh;
+  padding: 40px 12px;
+  border-top: 1px solid var(--border);
+  margin-top: 40px;
+}
+.ed-panel__head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; margin-bottom: 16px;
+}
+.ed-panel__title {
+  margin: 0; color: var(--fg-muted);
+  text-transform: uppercase; letter-spacing: 2px; font-size: 13px;
+}
+.ed-toolbar { display: flex; gap: 8px; flex-wrap: wrap; }
+.ed-toolbar .ed-danger { color: var(--danger); }
+.ed-panel__meta { display: flex; align-items: center; gap: 10px; }
+.ed-filter { max-width: 240px; }
+.ed-panel__count { font-size: 12px; white-space: nowrap; }
+.ed-panel__note { font-size: 12px; margin: 0 0 12px; }
+.ed-panel__note--upload {
+  color: var(--accent); border-left: 2px solid var(--accent);
+  padding: 4px 10px; background: var(--chip-bg); border-radius: 4px;
+  display: inline-block;
+}
+
+.ed-panel__grid {
+  display: grid; grid-template-columns: minmax(240px, 340px) 1fr;
+  gap: 16px; align-items: start;
+}
+
+.ed-nav {
+  display: flex; flex-direction: column; gap: 4px;
+  max-height: 72vh; overflow-y: auto; padding-right: 4px;
+}
+.ed-row {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  background: var(--bg-elev); border: 1px solid var(--border);
+  border-radius: 6px; padding: 6px 8px;
+  color: var(--fg); font-size: 13px; text-align: left; cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+}
+.ed-row:hover { border-color: var(--fg-muted); }
+.ed-row--sub { background: transparent; }
+.ed-row--active { border-color: var(--accent); }
+.ed-row__mark { color: var(--fg-muted); flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+.ed-row__name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ed-row__badge {
+  flex: 0 0 auto; color: var(--fg-muted); font-size: 12px;
+  border: 1px solid var(--border); border-radius: 999px; padding: 0 6px;
+}
+
+.ed-editor {
+  background: var(--bg-elev); border: 1px solid var(--border);
+  border-radius: 8px; padding: 16px; min-height: 320px;
+}
+.ed-editor__head { margin-bottom: 12px; }
+.ed-editor__path {
+  color: var(--fg-muted); font-size: 13px; font-weight: 600;
+  overflow-wrap: anywhere; word-break: break-word;
+}
+.ed-editor__hint { font-size: 12px; margin: 16px 0 0; }
+
+.ed-form { display: flex; flex-direction: column; gap: 16px; }
+.ed-field { display: flex; flex-direction: column; gap: 6px; }
+.ed-field__label {
+  font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--fg-muted);
+}
+.ed-field--short input { max-width: 220px; }
+
+/* вложения */
+.ed-assets { display: flex; flex-wrap: wrap; gap: 10px; }
+.ed-assets__item {
+  position: relative; display: flex; align-items: center; gap: 8px;
+  border: 1px solid var(--border); border-radius: 8px; padding: 6px 26px 6px 6px;
+  max-width: 260px;
+}
+.ed-assets__item img { width: 48px; height: 48px; object-fit: cover; border-radius: 6px; }
+.ed-assets__file {
+  width: 48px; height: 48px; display: grid; place-items: center;
+  border-radius: 6px; background: var(--bg); color: var(--fg-muted); font-size: 12px;
+}
+.ed-assets__name {
+  font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ed-assets__detach {
+  position: absolute; top: 2px; right: 4px;
+  background: transparent; border: 0; color: var(--danger);
+  font-size: 15px; line-height: 1; padding: 2px 4px;
+}
+.ed-assets__actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; align-items: center; }
+/* Невидимый file-инпут растянут по всей плашке: клик работает в любом месте */
+.ed-upload, .ed-bg__upload {
+  position: relative; overflow: hidden;
+  display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+  background: var(--bg); border: 1px dashed var(--border); border-radius: 6px;
+  padding: 7px 12px; font-size: 13px; color: var(--fg-soft);
+}
+.ed-upload:hover, .ed-bg__upload:hover { border-color: var(--accent); }
+.ed-upload input, .ed-bg__upload input {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  opacity: 0; cursor: pointer; padding: 0; border: 0;
+}
+.ed-attach { max-width: 260px; }
+
+/* выбор фона кадра */
+.ed-bg { display: flex; flex-direction: column; gap: 10px; }
+.ed-bg__modes { display: flex; flex-wrap: wrap; gap: 6px; }
+.ed-chip {
+  background: var(--bg); border: 1px solid var(--border); color: var(--fg-soft);
+  border-radius: 999px; padding: 6px 12px; font-size: 12px; cursor: pointer;
+}
+.ed-chip.is-active { border-color: var(--accent); color: var(--fg); }
+.ed-bg__tones { display: flex; flex-wrap: wrap; gap: 8px; }
+.ed-tone {
+  width: 30px; height: 30px; border-radius: 50%; padding: 0;
+  border: 2px solid transparent; cursor: pointer;
+}
+.ed-tone.is-active { border-color: var(--fg); }
+.ed-bg__images { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.ed-bg__thumb {
+  padding: 0; border: 2px solid transparent; border-radius: 8px;
+  background: transparent; cursor: pointer; line-height: 0;
+}
+.ed-bg__thumb img { width: 84px; height: 56px; object-fit: cover; border-radius: 6px; }
+.ed-bg__thumb.is-active { border-color: var(--accent); }
+
+@media (max-width: 860px) {
+  .ed-panel__grid { grid-template-columns: 1fr; }
+  .ed-nav { max-height: 40vh; }
+  .ed-row { min-height: 34px; } /* палец на телефоне: строки дерева — тоже цель нажатия */
+  .ed-editor { padding: 12px; }
+  .ed-assets__item { max-width: 100%; }
+}

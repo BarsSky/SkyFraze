@@ -1,0 +1,11 @@
+[Unit]
+Description=SkyFraze: следить за заявкой на обновление (update-state/request.json)
+Documentation=https://github.com/BarsSky/SkyFraze
+
+[Path]
+# Как только админка оставит заявку — запускается skyfraze-update.service
+PathExists=/home/skyadmin/skyfraze/update-state/request.json
+Unit=skyfraze-update.service
+
+[Install]
+WantedBy=multi-user.target

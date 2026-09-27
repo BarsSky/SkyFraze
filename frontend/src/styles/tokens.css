@@ -1,0 +1,204 @@
+/* SkyFraze — токены, базовая типографика и каркас страницы.
+   Темы: dark (по умолчанию) и light (кремово-мятная) через data-theme на <html>. */
+
+:root {
+  --bg: #0d1117;
+  --bg-elev: #161b22;
+  --border: #30363d;
+  --fg: #e6edf3;
+  --fg-soft: #c9d1d9;
+  --fg-muted: #7d8590;
+  --accent: #58a6ff;
+  --accent-soft: #79c0ff;
+  /* Фон primary-кнопок: белый текст даёт ≥4.5:1 (на --accent было 2.5:1) */
+  --accent-strong: #1f6feb;
+  --danger: #f85149;
+  --success: #3fb950;
+  --radius: 6px;
+  --space: 12px;
+
+  --surface-glass: rgba(10, 13, 24, 0.74);
+  --surface-line: rgba(255, 255, 255, 0.08);
+  --chip-bg: rgba(255, 255, 255, 0.07);
+
+  --sf-ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --sf-font-display: 'Helvetica Neue', 'Inter', system-ui, sans-serif;
+  --sf-font-body: system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+[data-theme='light'] {
+  --bg: #f4f6ec;            /* кремово-салатовый фон */
+  --bg-elev: #fbfdf5;
+  --border: #d9e2c7;
+  --fg: #232b1f;            /* тёмно-зелёный ink */
+  --fg-soft: #3e4a36;
+  --fg-muted: #6e7a5f;
+  --accent: #4f8a4a;
+  --accent-soft: #3f7a44;
+  --accent-strong: #3f7a44;
+  --danger: #b4453c;
+  --success: #4f8a4a;
+
+  --surface-glass: rgba(251, 253, 245, 0.82);
+  --surface-line: rgba(35, 43, 31, 0.12);
+  --chip-bg: rgba(35, 43, 31, 0.06);
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  /* Базовый кегль 16px: все rem-размеры панели рассчитаны от него. При 14px
+     подписи маршрута и навигации выходили ~11px и не читались. */
+  font-size: 16px;
+  line-height: 1.5;
+  transition: background 0.3s ease, color 0.3s ease;
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+button {
+  background: var(--accent-strong);
+  color: #fff;
+  border: 0;
+  border-radius: var(--radius);
+  padding: 8px 16px;
+  font-size: 14px;
+  cursor: pointer;
+  outline: none;
+}
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+button.secondary {
+  background: var(--bg-elev);
+  color: var(--fg);
+  border: 1px solid var(--border);
+}
+button.secondary:focus-visible {
+  outline-color: var(--fg-muted);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--fg-muted) 22%, transparent);
+}
+
+input, textarea, select {
+  width: 100%;
+  background: var(--bg-elev);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  font-size: 14px;
+  font-family: inherit;
+}
+textarea { resize: vertical; line-height: 1.5; }
+input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); }
+input:focus-visible, textarea:focus-visible, select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.card {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space);
+  margin-bottom: var(--space);
+}
+
+.layout {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  height: 100vh;
+}
+.layout header {
+  padding: var(--sf-header-pad, 12px) 24px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(10px);
+  z-index: 70;
+  transition: padding 0.2s ease;
+}
+.layout main {
+  padding: 24px;
+  overflow: auto;
+  background: var(--bg);
+}
+.error { color: var(--danger); margin: 8px 0; }
+.muted { color: var(--fg-muted); }
+.row { display: flex; gap: 12px; align-items: center; }
+.list { display: grid; gap: 8px; }
+/* Навигация в шапке: «Лента» и «Мои проекты» — соседние ссылки, им нужен зазор
+   на всех ширинах, а не только на мобильных (иначе текст слипается). */
+.auth-links { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; }
+
+/* Мобильные цели нажатия: ссылки и кнопки не меньше 34px по высоте */
+@media (max-width: 860px) {
+  .layout header a,
+  .layout header button,
+  .auth-links a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 34px;
+  }
+  .auth-links { gap: 10px; }
+  /* На телефоне шапка должна оставаться в одну строку: при переносе она занимает
+     ~150px, и верхняя панель стадии (кнопка «Редакторы») уезжает под неё.
+     Селектор с элементом — иначе правило перебивает `.layout header a` выше. */
+  .layout header {
+    flex-wrap: nowrap;
+    gap: 8px;
+    padding: 8px 12px;
+  }
+  .layout header > .row { min-width: 0; }
+  .layout header > .row:first-child { flex: 1 1 auto; }
+  .auth-links { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .auth-links::-webkit-scrollbar { display: none; }
+  .layout header a.header-nav__projects { display: none; }
+  /* Ссылки в тексте («Регистрация», «Публичные истории») — тоже цели нажатия:
+     без min-height они дают ~21px и по ним не попасть пальцем. */
+  .auth-inline-link {
+    display: inline-flex; align-items: center; min-height: 34px;
+  }
+  /* Заголовок карточки проекта — ссылка на проект: увеличиваем зону нажатия */
+  .card h3 a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 34px;
+  }
+}
+
+/* Empty-state страницы проекта */
+.sf-empty {
+  margin: 24px 0;
+  padding: 48px 24px;
+  border: 2px dashed var(--border);
+  border-radius: 12px;
+  background: var(--bg-elev);
+  text-align: center;
+}
+.sf-empty__mark {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 64px; height: 64px; margin-bottom: 16px;
+  border-radius: 50%; background: var(--bg); border: 1px solid var(--border);
+  font-size: 32px; color: var(--accent);
+}
+.sf-empty__title { margin: 0 0 8px; font-size: 22px; font-weight: 600; }
+.sf-empty__text { margin: 0 auto 20px; max-width: 480px; }
+.sf-empty__hint { margin-top: 12px; font-size: 12px; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { scroll-behavior: auto !important; }
+}

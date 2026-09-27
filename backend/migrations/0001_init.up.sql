@@ -1,12 +1,14 @@
 -- SkyFraze initial schema
 -- Phase 1 MVP: users, projects, teams, invitations, events, assets, sessions
-
-BEGIN;
+--
+-- Файл идемпотентен (IF NOT EXISTS / OR REPLACE): раннер применяет его и на
+-- чистой БД, и на БД, созданной до появления schema_migrations.
+-- BEGIN/COMMIT здесь нет — транзакцию открывает platform.RunMigrations.
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 -- ---------- users ----------
-CREATE TABLE users (
+CREATE TABLE IF NOT EXISTS users (
     id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     email         TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
@@ -15,10 +17,10 @@ CREATE TABLE users (
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_users_email ON users (email);
+CREATE INDEX IF NOT EXISTS idx_users_email ON users (email);
 
 -- ---------- projects ----------
-CREATE TABLE projects (
+CREATE TABLE IF NOT EXISTS projects (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     owner_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     title       TEXT NOT NULL,
@@ -27,10 +29,10 @@ CREATE TABLE projects (
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_projects_owner ON projects (owner_id);
+CREATE INDEX IF NOT EXISTS idx_projects_owner ON projects (owner_id);
 
 -- ---------- team memberships ----------
-CREATE TABLE team_memberships (
+CREATE TABLE IF NOT EXISTS team_memberships (
     project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     role       TEXT NOT NULL CHECK (role IN ('owner','editor','viewer')),
@@ -38,10 +40,10 @@ CREATE TABLE team_memberships (
     PRIMARY KEY (project_id, user_id)
 );
 
-CREATE INDEX idx_team_memberships_user ON team_memberships (user_id);
+CREATE INDEX IF NOT EXISTS idx_team_memberships_user ON team_memberships (user_id);
 
 -- ---------- invitations ----------
-CREATE TABLE invitations (
+CREATE TABLE IF NOT EXISTS invitations (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     project_id  UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     email       TEXT NOT NULL,
@@ -53,27 +55,29 @@ CREATE TABLE invitations (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_invitations_token ON invitations (token);
-CREATE INDEX idx_invitations_project ON invitations (project_id);
+CREATE INDEX IF NOT EXISTS idx_invitations_token ON invitations (token);
+CREATE INDEX IF NOT EXISTS idx_invitations_project ON invitations (project_id);
 
 -- ---------- events (timeline) ----------
-CREATE TABLE events (
+-- С версии 0002 таблица хранит по строке на событие (parent_id/depth), а
+-- CRDT-снапшот проекта живёт в project_event_state.
+CREATE TABLE IF NOT EXISTS events (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     project_id  UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     position    INTEGER NOT NULL DEFAULT 0,
     title       TEXT NOT NULL DEFAULT '',
     body        TEXT NOT NULL DEFAULT '',
     event_date  DATE,
-    yjs_state   BYTEA,                 -- последний снапшот Yjs-документа проекта
+    yjs_state   BYTEA,                 -- legacy: снапшот перенесён в project_event_state (0002)
     created_by  UUID REFERENCES users(id),
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_events_project_position ON events (project_id, position);
+CREATE INDEX IF NOT EXISTS idx_events_project_position ON events (project_id, position);
 
 -- ---------- assets ----------
-CREATE TABLE assets (
+CREATE TABLE IF NOT EXISTS assets (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     project_id  UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     owner_id    UUID NOT NULL REFERENCES users(id),
@@ -87,20 +91,20 @@ CREATE TABLE assets (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_assets_project ON assets (project_id);
+CREATE INDEX IF NOT EXISTS idx_assets_project ON assets (project_id);
 
 -- ---------- event_assets (M2M) ----------
-CREATE TABLE event_assets (
+CREATE TABLE IF NOT EXISTS event_assets (
     event_id  UUID NOT NULL REFERENCES events(id) ON DELETE CASCADE,
     asset_id  UUID NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
     added_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (event_id, asset_id)
 );
 
-CREATE INDEX idx_event_assets_asset ON event_assets (asset_id);
+CREATE INDEX IF NOT EXISTS idx_event_assets_asset ON event_assets (asset_id);
 
 -- ---------- sessions (refresh tokens) ----------
-CREATE TABLE sessions (
+CREATE TABLE IF NOT EXISTS sessions (
     id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id               UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     refresh_token_hash    TEXT NOT NULL,
@@ -111,8 +115,8 @@ CREATE TABLE sessions (
     created_at            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_sessions_user ON sessions (user_id);
-CREATE INDEX idx_sessions_refresh_hash ON sessions (refresh_token_hash);
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions (user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_refresh_hash ON sessions (refresh_token_hash);
 
 -- ---------- updated_at triggers ----------
 CREATE OR REPLACE FUNCTION set_updated_at() RETURNS TRIGGER AS $$
@@ -122,8 +126,10 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER trg_users_updated    BEFORE UPDATE ON users    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
-CREATE TRIGGER trg_projects_updated  BEFORE UPDATE ON projects FOR EACH ROW EXECUTE FUNCTION set_updated_at();
-CREATE TRIGGER trg_events_updated    BEFORE UPDATE ON events   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+DROP TRIGGER IF EXISTS trg_users_updated    ON users;
+DROP TRIGGER IF EXISTS trg_projects_updated ON projects;
+DROP TRIGGER IF EXISTS trg_events_updated   ON events;
 
-COMMIT;
+CREATE TRIGGER trg_users_updated    BEFORE UPDATE ON users    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER trg_projects_updated BEFORE UPDATE ON projects FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER trg_events_updated   BEFORE UPDATE ON events   FOR EACH ROW EXECUTE FUNCTION set_updated_at();

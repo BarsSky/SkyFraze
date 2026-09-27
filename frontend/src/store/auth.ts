@@ -6,6 +6,8 @@ export interface UserPublic {
   id: string
   email: string
   display_name: string
+  /** Администратор развёртывания (режим регистрации и заявки) */
+  is_admin: boolean
 }
 
 interface AuthState {

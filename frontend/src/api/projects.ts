@@ -7,6 +7,11 @@ export interface Project {
   description: string
   created_at: string
   updated_at: string
+  /** Публичная лента: видно всем только при is_public */
+  is_public: boolean
+  public_slug?: string | null
+  published_at?: string | null
+  views_count: number
 }
 
 export async function listProjects(): Promise<Project[]> {

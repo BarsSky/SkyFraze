@@ -6,6 +6,11 @@ FROM golang:1.26-alpine AS builder
 
 WORKDIR /src
 
+# Версия и коммит проставляются при сборке (их показывает админка в разделе
+# «Обновление» и сравнивает с последним релизом на GitHub).
+ARG VERSION=dev
+ARG COMMIT=""
+
 # Кэшируем зависимости отдельно от исходников — пересборка только при изменениях go.mod/go.sum.
 COPY go.mod go.sum ./
 RUN go mod download
@@ -15,7 +20,7 @@ COPY . .
 # CGO=0 → статический бинарь; -trimpath → воспроизводимый билд; -ldflags '-s -w' → меньше.
 RUN CGO_ENABLED=0 GOOS=linux go build \
     -trimpath \
-    -ldflags="-s -w" \
+    -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" \
     -o /out/server ./cmd/server
 
 # ──────────────────────────────────────────────────────────────────────────────

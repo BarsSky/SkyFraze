@@ -147,22 +147,6 @@ export function EventIllustration({ eventId, title, width = 1200, height = 700, 
 
       {/* Vignette */}
       <rect width={width} height={height} fill={`url(#bg-${eventId})`} opacity={0.15} style={{ mixBlendMode: 'multiply' as React.CSSProperties['mixBlendMode'] }} />
-
-      {/* Title overlay (subtle, в правом нижнем углу) */}
-      <g opacity={0.6}>
-        <text
-          x={width - 40}
-          y={height - 32}
-          textAnchor="end"
-          fill="#fff"
-          fontFamily="system-ui"
-          fontSize="22"
-          fontWeight={500}
-          style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.8))' }}
-        >
-          {title.slice(0, 60)}
-        </text>
-      </g>
     </svg>
   )
 }

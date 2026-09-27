@@ -47,9 +47,22 @@ services:
       CORS_ORIGINS: http://localhost
       LISTEN: ":8080"
       APP_ENV: production
+      # Администрирование развёртывания.
+      # ADMIN_EMAILS — кто администратор (через запятую); права выдаются и уже
+      # зарегистрированным, и тем, кто зарегистрируется позже. Если список пуст,
+      # администратором становится первый зарегистрированный пользователь.
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+      # REGISTRATION_MODE — стартовый режим, пока админ не поменял его в интерфейсе:
+      # request (по заявке, по умолчанию) | open (любой может регистрироваться).
+      REGISTRATION_MODE: ${REGISTRATION_MODE:-request}
+      # Обновление: источник релизов и общий с хостом каталог заявок
+      UPDATE_REPO: ${UPDATE_REPO:-}
+      UPDATE_CHANNEL: ${UPDATE_CHANNEL:-stable}
+      UPDATE_STATE_DIR: /app/update-state
     volumes:
       # uploaded assets persist between container restarts
       - assets:/app/storage
+      - ./update-state:/app/update-state
     depends_on:
       postgres:
         condition: service_healthy

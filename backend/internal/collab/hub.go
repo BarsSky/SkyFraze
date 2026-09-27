@@ -1,9 +1,9 @@
 // Package collab — WebSocket-relay для Yjs.
 //
 // Протокол:
-//   1) клиент шлёт HTTP Upgrade на /api/projects/{id}/collab?token=<JWT>
-//   2) после Upgrade — bidirectional поток бинарных Yjs-апдейтов (ws.BinaryMessage)
-//   3) периодический snapshot каждой активной комнаты сохраняется в Postgres
+//  1. клиент шлёт HTTP Upgrade на /api/projects/{id}/collab?token=<JWT>
+//  2. после Upgrade — bidirectional поток бинарных Yjs-апдейтов (ws.BinaryMessage)
+//  3. периодический snapshot каждой активной комнаты сохраняется в Postgres
 //
 // Hub держит in-memory rooms per project. CRDT разрешает конфликты на клиенте;
 // сервер только маршрутизирует байты и сохраняет снапшоты.
@@ -44,11 +44,34 @@ type Hub struct {
 	rooms map[uuid.UUID]*Room
 }
 
-func NewHub(logger *slog.Logger, secret string, ev *events.Service) *Hub {
+// NewHub — allowedOrigins: список origin'ов из CORS_ORIGINS (comma-separated).
+//
+// CheckOrigin раньше возвращал true всегда (любой сайт мог открыть WS с токеном
+// жертвы в query). Теперь допускаются только свои origin'ы; пустой Origin
+// (не-браузерные клиенты, тесты, CLI) пропускается — их всё равно защищает
+// только токен, а Origin в браузере подделать нельзя.
+//
+// Важное дополнение: помимо списка допускается origin, совпадающий с хостом самого
+// запроса. Без этого приложение работало только по тем адресам, что перечислены в
+// CORS_ORIGINS: открыв стенд по IP, домену или с телефона, пользователь получал
+// «пустой» проект — WebSocket отклонялся, снапшот не приходил, стадия считала
+// таймлайн пустым. Запрос на тот же хост — это и есть легитимный сценарий, а
+// подделывать Host в браузере нельзя (в отличие от Origin, который тоже проверяется).
+func NewHub(logger *slog.Logger, secret string, ev *events.Service, allowedOrigins string) *Hub {
+	allowed := parseOrigins(allowedOrigins)
 	upgrader := websocket.Upgrader{
 		ReadBufferSize:  4096,
 		WriteBufferSize: 4096,
-		CheckOrigin:     func(r *http.Request) bool { return true },
+		CheckOrigin: func(r *http.Request) bool {
+			origin := r.Header.Get("Origin")
+			if origin == "" {
+				return true
+			}
+			if allowed[origin] {
+				return true
+			}
+			return sameHost(origin, r.Host)
+		},
 	}
 	return &Hub{
 		logger:   logger,
@@ -57,6 +80,32 @@ func NewHub(logger *slog.Logger, secret string, ev *events.Service) *Hub {
 		upgrader: upgrader,
 		rooms:    make(map[uuid.UUID]*Room),
 	}
+}
+
+// sameHost сравнивает хост origin'а с хостом запроса (без схемы и порта по
+// умолчанию): http://192.168.13.66 и запрос на 192.168.13.66 — один и тот же стенд.
+func sameHost(origin, host string) bool {
+	origin = strings.TrimSpace(origin)
+	for _, prefix := range []string{"http://", "https://", "ws://", "wss://"} {
+		if strings.HasPrefix(strings.ToLower(origin), prefix) {
+			origin = origin[len(prefix):]
+			break
+		}
+	}
+	origin = strings.TrimSuffix(origin, "/")
+	return strings.EqualFold(origin, strings.TrimSpace(host))
+}
+
+// parseOrigins разбирает "http://a, http://b" в множество.
+func parseOrigins(s string) map[string]bool {
+	out := map[string]bool{}
+	for _, o := range strings.Split(s, ",") {
+		o = strings.TrimSpace(o)
+		if o != "" {
+			out[o] = true
+		}
+	}
+	return out
 }
 
 // Run — фоновая задача snapshot-периодичности.
@@ -166,7 +215,7 @@ func (h *Hub) addClient(conn *websocket.Conn, userID, projectID uuid.UUID) *clie
 	room.mu.Unlock()
 
 	// отправим последний снапшот подключившемуся
-	if state, err := h.ev.GetYjsState(context.Background(), userID, projectID); err == nil && len(state) > 0 {
+	if state, _, err := h.ev.GetYjsState(context.Background(), userID, projectID); err == nil && len(state) > 0 {
 		select {
 		case c.send <- state:
 		default:

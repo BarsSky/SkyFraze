@@ -1,13 +1,11 @@
 package auth
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
 	"net/http"
-	"strings"
 
 	"github.com/skyfraze/backend/internal/store"
 )
@@ -49,15 +47,28 @@ type userPublic struct {
 	ID          string `json:"id"`
 	Email       string `json:"email"`
 	DisplayName string `json:"display_name"`
+	IsAdmin     bool   `json:"is_admin"`
+}
+
+func publicUser(u *store.User) userPublic {
+	return userPublic{ID: u.ID.String(), Email: u.Email, DisplayName: u.DisplayName, IsAdmin: u.IsAdmin}
+}
+
+// Config — публичная конфигурация входа: как на этой инсталляции пускают новых
+// пользователей и пустая ли она ещё. Нужна странице регистрации, чтобы показать
+// либо форму, либо заявку (а на пустой инсталляции — форму первого администратора).
+func (h *Handler) Config(w http.ResponseWriter, r *http.Request) {
+	mode, bootstrap := h.svc.RegistrationInfo(r.Context())
+	writeJSON(w, http.StatusOK, map[string]any{
+		"registration_mode": mode,
+		"bootstrap":         bootstrap,
+	})
 }
 
 func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
-	bodyBytes, _ := io.ReadAll(r.Body)
-	h.logger.Info("register raw body", "len", len(bodyBytes), "body", string(bodyBytes))
-	r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+	r.Body = io.NopCloser(io.LimitReader(r.Body, 1<<20))
 	var req registerReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.logger.Info("register decode error", "err", err)
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
@@ -67,17 +78,62 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	}
 	u, tok, err := h.svc.Register(r.Context(), req.Email, req.Password, req.DisplayName)
 	if err != nil {
-		if errors.Is(err, ErrEmailTaken) {
+		switch {
+		case errors.Is(err, ErrRegistrationClosed):
+			writeErr(w, http.StatusForbidden, "registration is by request only")
+		case errors.Is(err, ErrEmailTaken):
 			writeErr(w, http.StatusConflict, "email already registered")
-			return
+		default:
+			h.logger.Error("register", "err", err)
+			writeErr(w, http.StatusInternalServerError, "register failed")
 		}
-		h.logger.Error("register", "err", err)
-		writeErr(w, http.StatusInternalServerError, "register failed")
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"user":   userPublic{ID: u.ID.String(), Email: u.Email, DisplayName: u.DisplayName},
+		"user":   publicUser(u),
 		"tokens": toResp(tok),
+	})
+}
+
+type registrationRequestReq struct {
+	Email       string `json:"email"`
+	Password    string `json:"password"`
+	DisplayName string `json:"display_name"`
+	Message     string `json:"message"`
+}
+
+// RequestRegistration — POST /api/auth/registration-requests: заявка на доступ.
+// Отвечает 202 Accepted: аккаунт появится только после решения администратора.
+func (h *Handler) RequestRegistration(w http.ResponseWriter, r *http.Request) {
+	r.Body = io.NopCloser(io.LimitReader(r.Body, 1<<20))
+	var req registrationRequestReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if req.Email == "" || req.Password == "" || req.DisplayName == "" {
+		writeErr(w, http.StatusBadRequest, "email, password, display_name required")
+		return
+	}
+	created, err := h.svc.SubmitRegistrationRequest(r.Context(), req.Email, req.Password, req.DisplayName, req.Message)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrEmailTaken):
+			writeErr(w, http.StatusConflict, "email already registered")
+		case errors.Is(err, ErrInvalidCreds):
+			writeErr(w, http.StatusBadRequest, "email, password, display_name required")
+		case errors.Is(err, store.ErrPendingRequestExists):
+			writeErr(w, http.StatusConflict, "registration request already pending")
+		default:
+			h.logger.Error("registration request", "err", err)
+			writeErr(w, http.StatusInternalServerError, "request failed")
+		}
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"status":     created.Status,
+		"email":      created.Email,
+		"created_at": created.CreatedAt,
 	})
 }
 
@@ -89,16 +145,21 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 	u, tok, err := h.svc.Login(r.Context(), req.Email, req.Password)
 	if err != nil {
-		if errors.Is(err, ErrInvalidCreds) {
+		switch {
+		case errors.Is(err, ErrInvalidCreds):
 			writeErr(w, http.StatusUnauthorized, "invalid credentials")
-			return
+		case errors.Is(err, ErrRequestPending):
+			writeErr(w, http.StatusForbidden, "registration request is pending")
+		case errors.Is(err, ErrRequestRejected):
+			writeErr(w, http.StatusForbidden, "registration request was rejected")
+		default:
+			h.logger.Error("login", "err", err)
+			writeErr(w, http.StatusInternalServerError, "login failed")
 		}
-		h.logger.Error("login", "err", err)
-		writeErr(w, http.StatusInternalServerError, "login failed")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"user":   userPublic{ID: u.ID.String(), Email: u.Email, DisplayName: u.DisplayName},
+		"user":   publicUser(u),
 		"tokens": toResp(tok),
 	})
 }
@@ -132,7 +193,7 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "user not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, userPublic{ID: u.ID.String(), Email: u.Email, DisplayName: u.DisplayName})
+	writeJSON(w, http.StatusOK, publicUser(u))
 }
 
 // helpers
@@ -154,9 +215,4 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 
 func writeErr(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
-}
-
-// emailSanitize — переносим в helper, если пригодится в других местах.
-func emailSanitize(e string) string {
-	return strings.TrimSpace(strings.ToLower(e))
 }

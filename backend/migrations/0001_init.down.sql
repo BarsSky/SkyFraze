@@ -1,6 +1,5 @@
 -- SkyFraze initial schema rollback
-
-BEGIN;
+-- Идемпотентно; транзакцию открывает раннер миграций (platform.RunMigrations).
 
 DROP TRIGGER IF EXISTS trg_events_updated   ON events;
 DROP TRIGGER IF EXISTS trg_projects_updated ON projects;
@@ -15,5 +14,3 @@ DROP TABLE IF EXISTS invitations;
 DROP TABLE IF EXISTS team_memberships;
 DROP TABLE IF EXISTS projects;
 DROP TABLE IF EXISTS users;
-
-COMMIT;

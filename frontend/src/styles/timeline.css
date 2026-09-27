@@ -1,0 +1,431 @@
+/* SkyFraze — сценический таймлайн (fixed-стадия + невидимый трек скролла).
+   Композиция по мотивам references/index-template.html движка scroll-world.
+   Скролл не «везёт» контент: он переключает кадры и текстовые вставки. */
+
+.sf-root {
+  position: relative;
+  --sf-bg: var(--bg);
+  --sf-ink: var(--fg);
+  --sf-ink-soft: var(--fg-muted);
+}
+[data-theme='light'] .sf-root {
+  --sf-bg: #f4f6ec;
+  --sf-ink: #232b1f;
+  --sf-ink-soft: #6e7a5f;
+}
+
+.sf-stage,
+.sf-copylayer,
+.sf-route,
+.sf-chips,
+.sf-hint,
+.sf-progress,
+.sf-topbar { transition: opacity 0.35s var(--sf-ease); }
+
+.sf-root[data-stage='idle'] .sf-stage,
+.sf-root[data-stage='idle'] .sf-copylayer,
+.sf-root[data-stage='idle'] .sf-route,
+.sf-root[data-stage='idle'] .sf-chips,
+.sf-root[data-stage='idle'] .sf-hint,
+.sf-root[data-stage='idle'] .sf-topbar,
+.sf-root[data-stage='idle'] .sf-progress {
+  opacity: 0;
+  /* visibility снимает и попадание в hit-test: под треком живут редакторы,
+     и фиксированные слои стадии не должны перехватывать по ним клики. */
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* ── верхняя панель ─────────────────────────────────────────────────── */
+/* Отступ сверху считается от фактической высоты шапки приложения
+   (--sf-header-h ставит TimelineStage через ResizeObserver): на телефоне шапка
+   выше, и жёсткий top: 54px уводил панель с кнопкой «Редакторы» под неё. */
+.sf-topbar {
+  position: fixed; left: 0; right: 0; top: calc(var(--sf-header-h, 46px) + 8px); z-index: 46;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; padding: 8px clamp(16px, 4vw, 40px);
+  pointer-events: none;
+}
+.sf-topbar > * { pointer-events: auto; }
+.sf-topbar__title {
+  font-weight: 700; font-size: 0.92rem; color: var(--sf-ink);
+  max-width: 30vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.sf-topbar__actions { display: flex; gap: 8px; align-items: center; }
+.sf-nav {
+  display: flex; gap: 4px; padding: 5px; border-radius: 999px;
+  background: var(--surface-glass); border: 1px solid var(--surface-line);
+  backdrop-filter: blur(10px);
+}
+.sf-nav__item {
+  font-size: 0.8rem; font-weight: 600; font-variant-numeric: tabular-nums;
+  color: var(--sf-ink-soft); background: transparent; border: 0;
+  padding: 6px 12px; border-radius: 999px; cursor: pointer;
+  transition: color 0.25s, background 0.25s;
+}
+.sf-nav__item:hover { color: var(--sf-ink); }
+/* Активная пилюля: тёмный текст на пастельном акценте читается, белый — нет */
+.sf-nav__item.is-active { color: var(--sf-bg); background: var(--sf-accent); }
+
+/* ── прогресс ───────────────────────────────────────────────────────── */
+.sf-progress {
+  position: fixed; top: 0; left: 0; right: 0; height: 3px; z-index: 60;
+  background: color-mix(in srgb, var(--sf-accent) 16%, transparent);
+}
+.sf-progress > span {
+  display: block; height: 100%; width: 100%;
+  background: var(--sf-accent);
+  transform-origin: 0 50%; transform: scaleX(0);
+}
+
+/* ── сцена ──────────────────────────────────────────────────────────── */
+.sf-stage {
+  position: fixed; inset: 0; z-index: 10; overflow: hidden;
+  background: var(--sf-bg); pointer-events: none;
+}
+.sf-sky { position: absolute; inset: 0; }
+.sf-sky__grad {
+  position: absolute; inset: -10%;
+  background: linear-gradient(178deg,
+    color-mix(in srgb, var(--sf-accent) 16%, var(--sf-bg)) 0%,
+    var(--sf-bg) 55%,
+    color-mix(in srgb, var(--sf-accent) 8%, var(--sf-bg)) 100%);
+  transition: background 0.8s var(--sf-ease);
+}
+.sf-sky__glow {
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(58% 40% at 72% 18%, color-mix(in srgb, var(--sf-accent) 22%, transparent), transparent 70%),
+    radial-gradient(46% 34% at 50% 55%, color-mix(in srgb, #fff 12%, transparent), transparent 72%);
+}
+[data-theme='light'] .sf-sky__glow {
+  background:
+    radial-gradient(58% 40% at 72% 18%, color-mix(in srgb, var(--sf-accent) 16%, transparent), transparent 70%),
+    radial-gradient(46% 34% at 50% 55%, rgba(255, 255, 255, 0.5), transparent 72%);
+}
+.sf-particles { position: absolute; inset: -6% -2%; }
+.sf-pt {
+  position: absolute; border-radius: 50%; opacity: 0;
+  animation-name: sf-drift; animation-timing-function: linear; animation-iteration-count: infinite;
+}
+.sf-pt--dot {
+  background: radial-gradient(circle at 34% 30%,
+    color-mix(in srgb, var(--sf-accent) 55%, #000),
+    color-mix(in srgb, var(--sf-accent) 25%, transparent) 80%);
+}
+.sf-pt--ring { border: 2px solid color-mix(in srgb, var(--sf-accent) 45%, transparent); }
+@keyframes sf-drift {
+  0%   { opacity: 0; transform: translate3d(0, 10px, 0) scale(0.9); }
+  12%  { opacity: 0.7; }
+  50%  { transform: translate3d(10px, -24px, 0) scale(1); }
+  88%  { opacity: 0.5; }
+  100% { opacity: 0; transform: translate3d(-8px, -52px, 0) scale(1.05); }
+}
+
+.sf-scene {
+  position: absolute; inset: 0; overflow: hidden;
+  transition: opacity 0.45s var(--sf-ease);
+}
+.sf-scene__inner { position: absolute; inset: 0; will-change: transform; }
+.sf-scene__still {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover; object-position: center 42%;
+}
+/* Настроенный «тон» — мягкий градиент вместо картинки */
+.sf-scene__tone { position: absolute; inset: 0; }
+/* Иллюстрация и картинка события занимают кадр целиком (full-bleed): сцена —
+   это фон, а не карточка; копирайт читается за счёт скрима слева. */
+.sf-scene__still--generated { display: block; }
+.sf-scene__still--generated svg { width: 100%; height: 100%; display: block; }
+[data-theme='light'] .sf-scene__still--generated { filter: saturate(0.92) brightness(1.03); }
+
+/* Светлая тема: сцена тёмная, поэтому скрим слева плотнее — копирайт читается,
+   а светлое небо вокруг не бьёт по глазам. */
+[data-theme='light'] .sf-copylayer::before {
+  background: linear-gradient(90deg,
+    var(--sf-bg) 0%,
+    color-mix(in srgb, var(--sf-bg) 94%, transparent) 40%,
+    color-mix(in srgb, var(--sf-bg) 60%, transparent) 68%,
+    transparent 100%);
+}
+[data-theme='light'] .sf-scene__vignette {
+  background: radial-gradient(ellipse at 50% 45%, transparent 45%,
+    color-mix(in srgb, var(--sf-bg) 58%, transparent) 100%);
+}
+.sf-scene__vignette {
+  position: absolute; inset: 0; z-index: 4;
+  background: radial-gradient(ellipse at 50% 45%, transparent 38%,
+    color-mix(in srgb, var(--sf-bg) 84%, transparent) 100%);
+}
+
+/* ── копирайт кадра ─────────────────────────────────────────────────── */
+.sf-copylayer { position: fixed; inset: 0; z-index: 20; pointer-events: none; }
+.sf-copylayer::before {
+  content: ''; position: absolute; inset: 0; width: min(58vw, 780px);
+  background: linear-gradient(90deg,
+    var(--sf-bg) 0%,
+    color-mix(in srgb, var(--sf-bg) 82%, transparent) 34%,
+    color-mix(in srgb, var(--sf-bg) 42%, transparent) 62%,
+    transparent 100%);
+}
+.sf-copy {
+  position: absolute; left: clamp(18px, 5vw, 64px); top: 50%;
+  transform: translateY(-50%); width: min(46vw, 560px);
+  max-height: min(84vh, 860px); overflow-y: auto; overscroll-behavior: contain;
+  padding-right: 6px; scrollbar-width: thin;
+  pointer-events: auto;
+}
+.sf-copy__num {
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 0.8rem; letter-spacing: 0.12em; color: var(--sf-ink-soft);
+}
+.sf-copy__eyebrow {
+  display: block; margin-top: 14px;
+  font-family: var(--sf-font-display); font-weight: 700;
+  font-size: 0.78rem; letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--sf-accent);
+}
+.sf-copy__title {
+  margin: 12px 0 0; font-family: var(--sf-font-display); font-weight: 700;
+  font-size: clamp(1.8rem, 3.9vw, 3.1rem); line-height: 1.06; letter-spacing: -0.01em;
+  color: var(--sf-ink);
+  overflow-wrap: anywhere; word-break: break-word;
+}
+.sf-copy__body {
+  margin: 16px 0 0; font-family: var(--sf-font-body);
+  font-size: clamp(0.98rem, 1.1vw, 1.12rem); line-height: 1.58; max-width: 52ch;
+  color: color-mix(in srgb, var(--sf-ink) 78%, var(--sf-ink-soft));
+  max-height: 34vh; overflow-y: auto; overscroll-behavior: contain;
+  overflow-wrap: anywhere; white-space: pre-wrap;
+}
+.sf-copy__meta { list-style: none; display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0 0; padding: 0; }
+.sf-copy__meta li {
+  font-size: 0.76rem; font-weight: 600; color: var(--sf-ink-soft);
+  background: var(--chip-bg); border: 1px solid var(--surface-line);
+  border-radius: 999px; padding: 5px 11px;
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.sf-copy__gallery { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.sf-copy__shot {
+  padding: 0; border: 1px solid var(--surface-line); border-radius: 8px;
+  background: transparent; cursor: zoom-in; line-height: 0;
+  transition: transform 0.2s, border-color 0.2s;
+}
+.sf-copy__shot:hover { transform: translateY(-2px); border-color: var(--sf-accent); }
+.sf-copy__shot img {
+  width: 84px; height: 62px; object-fit: cover; border-radius: 7px; display: block;
+}
+
+/* Просмотр картинки в полный размер */
+.sf-lightbox {
+  position: fixed; inset: 0; z-index: 80;
+  display: flex; align-items: center; justify-content: center;
+  padding: 4vh 4vw; gap: 12px; flex-direction: column;
+  background: color-mix(in srgb, #000 82%, transparent);
+  cursor: zoom-out;
+}
+.sf-lightbox img {
+  max-width: min(94vw, 1400px); max-height: 82vh;
+  object-fit: contain; border-radius: 10px;
+  box-shadow: 0 40px 120px -40px rgba(0, 0, 0, 0.9);
+}
+.sf-lightbox__close {
+  background: rgba(255, 255, 255, 0.12); color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 999px; padding: 8px 18px; font-size: 0.85rem;
+}
+
+.sf-copy__next {
+  list-style: none; margin: 18px 0 0; padding: 0 0 0 16px;
+  border-left: 2px solid color-mix(in srgb, var(--sf-accent) 30%, transparent);
+  display: flex; flex-direction: column; gap: 4px;
+}
+.sf-copy__next-row {
+  display: flex; align-items: baseline; gap: 8px; width: 100%;
+  background: transparent; border: 0; padding: 4px 6px; border-radius: 6px;
+  color: var(--sf-ink); cursor: pointer; text-align: left;
+  transition: background 0.25s;
+}
+.sf-copy__next-row:hover { background: var(--chip-bg); }
+.sf-copy__next-num {
+  font-family: ui-monospace, Menlo, monospace; font-size: 0.8rem;
+  color: var(--sf-accent); flex: 0 0 auto;
+}
+.sf-copy__next-title {
+  font-size: 0.86rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.sf-copy__nav { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 22px; }
+.sf-btn {
+  font-size: 0.9rem; font-weight: 600; padding: 10px 18px;
+  border-radius: 999px; cursor: pointer; transition: transform 0.2s;
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.sf-btn:hover:not(:disabled) { transform: translateY(-2px); }
+.sf-btn--primary { background: var(--sf-ink); color: var(--sf-bg); border: 0; }
+.sf-btn--ghost {
+  background: transparent; color: var(--sf-ink);
+  border: 1.5px solid color-mix(in srgb, var(--sf-ink) 28%, transparent);
+}
+.sf-btn:disabled { opacity: 0.45; cursor: default; }
+
+/* ── маршрут справа: дерево глав и кадров ───────────────────────────────
+   Карточка с постоянно видимыми подписями. Колонки: маркер на рельсе →
+   номер (моно, выровнен по правому краю) → название (перенос до двух строк).
+   Состояния: is-passed / is-active у главы и кадра. */
+.sf-route {
+  position: fixed; right: clamp(14px, 2.4vw, 30px); top: 50%;
+  transform: translateY(-50%); z-index: 40;
+  width: 300px; max-height: 78vh; overflow-y: auto; overscroll-behavior: contain;
+  scrollbar-width: none;
+  padding: 12px 14px 12px 12px;
+  background: var(--surface-glass); backdrop-filter: blur(12px);
+  border: 1px solid var(--surface-line); border-radius: 16px;
+  box-shadow: 0 14px 40px color-mix(in srgb, var(--sf-ink) 9%, transparent);
+}
+.sf-route::-webkit-scrollbar { display: none; }
+.sf-route__head {
+  margin: 0 0 8px 4px;
+  font-family: var(--sf-font-display, inherit); font-weight: 700;
+  font-size: 0.78rem; letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--sf-ink-soft);
+}
+.sf-route__list { position: relative; display: flex; flex-direction: column; }
+.sf-route__rail {
+  position: absolute; left: 7px; top: 14px; bottom: 14px; width: 2px;
+  border-radius: 2px; background: color-mix(in srgb, var(--sf-accent) 22%, transparent);
+}
+.sf-route__group { position: relative; }
+.sf-route__row {
+  display: grid; grid-template-columns: 16px 56px minmax(0, 1fr);
+  align-items: center; column-gap: 8px;
+  width: 100%; min-height: 34px; padding: 6px 8px 6px 0;
+  background: transparent; border: 0; border-radius: 10px; cursor: pointer;
+  text-align: left; color: var(--sf-ink-soft);
+  font-size: 0.9rem; line-height: 1.35;
+  transition: background 0.2s, color 0.2s;
+}
+.sf-route__row:hover { background: color-mix(in srgb, var(--sf-accent) 12%, transparent); color: var(--sf-ink); }
+.sf-route__dot {
+  justify-self: center; width: 9px; height: 9px; border-radius: 50%;
+  background: color-mix(in srgb, var(--sf-accent) 38%, transparent);
+  transition: transform 0.25s, background 0.25s, box-shadow 0.25s;
+}
+.sf-route__row:hover .sf-route__dot { transform: scale(1.2); background: var(--sf-accent); }
+.sf-route__row.is-passed .sf-route__dot { background: color-mix(in srgb, var(--sf-accent) 70%, transparent); }
+.sf-route__row.is-active .sf-route__dot {
+  background: var(--sf-accent); transform: scale(1.35);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--sf-accent) 20%, transparent);
+}
+.sf-route__num {
+  font-family: ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums;
+  font-size: 0.84rem; text-align: right; color: var(--sf-ink-soft);
+}
+.sf-route__label {
+  /* Переносим длинные названия вместо обрезки: две строки, дальше — многоточие.
+     Полный текст остаётся в title у кнопки. */
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; overflow-wrap: anywhere; font-weight: 500;
+}
+.sf-route__row.is-active { color: var(--sf-ink); background: color-mix(in srgb, var(--sf-accent) 14%, transparent); }
+.sf-route__row.is-active .sf-route__num,
+.sf-route__row.is-active .sf-route__label { color: var(--sf-ink); font-weight: 700; }
+.sf-route__row--sub { min-height: 32px; font-size: 0.86rem; }
+.sf-route__row--sub .sf-route__num { font-size: 0.8rem; }
+.sf-route__row--sub .sf-route__dot { width: 6px; height: 6px; }
+/* Активный кадр внутри активной главы: подсвечиваем номер и маркер, но не
+   рисуем вторую залитую плашку — иначе непонятно, какая строка «главная». */
+.sf-route__row--sub.is-active { background: transparent; }
+.sf-route__row--sub.is-active .sf-route__num { color: var(--sf-accent); font-weight: 700; }
+.sf-route__branch { position: relative; }
+
+/* ── чипы для узких экранов ─────────────────────────────────────────── */
+.sf-chips { display: none; }
+.sf-chip {
+  flex: 0 0 auto; cursor: pointer;
+  background: var(--surface-glass); color: var(--sf-ink-soft);
+  border: 1px solid var(--surface-line); border-radius: 999px;
+  padding: 5px 12px; font-size: 0.76rem; font-weight: 600;
+  max-width: 210px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  backdrop-filter: blur(8px);
+}
+.sf-chip.is-active { color: var(--sf-bg); background: var(--sf-accent); border-color: transparent; }
+.sf-chip--sub { max-width: 92px; font-family: ui-monospace, Menlo, monospace; }
+
+/* ── подсказка и трек ───────────────────────────────────────────────── */
+.sf-hint {
+  position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 30;
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  font-size: 0.76rem; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--sf-ink-soft); text-align: center;
+}
+.sf-hint i {
+  width: 20px; height: 30px; border-radius: 12px; position: relative;
+  border: 2px solid color-mix(in srgb, var(--sf-ink) 30%, transparent);
+}
+.sf-hint i::after {
+  content: ''; position: absolute; left: 50%; top: 6px;
+  width: 4px; height: 6px; border-radius: 2px; background: var(--sf-accent);
+  transform: translateX(-50%); animation: sf-wheel 1.7s ease-in-out infinite;
+}
+@keyframes sf-wheel {
+  0%, 100% { transform: translate(-50%, 0); opacity: 1; }
+  50%      { transform: translate(-50%, 8px); opacity: 0.4; }
+}
+.sf-track { position: relative; width: 100%; }
+
+/* ── адаптив ────────────────────────────────────────────────────────── */
+@media (max-width: 1280px) {
+  .sf-route { display: none; }
+  .sf-nav { display: none; }
+  .sf-chips {
+    display: flex; position: fixed; left: 0; right: 0;
+    /* Шапка приложения + верхняя панель стадии (~50px) + зазор: иначе чипы
+       налезают на панель, и её кнопки перестают нажиматься. */
+    top: calc(var(--sf-header-h, 46px) + 62px); z-index: 45;
+    gap: 6px; padding: 8px 12px; overflow-x: auto; scrollbar-width: none;
+    background: linear-gradient(to bottom, color-mix(in srgb, var(--sf-bg) 92%, transparent), transparent);
+  }
+  .sf-chips::-webkit-scrollbar { display: none; }
+}
+
+@media (max-width: 860px) {
+  .layout header .muted { display: none; }
+  .layout header button { white-space: nowrap; padding: 6px 10px; font-size: 12px; }
+  .sf-topbar__title { display: none; }
+  .sf-topbar__actions { gap: 6px; }
+  .sf-topbar__actions a { display: none; }
+  .sf-chips { top: calc(var(--sf-header-h, 46px) + 62px); }
+  .sf-copylayer::before {
+    width: 100%; height: 64%; top: auto; bottom: 0;
+    background: linear-gradient(0deg, var(--sf-bg) 10%,
+      color-mix(in srgb, var(--sf-bg) 72%, transparent) 48%, transparent 100%);
+  }
+  .sf-copy {
+    left: clamp(16px, 5vw, 32px); right: clamp(16px, 5vw, 32px);
+    top: auto; bottom: calc(clamp(74px, 16dvh, 132px) + env(safe-area-inset-bottom));
+    transform: none; width: auto; max-width: 560px; max-height: 66vh;
+  }
+  .sf-copy__title { font-size: clamp(1.7rem, 7vw, 2.5rem); }
+  .sf-copy__body { max-width: none; max-height: 26vh; }
+  .sf-copy__nav .sf-btn { flex: 1 1 auto; text-align: center; }
+  .sf-hint { bottom: calc(18px + env(safe-area-inset-bottom)); }
+  .sf-hint span { white-space: nowrap; font-size: 0.76rem; letter-spacing: 0.1em; }
+  .sf-scene__still { object-position: center 46%; }
+  /* Мобильные цели нажатия: чипы и превью вложенных не меньше 34px */
+  .sf-chip {
+    min-height: 34px;
+    display: inline-flex;
+    align-items: center;
+    padding: 6px 14px;
+  }
+  .sf-copy__next-row { min-height: 34px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sf-pt { display: none; }
+  .sf-hint i::after { animation: none; }
+  .sf-scene__inner { will-change: auto; }
+  .sf-btn:hover:not(:disabled) { transform: none; }
+}

@@ -1,0 +1,3 @@
+[submodule "deps/scroll-world"]
+	path = deps/scroll-world
+	url = https://github.com/oso95/scroll-world.git

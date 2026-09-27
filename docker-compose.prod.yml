@@ -1,0 +1,107 @@
+# SkyFraze — конфигурация для сервера (production-like).
+#
+# Отличия от docker-compose.yml (который рассчитан на локальную разработку):
+#   * Postgres НЕ публикуется наружу. На сервере 5432 уже может быть занят
+#     системным postgres, да и база не должна быть доступна извне;
+#   * порт UI задаётся переменной SKYFRAZE_PORT (по умолчанию 80), чтобы можно
+#     было увести приложение на другой порт, если 80 занят (например, mailcow);
+#   * всё с restart: unless-stopped и без публикации отладочного порта 5173.
+#
+# Запуск:
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# .env рядом (см. .env.example):
+#   JWT_SECRET=...            обязателен
+#   ADMIN_EMAILS=you@example.com
+#   REGISTRATION_MODE=request
+#   SKYFRAZE_PORT=80
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: skyfraze-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: skyfraze
+      POSTGRES_PASSWORD: skyfraze_dev
+      POSTGRES_DB: skyfraze
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U skyfraze -d skyfraze"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - skyfraze-net
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        # Версия и коммит попадают в бинарь и показываются в админке («Обновление»)
+        VERSION: ${SKYFRAZE_VERSION:-dev}
+        COMMIT: ${SKYFRAZE_COMMIT:-}
+    image: skyfraze-backend:latest
+    container_name: skyfraze-backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://skyfraze:skyfraze_dev@postgres:5432/skyfraze?sslmode=disable
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      STORAGE_DIR: /app/storage
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost}
+      LISTEN: ":8080"
+      APP_ENV: production
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+      REGISTRATION_MODE: ${REGISTRATION_MODE:-request}
+      # Механизм обновления: откуда брать релизы и где общий с хостом каталог заявок
+      UPDATE_REPO: ${UPDATE_REPO:-}
+      UPDATE_TOKEN: ${UPDATE_TOKEN:-}
+      UPDATE_CHANNEL: ${UPDATE_CHANNEL:-stable}
+      UPDATE_STATE_DIR: /app/update-state
+    volumes:
+      - assets:/app/storage
+      # Каталог состояния обновления: админка пишет request.json, хост-скрипт —
+      # status.json и update.log (см. deploy/skyfraze-update.sh)
+      - ./update-state:/app/update-state
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+    networks:
+      - skyfraze-net
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: skyfraze-frontend:latest
+    container_name: skyfraze-frontend
+    restart: unless-stopped
+    ports:
+      - "${SKYFRAZE_PORT:-80}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    networks:
+      - skyfraze-net
+
+volumes:
+  pgdata:
+  assets:
+
+networks:
+  skyfraze-net:
+    driver: bridge

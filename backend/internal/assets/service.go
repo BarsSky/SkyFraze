@@ -91,6 +91,28 @@ func (s *Service) Open(ctx context.Context, actorID, assetID uuid.UUID) (io.Read
 	return rc, a, nil
 }
 
+// OpenPublic — публичное чтение ассета: доступно без авторизации, но ТОЛЬКО если
+// проект, которому принадлежит файл, опубликован (projects.is_public). Это тот же
+// контур, что и публичная история: снятие с публикации закрывает и картинки.
+func (s *Service) OpenPublic(ctx context.Context, assetID uuid.UUID) (io.ReadCloser, *store.Asset, error) {
+	a, err := s.store.GetAsset(ctx, assetID)
+	if err != nil {
+		return nil, nil, err
+	}
+	p, err := s.store.GetProject(ctx, a.ProjectID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !p.IsPublic {
+		return nil, nil, store.ErrNotFound
+	}
+	rc, err := s.obj.Get(ctx, a.S3Key)
+	if err != nil {
+		return nil, nil, err
+	}
+	return rc, a, nil
+}
+
 func (s *Service) List(ctx context.Context, actorID, projectID uuid.UUID) ([]store.Asset, error) {
 	if _, err := s.proj.Get(ctx, actorID, projectID); err != nil {
 		return nil, err

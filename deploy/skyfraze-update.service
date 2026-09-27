@@ -1,0 +1,16 @@
+[Unit]
+Description=SkyFraze: применить заявку на обновление из админки
+Documentation=https://github.com/BarsSky/SkyFraze
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Каталог установки SkyFraze (там же лежит .env и docker-compose.prod.yml)
+WorkingDirectory=/home/skyadmin/skyfraze
+Environment=SKYFRAZE_DIR=/home/skyadmin/skyfraze
+Environment=SKYFRAZE_STATE_DIR=/home/skyadmin/skyfraze/update-state
+ExecStart=/home/skyadmin/skyfraze/deploy/skyfraze-update.sh
+# Обновление может занять несколько минут (сборка Go + Vite)
+TimeoutStartSec=1800
+# Скрипт сам пишет статус в update-state/; systemd только запускает его.

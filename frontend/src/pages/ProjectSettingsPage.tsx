@@ -71,8 +71,8 @@ export function ProjectSettingsPage() {
               value={role}
               onChange={(e) => setRole(e.target.value as 'editor' | 'viewer')}
               style={{
-                background: '#0d1117', color: '#e6edf3',
-                border: '1px solid #30363d', borderRadius: 6, padding: '8px 10px',
+                background: 'var(--bg)', color: 'var(--fg)',
+                border: '1px solid var(--border)', borderRadius: 6, padding: '8px 10px',
                 minWidth: 110,
               }}
             >
@@ -86,7 +86,7 @@ export function ProjectSettingsPage() {
         {lastInvite && (
           <div className="card" style={{ marginTop: 12 }}>
             <p>Скопируйте и поделитесь этой ссылкой (одноразовая, {lastInvite.expires_at.slice(0, 10)}):</p>
-            <code style={{ wordBreak: 'break-all', display: 'block', padding: 8, background: '#0d1117' }}>
+            <code style={{ wordBreak: 'break-all', display: 'block', padding: 8, background: 'var(--bg)' }}>
               {window.location.origin}/invitations/{lastInvite.token}
             </code>
           </div>

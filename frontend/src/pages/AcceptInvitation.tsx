@@ -93,7 +93,7 @@ export function AcceptInvitation() {
   // status === 'ok'
   return (
     <div style={{ maxWidth: 480, margin: '80px auto', padding: 24, textAlign: 'center' }}>
-      <h2 style={{ color: '#3fb950' }}>✓ Приглашение принято!</h2>
+      <h2 style={{ color: 'var(--success)' }}>✓ Приглашение принято!</h2>
       <p className="muted" style={{ marginBottom: 16 }}>
         {user ? `Добро пожаловать в проект, ${user.display_name}!` : 'Приглашение успешно принято'}
       </p>
