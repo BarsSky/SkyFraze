@@ -284,6 +284,11 @@ docker compose -f docker-compose.prod.yml down      # остановить (да
 
 ```bash
 cd frontend && DEPLOY_URL=http://192.168.13.66 npx tsx tests/deployed-smoke.ts
+
+# Проверка мобильного сценария на развёрнутом стенде (незащищённый контекст,
+# создание событий, кнопки меню и редакторов). Требует временного пользователя:
+# на стенде временно включается открытая регистрация, затем пользователь удаляется.
+cd frontend && REMOTE_URL=http://192.168.13.66 TEMP_EMAIL=you@example.com npx tsx tests/remote-mobile-check.ts
 ```
 
 ### Обновление стенда из GitHub

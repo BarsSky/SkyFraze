@@ -1,0 +1,171 @@
+// Проверка развёрнутого стенда (192.168.13.66) с телефона: проект открывается,
+// элементы меню/редактирования на месте, и создание события работает в
+// незащищённом контексте (http://IP → crypto.randomUUID недоступен).
+import { chromium, request } from 'playwright'
+import * as fs from 'fs'
+
+const BASE = process.env.REMOTE_URL ?? 'http://192.168.13.66'
+const EMAIL = process.env.TEMP_EMAIL!
+const PASS = 'hunter22!'
+const OUT = 'C:/Projects/SkyFraze/_mobile_diag'
+fs.mkdirSync(OUT, { recursive: true })
+
+const problems: string[] = []
+const notes: string[] = []
+const ok = (label: string, cond: boolean, detail = '') => {
+  if (cond) {
+    notes.push(label)
+    console.log(`  ok   ${label}`)
+  } else {
+    problems.push(`${label}${detail ? ' — ' + detail : ''}`)
+    console.log(`  FAIL ${label}${detail ? ' — ' + detail : ''}`)
+  }
+}
+
+const api = await request.newContext()
+// Пользователь создаётся на время проверки (на стенде открыт режим регистрации),
+// затем удаляется отдельным шагом.
+const reg = await api.post(`${BASE}/api/auth/register`, {
+  data: { email: EMAIL, password: PASS, display_name: 'Mobile Check' },
+})
+let token: string
+if (reg.status() === 201) {
+  token = ((await reg.json()) as { tokens: { access: string } }).tokens.access
+} else {
+  const login = await api.post(`${BASE}/api/auth/login`, { data: { email: EMAIL, password: PASS } })
+  if (!login.ok()) throw new Error(`register ${reg.status()}, login ${login.status()}`)
+  token = ((await login.json()) as { tokens: { access: string } }).tokens.access
+}
+const auth = { Authorization: `Bearer ${token}` }
+
+// Проект с главой и под-событием — как у обычного пользователя
+const title = `Mobile check ${Date.now()}`
+const created = await api.post(`${BASE}/api/projects`, {
+  headers: auth,
+  data: { title, description: 'проверка мобильного вида' },
+})
+const projectId = ((await created.json()) as { id: string }).id
+const chapter = crypto.randomUUID()
+await api.put(`${BASE}/api/projects/${projectId}/events/tree`, {
+  headers: auth,
+  data: [
+    { id: chapter, parent_id: null, position: 0, title: 'Глава для телефона', body: 'Текст главы, чтобы копирайт был непустым.' },
+  ],
+})
+
+const browser = await chromium.launch()
+const ctx = await browser.newContext({
+  viewport: { width: 390, height: 844 },
+  deviceScaleFactor: 2,
+  isMobile: true,
+  hasTouch: true,
+  userAgent:
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+})
+const page = await ctx.newPage()
+const errors: string[] = []
+page.on('pageerror', (e) => errors.push('pageerror: ' + e.message))
+// Смотрим, что клиент отправляет в проекцию дерева и что отвечает сервер.
+page.on('request', (r) => {
+  if (r.url().includes('/events/tree')) console.log('  → PUT tree:', String(r.postData()).slice(0, 240))
+})
+page.on('response', async (r) => {
+  if (r.url().includes('/events/tree')) console.log('  ← tree:', r.status(), (await r.text().catch(() => '')).slice(0, 140))
+})
+page.on('console', (m) => {
+  if (m.type() === 'error') errors.push('console: ' + m.text().slice(0, 140))
+})
+
+await page.goto(`${BASE}/login`, { waitUntil: 'networkidle' })
+const secure = (await page.evaluate(`window.isSecureContext`)) as boolean
+const hasRandomUUID = (await page.evaluate(`typeof crypto.randomUUID === 'function'`)) as boolean
+ok('незащищённый контекст (как на телефоне)', secure === false, `isSecureContext=${secure}`)
+ok('crypto.randomUUID отсутствует', hasRandomUUID === false, `randomUUID=${hasRandomUUID}`)
+
+await page.fill('input[type=email]', EMAIL)
+await page.fill('input[type=password]', PASS)
+await page.click('button[type=submit]')
+await page.waitForURL(/projects/, { timeout: 20000 })
+
+await page.goto(`${BASE}/projects/${projectId}`, { waitUntil: 'networkidle' })
+await page.waitForSelector('.sf-root', { timeout: 25000 })
+await page.waitForTimeout(2500)
+
+const view = (await page.evaluate(`(() => {
+  const q = (s) => document.querySelector(s)
+  const box = (s) => { const el = q(s); if (!el) return null; const r = el.getBoundingClientRect(); const cs = getComputedStyle(el); return { y: Math.round(r.y), h: Math.round(r.height), vis: cs.visibility, op: Number(cs.opacity).toFixed(1) } }
+  const btn = Array.from(document.querySelectorAll('.sf-topbar__actions button, .sf-topbar__actions a')).find((el) => /Редактор/i.test(el.textContent || ''))
+  let hit = null
+  if (btn) { const r = btn.getBoundingClientRect(); const t = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2); hit = t ? (btn.contains(t) ? 'button' : (t.className || t.tagName)) : 'none' }
+  return {
+    stage: q('.sf-root')?.getAttribute('data-stage'),
+    header: box('.layout header'),
+    topbar: box('.sf-topbar'),
+    copy: box('.sf-copy'),
+    chips: box('.sf-chips'),
+    editors: !!q('[data-editor-panel]'),
+    editorsButtonHit: hit,
+    title: q('.sf-copy__title')?.textContent || '',
+    text: document.body.innerText.replace(/\\s+/g, ' ').slice(0, 120),
+  }
+})()`)) as Record<string, unknown>
+
+console.log('  состояние:', JSON.stringify(view))
+ok('страница проекта не пустая', String(view.text).includes('Глава для телефона'), String(view.text).slice(0, 80))
+ok('стадия активна (не idle)', view.stage === 'active', String(view.stage))
+ok('панель стадии видна', (view.topbar as { vis: string })?.vis === 'visible', JSON.stringify(view.topbar))
+ok('копирайт виден', (view.copy as { vis: string })?.vis === 'visible', JSON.stringify(view.copy))
+ok('кнопка «Редакторы» нажимается', view.editorsButtonHit === 'button', String(view.editorsButtonHit))
+ok('редакторы в DOM', view.editors === true)
+
+// Создание события на телефоне: здесь раньше падал crypto.randomUUID.
+// «+ подсобытие» создаёт ребёнка у ВЫБРАННОГО события, поэтому сначала выбираем главу.
+await page.evaluate(`(() => document.querySelector('[data-editor-panel]')?.scrollIntoView({ behavior: 'instant', block: 'start' }))()`)
+await page.waitForTimeout(1200)
+const chapterRow = page.locator('.ed-row', { hasText: 'Глава для телефона' }).first()
+if (await chapterRow.count()) {
+  await chapterRow.click()
+  await page.waitForTimeout(800)
+}
+const addSub = page.locator('.ed-toolbar button:has-text("+ подсобытие")')
+if (await addSub.count()) {
+  const before = (await page.evaluate(`(() => ({
+    rows: document.querySelectorAll('.ed-row').length,
+    crdt: window.__yjsDoc ? window.__yjsDoc.getArray('events').length : -1,
+    disabled: Array.from(document.querySelectorAll('.ed-toolbar button')).map((b) => (b.textContent || '').trim() + ':' + (b.disabled ? 'off' : 'on')),
+  }))()`)) as Record<string, unknown>
+  console.log('  до клика:', JSON.stringify(before))
+  await addSub.first().click()
+  await page.waitForTimeout(8000)
+  const after = (await page.evaluate(`(() => ({
+    rows: document.querySelectorAll('.ed-row').length,
+    crdt: window.__yjsDoc ? window.__yjsDoc.getArray('events').length : -1,
+    note: document.querySelector('[data-sync-note]')?.textContent || '',
+    body: document.body.innerText.replace(/\\s+/g, ' ').slice(-160),
+  }))()`)) as Record<string, unknown>
+  console.log('  после клика:', JSON.stringify(after))
+  // /events отдаёт ВЛОЖЕННОЕ дерево: под-событие лежит в children корня.
+  const tree = (await (await api.get(`${BASE}/api/projects/${projectId}/events`, { headers: auth })).json()) as Array<{
+    title: string
+    children?: unknown[]
+  }>
+  const total = tree.reduce((n, node) => n + 1 + (node.children?.length ?? 0), 0)
+  ok(
+    'создание под-события на телефоне работает',
+    total >= 2 && (tree[0]?.children?.length ?? 0) >= 1,
+    `корней: ${tree.length}, всего с потомками: ${total}, в CRDT: ${after.crdt}`,
+  )
+} else {
+  problems.push('нет кнопки «+ подсобытие» в редакторах')
+}
+
+await page.screenshot({ path: `${OUT}/remote-mobile-project.png` })
+ok('нет ошибок в консоли', errors.length === 0, errors.slice(0, 3).join(' | '))
+
+// уборка
+await api.delete(`${BASE}/api/projects/${projectId}`, { headers: auth })
+await api.dispose()
+await browser.close()
+
+console.log(`\nошибок: ${problems.length}, проверок: ${notes.length}`)
+process.exit(problems.length ? 1 : 0)
