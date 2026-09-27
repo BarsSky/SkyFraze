@@ -453,4 +453,4 @@ ONLY_FUNCTIONAL=1 npx tsx ../.dsh/skills/ui-visual-audit/scripts/visual-audit.ts
 
 ## Лицензия
 
-TBD
+TBD (см. также [CHANGELOG.md](CHANGELOG.md) — историю изменений по версиям)

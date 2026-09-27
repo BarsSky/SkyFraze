@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -148,7 +149,10 @@ func main() {
 	// health
 	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"status":"ok"}`))
+		// Версия в ответе нужна мониторингу и скрипту обновления: по ней видно,
+		// какая ревизия реально работает, не заходя в админку.
+		payload := fmt.Sprintf(`{"status":"ok","version":%q,"commit":%q}`, version, commit)
+		w.Write([]byte(payload))
 	})
 	r.Get("/ready", func(w http.ResponseWriter, r *http.Request) {
 		pctx, pcancel := context.WithTimeout(r.Context(), 2*time.Second)
