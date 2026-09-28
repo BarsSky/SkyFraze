@@ -8,9 +8,19 @@ Wants=network-online.target
 Type=oneshot
 # Каталог установки SkyFraze (там же лежит .env и docker-compose.prod.yml)
 WorkingDirectory=/home/skyadmin/skyfraze
+# Запуск от владельца каталога, а не от root: git отказывается работать с
+# репозиторием, владелец которого — другой пользователь («detected dubious
+# ownership»), и обновление из админки падало на `git fetch`. Установщик
+# подставляет сюда настоящего пользователя (см. install-update-units.sh).
+User=skyadmin
+Group=skyadmin
 Environment=SKYFRAZE_DIR=/home/skyadmin/skyfraze
 Environment=SKYFRAZE_STATE_DIR=/home/skyadmin/skyfraze/update-state
-ExecStart=/home/skyadmin/skyfraze/deploy/skyfraze-update.sh
+# Запускаем через bash, а не «./скрипт»: право на исполнение теряется при
+# `git checkout` (в репозитории файл хранится как 644), и обновление из админки
+# падало с 203/EXEC «Permission denied». Явный интерпретатор от режима файла
+# не зависит.
+ExecStart=/bin/bash /home/skyadmin/skyfraze/deploy/skyfraze-update.sh
 # Обновление может занять несколько минут (сборка Go + Vite)
 TimeoutStartSec=1800
 # Скрипт сам пишет статус в update-state/; systemd только запускает его.
