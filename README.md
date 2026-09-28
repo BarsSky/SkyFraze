@@ -12,6 +12,10 @@
 |---|---|
 | ![Админка](docs/screenshots/admin.png) | ![Мобильный вид](docs/screenshots/mobile-project.png) |
 
+| Соавторы и специализации | Соавтору — только чтение |
+|---|---|
+| ![Соавторы](docs/screenshots/coauthors.png) | ![Только чтение](docs/screenshots/coauthor-readonly.png) |
+
 ## Что умеет
 
 - Проекты (сюжеты) с владельцем и командой

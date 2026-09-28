@@ -41,6 +41,8 @@
   flex-direction: column;
   gap: 4px;
   min-width: 0;
+  /* Колонка с именем растягивается, но НЕ отбирает ширину у колонки действий:
+     иначе подпись переключателя сжималась в столбик по одному слову. */
   flex: 1 1 260px;
 }
 .coauthors__nick {
@@ -49,8 +51,8 @@
   color: var(--fg-muted);
 }
 .coauthors__crafts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
-.coauthors__actions { display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
-.coauthors__actions--stack { align-items: flex-start; min-width: 240px; }
+.coauthors__actions { display: flex; flex-direction: column; gap: 8px; align-items: flex-end; flex: 0 0 auto; }
+.coauthors__actions--stack { align-items: flex-start; min-width: 260px; max-width: 360px; }
 .coauthors__toggle {
   display: flex;
   gap: 8px;
@@ -59,7 +61,15 @@
   cursor: pointer;
   max-width: 320px;
 }
-.coauthors__toggle input { margin-top: 3px; flex: 0 0 auto; }
+/* Чекбокс переключателя: глобальное правило `input { width: 100% }` растягивало
+   его на всю строку, и подпись выдавливалась за край, ломаясь по слову в строку.
+   Флажку нужна своя ширина, а не ширина поля ввода. */
+.coauthors__toggle input {
+  width: auto;
+  padding: 0;
+  margin-top: 3px;
+  flex: 0 0 auto;
+}
 .coauthors__badge {
   display: inline-block;
   margin-left: 8px;
