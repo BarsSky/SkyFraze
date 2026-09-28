@@ -87,6 +87,10 @@ const VIEWPORTS = [
   { width: 1440, height: 900, tag: 'desktop' },
   { width: 1024, height: 768, tag: 'tablet' },
   { width: 390, height: 844, tag: 'mobile' },
+  // Маленький телефон (4", iPhone SE): именно здесь вылезала шапка, из-за чего
+  // браузер расширял layout viewport и масштабировал страницу — фиксированные
+  // слои стадии уезжали за экран. Без этого вьюпорта дефект не ловился.
+  { width: 320, height: 568, tag: 'mobile-small' },
 ]
 const THEMES = ['dark', 'light'] as const
 

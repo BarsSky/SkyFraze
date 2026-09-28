@@ -46,6 +46,11 @@
 
 * { box-sizing: border-box; }
 
+/* Страховка от случайного горизонтального выезда: на мобильном он приводит к
+   расширению layout viewport и масштабированию страницы (см. комментарий у шапки).
+   `clip` (а не `hidden`) не создаёт скролл-контейнер и не влияет на fixed-слои. */
+html { overflow-x: clip; }
+
 html, body, #root {
   margin: 0;
   padding: 0;
@@ -154,18 +159,22 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
     min-height: 34px;
   }
   .auth-links { gap: 10px; }
-  /* На телефоне шапка должна оставаться в одну строку: при переносе она занимает
-     ~150px, и верхняя панель стадии (кнопка «Редакторы») уезжает под неё.
-     Селектор с элементом — иначе правило перебивает `.layout header a` выше. */
+  /* Шапка должна УМЕЩАТЬСЯ в ширину экрана. Если она вылезает (а на 320px при
+     запрете переноса это ровно так), мобильный браузер расширяет layout viewport
+     и масштабирует страницу целиком — после чего фиксированные слои стадии,
+     посчитанные от vh, оказываются за пределами видимой области: «элементы
+     уходят за экран». Поэтому перенос разрешён, а высоту шапки стадия измеряет
+     сама (--sf-header-h) и больше не наезжает на неё. */
   .layout header {
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
+    row-gap: 4px;
     gap: 8px;
     padding: 8px 12px;
   }
   .layout header > .row { min-width: 0; }
-  .layout header > .row:first-child { flex: 1 1 auto; }
-  .auth-links { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
-  .auth-links::-webkit-scrollbar { display: none; }
+  .layout header > .row:first-child { flex: 1 1 auto; flex-wrap: wrap; }
+  .layout header > .row:last-child { flex: 0 1 auto; flex-wrap: wrap; justify-content: flex-end; }
+  .auth-links { flex-wrap: wrap; }
   .layout header a.header-nav__projects { display: none; }
   /* Ссылки в тексте («Регистрация», «Публичные истории») — тоже цели нажатия:
      без min-height они дают ~21px и по ним не попасть пальцем. */
