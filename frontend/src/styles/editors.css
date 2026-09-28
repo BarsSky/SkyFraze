@@ -79,6 +79,13 @@
   max-width: 260px;
 }
 .ed-assets__item img { width: 48px; height: 48px; object-fit: cover; border-radius: 6px; }
+/* Миниатюра-кнопка: клик открывает полноэкранный просмотр со свайпом. */
+.ed-assets__preview {
+  padding: 0; border: 1px solid transparent; border-radius: 6px;
+  background: transparent; line-height: 0; cursor: zoom-in;
+  transition: border-color 0.2s, transform 0.2s;
+}
+.ed-assets__preview:hover { border-color: var(--accent, #6fb3c9); transform: translateY(-1px); }
 .ed-assets__file {
   width: 48px; height: 48px; display: grid; place-items: center;
   border-radius: 6px; background: var(--bg); color: var(--fg-muted); font-size: 12px;

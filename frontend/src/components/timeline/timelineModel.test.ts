@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import {
   FRAME_WEIGHT_CHAPTER,
+  FRAME_WEIGHT_IMAGE,
   FRAME_WEIGHT_STEP,
   FRAME_WEIGHT_SUBSTEP,
   TRANSITION_BAND,
   buildTimelineModel,
   chapterNumber,
+  eventFrames,
+  eventPosition,
+  frameLabel,
   resolveScrollState,
   stepNumber,
   unitsBeforeChapter,
@@ -76,18 +80,19 @@ describe('buildTimelineModel', () => {
       ev('s2', 'c', 'Свой тон', 2, { bgKind: 'tone', bgTone: '#123456' }),
       ev('s3', 'c', 'Своя картинка', 3, { bgKind: 'asset', assets: [asset('a'), asset('b')], bgAssetId: 'b' }),
     ]
-    const chapter = buildTimelineModel(items, ['#000000']).chapters[0]
-    expect(chapter.frames[0].background.kind).toBe('asset')
-    expect(chapter.frames[0].background.assetUrl).toBe('/api/assets/img1')
+    // Картинки событий добавляют свои кадры, поэтому смотрим только события.
+    const events = eventFrames(buildTimelineModel(items, ['#000000']).chapters[0].frames)
+    expect(events[0].background.kind).toBe('asset')
+    expect(events[0].background.assetUrl).toBe('/api/assets/img1')
     // наследование картинки главы
-    expect(chapter.frames[1].background.kind).toBe('asset')
-    expect(chapter.frames[1].background.assetUrl).toBe('/api/assets/img1')
+    expect(events[1].background.kind).toBe('asset')
+    expect(events[1].background.assetUrl).toBe('/api/assets/img1')
     // свой тон
-    expect(chapter.frames[2].background).toEqual({ kind: 'tone', tone: '#123456' })
+    expect(events[2].background).toEqual({ kind: 'tone', tone: '#123456' })
     // тон красит фон, но не текст: акцент остаётся из палитры темы
-    expect(chapter.frames[2].accent).toBe('#000000')
+    expect(events[2].accent).toBe('#000000')
     // выбранная картинка из вложений
-    expect(chapter.frames[3].background.assetUrl).toBe('/api/assets/b')
+    expect(events[3].background.assetUrl).toBe('/api/assets/b')
   })
 
   it('без настроек фон — процедурный (generated) с тоном главы', () => {
@@ -101,6 +106,75 @@ describe('buildTimelineModel', () => {
     expect(model.chapters).toEqual([])
     expect(model.totalWeight).toBe(0)
     expect(model.frameCount).toBe(0)
+  })
+})
+
+describe('кадры-картинки', () => {
+  const pdf: StageAsset = { id: 'doc', url: '/api/assets/doc', mime: 'application/pdf' }
+  const items: StageEvent[] = [
+    ev('c', null, 'Глава', 0, { assets: [asset('i1'), pdf, asset('i2')] }),
+    ev('s1', 'c', 'Под-событие', 1),
+    ev('s2', 'c', 'Второе под-событие', 2, { assets: [asset('i3')] }),
+  ]
+
+  it('картинки события идут своими кадрами до его под-событий', () => {
+    const chapter = buildTimelineModel(items, ['#111']).chapters[0]
+    expect(chapter.frames.map((f) => f.number)).toEqual(['01', '01·1', '01·2', '01.1', '01.2', '01.2·1'])
+    expect(chapter.frames.map((f) => f.kind)).toEqual(['event', 'image', 'image', 'event', 'event', 'image'])
+    // не-картинка (pdf) кадром не становится
+    expect(chapter.frames.filter((f) => f.kind === 'image').map((f) => f.image?.id)).toEqual(['i1', 'i2', 'i3'])
+  })
+
+  it('кадр-картинка показывает саму картинку целиком и весит меньше под-события', () => {
+    const chapter = buildTimelineModel(items, ['#111']).chapters[0]
+    const photo = chapter.frames[1]
+    expect(photo.background).toEqual({ kind: 'asset', assetUrl: '/api/assets/i1', tone: '#111' })
+    expect(photo.weight).toBe(FRAME_WEIGHT_IMAGE)
+    expect(photo.weight).toBeLessThan(FRAME_WEIGHT_SUBSTEP)
+    expect(photo.imageIndex).toBe(0)
+    expect(photo.imageCount).toBe(2)
+    expect(photo.ownerNumber).toBe('01')
+    // ссылка на событие сохраняется: по flatIndex редактор находит событие
+    expect(photo.flatIndex).toBe(0)
+  })
+
+  it('прокрутка проходит картинки по очереди и только потом вложенное событие', () => {
+    const model = buildTimelineModel(items, ['#111'])
+    const seen: string[] = []
+    const step = model.totalWeight / 600
+    for (let p = 0; p <= model.totalWeight; p += step) {
+      const state = resolveScrollState(model, p)
+      const mark = state.frame ? `${state.frame.kind}:${state.frame.number}` : ''
+      if (seen[seen.length - 1] !== mark) seen.push(mark)
+    }
+    expect(seen).toEqual([
+      'event:01',
+      'image:01·1',
+      'image:01·2',
+      'event:01.1',
+      'event:01.2',
+      'image:01.2·1',
+    ])
+  })
+
+  it('счётчики и подписи говорят про события, а не про картинки', () => {
+    const chapter = buildTimelineModel(items, ['#111']).chapters[0]
+    expect(eventFrames(chapter.frames).map((f) => f.number)).toEqual(['01', '01.1', '01.2'])
+    expect(eventPosition(chapter.frames, chapter.frames[0])).toEqual({ index: 1, total: 3 })
+    expect(eventPosition(chapter.frames, chapter.frames[4])).toEqual({ index: 3, total: 3 })
+    expect(frameLabel(chapter.frames[0])).toBe('01')
+    expect(frameLabel(chapter.frames[1])).toBe('фото 1/2')
+    expect(frameLabel(chapter.frames[5])).toBe('фото 1/1')
+  })
+
+  it('уникальные id кадров: одна картинка у двух событий не сталкивается', () => {
+    const shared = asset('same')
+    const model = buildTimelineModel(
+      [ev('c', null, 'Глава', 0, { assets: [shared] }), ev('s', 'c', 'Под', 1, { assets: [shared] })],
+      ['#111'],
+    )
+    const ids = model.chapters[0].frames.map((f) => f.id)
+    expect(new Set(ids).size).toBe(ids.length)
   })
 })
 

@@ -1,4 +1,4 @@
-import type { TimelineChapter } from '../timelineModel'
+import { eventFrames, type TimelineChapter } from '../timelineModel'
 
 interface Props {
   chapters: TimelineChapter[]
@@ -27,6 +27,7 @@ export function RouteTree({ chapters, activeChapter, activeFrame, onChapter, onF
         {chapters.map((chapter, ci) => {
           const isActive = ci === activeChapter
           const state = isActive ? ' is-active' : ci < activeChapter ? ' is-passed' : ''
+          const events = eventFrames(chapter.frames)
           return (
             <div className="sf-route__group" key={chapter.id}>
               <button
@@ -41,22 +42,28 @@ export function RouteTree({ chapters, activeChapter, activeFrame, onChapter, onF
                 <span className="sf-route__label">{chapter.title || `Глава ${chapter.number}`}</span>
               </button>
 
-              {isActive && chapter.frames.length > 1 && (
+              {isActive && events.length > 1 && (
                 <div className="sf-route__branch">
-                  {chapter.frames.map((frame, fi) => (
-                    <button
-                      key={frame.id}
-                      type="button"
-                      className={fi === activeFrame ? 'sf-route__row sf-route__row--sub is-active' : 'sf-route__row sf-route__row--sub'}
-                      onClick={() => onFrame(ci, fi)}
-                      aria-current={fi === activeFrame ? 'true' : undefined}
-                      title={`${frame.number} ${fi === 0 ? 'глава' : frame.title}`}
-                    >
-                      <i className="sf-route__dot" aria-hidden />
-                      <span className="sf-route__num">{frame.number}</span>
-                      <span className="sf-route__label">{fi === 0 ? 'глава' : frame.title}</span>
-                    </button>
-                  ))}
+                  {/* В маршруте только события: кадры-картинки — иллюстрации
+                      события, а не отдельные пункты дерева. Прыжок всё равно
+                      идёт по индексу в полном списке кадров главы. */}
+                  {events.map((frame) => {
+                    const fi = chapter.frames.indexOf(frame)
+                    return (
+                      <button
+                        key={frame.id}
+                        type="button"
+                        className={fi === activeFrame ? 'sf-route__row sf-route__row--sub is-active' : 'sf-route__row sf-route__row--sub'}
+                        onClick={() => onFrame(ci, fi)}
+                        aria-current={fi === activeFrame ? 'true' : undefined}
+                        title={`${frame.number} ${fi === 0 ? 'глава' : frame.title}`}
+                      >
+                        <i className="sf-route__dot" aria-hidden />
+                        <span className="sf-route__num">{frame.number}</span>
+                        <span className="sf-route__label">{fi === 0 ? 'глава' : frame.title}</span>
+                      </button>
+                    )
+                  })}
                 </div>
               )}
             </div>

@@ -6,6 +6,8 @@ import {
   CHAPTER_ACCENTS_LIGHT,
   TRACK_VH_PER_UNIT,
   buildTimelineModel,
+  eventFrames,
+  frameLabel,
   resolveScrollState,
   unitsBeforeChapter,
   unitsBeforeFrame,
@@ -150,13 +152,15 @@ export function TimelineStage({ events, assetsById, projectTitle, actions, copyF
   const model = useMemo(() => buildTimelineModel(items, accents), [items, accents])
 
   // Плоский список кадров по всему таймлайну — для переходов «назад/дальше»
-  // сквозь главы (а не только внутри текущей).
+  // сквозь главы (а не только внутри текущей). Кадры-картинки тоже участвуют:
+  // листать фотографии события нужно и кнопками, не только прокруткой.
   const flatFrames = useMemo(
     () =>
       model.chapters.flatMap((chapter) =>
         chapter.frames.map((frame, frameIndex) => ({
           id: frame.id,
           number: frame.number,
+          label: frameLabel(frame),
           chapterIndex: chapter.chapterIndex,
           frameIndex,
         })),
@@ -273,8 +277,9 @@ export function TimelineStage({ events, assetsById, projectTitle, actions, copyF
       data-stage={stageActive ? 'active' : 'idle'}
       data-chapter={chapter?.number ?? ''}
       data-frame-number={frame?.number ?? ''}
+      data-frame-kind={frame?.kind ?? ''}
       data-frame-index={state.frameIndex}
-      data-frames-in-chapter={chapter?.frames.length ?? 0}
+      data-frames-in-chapter={chapter ? eventFrames(chapter.frames).length : 0}
       style={{ ['--sf-accent' as string]: accent }}
     >
       <div className="sf-progress" aria-hidden>
@@ -312,12 +317,11 @@ export function TimelineStage({ events, assetsById, projectTitle, actions, copyF
           <CopyPanel
             chapter={chapter}
             frame={frame}
-            frameIndex={state.frameIndex}
             onJumpFrame={jumpToFrame}
             onPrev={prevEntry ? () => jumpToFrame(prevEntry.chapterIndex, prevEntry.frameIndex) : undefined}
             onNext={nextEntry ? () => jumpToFrame(nextEntry.chapterIndex, nextEntry.frameIndex) : undefined}
-            prevLabel={prevEntry?.number}
-            nextLabel={nextEntry?.number}
+            prevLabel={prevEntry?.label}
+            nextLabel={nextEntry?.label}
             footer={copyFooter}
           />
         )}

@@ -4,15 +4,20 @@ import type { TimelineFrame } from '../timelineModel'
 /**
  * Фон кадра: картинка (ассет события), тон или процедурная иллюстрация.
  * Настраивается на самом событии (в редакторе) и наследуется от родителя.
+ *
+ * У кадра-картинки (kind === 'image') фотография — не фон, а содержимое кадра:
+ * она показывается целиком (`object-fit: contain`), а не обрезается по краям.
  */
 export function SceneFrame({ frame, local }: { frame: TimelineFrame; local: number }) {
   const parallax = `translate3d(0, ${(-2 + local * 4).toFixed(2)}%, 0) scale(${(1.04 - local * 0.04).toFixed(3)})`
   const { background } = frame
+  const stillClass =
+    frame.kind === 'image' ? 'sf-scene__still sf-scene__still--photo' : 'sf-scene__still'
 
   return (
     <div className="sf-scene__inner" style={{ transform: parallax }}>
       {background.kind === 'asset' && background.assetUrl ? (
-        <img className="sf-scene__still" src={background.assetUrl} alt="" loading="lazy" />
+        <img className={stillClass} src={background.assetUrl} alt="" loading="lazy" />
       ) : background.kind === 'tone' ? (
         <div className="sf-scene__tone" style={{ background: toneGradient(background.tone) }} />
       ) : (

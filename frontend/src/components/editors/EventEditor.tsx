@@ -1,5 +1,7 @@
+import { useState } from 'react'
 import type { Asset } from '../../api/assets'
 import type { YMap } from '../../collab/yprovider'
+import { ImageViewer } from '../ImageViewer'
 import { BackgroundPicker, type BackgroundValue } from './BackgroundPicker'
 
 interface Props {
@@ -25,6 +27,9 @@ const eventDateText = (value: unknown): string => {
 /**
  * Редактор одного события: заголовок, текст, дата, вложения и фон кадра.
  * Всё редактирование проекта живёт здесь — стадия ничего не меняет.
+ *
+ * Миниатюры вложений открывают тот же полноэкранный просмотрщик, что и в кадре
+ * стадии: смотреть картинку удобно и во время правки, не выходя из проекта.
  */
 export function EventEditor({
   ymap, assets, images, assetUrls, onUpload, onAttach, onDetach, onBackgroundChange, background, onChange,
@@ -33,9 +38,11 @@ export function EventEditor({
   const body = (ymap.get('body') as string | undefined) ?? ''
   const attachedIds = ((ymap.get('assets') as string[] | undefined) ?? []).filter(Boolean)
   const eventDate = eventDateText(ymap.get('event_date'))
+  const [viewer, setViewer] = useState<number | null>(null)
 
   const unattached = assets.filter((a) => !attachedIds.includes(a.id))
   const attached = assets.filter((a) => attachedIds.includes(a.id))
+  const attachedImages = attached.filter((a) => a.mime.startsWith('image/') && assetUrls[a.id])
 
   return (
     <div className="ed-form" data-editor-section>
@@ -95,7 +102,14 @@ export function EventEditor({
           {attached.map((asset) => (
             <div key={asset.id} className="ed-assets__item">
               {asset.mime.startsWith('image/') && assetUrls[asset.id] ? (
-                <img src={assetUrls[asset.id]} alt={asset.filename} loading="lazy" />
+                <button
+                  type="button"
+                  className="ed-assets__preview"
+                  title="Открыть в полный размер"
+                  onClick={() => setViewer(attachedImages.findIndex((a) => a.id === asset.id))}
+                >
+                  <img src={assetUrls[asset.id]} alt={asset.filename} loading="lazy" />
+                </button>
               ) : (
                 <span className="ed-assets__file">файл</span>
               )}
@@ -141,6 +155,16 @@ export function EventEditor({
           )}
         </div>
       </div>
+
+      {viewer !== null && viewer >= 0 && (
+        <ImageViewer
+          images={attachedImages.map((a) => ({ id: a.id, url: assetUrls[a.id], caption: a.filename }))}
+          index={viewer}
+          onIndexChange={setViewer}
+          onClose={() => setViewer(null)}
+          title={title}
+        />
+      )}
     </div>
   )
 }

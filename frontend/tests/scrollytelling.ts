@@ -369,6 +369,19 @@ async function runViewport(vp: { width: number; height: number; tag: string }) {
   console.log(`[${vp.tag}] вложений после загрузки: ${attachments}`)
   if (attachments < 1) problems.push('загруженный файл не прикрепился к событию')
 
+  // Вторая картинка у того же события: нужно проверить и листание кадров, и свайп
+  // между страницами просмотрщика. Инпут сначала очищаем: повторный выбор того же
+  // файла браузер считает «ничем не изменившимся» и событие change не приходит.
+  await page.setInputFiles('.ed-upload input[type=file]', [])
+  await page.setInputFiles('.ed-upload input[type=file]', tmpImage)
+  for (let i = 0; i < 16; i++) {
+    await page.waitForTimeout(500)
+    attachments = (await page.evaluate(`document.querySelectorAll('.ed-assets__item').length`)) as number
+    if (attachments > 1) break
+  }
+  console.log(`[${vp.tag}] вложений всего: ${attachments}`)
+  if (attachments < 2) problems.push(`второй файл не прикрепился (вложений ${attachments})`)
+
   await scrollTop(page)
   await page.locator('.sf-copy__nav .sf-btn--primary').click() // кадр с вложением
   await settleFrame(page)
@@ -383,21 +396,193 @@ async function runViewport(vp: { width: number; height: number; tag: string }) {
     }
   })()`)) as { shots: number; loaded: number; sceneImage: boolean; sceneLoaded: boolean }
   console.log(`[${vp.tag}] галерея кадра: картинок=${gallery.shots} (загружено=${gallery.loaded}), фон-картинка=${gallery.sceneImage} (загружена=${gallery.sceneLoaded})`)
-  if (gallery.shots < 1) problems.push('галерея кадра не показывает загруженную картинку')
-  if (gallery.loaded < 1) problems.push('картинка галереи не загрузилась (ассет недоступен)')
+  if (gallery.shots < 2) problems.push(`галерея кадра показывает ${gallery.shots} картинок, ожидалось 2`)
+  if (gallery.loaded < 2) problems.push('картинки галереи не загрузились (ассет недоступен)')
   if (gallery.sceneImage && !gallery.sceneLoaded) problems.push('фон-картинка кадра не загрузилась')
 
+  // ── полноэкранный просмотр: отдельный слой поверх сайта, свайп и стрелки
   if (gallery.shots > 0) {
     await page.locator('.sf-copy__shot').first().click()
-    await page.waitForTimeout(500)
-    const opened = (await page.evaluate(`!!document.querySelector('.sf-lightbox')`)) as boolean
-    await shot(page, `${vp.tag}-lightbox`)
+    await page.waitForSelector('.sf-viewer', { timeout: 5000 }).catch(() => undefined)
+    const opened = (await page.evaluate(`!!document.querySelector('.sf-viewer')`)) as boolean
+    await shot(page, `${vp.tag}-viewer-1`)
+    const viewerState = async () =>
+      (await page.evaluate(`(() => {
+        const v = document.querySelector('.sf-viewer')
+        if (!v) return null
+        const img = v.querySelector('.sf-viewer__img')
+        const r = v.getBoundingClientRect()
+        return {
+          index: Number(v.getAttribute('data-viewer-index')),
+          total: Number(v.getAttribute('data-viewer-total')),
+          counter: (v.querySelector('.sf-viewer__count')?.textContent || '').trim(),
+          inViewport: r.top >= -1 && r.bottom <= window.innerHeight + 1 && r.left >= -1 && r.right <= window.innerWidth + 1,
+          imgLoaded: img ? img.complete && img.naturalWidth > 0 : false,
+          topLayer: (() => {
+            const cx = Math.round(window.innerWidth / 2)
+            const cy = Math.round(window.innerHeight / 2)
+            const hit = document.elementFromPoint(cx, cy)
+            return !!(hit && hit.closest && hit.closest('.sf-viewer'))
+          })(),
+          bodyLocked: getComputedStyle(document.body).overflow === 'hidden',
+        }
+      })()`)) as Record<string, any> | null
+    const first = await viewerState()
+    console.log(`[${vp.tag}] просмотрщик: ${JSON.stringify(first)}`)
+    if (!opened) problems.push('клик по картинке галереи не открывает просмотр')
+    if (first) {
+      if (first.total !== gallery.shots) problems.push(`просмотрщик показал ${first.total} картинок, в галерее ${gallery.shots}`)
+      if (first.index !== 0) problems.push(`просмотрщик открылся на картинке ${first.index}, ожидалось 0`)
+      if (!first.topLayer) problems.push('просмотрщик не перекрывает сайт (клик в центре попадает не в него)')
+      if (!first.inViewport) problems.push('просмотрщик не помещается на экране')
+      if (!first.imgLoaded) problems.push('картинка в просмотрщике не загрузилась')
+      if (!first.bodyLocked) problems.push('под открытым просмотрщиком страница продолжает прокручиваться')
+    }
+
+    // стрелки: вперёд и назад
+    await page.keyboard.press('ArrowRight')
+    await page.waitForTimeout(350)
+    const afterKey = await viewerState()
+    if (afterKey && afterKey.index !== 1) problems.push(`стрелка → не перелистнула картинку (index=${afterKey.index})`)
+    await page.keyboard.press('ArrowLeft')
+    await page.waitForTimeout(350)
+    const afterBack = await viewerState()
+    if (afterBack && afterBack.index !== 0) problems.push(`стрелка ← не вернула картинку (index=${afterBack.index})`)
+
+    // свайп: влево — следующая, вправо — предыдущая (на телефоне это жест пальцем)
+    const cx = vp.width / 2
+    const cy = vp.height / 2
+    const swipe = async (from: number, to: number) => {
+      await page.mouse.move(cx + from, cy)
+      await page.mouse.down()
+      await page.mouse.move(cx + (from + to) / 2, cy, { steps: 8 })
+      await page.mouse.move(cx + to, cy, { steps: 8 })
+      await page.mouse.up()
+      await page.waitForTimeout(350)
+      return viewerState()
+    }
+    const afterSwipeLeft = await swipe(120, -140)
+    if (afterSwipeLeft && afterSwipeLeft.index !== 1) {
+      problems.push(`свайп влево не перелистнул картинку (index=${afterSwipeLeft.index})`)
+    }
+    const afterSwipeRight = await swipe(-140, 140)
+    console.log(
+      `[${vp.tag}] листание просмотрщика: стрелка → ${afterKey?.index}, стрелка ← ${afterBack?.index}, свайп влево ${afterSwipeLeft?.index}, свайп вправо ${afterSwipeRight?.index}`,
+    )
+    if (afterSwipeRight && afterSwipeRight.index !== 0) {
+      problems.push(`свайп вправо не вернул картинку (index=${afterSwipeRight.index})`)
+    }
+    await shot(page, `${vp.tag}-viewer-2`)
+
     await page.keyboard.press('Escape')
     await page.waitForTimeout(400)
-    const stillOpen = (await page.evaluate(`!!document.querySelector('.sf-lightbox')`)) as boolean
+    const stillOpen = (await page.evaluate(`!!document.querySelector('.sf-viewer')`)) as boolean
     console.log(`[${vp.tag}] просмотр картинки: открылся=${opened}, закрылся по Esc=${!stillOpen}`)
-    if (!opened) problems.push('клик по картинке галереи не открывает просмотр')
     if (stillOpen) problems.push('просмотр картинки не закрывается по Esc')
+    const scrollRestored = (await page.evaluate(`getComputedStyle(document.body).overflow !== 'hidden'`)) as boolean
+    if (!scrollRestored) problems.push('после закрытия просмотра страница осталась заблокированной')
+  }
+
+  // ── картинки события идут отдельными кадрами: за кадром события — фотография,
+  //    и только потом под-событие. Это и есть «прокрутка показывает картинки
+  //    друг за другом до перехода к подсобытию».
+  await scrollTop(page)
+  await page.locator('.sf-copy__nav .sf-btn--primary').click() // 01.1 — событие с картинками
+  await settleFrame(page)
+  await page.locator('.sf-copy__nav .sf-btn--primary').click() // 01.1·1 — первый кадр-картинка
+  await settleFrame(page)
+  const photoFrame = (await page.evaluate(`(() => {
+    const root = document.querySelector('.sf-root')
+    const scene = document.querySelector('.sf-scene[data-active="true"] img.sf-scene__still')
+    return {
+      kind: root ? root.getAttribute('data-frame-kind') : null,
+      number: root ? root.getAttribute('data-frame-number') : null,
+      photoScene: !!document.querySelector('.sf-scene[data-active="true"] img.sf-scene__still--photo'),
+      photoLoaded: scene ? (scene.complete && scene.naturalWidth > 0) : false,
+      title: (document.querySelector('.sf-copy--photo .sf-copy__title')?.textContent || '').trim(),
+      counter: (document.querySelector('.sf-copy--photo .sf-copy__num')?.textContent || '').trim(),
+      framesInChapter: root ? Number(root.getAttribute('data-frames-in-chapter')) : -1,
+    }
+  })()`)) as Record<string, any>
+  console.log(`[${vp.tag}] кадр-картинка: ${JSON.stringify(photoFrame)}`)
+  if (photoFrame.kind !== 'image') problems.push(`после кадра события ожидался кадр-картинки, получен ${photoFrame.kind} (${photoFrame.number})`)
+  if (!photoFrame.photoScene) problems.push('кадр-картинка не показывает фотографию целиком')
+  if (!photoFrame.photoLoaded) problems.push('фотография кадра-картинки не загрузилась')
+  if (!/фото 1 \/ 2/.test(String(photoFrame.counter))) problems.push(`подпись кадра-картинки: «${photoFrame.counter}»`)
+  if (photoFrame.framesInChapter !== expectedNumbers.length) {
+    problems.push(`кадров-событий в главе ${photoFrame.framesInChapter}, ожидалось ${expectedNumbers.length}`)
+  }
+  await shot(page, `${vp.tag}-photo-frame`)
+
+  // На узких экранах подпись стоит под фотографией: снимок не должен уезжать под
+  // панель (там его не видно), а кнопки навигации — быть перекрытыми подсказкой.
+  if (vp.width <= 860) {
+    const photoLayout = (await page.evaluate(`(() => {
+      const img = document.querySelector('.sf-scene[data-active="true"] img.sf-scene__still--photo')
+      const copy = document.querySelector('.sf-copy--photo')
+      if (!img || !copy) return null
+      const cs = getComputedStyle(img)
+      const i = img.getBoundingClientRect()
+      const c = copy.getBoundingClientRect()
+      const contentBottom = i.bottom - parseFloat(cs.paddingBottom)
+      const next = document.querySelector('.sf-copy__nav .sf-btn--primary')
+      let hit = null
+      if (next) {
+        const r = next.getBoundingClientRect()
+        const el = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)
+        hit = el ? (next.contains(el) ? 'button' : (el.className || el.tagName)) : 'none'
+      }
+      return {
+        overlap: Math.round(contentBottom - c.top),
+        photoBottom: Math.round(contentBottom),
+        copyTop: Math.round(c.top),
+        copies: document.querySelectorAll('.sf-copy').length,
+        hit,
+        // Снимок и подпись должны целиком укладываться в экран. Верх сцены не
+        // проверяем: слой кадра сдвинут параллакс-трансформом и выходит на пиксель.
+        photoFits: contentBottom > 0 && contentBottom <= window.innerHeight + 1,
+        copyFits: c.top >= -1 && c.bottom <= window.innerHeight + 1,
+      }
+    })()`)) as Record<string, any> | null
+    console.log(`[${vp.tag}] раскладка кадра-картинки: ${JSON.stringify(photoLayout)}`)
+    if (!photoLayout) {
+      problems.push('кадр-картинка: не найдены фотография или панель подписи')
+    } else {
+      if (photoLayout.overlap > 0) {
+        problems.push(`фотография заходит под панель подписи на ${photoLayout.overlap}px (снимок до ${photoLayout.photoBottom}, панель с ${photoLayout.copyTop})`)
+      }
+      if (!photoLayout.photoFits) problems.push(`снимок кадра-картинки не помещается на экране (низ ${photoLayout.photoBottom})`)
+      if (!photoLayout.copyFits) problems.push('панель подписи кадра-картинки не помещается на экране')
+      if (photoLayout.hit !== 'button') problems.push(`кнопка «дальше» на кадре-картинке не нажимается (клик → ${photoLayout.hit})`)
+    }
+  }
+
+  await page.locator('.sf-copy__nav .sf-btn--primary').click() // 01.1·2 — вторая картинка
+  await settleFrame(page)
+  const secondPhoto = (await page.evaluate(`(() => {
+    const root = document.querySelector('.sf-root')
+    return {
+      kind: root ? root.getAttribute('data-frame-kind') : null,
+      counter: (document.querySelector('.sf-copy--photo .sf-copy__num')?.textContent || '').trim(),
+    }
+  })()`)) as Record<string, any>
+  if (!/фото 2 \/ 2/.test(String(secondPhoto.counter))) {
+    problems.push(`вторая картинка события не показана: «${secondPhoto.counter}»`)
+  }
+
+  await page.locator('.sf-copy__nav .sf-btn--primary').click() // 01.1.1 — под-событие
+  await settleFrame(page)
+  const afterPhotos = (await page.evaluate(`(() => {
+    const root = document.querySelector('.sf-root')
+    return {
+      kind: root ? root.getAttribute('data-frame-kind') : null,
+      number: root ? root.getAttribute('data-frame-number') : null,
+      title: (document.querySelector('.sf-copy__title')?.textContent || '').trim(),
+    }
+  })()`)) as Record<string, any>
+  console.log(`[${vp.tag}] после картинок: кадр ${afterPhotos.number} (${afterPhotos.kind}) «${afterPhotos.title}»`)
+  if (afterPhotos.kind !== 'event' || afterPhotos.number !== '01.1.1') {
+    problems.push(`после картинок ожидался кадр под-события 01.1.1, получен ${afterPhotos.kind} ${afterPhotos.number}`)
   }
 
   // ── клики по строкам редактора не перехватываются фиксированной стадией

@@ -803,16 +803,50 @@ async function functional(browser: Browser, errors: string[]) {
     add({ severity: 'error', area: 'functional', screen: 'timeline', viewport: V, check: 'галерея кадра', detail: `картинок ${gallery.count}, загружено ${gallery.loaded}`, where: 'assetObject.ts / CopyPanel' })
   } else {
     pass('timeline', V, `галерея: ${gallery.loaded}/${gallery.count} картинок`)
+    // Просмотр — отдельный слой поверх сайта со свайпом и стрелками, а не
+    // вложенное окно внутри прокручиваемой панели кадра.
     await page.locator('.sf-copy__shot').first().click()
-    await page.waitForTimeout(400)
-    const opened = (await page.evaluate(`!!document.querySelector('.sf-lightbox')`)) as boolean
+    await page.waitForSelector('.sf-viewer', { timeout: 5000 }).catch(() => undefined)
+    const viewer = (await page.evaluate(`(() => {
+      const v = document.querySelector('.sf-viewer')
+      if (!v) return null
+      const img = v.querySelector('.sf-viewer__img')
+      const hit = document.elementFromPoint(Math.round(window.innerWidth / 2), Math.round(window.innerHeight / 2))
+      return {
+        index: Number(v.getAttribute('data-viewer-index')),
+        total: Number(v.getAttribute('data-viewer-total')),
+        counter: (v.querySelector('.sf-viewer__count')?.textContent || '').trim(),
+        imgLoaded: img ? img.complete && img.naturalWidth > 0 : false,
+        topLayer: !!(hit && hit.closest && hit.closest('.sf-viewer')),
+        navs: v.querySelectorAll('.sf-viewer__nav').length,
+      }
+    })()`)) as Record<string, unknown> | null
+    let flip = true
+    if (viewer && Number(viewer.total) > 1) {
+      await page.keyboard.press('ArrowRight')
+      await page.waitForTimeout(300)
+      flip = (await page.evaluate(`Number(document.querySelector('.sf-viewer')?.getAttribute('data-viewer-index'))`)) === 1
+    }
     await page.keyboard.press('Escape')
     await page.waitForTimeout(300)
-    const closed = !(await page.evaluate(`!!document.querySelector('.sf-lightbox')`)) as boolean
-    if (!opened || !closed) {
-      add({ severity: 'error', area: 'functional', screen: 'timeline', viewport: V, check: 'просмотр картинки', detail: `открылся=${opened}, закрылся=${closed}`, where: 'CopyPanel lightbox' })
+    const closed = !(await page.evaluate(`!!document.querySelector('.sf-viewer')`)) as boolean
+    const viewerOk =
+      !!viewer &&
+      viewer.topLayer === true &&
+      viewer.navs === 2 &&
+      viewer.imgLoaded === true &&
+      Number(viewer.total) === gallery.count &&
+      flip &&
+      closed
+    if (!viewerOk) {
+      add({
+        severity: 'error', area: 'functional', screen: 'timeline', viewport: V,
+        check: 'полноэкранный просмотр картинок',
+        detail: `открыт=${!!viewer}, поверх сайта=${viewer?.topLayer}, стрелок=${viewer?.navs}, картинка загружена=${viewer?.imgLoaded}, листание=${flip}, закрылся по Esc=${closed}`,
+        where: 'components/ImageViewer.tsx / CopyPanel',
+      })
     } else {
-      pass('timeline', V, 'просмотр картинки (Esc)')
+      pass('timeline', V, `просмотр картинок: ${viewer?.counter}, листание, Esc`)
     }
   }
 

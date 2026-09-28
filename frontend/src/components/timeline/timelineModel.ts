@@ -36,15 +36,25 @@ export interface FrameBackground {
   tone?: string
 }
 
+/**
+ * Вид кадра: событие или отдельная картинка из его вложений.
+ *
+ * Картинка события — самостоятельный кадр трека: он идёт сразу после кадра
+ * события и до его под-событий, поэтому при прокрутке вниз фотографии
+ * показываются друг за другом, а уже потом начинается вложенное событие.
+ */
+export type FrameKind = 'event' | 'image'
+
 export interface TimelineFrame {
   id: string
   flatIndex: number
   depth: number
-  /** 01 / 01.1 / 01.1.1 — нумерация по ветке */
+  /** 01 / 01.1 / 01.1.1 — нумерация по ветке; у картинки — 01.1·2 */
   number: string
   chapterIndex: number
   chapterNumber: string
   isChapter: boolean
+  kind: FrameKind
   eyebrow: string
   title: string
   body: string
@@ -54,6 +64,12 @@ export interface TimelineFrame {
   /** прямые дети — превью «что дальше» в копирайте */
   childFrames: TimelineFrame[]
   weight: number
+  /** только у kind === 'image': сама картинка и её место в наборе события */
+  image?: StageAsset
+  imageIndex?: number
+  imageCount?: number
+  /** номер события-владельца: у кадра-картинки своя нумерация, подпись — от события */
+  ownerNumber?: string
 }
 
 export interface TimelineChapter extends TimelineFrame {
@@ -87,6 +103,14 @@ export interface StageState {
 export const FRAME_WEIGHT_CHAPTER = 1
 export const FRAME_WEIGHT_STEP = 0.9
 export const FRAME_WEIGHT_SUBSTEP = 0.75
+/**
+ * Картинка события — отдельный кадр. Вес меньше, чем у под-события: фотография
+ * читается быстрее текста, но всё равно занимает собственный экран прокрутки.
+ */
+export const FRAME_WEIGHT_IMAGE = 0.72
+
+/** Картинками считаются вложения с таким началом MIME-типа. */
+export const IMAGE_MIME_PREFIX = 'image/'
 
 /** Доля кадра, отведённая на переход (кроссфейд фона/копирайта). */
 export const TRANSITION_BAND = 0.22
@@ -170,6 +194,7 @@ export function buildTimelineModel(items: StageEvent[], accents: string[]): Time
         chapterIndex,
         chapterNumber: chapterNumber(chapterIndex),
         isChapter: depth === 0,
+        kind: 'event',
         eyebrow: depth === 0 ? 'Глава' : depth === 1 ? 'Подсобытие' : 'Под-шаг',
         title: node.item.title,
         body: node.item.body,
@@ -181,6 +206,37 @@ export function buildTimelineModel(items: StageEvent[], accents: string[]): Time
       }
       frames.push(frame)
       frameCount++
+
+      // Картинки события — свои кадры сразу после него и ДО под-событий: при
+      // прокрутке вниз фотографии идут друг за другом, и только потом трек
+      // переходит к вложенному событию (или к следующему событию главы).
+      const images = node.item.assets.filter((a) => a.mime.startsWith(IMAGE_MIME_PREFIX))
+      images.forEach((image, imageIndex) => {
+        frames.push({
+          id: `${node.item.id}::img::${image.id}`,
+          flatIndex: node.item.flatIndex,
+          depth,
+          number: `${number}·${imageIndex + 1}`,
+          chapterIndex,
+          chapterNumber: chapterNumber(chapterIndex),
+          isChapter: false,
+          kind: 'image',
+          eyebrow: 'Иллюстрация',
+          title: node.item.title,
+          body: '',
+          accent,
+          // Фон кадра-картинки — сама картинка: сцена показывает её целиком.
+          background: { kind: 'asset', assetUrl: image.url, tone: accent },
+          assets: node.item.assets,
+          childFrames: [],
+          weight: FRAME_WEIGHT_IMAGE,
+          image,
+          imageIndex,
+          imageCount: images.length,
+          ownerNumber: number,
+        })
+      })
+
       frame.childFrames = node.children.map((child, childIdx) =>
         build(child, depth + 1, `${number}.${childIdx + 1}`, background, accent),
       )
@@ -276,4 +332,28 @@ export function unitsBeforeFrame(model: TimelineModel, chapterIndex: number, fra
     .slice(0, Math.max(0, frameIndex))
     .reduce((sum, f) => sum + f.weight, 0)
   return unitsBeforeChapter(model, chapterIndex) + before
+}
+
+/**
+ * Только кадры событий — без кадров-картинок.
+ *
+ * Навигация (маршрут, чипы, панель глав) и счётчики «кадров в главе» говорят
+ * про события: картинка не отдельное событие, а его иллюстрация, и в списке
+ * событий её быть не должно.
+ */
+export function eventFrames(frames: TimelineFrame[]): TimelineFrame[] {
+  return frames.filter((f) => f.kind === 'event')
+}
+
+/** Позиция кадра-события в главе (1-based) и общее число событий главы. */
+export function eventPosition(frames: TimelineFrame[], frame: TimelineFrame): { index: number; total: number } {
+  const events = eventFrames(frames)
+  const index = events.findIndex((f) => f.id === frame.id)
+  return { index: index < 0 ? 0 : index + 1, total: events.length }
+}
+
+/** Короткая подпись кадра для кнопок «назад / дальше» и подсказок. */
+export function frameLabel(frame: TimelineFrame): string {
+  if (frame.kind !== 'image') return frame.number
+  return `фото ${(frame.imageIndex ?? 0) + 1}/${frame.imageCount ?? 1}`
 }

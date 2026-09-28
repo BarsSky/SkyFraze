@@ -138,6 +138,12 @@
 .sf-scene__still--generated { display: block; }
 .sf-scene__still--generated svg { width: 100%; height: 100%; display: block; }
 [data-theme='light'] .sf-scene__still--generated { filter: saturate(0.92) brightness(1.03); }
+/* Кадр-картинка (kind === 'image'): фотография — содержимое кадра, а не фон,
+   поэтому показываем её целиком, не обрезая по краям. */
+.sf-scene__still--photo {
+  object-fit: contain; object-position: center center;
+  padding: clamp(10px, 2vw, 34px);
+}
 
 /* Светлая тема: сцена тёмная, поэтому скрим слева плотнее — копирайт читается,
    а светлое небо вокруг не бьёт по глазам. */
@@ -198,6 +204,8 @@
   max-height: 34vh; overflow-y: auto; overscroll-behavior: contain;
   overflow-wrap: anywhere; white-space: pre-wrap;
 }
+/* Кадр-картинка: на экране главное фотография, поэтому подпись скромнее. */
+.sf-copy--photo .sf-copy__title--photo { font-size: clamp(1.3rem, 2.4vw, 2rem); }
 .sf-copy__meta { list-style: none; display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0 0; padding: 0; }
 .sf-copy__meta li {
   font-size: 0.76rem; font-weight: 600; color: var(--sf-ink-soft);
@@ -217,23 +225,73 @@
   width: 84px; height: 62px; object-fit: cover; border-radius: 7px; display: block;
 }
 
-/* Просмотр картинки в полный размер */
-.sf-lightbox {
-  position: fixed; inset: 0; z-index: 80;
+/* ── просмотр картинок: отдельный слой поверх всего сайта ─────────────────
+   Портал в body (панель копирайта прокручивается и обрезала бы вложенное окно),
+   свайп влево-вправо, стрелки, Esc. Пока окно открыто, страница под ним не
+   прокручивается: touch-action: none + запрет прокрутки у html/body. */
+html.sf-viewer-open,
+html.sf-viewer-open body { overflow: hidden; }
+
+.sf-viewer {
+  position: fixed; inset: 0; z-index: 90;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 10px; outline: none;
+  padding: calc(54px + env(safe-area-inset-top)) clamp(10px, 3vw, 28px)
+           calc(14px + env(safe-area-inset-bottom));
+  background: color-mix(in srgb, #000 88%, transparent);
+  backdrop-filter: blur(6px);
+  touch-action: none; user-select: none;
+  animation: sf-viewer-in 0.18s var(--sf-ease);
+}
+@keyframes sf-viewer-in { from { opacity: 0; } to { opacity: 1; } }
+
+.sf-viewer__bar {
+  position: absolute; top: max(12px, env(safe-area-inset-top)); left: 0; right: 0;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; padding: 0 clamp(12px, 3vw, 26px);
+}
+.sf-viewer__count {
+  font-family: ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums;
+  font-size: 0.85rem; color: rgba(255, 255, 255, 0.88);
+  background: rgba(255, 255, 255, 0.14); border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px; padding: 6px 13px;
+}
+.sf-viewer__close {
+  min-height: 40px; padding: 8px 18px; border-radius: 999px; cursor: pointer;
+  font-size: 0.85rem; color: #fff; background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.26);
+}
+.sf-viewer__close:hover { background: rgba(255, 255, 255, 0.24); }
+
+.sf-viewer__body {
+  position: relative; flex: 1 1 auto; min-height: 0; width: 100%;
   display: flex; align-items: center; justify-content: center;
-  padding: 4vh 4vw; gap: 12px; flex-direction: column;
-  background: color-mix(in srgb, #000 82%, transparent);
-  cursor: zoom-out;
+  padding: 0 clamp(50px, 7vw, 92px);
 }
-.sf-lightbox img {
-  max-width: min(94vw, 1400px); max-height: 82vh;
-  object-fit: contain; border-radius: 10px;
-  box-shadow: 0 40px 120px -40px rgba(0, 0, 0, 0.9);
+.sf-viewer__img {
+  max-width: 100%; max-height: 100%; object-fit: contain;
+  border-radius: 10px; box-shadow: 0 40px 120px -40px rgba(0, 0, 0, 0.9);
+  -webkit-user-drag: none;
 }
-.sf-lightbox__close {
-  background: rgba(255, 255, 255, 0.12); color: #fff;
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  border-radius: 999px; padding: 8px 18px; font-size: 0.85rem;
+.sf-viewer__nav {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  width: 52px; height: 52px; border-radius: 50%; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.7rem; line-height: 1; color: #fff;
+  background: rgba(255, 255, 255, 0.14); border: 1px solid rgba(255, 255, 255, 0.26);
+}
+.sf-viewer__nav:hover:not(:disabled) { background: rgba(255, 255, 255, 0.26); }
+.sf-viewer__nav:disabled { opacity: 0.25; cursor: default; }
+.sf-viewer__nav--prev { left: clamp(4px, 1.6vw, 20px); }
+.sf-viewer__nav--next { right: clamp(4px, 1.6vw, 20px); }
+
+.sf-viewer__caption {
+  margin: 0; max-width: 72ch; text-align: center;
+  font-size: 0.92rem; color: rgba(255, 255, 255, 0.9);
+}
+.sf-viewer__hint {
+  margin: 0; text-align: center;
+  font-size: 0.76rem; letter-spacing: 0.08em; color: rgba(255, 255, 255, 0.55);
 }
 
 .sf-copy__next {
@@ -354,11 +412,15 @@
 .sf-chip--sub { max-width: 92px; font-family: ui-monospace, Menlo, monospace; }
 
 /* ── подсказка и трек ───────────────────────────────────────────────── */
+/* Подсказка декоративная и гаснет после начала прокрутки, но прозрачный
+   элемент всё равно перехватывает клики: на кадре-картинке кнопки «назад /
+   дальше» стоят внизу, и подсказка закрывала их. Клики не её. */
 .sf-hint {
   position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 30;
   display: flex; flex-direction: column; align-items: center; gap: 8px;
   font-size: 0.76rem; letter-spacing: 0.14em; text-transform: uppercase;
   color: var(--sf-ink-soft); text-align: center;
+  pointer-events: none;
 }
 .sf-hint i {
   width: 20px; height: 30px; border-radius: 12px; position: relative;
@@ -424,6 +486,11 @@
   .sf-hint { bottom: calc(18px + env(safe-area-inset-bottom)); }
   .sf-hint span { white-space: nowrap; font-size: 0.76rem; letter-spacing: 0.1em; }
   .sf-scene__still { object-position: center 46%; }
+  .sf-viewer__body { padding: 0 46px; }
+  .sf-viewer__nav { width: 42px; height: 42px; font-size: 1.4rem; }
+  .sf-viewer__nav--prev { left: 2px; }
+  .sf-viewer__nav--next { right: 2px; }
+  .sf-viewer__caption { font-size: 0.85rem; }
   /* Мобильные цели нажатия: чипы и превью вложенных не меньше 34px */
   .sf-chip {
     min-height: 34px;
@@ -442,16 +509,36 @@
   }
 }
 
+/* ── кадр-картинка на узких экранах ───────────────────────────────────────
+   Фотография занимает верх экрана, подпись — компактную полосу снизу, поэтому
+   трек не закрывает саму картинку. Отступ снизу считаем в vh (а не в % от
+   ширины): на планшете 768px процент от ширины отнял бы у снимка пол-экрана.
+   Блок обязан идти ПОСЛЕ @supports выше: у .sf-copy и .sf-copy--photo
+   одинаковая специфичность, и последнее правило выигрывает. */
+@media (max-width: 860px) {
+  .sf-scene__still--photo { padding: 1vh 2vw 32vh; }
+  .sf-copy--photo {
+    bottom: calc(20px + env(safe-area-inset-bottom));
+    /* Панель стоит на 20px от низа, поэтому места ей больше, чем обычному кадру. */
+    max-height: calc(100vh - var(--sf-header-h, 46px) - 124px - 20px);
+  }
+  /* Номер кадра уже говорит «фото 2 / 5» — мета-чипы в кадре-картинке лишние. */
+  .sf-copy--photo .sf-copy__meta { display: none; }
+}
+
 /* Короткие экраны: маленький телефон в ландшафте (360px высоты) или очень узкий
    аппарат. Подсказка и отступ снизу съедали место, которого и так нет, — отдаём
    его панели копирайта, чтобы заголовок, текст и кнопки навигации читались.
    ВАЖНО: блок идёт ПОСЛЕ @supports выше, иначе то правило перебивает bottom. */
 @media (max-width: 860px) and (max-height: 480px) {
   .sf-hint { display: none; }
+  .sf-viewer__hint { display: none; }
   .sf-copy {
     bottom: calc(8px + env(safe-area-inset-bottom));
     max-height: calc(100vh - var(--sf-header-h, 46px) - 124px - 12px);
   }
+  /* Ландшафт телефона: высоты мало, под снимок оставляем больше половины экрана. */
+  .sf-scene__still--photo { padding: 1vh 1vw 42vh; }
   .sf-copy__title { font-size: clamp(1.3rem, 5vh, 1.8rem); }
   /* Кнопки «назад / дальше» прилипают к низу панели: на 360px высоты содержимое
      кадра всё равно прокручивается внутри, а навигация должна быть под рукой. */
