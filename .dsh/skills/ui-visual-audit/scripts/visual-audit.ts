@@ -548,6 +548,40 @@ async function visualScreens(browser: Browser, errors: string[], slug: string | 
       await shot(page, name)
       applyProbe(await probe(page), 'projects', vp.tag, name)
 
+      // соавторы: поиск людей по нику, специализации, доступ к закрытым проектам
+      await page.goto(`${BASE}/coauthors`)
+      await page.waitForSelector('[data-profile]', { timeout: 20000 }).catch(() => null)
+      await page.waitForTimeout(700)
+      name = `${vp.tag}-${theme}-coauthors`
+      await shot(page, name)
+      applyProbe(await probe(page), 'coauthors', vp.tag, name)
+      const coauthorState = (await page.evaluate(`(() => {
+        const nick = document.querySelector('[data-profile] input[aria-label="Ваш ник"]')
+        const search = document.querySelector('input[aria-label="Поиск людей по нику или имени"]')
+        return {
+          hasProfile: !!document.querySelector('[data-profile]'),
+          nick: nick ? nick.value : null,
+          hasSearch: !!search,
+          coauthors: document.querySelectorAll('[data-coauthors] .coauthors__row').length,
+        }
+      })()`)) as { hasProfile: boolean; nick: string | null; hasSearch: boolean; coauthors: number }
+      if (!coauthorState.hasProfile || !coauthorState.hasSearch) {
+        add({
+          severity: 'error', area: 'visual', screen: 'coauthors', viewport: vp.tag,
+          check: 'страница соавторов', detail: JSON.stringify(coauthorState),
+          where: 'CoauthorsPage',
+        })
+      } else {
+        pass('coauthors', vp.tag, `соавторов: ${coauthorState.coauthors}, ник: @${coauthorState.nick}`)
+      }
+      if (!coauthorState.nick) {
+        add({
+          severity: 'error', area: 'functional', screen: 'coauthors', viewport: vp.tag,
+          check: 'ник пользователя', detail: 'пустой ник — человека не найти поиском',
+          where: 'auth/service.go (генерация ника) / ProfileCard',
+        })
+      }
+
       // timeline: проходим все кадры
       const demoUrl = `${BASE}${DEMO.startsWith('/') ? DEMO : '/' + DEMO}`
       await page.goto(demoUrl)

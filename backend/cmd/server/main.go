@@ -18,6 +18,7 @@ import (
 	"github.com/skyfraze/backend/internal/admin"
 	"github.com/skyfraze/backend/internal/assets"
 	"github.com/skyfraze/backend/internal/auth"
+	"github.com/skyfraze/backend/internal/coauthors"
 	"github.com/skyfraze/backend/internal/collab"
 	"github.com/skyfraze/backend/internal/events"
 	"github.com/skyfraze/backend/internal/feed"
@@ -30,6 +31,7 @@ import (
 	"github.com/skyfraze/backend/internal/update"
 	"github.com/skyfraze/backend/migrations"
 )
+
 // version и commit проставляются при сборке образа:
 //
 //	go build -ldflags "-X main.version=v0.2.0 -X main.commit=<sha>"
@@ -122,6 +124,10 @@ func main() {
 	teamsSvc := teams.New(st, projSvc)
 	teamsH := teams.NewHandler(teamsSvc, logger)
 
+	// соавторы: творческий круг человека (поиск по нику, заявки, специализации)
+	coauthorsSvc := coauthors.New(st)
+	coauthorsH := coauthors.NewHandler(coauthorsSvc, logger)
+
 	feedSvc := feed.New(st, projSvc)
 	feedH := feed.NewHandler(feedSvc, logger)
 
@@ -176,8 +182,15 @@ func main() {
 		r.Group(func(r chi.Router) {
 			r.Use(authSvc.WithUser)
 			r.Get("/me", authH.Me)
+			// Профиль: имя и ник (@username), по которому человека находят.
+			r.Patch("/me", authH.UpdateProfile)
 		})
 	})
+
+	// соавторы: поиск людей по нику, заявки, специализации и доступ к закрытым
+	// проектам. Общий поиск — отдельным префиксом /api/users.
+	r.Mount("/api/coauthors", coauthorsH.Routes(authSvc))
+	r.Mount("/api/users", coauthorsH.SearchRoutes(authSvc))
 
 	// администрирование развёртывания: режим регистрации и заявки
 	r.Mount("/api/admin", adminH.Routes(authSvc, updateH))
@@ -229,6 +242,10 @@ func main() {
 		r.Delete("/", projH.Delete)
 
 		r.Get("/members", teamsH.Members(authSvc))
+		// Прямое добавление участника (владелец): основной путь — выбрать соавтора
+		// из своего круга, не высылая ссылку-приглашение.
+		r.Post("/members", teamsH.AddMember(authSvc))
+		r.Delete("/members/{userID}", teamsH.RemoveMember(authSvc))
 		r.Post("/invitations", teamsH.Invite(authSvc))
 		r.Get("/invitations", teamsH.ListInvitations(authSvc))
 		r.Get("/events/state", evH.GetState(authSvc))

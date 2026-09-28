@@ -5,6 +5,8 @@ export interface UserPublic {
   id: string
   email: string
   display_name: string
+  /** Ник (@username): по нему человека находят в поиске соавторов. */
+  username: string
   /** Администратор развёртывания: режим регистрации и заявки */
   is_admin: boolean
 }
@@ -55,6 +57,19 @@ export async function login(input: { email: string; password: string }) {
 
 export async function me(): Promise<UserPublic> {
   return await http.get('auth/me').json<UserPublic>()
+}
+
+/**
+ * Профиль: имя и ник. Ник уникален — занятый вернёт 409, и это нормальная
+ * ситуация, а не сбой: интерфейс подсказывает взять другой.
+ */
+export async function updateProfile(input: {
+  display_name?: string
+  username?: string
+}): Promise<UserPublic> {
+  const user = await http.patch('auth/me', { json: input }).json<UserPublic>()
+  useAuthStore.getState().setUser(user)
+  return user
 }
 
 export function logout() {

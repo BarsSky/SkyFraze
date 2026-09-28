@@ -12,6 +12,12 @@ export interface Project {
   public_slug?: string | null
   published_at?: string | null
   views_count: number
+  /** Как получен доступ: свой проект, участие в команде или соавторское чтение. */
+  access?: 'owner' | 'member' | 'coauthor'
+  /** Роль в проекте: по ней страница решает, показывать ли редакторы. */
+  role?: 'owner' | 'editor' | 'viewer'
+  /** Доступ выдан соавторством (только чтение), а не участием в команде. */
+  coauthor_access?: boolean
 }
 
 export async function listProjects(): Promise<Project[]> {

@@ -37,6 +37,7 @@ var schemaSteps = []struct{ table, file string }{
 	{"project_event_state", "0002_events_hierarchy.up.sql"},
 	{"project_ratings", "0003_public_feed.up.sql"},
 	{"registration_requests", "0004_admin_registration.up.sql"},
+	{"coauthor_links", "0005_coauthors.up.sql"},
 }
 
 // Setup открывает отдельную БД для пакета (suffix), применяет миграции и

@@ -1,0 +1,133 @@
+/* SkyFraze — соавторы: поиск людей, заявки, специализации и доступ к закрытым
+   проектам. Стили держим рядом с фичей: страница живёт отдельно от ленты и
+   редакторов, и её раскладка не должна тянуть за собой их правила. */
+
+.coauthors {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 0 4px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.coauthors__search {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.coauthors__search input { flex: 1 1 260px; min-width: 200px; }
+
+.coauthors__results { margin-top: 14px; display: flex; flex-direction: column; gap: 8px; }
+
+.coauthors__row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+.coauthors__row:first-of-type { border-top: 0; }
+.coauthors__row--card {
+  padding: 12px 0;
+  gap: 16px;
+}
+
+.coauthors__who {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1 1 260px;
+}
+.coauthors__nick {
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 0.85rem;
+  color: var(--fg-muted);
+}
+.coauthors__crafts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
+.coauthors__actions { display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
+.coauthors__actions--stack { align-items: flex-start; min-width: 240px; }
+.coauthors__toggle {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 0.88rem;
+  cursor: pointer;
+  max-width: 320px;
+}
+.coauthors__toggle input { margin-top: 3px; flex: 0 0 auto; }
+.coauthors__badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 9px;
+  border-radius: 999px;
+  background: var(--accent, #6fb3c9);
+  color: #0d1117;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+.coauthors__form {
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+}
+.coauthors__form textarea { width: 100%; resize: vertical; }
+
+/* ── специализации ──────────────────────────────────────────────────── */
+.crafts { margin-top: 12px; }
+.crafts__catalog { display: flex; flex-wrap: wrap; gap: 6px; }
+.craft-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg-soft);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s, color 0.2s;
+}
+span.craft-chip { cursor: default; }
+.craft-chip:hover { border-color: var(--accent, #6fb3c9); }
+.craft-chip.is-picked {
+  background: color-mix(in srgb, var(--accent, #6fb3c9) 22%, transparent);
+  border-color: var(--accent, #6fb3c9);
+  color: var(--fg);
+  font-weight: 600;
+}
+.crafts__custom { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.crafts__custom input { flex: 1 1 200px; }
+
+/* ── соавторские проекты в списке проектов ──────────────────────────── */
+.projects__shared { margin-top: 8px; }
+.projects__shared .card { border-style: dashed; }
+
+/* Полоса «только чтение» на странице проекта: объясняет, почему нет редакторов. */
+.sf-readonly {
+  position: relative;
+  z-index: 41;
+  margin: 8px clamp(16px, 4vw, 40px) 0;
+  padding: 8px 14px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  background: var(--surface-glass);
+  color: var(--fg-soft);
+  font-size: 0.85rem;
+}
+
+@media (max-width: 700px) {
+  .coauthors__row { flex-direction: column; }
+  .coauthors__actions { align-items: stretch; width: 100%; }
+  .coauthors__actions--stack { min-width: 0; }
+  .coauthors__toggle { max-width: none; }
+  /* Цели нажатия на телефоне: чипы специализаций не мельче 32px. */
+  .craft-chip { min-height: 32px; }
+}

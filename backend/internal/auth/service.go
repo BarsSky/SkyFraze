@@ -17,11 +17,11 @@ import (
 
 // Errors
 var (
-	ErrEmailTaken       = errors.New("email already registered")
-	ErrInvalidCreds     = errors.New("invalid credentials")
-	ErrSessionRevoked   = errors.New("session revoked")
-	ErrSessionExpired   = errors.New("session expired")
-	ErrInvalidRefresh   = errors.New("invalid refresh token")
+	ErrEmailTaken     = errors.New("email already registered")
+	ErrInvalidCreds   = errors.New("invalid credentials")
+	ErrSessionRevoked = errors.New("session revoked")
+	ErrSessionExpired = errors.New("session expired")
+	ErrInvalidRefresh = errors.New("invalid refresh token")
 	// ErrRegistrationClosed — регистрация только по заявке: прямой /register
 	// запрещён, но заявку принять можно (POST /api/auth/registration-requests).
 	ErrRegistrationClosed = errors.New("registration is by request only")
@@ -29,7 +29,38 @@ var (
 	ErrRequestPending = errors.New("registration request is pending")
 	// ErrRequestRejected — заявку отклонили.
 	ErrRequestRejected = errors.New("registration request was rejected")
+	// ErrInvalidUsername — ник не подходит: короткий, длинный или с недопустимыми
+	// символами (латиница, цифры, точка, дефис, подчёркивание).
+	ErrInvalidUsername = errors.New("invalid username")
 )
+
+// UpdateProfile меняет отображаемое имя и ник (@username). Пустые поля означают
+// «не трогать»: интерфейс отправляет только изменённое.
+func (s *Service) UpdateProfile(ctx context.Context, userID uuid.UUID, displayName, username string) (*store.User, error) {
+	u, err := s.store.GetUserByID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	name := strings.TrimSpace(displayName)
+	if name == "" {
+		name = u.DisplayName
+	}
+	if len([]rune(name)) > 80 {
+		return nil, ErrInvalidUsername
+	}
+
+	nick := store.NormalizeUsername(username)
+	if strings.TrimSpace(username) == "" {
+		nick = u.Username
+	} else if !store.ValidUsername(username) {
+		return nil, ErrInvalidUsername
+	}
+	if nick == u.Username && name == u.DisplayName {
+		return u, nil
+	}
+	return s.store.UpdateProfile(ctx, userID, name, nick)
+}
 
 // Service — фасад auth-операций.
 type Service struct {
@@ -111,10 +142,10 @@ func (s *Service) IsOpenRegistration(ctx context.Context) bool {
 
 // Tokens — пара токенов после успешного login/refresh.
 type Tokens struct {
-	Access      string
-	Refresh     string
-	AccessExp   time.Time
-	RefreshExp  time.Time
+	Access     string
+	Refresh    string
+	AccessExp  time.Time
+	RefreshExp time.Time
 }
 
 // RegistrationInfo — режим регистрации и признак «инсталляция ещё пустая».

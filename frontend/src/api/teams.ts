@@ -7,6 +7,7 @@ export interface TeamMember {
   added_at: string
   email?: string
   display_name?: string
+  username?: string
 }
 
 export interface Invitation {
@@ -27,6 +28,24 @@ export async function listMembers(projectId: string): Promise<TeamMember[]> {
 
 export async function invite(projectId: string, email: string, role: 'editor' | 'viewer'): Promise<Invitation> {
   return await http.post(`projects/${projectId}/invitations`, { json: { email, role } }).json<Invitation>()
+}
+
+/**
+ * Добавить участника сразу, без ссылки-приглашения. Основной путь — выбрать
+ * человека из списка соавторов: он уже в круге, роль назначается тут же.
+ */
+export async function addMember(
+  projectId: string,
+  userId: string,
+  role: 'editor' | 'viewer',
+): Promise<TeamMember> {
+  return await http
+    .post(`projects/${projectId}/members`, { json: { user_id: userId, role } })
+    .json<TeamMember>()
+}
+
+export async function removeMember(projectId: string, userId: string): Promise<void> {
+  await http.delete(`projects/${projectId}/members/${userId}`)
 }
 
 export async function acceptInvitation(token: string): Promise<TeamMember> {

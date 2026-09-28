@@ -48,9 +48,13 @@
 }
 .sf-topbar > * { pointer-events: auto; }
 .sf-topbar__title {
+  display: inline-flex; align-items: center; gap: 8px; min-width: 0;
   font-weight: 700; font-size: 0.92rem; color: var(--sf-ink);
-  max-width: 30vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  max-width: 30vw;
 }
+/* Знак проекта рядом с названием — тот же рисунок, что в favicon */
+.sf-topbar__mark { flex: 0 0 auto; display: block; }
+.sf-topbar__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sf-topbar__actions { display: flex; gap: 8px; align-items: center; }
 .sf-nav {
   display: flex; gap: 4px; padding: 5px; border-radius: 999px;

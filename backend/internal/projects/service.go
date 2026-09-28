@@ -55,6 +55,34 @@ func (s *Service) List(ctx context.Context, userID uuid.UUID) ([]store.Project, 
 	return s.store.ListProjectsForUser(ctx, userID)
 }
 
+// ListSharedByCoauthors — закрытые проекты соавторов, открытые мне на чтение.
+// Это не участие в проекте: роль здесь всегда viewer, правок нет.
+func (s *Service) ListSharedByCoauthors(ctx context.Context, userID uuid.UUID) ([]store.Project, error) {
+	return s.store.ListProjectsSharedByCoauthors(ctx, userID)
+}
+
+// Access описывает, как пользователь получил доступ к проекту: как участник
+// команды или как соавтор, которому владелец открыл закрытый проект на чтение.
+type Access struct {
+	Role     store.Role
+	Coauthor bool
+}
+
+// AccessOf — роль пользователя в проекте или ErrForbidden.
+func (s *Service) AccessOf(ctx context.Context, userID, projectID uuid.UUID) (Access, error) {
+	m, err := s.requireMember(ctx, userID, projectID, store.RoleViewer)
+	if err != nil {
+		return Access{}, err
+	}
+	return accessOf(m), nil
+}
+
+// accessOf: роль viewer, полученную НЕ через team_memberships, помечаем как
+// соавторскую — интерфейс по этому признаку показывает «только чтение».
+func accessOf(m *store.MembershipLite) Access {
+	return Access{Role: m.Role, Coauthor: m.Coauthor}
+}
+
 // RequireViewer — чтение проекта: любая роль (owner/editor/viewer).
 func (s *Service) RequireViewer(ctx context.Context, userID, projectID uuid.UUID) error {
 	_, err := s.requireMember(ctx, userID, projectID, store.RoleViewer)
@@ -103,6 +131,11 @@ func (s *Service) Delete(ctx context.Context, userID, projectID uuid.UUID) error
 }
 
 // requireMember — обёртка: получает membership, проверяет минимальную роль.
+//
+// Если участия нет, читать проект всё равно может соавтор, которому владелец
+// открыл свои закрытые проекты (переключатель «видит мои закрытые проекты»).
+// Соавтор получает РОВНО роль viewer: RequireEditor сравнивает ранги, поэтому
+// правки для него закрыты по построению.
 func (s *Service) requireMember(ctx context.Context, userID, projectID uuid.UUID, minRole store.Role) (*store.MembershipLite, error) {
 	m, err := s.store.GetMembership(ctx, projectID, userID)
 	if err != nil {
@@ -111,6 +144,18 @@ func (s *Service) requireMember(ctx context.Context, userID, projectID uuid.UUID
 			p, perr := s.store.GetProject(ctx, projectID)
 			if perr == nil && p.OwnerID == userID {
 				return &store.MembershipLite{ProjectID: projectID, UserID: userID, Role: store.RoleOwner}, nil
+			}
+			if perr == nil && minRole == store.RoleViewer && p.OwnerID != userID {
+				allowed, aerr := s.store.CoauthorCanRead(ctx, p.OwnerID, userID)
+				if aerr != nil {
+					return nil, aerr
+				}
+				if allowed {
+					return &store.MembershipLite{
+						ProjectID: projectID, UserID: userID,
+						Role: store.RoleViewer, Coauthor: true,
+					}, nil
+				}
 			}
 			return nil, ErrForbidden
 		}

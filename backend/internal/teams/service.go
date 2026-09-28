@@ -16,15 +16,15 @@ import (
 
 // Errors
 var (
-	ErrForbidden       = errors.New("forbidden")
-	ErrInvitationUsed  = errors.New("invitation already accepted")
-	ErrInvitationGone  = errors.New("invitation expired or not found")
-	ErrSelfInviteOnly  = errors.New("cannot invite yourself")
+	ErrForbidden      = errors.New("forbidden")
+	ErrInvitationUsed = errors.New("invitation already accepted")
+	ErrInvitationGone = errors.New("invitation expired or not found")
+	ErrSelfInviteOnly = errors.New("cannot invite yourself")
 )
 
 type Service struct {
-	store  *store.Store
-	proj   *projects.Service
+	store     *store.Store
+	proj      *projects.Service
 	inviteTTL time.Duration
 }
 
@@ -127,6 +127,38 @@ func (s *Service) Remove(ctx context.Context, actorID, projectID, targetID uuid.
 		return fmt.Errorf("cannot remove project owner")
 	}
 	return s.store.RemoveMembership(ctx, projectID, targetID)
+}
+
+// AddMember добавляет человека в проект напрямую, без ссылки-приглашения.
+// Так владелец подключает соавтора из своего круга: список уже под рукой, а роль
+// (editor/viewer) выбирается тут же.
+func (s *Service) AddMember(ctx context.Context, actorID, projectID, targetID uuid.UUID, role store.Role) (*store.MembershipLite, error) {
+	if role != store.RoleEditor && role != store.RoleViewer {
+		return nil, fmt.Errorf("invalid role: %q", role)
+	}
+	if actorID == targetID {
+		return nil, ErrSelfInviteOnly
+	}
+	p, err := s.store.GetProject(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	if p.OwnerID != actorID {
+		return nil, ErrForbidden
+	}
+	if p.OwnerID == targetID {
+		return nil, ErrSelfInviteOnly
+	}
+	if _, err := s.store.GetUserByID(ctx, targetID); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, store.ErrNotFound
+		}
+		return nil, err
+	}
+	if err := s.store.AddMembership(ctx, projectID, targetID, role); err != nil {
+		return nil, err
+	}
+	return s.store.GetMembership(ctx, projectID, targetID)
 }
 
 func (s *Service) ChangeRole(ctx context.Context, actorID, projectID, targetID uuid.UUID, role store.Role) error {

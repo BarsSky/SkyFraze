@@ -5,6 +5,7 @@ import './styles/tokens.css'
 import './styles/timeline.css'
 import './styles/editors.css'
 import './styles/feed.css'
+import './styles/coauthors.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

@@ -122,6 +122,11 @@ export function ProjectsPage() {
     return `${window.location.origin}/s/${p.public_slug}`
   }
 
+  // Свои проекты и участие — в основном списке; открытые соавторами — отдельно,
+  // потому что там другой набор действий (только чтение).
+  const own = list.filter((p) => p.access !== 'coauthor')
+  const shared = list.filter((p) => p.access === 'coauthor')
+
   return (
     <div style={{ maxWidth: 760, margin: '0 auto' }}>
       <div className="row" style={{ justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
@@ -178,8 +183,8 @@ export function ProjectsPage() {
       )}
 
       <div className="list">
-        {list.length === 0 && <p className="muted">Нет проектов. Создайте первый.</p>}
-        {list.map((p) => {
+        {own.length === 0 && <p className="muted">Нет проектов. Создайте первый.</p>}
+        {own.map((p) => {
           const isOwner = p.owner_id === userId
           return (
             <div key={p.id} className="card row" style={{ justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
@@ -250,6 +255,31 @@ export function ProjectsPage() {
           )
         })}
       </div>
+
+      {/* Проекты соавторов: открыты владельцем на чтение. Правок здесь нет —
+          ни публикации, ни участников, ни удаления; только «открыть». */}
+      {shared.length > 0 && (
+        <div className="projects__shared" data-shared-projects>
+          <h3 style={{ marginBottom: 4 }}>Проекты соавторов</h3>
+          <p className="muted" style={{ marginTop: 0 }}>
+            Эти проекты открыли вам как соавтору — читать можно целиком, править нельзя.
+          </p>
+          <div className="list">
+            {shared.map((p) => (
+              <div key={p.id} className="card row" style={{ justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+                <div style={{ minWidth: 0, flex: '1 1 240px' }}>
+                  <h3 style={{ margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <Link to={`/projects/${p.id}`}>{p.title}</Link>
+                    <span className="pub-badge" title="Доступ только на чтение">только чтение</span>
+                  </h3>
+                  <p className="muted" style={{ margin: 0 }}>{p.description || <em>без описания</em>}</p>
+                </div>
+                <Link to={`/projects/${p.id}`}><button className="secondary">Открыть</button></Link>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -6,6 +6,8 @@ export interface UserPublic {
   id: string
   email: string
   display_name: string
+  /** Ник (@username): по нему человека находят соавторы. */
+  username?: string
   /** Администратор развёртывания (режим регистрации и заявки) */
   is_admin: boolean
 }

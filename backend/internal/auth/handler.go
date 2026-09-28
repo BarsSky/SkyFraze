@@ -37,21 +37,59 @@ type refreshReq struct {
 }
 
 type tokensResp struct {
-	Access       string `json:"access"`
-	Refresh      string `json:"refresh"`
-	AccessExp    int64  `json:"access_exp_unix"`
-	RefreshExp   int64  `json:"refresh_exp_unix"`
+	Access     string `json:"access"`
+	Refresh    string `json:"refresh"`
+	AccessExp  int64  `json:"access_exp_unix"`
+	RefreshExp int64  `json:"refresh_exp_unix"`
 }
 
 type userPublic struct {
 	ID          string `json:"id"`
 	Email       string `json:"email"`
 	DisplayName string `json:"display_name"`
-	IsAdmin     bool   `json:"is_admin"`
+	// Username — ник (@nick): по нему человека находят соавторы.
+	Username string `json:"username"`
+	IsAdmin  bool   `json:"is_admin"`
 }
 
 func publicUser(u *store.User) userPublic {
-	return userPublic{ID: u.ID.String(), Email: u.Email, DisplayName: u.DisplayName, IsAdmin: u.IsAdmin}
+	return userPublic{
+		ID: u.ID.String(), Email: u.Email, DisplayName: u.DisplayName,
+		Username: u.Username, IsAdmin: u.IsAdmin,
+	}
+}
+
+type updateProfileReq struct {
+	DisplayName string `json:"display_name"`
+	Username    string `json:"username"`
+}
+
+// UpdateProfile — имя и ник. Ник уникален: 409, если занят.
+func (h *Handler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
+	uid, err := UserIDFromCtx(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var req updateProfileReq
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	u, err := h.svc.UpdateProfile(r.Context(), uid, req.DisplayName, req.Username)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidUsername):
+			writeErr(w, http.StatusBadRequest, "invalid username")
+		case errors.Is(err, store.ErrAlreadyExists):
+			writeErr(w, http.StatusConflict, "username taken")
+		default:
+			h.logger.Error("update profile", "err", err)
+			writeErr(w, http.StatusInternalServerError, "update failed")
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, publicUser(u))
 }
 
 // Config — публичная конфигурация входа: как на этой инсталляции пускают новых

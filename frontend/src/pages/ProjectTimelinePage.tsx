@@ -117,6 +117,18 @@ export function ProjectTimelinePage() {
     document.querySelector<HTMLElement>('[data-editor-panel]')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }, [])
 
+  // Правки доступны владельцу и редактору. Наблюдателю и соавтору, которому
+  // владелец открыл закрытый проект, доступно только чтение: редакторы не
+  // показываем вовсе — молча неработающие поля хуже, чем их отсутствие.
+  // `canEdit === null` — роль ещё не приехала; до этого запись не отправляем,
+  // иначе читатель получал 403 в консоль (и лишний трафик).
+  const canEdit = project == null ? null : project.role === 'owner' || project.role === 'editor'
+  const showEditors = canEdit !== false
+
+  useEffect(() => {
+    collab?.setWritable(canEdit)
+  }, [collab, canEdit])
+
   return (
     <div className="sf-page">
       {error != null && (
@@ -134,8 +146,21 @@ export function ProjectTimelinePage() {
           />
         </div>
       )}
+      {canEdit === false && (
+        <div className="sf-readonly" data-readonly-banner>
+          {project?.coauthor_access
+            ? 'Проект открыт вам как соавтору: только чтение, правок здесь нет.'
+            : 'Вы наблюдатель в этом проекте: только чтение, правок здесь нет.'}
+        </div>
+      )}
       {eventsCount === -1 && !error && <p className="muted">Подключение к realtime-серверу…</p>}
-      {eventsCount === 0 && <EmptyState onCreate={createFirstChapter} />}
+      {eventsCount === 0 && showEditors && <EmptyState onCreate={createFirstChapter} />}
+      {eventsCount === 0 && !showEditors && (
+        <div className="sf-empty">
+          <h3 className="sf-empty__title">Таймлайн пока пуст</h3>
+          <p className="muted sf-empty__text">Автор ещё не добавил ни одной главы.</p>
+        </div>
+      )}
 
       {events && eventsCount > 0 && (
         <TimelineStage
@@ -143,14 +168,16 @@ export function ProjectTimelinePage() {
           assetsById={assetsById}
           projectTitle={project?.title ?? 'Таймлайн'}
           actions={
-            <button className="secondary" onClick={openEditors}>
-              Редакторы
-            </button>
+            showEditors ? (
+              <button className="secondary" onClick={openEditors}>
+                Редакторы
+              </button>
+            ) : undefined
           }
         />
       )}
 
-      {events && eventsCount > 0 && (
+      {events && eventsCount > 0 && showEditors && (
         <EditorsPanel
           events={events}
           assets={assets}

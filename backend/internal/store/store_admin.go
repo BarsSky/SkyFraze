@@ -190,10 +190,21 @@ func (s *Store) ApproveRegistrationRequest(ctx context.Context, id uuid.UUID, by
 	}
 	req = collected[0]
 
-	user, err := qOne[User](ctx, tx,
-		`INSERT INTO users (email, password_hash, display_name, is_admin)
-		 VALUES ($1,$2,$3,$4) RETURNING `+userColumns,
-		req.Email, req.PasswordHash, req.DisplayName, isAdmin)
+	// Ник подбираем так же, как при обычной регистрации: у одобренного заявкой
+	// пользователя он должен быть сразу, иначе его не найти поиском.
+	var user *User
+	for attempt := 0; attempt < 20; attempt++ {
+		user, err = qOne[User](ctx, tx,
+			`INSERT INTO users (email, password_hash, display_name, username, is_admin)
+			 VALUES ($1,$2,$3,$4,$5) RETURNING `+userColumns,
+			req.Email, req.PasswordHash, req.DisplayName, suggestUsername(req.Email, attempt), isAdmin)
+		if err == nil {
+			break
+		}
+		if !isUsernameConflict(err) {
+			return nil, err
+		}
+	}
 	if err != nil {
 		return nil, err
 	}

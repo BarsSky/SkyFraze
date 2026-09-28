@@ -21,7 +21,11 @@ func New(pool *pgxpool.Pool) *Store {
 	return &Store{Pool: pool}
 }
 
-var ErrNotFound = errors.New("not found")
+var (
+	ErrNotFound = errors.New("not found")
+	// ErrAlreadyExists — значение занято (ник, связь соавторов).
+	ErrAlreadyExists = errors.New("already exists")
+)
 
 // querier — общий интерфейс пула и транзакции: одни и те же выборки должны
 // работать и вне, и внутри транзакции (иначе логика дублируется).
@@ -61,6 +65,9 @@ type User struct {
 	Email        string    `db:"email" json:"email"`
 	PasswordHash string    `db:"password_hash" json:"-"`
 	DisplayName  string    `db:"display_name" json:"display_name"`
+	// Username — ник для поиска людей (@nick). Подбирается при регистрации из
+	// email, меняется в профиле; уникален без учёта регистра.
+	Username string `db:"username" json:"username"`
 	// IsAdmin — администратор развёртывания: управляет режимом регистрации
 	// и рассматривает заявки. Назначается env ADMIN_EMAILS (или первый пользователь).
 	IsAdmin   bool      `db:"is_admin" json:"is_admin"`
@@ -68,22 +75,32 @@ type User struct {
 	UpdatedAt time.Time `db:"updated_at" json:"updated_at"`
 }
 
-const userColumns = `id, email, password_hash, display_name, is_admin, created_at, updated_at`
+const userColumns = `id, email, password_hash, display_name, username, is_admin, created_at, updated_at`
 
 func (s *Store) CreateUser(ctx context.Context, email, hash, name string) (*User, error) {
-	return qOne[User](ctx, s.Pool,
-		`INSERT INTO users (email, password_hash, display_name)
-		 VALUES ($1,$2,$3) RETURNING `+userColumns,
-		email, hash, name)
+	return s.CreateUserWithHash(ctx, email, hash, name, false)
 }
 
 // CreateUserWithHash создаёт пользователя с готовым хэшем пароля (одобрение заявки)
 // и сразу помечает администратором, если так решило развёртывание.
+//
+// Ник подбирается из email; если он занят — добавляется цифровой суффикс, поэтому
+// INSERT повторяется. Так у каждого пользователя сразу есть ник для поиска, и
+// регистрацию не приходится прерывать вопросом «придумайте ник».
 func (s *Store) CreateUserWithHash(ctx context.Context, email, hash, name string, isAdmin bool) (*User, error) {
-	return qOne[User](ctx, s.Pool,
-		`INSERT INTO users (email, password_hash, display_name, is_admin)
-		 VALUES ($1,$2,$3,$4) RETURNING `+userColumns,
-		email, hash, name, isAdmin)
+	for attempt := 0; attempt < 20; attempt++ {
+		u, err := qOne[User](ctx, s.Pool,
+			`INSERT INTO users (email, password_hash, display_name, username, is_admin)
+			 VALUES ($1,$2,$3,$4,$5) RETURNING `+userColumns,
+			email, hash, name, suggestUsername(email, attempt), isAdmin)
+		if err == nil {
+			return u, nil
+		}
+		if !isUsernameConflict(err) {
+			return nil, err
+		}
+	}
+	return nil, ErrAlreadyExists
 }
 
 func (s *Store) GetUserByEmail(ctx context.Context, email string) (*User, error) {
@@ -126,15 +143,31 @@ func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 		`SELECT `+userColumns+` FROM users ORDER BY created_at`)
 }
 
+// UpdateProfile меняет отображаемое имя и ник одной операцией: интерфейс
+// отправляет их вместе, а ник должен остаться уникальным.
+func (s *Store) UpdateProfile(ctx context.Context, userID uuid.UUID, displayName, username string) (*User, error) {
+	u, err := qOne[User](ctx, s.Pool,
+		`UPDATE users SET display_name=$2, username=$3, updated_at=now()
+		  WHERE id=$1 RETURNING `+userColumns,
+		userID, displayName, username)
+	if err != nil {
+		if isUsernameConflict(err) {
+			return nil, ErrAlreadyExists
+		}
+		return nil, err
+	}
+	return u, nil
+}
+
 // ========================== Projects ==========================
 
 type Project struct {
-	ID          uuid.UUID  `db:"id" json:"id"`
-	OwnerID     uuid.UUID  `db:"owner_id" json:"owner_id"`
-	Title       string     `db:"title" json:"title"`
-	Description string     `db:"description" json:"description"`
-	CreatedAt   time.Time  `db:"created_at" json:"created_at"`
-	UpdatedAt   time.Time  `db:"updated_at" json:"updated_at"`
+	ID          uuid.UUID `db:"id" json:"id"`
+	OwnerID     uuid.UUID `db:"owner_id" json:"owner_id"`
+	Title       string    `db:"title" json:"title"`
+	Description string    `db:"description" json:"description"`
+	CreatedAt   time.Time `db:"created_at" json:"created_at"`
+	UpdatedAt   time.Time `db:"updated_at" json:"updated_at"`
 	// Публичная лента: проект виден всем ТОЛЬКО при IsPublic = true.
 	IsPublic    bool       `db:"is_public" json:"is_public"`
 	PublicSlug  *string    `db:"public_slug" json:"public_slug,omitempty"`
@@ -197,6 +230,7 @@ type TeamMember struct {
 	AddedAt     time.Time `db:"added_at" json:"added_at"`
 	Email       string    `db:"email" json:"email,omitempty"`
 	DisplayName string    `db:"display_name" json:"display_name,omitempty"`
+	Username    string    `db:"username" json:"username,omitempty"`
 }
 
 // MembershipLite — то, что возвращает GetMembership (без JOIN).
@@ -205,6 +239,9 @@ type MembershipLite struct {
 	UserID    uuid.UUID `db:"user_id" json:"user_id"`
 	Role      Role      `db:"role" json:"role"`
 	AddedAt   time.Time `db:"added_at" json:"added_at"`
+	// Coauthor — доступ выдан соавторством, а не участием в команде: роль viewer
+	// и никаких правок. Выставляется только в памяти (в team_memberships такого нет).
+	Coauthor bool `db:"-" json:"coauthor,omitempty"`
 }
 
 func (s *Store) AddMembership(ctx context.Context, projectID, userID uuid.UUID, role Role) error {
@@ -225,7 +262,7 @@ func (s *Store) GetMembership(ctx context.Context, projectID, userID uuid.UUID) 
 func (s *Store) ListMembers(ctx context.Context, projectID uuid.UUID) ([]TeamMember, error) {
 	return qAll[TeamMember](ctx, s.Pool,
 		`SELECT tm.project_id, tm.user_id, tm.role, tm.added_at,
-		        u.email, u.display_name
+		        u.email, u.display_name, u.username
 		   FROM team_memberships tm
 		   JOIN users u ON u.id = tm.user_id
 		  WHERE tm.project_id = $1

@@ -8,6 +8,7 @@ import { AcceptInvitation } from '../pages/AcceptInvitation'
 import { FeedPage } from '../pages/FeedPage'
 import { PublicStoryPage } from '../pages/PublicStoryPage'
 import { AdminPage } from '../pages/AdminPage'
+import { CoauthorsPage } from '../pages/CoauthorsPage'
 import { RequireAuth } from '../components/RequireAuth'
 import { Header } from '../components/Header'
 import { useAuthStore } from '../store/auth'
@@ -59,6 +60,17 @@ export function App() {
               <div className="layout">
                 <Header />
                 <main><ProjectTimelinePage /></main>
+              </div>
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/coauthors"
+          element={
+            <RequireAuth>
+              <div className="layout">
+                <Header />
+                <main><CoauthorsPage /></main>
               </div>
             </RequireAuth>
           }

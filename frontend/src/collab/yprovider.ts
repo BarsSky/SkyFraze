@@ -24,6 +24,12 @@ export interface CollabHandle {
   flushNow: () => Promise<void>
   /** Проецирует текущее дерево CRDT на сервер (серверная модель иерархии). */
   syncTree: () => Promise<SyncTreeResult>
+  /**
+   * Разрешение на запись. `null` — роль ещё не известна (страница не получила
+   * проект): до этого момента запись не отправляем, иначе читатель (наблюдатель
+   * или соавтор с доступом только на чтение) получал бы 403 в консоль.
+   */
+  setWritable: (allowed: boolean | null) => void
   /** Открылось ли realtime-соединение: без него правки сохраняются, но не летят другим. */
   connected: boolean
 }
@@ -74,12 +80,26 @@ export function useCollab(projectId: string): CollabHandle | null {
     }
     let active = true
     let revision = 0
+    /**
+     * Роль ещё не известна, пока страница не получила проект: за это время уже
+     * успевают уйти первая проекция дерева и запись снапшота, и читатель получал
+     * 403. Поэтому до выяснения роли запись не отправляем вовсе.
+     */
+    let writable: boolean | null = null
+    let treeSynced = false
+
+    const canWrite = () => writable === true
 
     const syncTree = async (): Promise<SyncTreeResult> => {
+      if (!canWrite()) return { ok: false, reason: 'forbidden' }
       const payload = yFlatTree(events)
-      if (payload.length === 0) return { ok: true }
+      if (payload.length === 0) {
+        treeSynced = true
+        return { ok: true }
+      }
       try {
         await syncEventTree(projectId, payload)
+        treeSynced = true
         return { ok: true }
       } catch (e) {
         const status = (e as { response?: Response })?.response?.status
@@ -157,8 +177,9 @@ export function useCollab(projectId: string): CollabHandle | null {
         const update = Y.encodeStateAsUpdate(doc)
         if (update.byteLength > 0 && ws) ws.send(update)
         // Первичная проекция дерева на сервер: у проекта может быть история в
-        // CRDT и пустая реляционная модель (после миграции 0002).
-        if (active) void syncTree()
+        // CRDT и пустая реляционная модель (после миграции 0002). Роль к этому
+        // моменту может быть ещё не известна — тогда проекцию сделает setWritable.
+        if (active && canWrite() && !treeSynced) void syncTree()
       }
       ws.onclose = () => setConnected(false)
       ws.onerror = () => setConnected(false)
@@ -204,7 +225,7 @@ export function useCollab(projectId: string): CollabHandle | null {
     }
 
     const flushNow = async (): Promise<void> => {
-      if (!active) return
+      if (!active || !canWrite()) return
       if (saving) {
         queued = true
         return
@@ -223,6 +244,7 @@ export function useCollab(projectId: string): CollabHandle | null {
       }
     }
     const save = (): Promise<void> => {
+      if (!canWrite()) return Promise.resolve()
       if (debounceTimer) clearTimeout(debounceTimer)
       debounceTimer = setTimeout(() => {
         pendingPromise = flushNow()
@@ -247,7 +269,7 @@ export function useCollab(projectId: string): CollabHandle | null {
     // Последняя запись при уходе со страницы: sendBeacon не умеет заголовки,
     // поэтому используем fetch с keepalive — он несёт базовую ревизию.
     const onUnload = () => {
-      if (!active || !wsOpened) return
+      if (!active || !wsOpened || !canWrite()) return
       const state = Y.encodeStateAsUpdate(doc)
       const safe = new Uint8Array(new ArrayBuffer(state.byteLength))
       safe.set(state)
@@ -265,7 +287,20 @@ export function useCollab(projectId: string): CollabHandle | null {
     }
     window.addEventListener('pagehide', onUnload)
 
-    setHandle({ doc, events, wsUrl: () => wsUrl, save, flushNow, syncTree, connected: false })
+    /**
+     * Страница сообщает роль, когда получила проект. Если запись разрешена и
+     * первичная проекция дерева ещё не уходила (её пропустили, пока роль была
+     * неизвестна), делаем её здесь — один раз.
+     */
+    const setWritable = (allowed: boolean | null) => {
+      const previous = writable
+      writable = allowed
+      if (allowed === true && previous !== true && active && wsOpened && !treeSynced) {
+        void syncTree()
+      }
+    }
+
+    setHandle({ doc, events, wsUrl: () => wsUrl, save, flushNow, syncTree, setWritable, connected: false })
     // Контент тянем сразу, не дожидаясь WebSocket (см. loadContent).
     void loadContent()
 
@@ -275,7 +310,7 @@ export function useCollab(projectId: string): CollabHandle | null {
       clearInterval(safetyNet)
       window.removeEventListener('pagehide', onUnload)
       // flush делаем ТОЛЬКО если WS-соединение успешно открылось (значит, мы доверенный клиент)
-      if (wsOpened) void flushNow()
+      if (wsOpened && canWrite()) void flushNow()
       try { ws?.close() } catch { /* ignore */ }
     }
   }, [projectId])

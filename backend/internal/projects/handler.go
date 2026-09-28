@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/skyfraze/backend/internal/auth"
+	"github.com/skyfraze/backend/internal/store"
 )
 
 type Handler struct {
@@ -31,6 +32,15 @@ type updateReq struct {
 	Description string `json:"description"`
 }
 
+// projectDetail — проект вместе с ролью вызывающего. Доступ по соавторству — это
+// роль viewer плюс пометка Coauthor: интерфейс по ней пишет «только чтение» и не
+// показывает редакторы.
+type projectDetail struct {
+	*store.Project
+	Role     string `json:"role"`
+	Coauthor bool   `json:"coauthor_access"`
+}
+
 // Routes — коллекция проектов. CRUD одиночного проекта (/api/projects/{id})
 // регистрируется в cmd/server/main.go внутри param-поддерева chi: там же живут
 // под-ресурсы (members/invitations/events/assets). Регистрировать Get/Update/Delete
@@ -45,6 +55,14 @@ func (h *Handler) Routes(authSvc *auth.Service) http.Handler {
 	return r
 }
 
+// projectListItem — проект вместе с тем, КАК пользователь получил к нему доступ:
+// как владелец, как участник команды или как соавтор, которому владелец открыл
+// закрытый проект на чтение. Интерфейс показывает последние отдельным блоком.
+type projectListItem struct {
+	*store.Project
+	Access string `json:"access"`
+}
+
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	uid, err := auth.UserIDFromCtx(r.Context())
 	if err != nil {
@@ -57,7 +75,25 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "list failed")
 		return
 	}
-	writeJSON(w, http.StatusOK, ps)
+	shared, err := h.svc.ListSharedByCoauthors(r.Context(), uid)
+	if err != nil {
+		h.logger.Error("list shared projects", "err", err)
+		writeErr(w, http.StatusInternalServerError, "list failed")
+		return
+	}
+
+	items := make([]projectListItem, 0, len(ps)+len(shared))
+	for i := range ps {
+		access := "member"
+		if ps[i].OwnerID == uid {
+			access = "owner"
+		}
+		items = append(items, projectListItem{Project: &ps[i], Access: access})
+	}
+	for i := range shared {
+		items = append(items, projectListItem{Project: &shared[i], Access: "coauthor"})
+	}
+	writeJSON(w, http.StatusOK, items)
 }
 
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
@@ -108,7 +144,19 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	writeJSON(w, http.StatusOK, p)
+	// Отдаём вместе с проектом роль вызывающего: страница проекта по ней решает,
+	// показывать ли редакторы (соавтору и наблюдателю — нет).
+	access, aerr := h.svc.AccessOf(r.Context(), uid, pid)
+	if aerr != nil {
+		h.logger.Error("project access", "err", aerr)
+		writeErr(w, http.StatusInternalServerError, "get failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, projectDetail{
+		Project:  p,
+		Role:     string(access.Role),
+		Coauthor: access.Coauthor,
+	})
 }
 
 func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {

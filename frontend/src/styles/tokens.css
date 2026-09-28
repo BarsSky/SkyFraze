@@ -149,6 +149,18 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
    на всех ширинах, а не только на мобильных (иначе текст слипается). */
 .auth-links { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; }
 
+/* Знак SkyFraze рядом с названием: рисунок тот же, что в favicon.svg */
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  color: var(--fg);
+  text-decoration: none;
+}
+.brand svg { flex: 0 0 auto; display: block; }
+.brand__name { white-space: nowrap; }
+
 /* Мобильные цели нажатия: ссылки и кнопки не меньше 34px по высоте */
 @media (max-width: 860px) {
   .layout header a,

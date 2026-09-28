@@ -27,6 +27,54 @@ type inviteReq struct {
 	Role  string `json:"role"`
 }
 
+type addMemberReq struct {
+	UserID string `json:"user_id"`
+	Role   string `json:"role"`
+}
+
+// AddMember — владелец добавляет человека в проект сразу (без ссылки-приглашения).
+// Основной путь: выбрать соавтора из списка в настройках проекта.
+func (h *Handler) AddMember(_ *auth.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		uid, err := auth.UserIDFromCtx(r.Context())
+		if err != nil {
+			writeErr(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		pid, err := uuid.Parse(chi.URLParam(r, "id"))
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid project id")
+			return
+		}
+		var req addMemberReq
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid json")
+			return
+		}
+		target, err := uuid.Parse(req.UserID)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid user_id")
+			return
+		}
+		m, err := h.svc.AddMember(r.Context(), uid, pid, target, store.Role(req.Role))
+		if err != nil {
+			switch {
+			case errors.Is(err, ErrForbidden):
+				writeErr(w, http.StatusForbidden, "forbidden")
+			case errors.Is(err, ErrSelfInviteOnly):
+				writeErr(w, http.StatusBadRequest, "cannot add owner")
+			case errors.Is(err, store.ErrNotFound):
+				writeErr(w, http.StatusNotFound, "user not found")
+			default:
+				h.logger.Error("add member", "err", err)
+				writeErr(w, http.StatusInternalServerError, "add failed")
+			}
+			return
+		}
+		writeJSON(w, http.StatusCreated, m)
+	}
+}
+
 func (h *Handler) Invite(authSvc *auth.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		uid, err := auth.UserIDFromCtx(r.Context())
@@ -85,6 +133,38 @@ func (h *Handler) Accept() http.HandlerFunc {
 			return
 		}
 		writeJSON(w, http.StatusOK, m)
+	}
+}
+
+// RemoveMember — владелец убирает участника из проекта (обратное к AddMember).
+func (h *Handler) RemoveMember(_ *auth.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		uid, err := auth.UserIDFromCtx(r.Context())
+		if err != nil {
+			writeErr(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		pid, err := uuid.Parse(chi.URLParam(r, "id"))
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid project id")
+			return
+		}
+		target, err := uuid.Parse(chi.URLParam(r, "userID"))
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid user id")
+			return
+		}
+		if err := h.svc.Remove(r.Context(), uid, pid, target); err != nil {
+			switch {
+			case errors.Is(err, ErrForbidden):
+				writeErr(w, http.StatusForbidden, "forbidden")
+			default:
+				h.logger.Error("remove member", "err", err)
+				writeErr(w, http.StatusInternalServerError, "remove failed")
+			}
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	}
 }
 
