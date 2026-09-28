@@ -12,7 +12,11 @@
     "e2e": "playwright test"
   },
   "dependencies": {
+    "dompurify": "^3.4.16",
+    "katex": "^0.18.9",
     "ky": "^1.7.1",
+    "markdown-it": "^15.0.2",
+    "mermaid": "^12.0.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.27.0",

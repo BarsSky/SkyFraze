@@ -6,6 +6,7 @@ import {
   type TimelineFrame,
 } from '../timelineModel'
 import { ImageViewer } from '../../ImageViewer'
+import { MarkdownBlock } from '../../MarkdownBlock'
 
 interface Props {
   chapter: TimelineChapter
@@ -82,7 +83,7 @@ export function CopyPanel({
           </div>
           <span className="sf-copy__eyebrow">{frame.eyebrow}</span>
           <h2 className="sf-copy__title">{frame.title || 'Без названия'}</h2>
-          {frame.body && <p className="sf-copy__body">{frame.body}</p>}
+          {frame.body && <MarkdownBlock source={frame.body} className="sf-copy__body" />}
 
           <ul className="sf-copy__meta">
             {!frame.isChapter && <li>глава {chapter.number}: {chapter.title}</li>}

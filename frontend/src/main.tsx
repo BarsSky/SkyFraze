@@ -6,6 +6,7 @@ import './styles/timeline.css'
 import './styles/editors.css'
 import './styles/feed.css'
 import './styles/coauthors.css'
+import './styles/markdown.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
