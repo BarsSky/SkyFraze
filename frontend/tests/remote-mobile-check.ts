@@ -54,8 +54,10 @@ await api.put(`${BASE}/api/projects/${projectId}/events/tree`, {
 })
 
 const browser = await chromium.launch()
+// Размер экрана: по умолчанию 6.1", но проверять надо и маленькие (320x568 — 4").
+const [vw, vh] = (process.env.MOBILE_SIZE ?? '390x844').split('x').map(Number)
 const ctx = await browser.newContext({
-  viewport: { width: 390, height: 844 },
+  viewport: { width: vw, height: vh },
   deviceScaleFactor: 2,
   isMobile: true,
   hasTouch: true,
@@ -117,6 +119,36 @@ ok('панель стадии видна', (view.topbar as { vis: string })?.vis
 ok('копирайт виден', (view.copy as { vis: string })?.vis === 'visible', JSON.stringify(view.copy))
 ok('кнопка «Редакторы» нажимается', view.editorsButtonHit === 'button', String(view.editorsButtonHit))
 ok('редакторы в DOM', view.editors === true)
+
+// Главное для маленьких экранов: страница НЕ масштабируется браузером (layout viewport
+// равен экрану) и ничего не вылезает по горизонтали — иначе фиксированные слои уезжают.
+const fit = (await page.evaluate(`(() => {
+  const de = document.documentElement
+  const H = window.innerHeight, W = window.innerWidth
+  const rects = {}
+  for (const [name, sel] of Object.entries({ header: '.layout header', topbar: '.sf-topbar', chips: '.sf-chips', copy: '.sf-copy', hint: '.sf-hint', nav: '.sf-copy__nav' })) {
+    const el = document.querySelector(sel)
+    if (!el) continue
+    const r = el.getBoundingClientRect()
+    const cs = getComputedStyle(el)
+    if (cs.visibility === 'hidden' || Number(cs.opacity) < 0.05 || r.height < 1) continue
+    rects[name] = { y: Math.round(r.y), bottom: Math.round(r.bottom), right: Math.round(r.right) }
+  }
+  return {
+    innerW: W, innerH: H, scrollW: de.scrollWidth, clientW: de.clientWidth,
+    overflowX: de.scrollWidth - de.clientWidth,
+    outside: Object.entries(rects).filter(([, r]) => r.y < -1 || r.bottom > H + 1 || r.right > W + 1).map(([k, r]) => k + ' y' + r.y + '..' + r.bottom + ' right' + r.right),
+    rects,
+  }
+})()`)) as Record<string, any>
+console.log('  геометрия:', JSON.stringify(fit))
+ok('страница не шире экрана', fit.overflowX <= 0, `scrollWidth ${fit.scrollW} > clientWidth ${fit.clientW}`)
+ok(
+  'layout viewport равен экрану (нет масштабирования)',
+  Math.abs(fit.innerW - vw) <= 1 && Math.abs(fit.innerH - vh) <= 1,
+  `inner ${fit.innerW}x${fit.innerH}, ожидалось ${vw}x${vh}`,
+)
+ok('элементы стадии внутри экрана', fit.outside.length === 0, JSON.stringify(fit.outside))
 
 // Создание события на телефоне: здесь раньше падал crypto.randomUUID.
 // «+ подсобытие» создаёт ребёнка у ВЫБРАННОГО события, поэтому сначала выбираем главу.
