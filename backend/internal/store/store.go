@@ -473,6 +473,15 @@ func (s *Store) ReplaceEventTree(ctx context.Context, projectID uuid.UUID, by uu
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// Проекция — на весь проект, поэтому сохранения одного проекта должны идти
+	// по очереди. Без этого два параллельных PUT (редактор и автосохранение)
+	// брали блокировки строк в разном порядке и Postgres снимал одну транзакцию
+	// как жертву deadlock'а (40P01) — клиент получал 500 и «правки не сохранились».
+	// Блокировка транзакционная: снимается сама при COMMIT/ROLLBACK.
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1::text)::bigint)`, projectID.String()); err != nil {
+		return err
+	}
+
 	keep := make(map[uuid.UUID]bool, len(nodes))
 	for _, n := range nodes {
 		keep[n.ID] = true
