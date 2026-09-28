@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { useAuthStore } from '../store/auth'
 import { buildEventTree } from './eventTree'
 import { randomId } from '../lib/uuid'
+import { collabSocketUrl } from './socketUrl'
 import { getEventState, listEventRows, putEventState, syncEventTree, type FlatEventNode } from '../api/events'
 
 export type YArray = Y.Array<Y.Map<unknown>>
@@ -58,10 +59,19 @@ export function useCollab(projectId: string): CollabHandle | null {
     }
 
     const tok = useAuthStore.getState().accessToken
-    const wsUrl = `ws://${window.location.host}/api/projects/${projectId}/collab`
-    const ws = new WebSocket(wsUrl + '?token=' + encodeURIComponent(tok ?? ''))
-    ws.binaryType = 'arraybuffer'
+    const wsUrl = collabSocketUrl(projectId)
+    // WebSocket может быть недоступен по многим причинам: HTTPS-страница и ws://
+    // (браузер бросает SecurityError), прокси без поддержки Upgrade, блокировка в
+    // корпоративной сети. Ни один из этих случаев не должен ронять приложение:
+    // содержимое проекта грузится по REST (см. loadContent), а realtime — бонус.
+    let ws: WebSocket | null = null
     let wsOpened = false
+    try {
+      ws = new WebSocket(wsUrl + '?token=' + encodeURIComponent(tok ?? ''))
+      ws.binaryType = 'arraybuffer'
+    } catch (e) {
+      console.warn('[yprovider] realtime недоступен, работаем без него:', String(e))
+    }
     let active = true
     let revision = 0
 
@@ -137,24 +147,28 @@ export function useCollab(projectId: string): CollabHandle | null {
       }
     }
 
-    ws.onopen = async () => {
-      wsOpened = true
-      setConnected(true)
-      // Соединение могли открыть раньше, чем приехал снапшот: отправляем то, что
-      // уже есть, а остальное уйдёт через doc.on('update') после загрузки.
-      const update = Y.encodeStateAsUpdate(doc)
-      if (update.byteLength > 0) ws.send(update)
-      // Первичная проекция дерева на сервер: у проекта может быть история в
-      // CRDT и пустая реляционная модель (после миграции 0002).
-      if (active) void syncTree()
-    }
-    ws.onclose = () => setConnected(false)
-    ws.onmessage = (ev) => {
-      if (ev.data instanceof ArrayBuffer) {
-        try {
-          Y.applyUpdate(doc, new Uint8Array(ev.data), 'remote')
-        } catch {
-          /* ignore malformed */
+    // Обработчики навешиваем только если сокет удалось создать.
+    if (ws) {
+      ws.onopen = async () => {
+        wsOpened = true
+        setConnected(true)
+        // Соединение могли открыть раньше, чем приехал снапшот: отправляем то, что
+        // уже есть, а остальное уйдёт через doc.on('update') после загрузки.
+        const update = Y.encodeStateAsUpdate(doc)
+        if (update.byteLength > 0 && ws) ws.send(update)
+        // Первичная проекция дерева на сервер: у проекта может быть история в
+        // CRDT и пустая реляционная модель (после миграции 0002).
+        if (active) void syncTree()
+      }
+      ws.onclose = () => setConnected(false)
+      ws.onerror = () => setConnected(false)
+      ws.onmessage = (ev) => {
+        if (ev.data instanceof ArrayBuffer) {
+          try {
+            Y.applyUpdate(doc, new Uint8Array(ev.data), 'remote')
+          } catch {
+            /* ignore malformed */
+          }
         }
       }
     }
@@ -219,7 +233,7 @@ export function useCollab(projectId: string): CollabHandle | null {
 
     doc.on('update', (update, origin) => {
       if (origin === 'remote') return
-      if (ws.readyState === WebSocket.OPEN) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
         try { ws.send(update) } catch { /* ignore */ }
       }
       void save()
@@ -262,7 +276,7 @@ export function useCollab(projectId: string): CollabHandle | null {
       window.removeEventListener('pagehide', onUnload)
       // flush делаем ТОЛЬКО если WS-соединение успешно открылось (значит, мы доверенный клиент)
       if (wsOpened) void flushNow()
-      try { ws.close() } catch { /* ignore */ }
+      try { ws?.close() } catch { /* ignore */ }
     }
   }, [projectId])
 
