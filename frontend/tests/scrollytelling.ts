@@ -59,9 +59,16 @@ async function readFrame(page: Page): Promise<FrameSnapshot> {
     const check = (el, name) => {
       if (!el) return
       if (el.scrollWidth > el.clientWidth + 1) { fits = false; issues.push(name + ': горизонт ' + el.scrollWidth + '>' + el.clientWidth) }
-      const r = el.getBoundingClientRect()
+      const scroller = el.closest('.sf-copy__scroll')
+      // Содержимое листа кадра прокручивается внутри него: «ниже сгиба» здесь —
+      // нормальное состояние, важно что сам лист целиком в экране, а текст и
+      // кнопки навигации доступны. По вертикали проверяем сам лист.
+      const target = scroller && scroller !== el ? scroller : el
+      const r = target.getBoundingClientRect()
       if (r.left < -1 || r.right > window.innerWidth + 1) { fits = false; issues.push(name + ': вне экрана по X') }
       if (r.top < -1 || r.bottom > window.innerHeight + 1) { fits = false; issues.push(name + ': вне экрана по Y') }
+      const own = el.getBoundingClientRect()
+      if (own.left < -1 || own.right > window.innerWidth + 1) { fits = false; issues.push(name + ': вне экрана по X (элемент)') }
     }
     check(copy, 'copy')
     check(title, 'title')

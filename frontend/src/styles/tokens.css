@@ -171,22 +171,32 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
     min-height: 34px;
   }
   .auth-links { gap: 10px; }
-  /* Шапка должна УМЕЩАТЬСЯ в ширину экрана. Если она вылезает (а на 320px при
-     запрете переноса это ровно так), мобильный браузер расширяет layout viewport
-     и масштабирует страницу целиком — после чего фиксированные слои стадии,
-     посчитанные от vh, оказываются за пределами видимой области: «элементы
-     уходят за экран». Поэтому перенос разрешён, а высоту шапки стадия измеряет
-     сама (--sf-header-h) и больше не наезжает на неё. */
+  /* Шапка должна УМЕЩАТЬСЯ в ширину экрана. Если она вылезает, мобильный браузер
+     расширяет layout viewport и масштабирует страницу целиком — после чего
+     фиксированные слои стадии, посчитанные от vh, оказываются за пределами
+     видимой области: «элементы уходят за экран».
+     Раньше переносили строки, но с появлением ссылок «Соавторы» и «Админка» у
+     вошедшего администратора шапка стала занимать три строки — это четверть
+     экрана, и текст в кадре читать уже негде. Теперь шапка — одна строка с
+     горизонтальной прокруткой: переполнение остаётся ВНУТРИ неё, layout viewport
+     не расширяется, высоту стадия по-прежнему измеряет сама (--sf-header-h). */
   .layout header {
-    flex-wrap: wrap;
-    row-gap: 4px;
+    flex-wrap: nowrap;
     gap: 8px;
-    padding: 8px 12px;
+    padding: 8px 10px;
+    overflow-x: auto;
+    scrollbar-width: none;
   }
-  .layout header > .row { min-width: 0; }
-  .layout header > .row:first-child { flex: 1 1 auto; flex-wrap: wrap; }
-  .layout header > .row:last-child { flex: 0 1 auto; flex-wrap: wrap; justify-content: flex-end; }
-  .auth-links { flex-wrap: wrap; }
+  .layout header::-webkit-scrollbar { display: none; }
+  .layout header > .row { flex: 0 0 auto; flex-wrap: nowrap; }
+  .layout header > .row:first-child { min-width: 0; }
+  .auth-links { flex-wrap: nowrap; }
+  .brand { min-height: 34px; }
+  /* Узкая шапка: у переключателя темы остаётся только значок ☾/☀, слово
+     «тёмная» отнимало 60px у ссылок. Минимальная ширина — чтобы цель нажатия
+     осталась не меньше 34px (иначе палец по кнопке не попадает). */
+  .header-theme__label { display: none; }
+  .header-theme { min-width: 34px; justify-content: center; }
   .layout header a.header-nav__projects { display: none; }
   /* Ссылки в тексте («Регистрация», «Публичные истории») — тоже цели нажатия:
      без min-height они дают ~21px и по ним не попасть пальцем. */

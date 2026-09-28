@@ -33,12 +33,13 @@ export function Header() {
           </span>
         )}
         <button
-          className="secondary"
+          className="secondary header-theme"
           onClick={() => setTheme(nextTheme)}
           title={nextTheme === 'light' ? 'Светлая тема (кремово-мятная)' : 'Тёмная тема'}
           aria-label="Переключить тему"
         >
-          {theme === 'dark' ? '☾ тёмная' : '☀ светлая'}
+          {theme === 'dark' ? '☾' : '☀'}
+          <span className="header-theme__label">{theme === 'dark' ? ' тёмная' : ' светлая'}</span>
         </button>
         {user ? (
           <button className="secondary" onClick={() => { logout(); nav('/login') }}>

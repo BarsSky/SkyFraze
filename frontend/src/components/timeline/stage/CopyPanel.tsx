@@ -61,29 +61,33 @@ export function CopyPanel({
       data-frame-number={frame.number}
       data-frame-kind={frame.kind}
     >
-      {isPhoto ? (
-        <>
-          <div className="sf-copy__num">
-            {frame.ownerNumber ?? frame.number} · фото {photoIndex + 1} / {photoCount}
-          </div>
-          <span className="sf-copy__eyebrow">{frame.eyebrow}</span>
-          <h2 className="sf-copy__title sf-copy__title--photo">{frame.title || 'Без названия'}</h2>
-          <ul className="sf-copy__meta">
-            <li>глава {chapter.number}: {chapter.title}</li>
-            {photoCount > 1 && <li>картинок у события: {photoCount}</li>}
-          </ul>
-          <button type="button" className="sf-btn sf-btn--ghost" onClick={() => setViewer(photoIndex)}>
-            открыть в полный размер
-          </button>
-        </>
-      ) : (
-        <>
-          <div className="sf-copy__num">
-            {frame.number} · {position.index} / {position.total}
-          </div>
-          <span className="sf-copy__eyebrow">{frame.eyebrow}</span>
-          <h2 className="sf-copy__title">{frame.title || 'Без названия'}</h2>
-          {frame.body && <MarkdownBlock source={frame.body} className="sf-copy__body" />}
+      {/* Содержимое кадра прокручивается внутри листа, а навигация и блок
+          страницы (оценка, просмотры) остаются на виду: на телефоне до кнопок
+          «назад/дальше» иначе приходилось докручивать. */}
+      <div className="sf-copy__scroll">
+        {isPhoto ? (
+          <>
+            <div className="sf-copy__num">
+              {frame.ownerNumber ?? frame.number} · фото {photoIndex + 1} / {photoCount}
+            </div>
+            <span className="sf-copy__eyebrow">{frame.eyebrow}</span>
+            <h2 className="sf-copy__title sf-copy__title--photo">{frame.title || 'Без названия'}</h2>
+            <ul className="sf-copy__meta">
+              <li>глава {chapter.number}: {chapter.title}</li>
+              {photoCount > 1 && <li>картинок у события: {photoCount}</li>}
+            </ul>
+            <button type="button" className="sf-btn sf-btn--ghost" onClick={() => setViewer(photoIndex)}>
+              открыть в полный размер
+            </button>
+          </>
+        ) : (
+          <>
+            <div className="sf-copy__num">
+              {frame.number} · {position.index} / {position.total}
+            </div>
+            <span className="sf-copy__eyebrow">{frame.eyebrow}</span>
+            <h2 className="sf-copy__title">{frame.title || 'Без названия'}</h2>
+            {frame.body && <MarkdownBlock source={frame.body} className="sf-copy__body" />}
 
           <ul className="sf-copy__meta">
             {!frame.isChapter && <li>глава {chapter.number}: {chapter.title}</li>}
@@ -128,8 +132,9 @@ export function CopyPanel({
               })}
             </ol>
           )}
-        </>
-      )}
+          </>
+        )}
+      </div>
 
       <div className="sf-copy__nav">
         <button type="button" className="sf-btn sf-btn--ghost" disabled={!onPrev} onClick={() => onPrev?.()}>
