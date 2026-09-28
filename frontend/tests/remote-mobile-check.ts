@@ -126,12 +126,15 @@ const view = (await page.evaluate(`(() => {
     editors: !!q('[data-editor-panel]'),
     editorsButtonHit: hit,
     title: q('.sf-copy__title')?.textContent || '',
+    // Ищем главу по всему тексту страницы: на большом экране она не попадает
+    // в первые 120 символов (шапка занимает больше места), и проверка ложно падала.
+    hasChapter: document.body.innerText.includes('Глава для телефона'),
     text: document.body.innerText.replace(/\\s+/g, ' ').slice(0, 120),
   }
 })()`)) as Record<string, unknown>
 
 console.log('  состояние:', JSON.stringify(view))
-ok('страница проекта не пустая', String(view.text).includes('Глава для телефона'), String(view.text).slice(0, 80))
+ok('страница проекта не пустая', view.hasChapter === true, String(view.text).slice(0, 100))
 ok('стадия активна (не idle)', view.stage === 'active', String(view.stage))
 ok('панель стадии видна', (view.topbar as { vis: string })?.vis === 'visible', JSON.stringify(view.topbar))
 ok('копирайт виден', (view.copy as { vis: string })?.vis === 'visible', JSON.stringify(view.copy))
