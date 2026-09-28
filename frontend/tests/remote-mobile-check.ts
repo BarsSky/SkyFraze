@@ -22,7 +22,7 @@ const ok = (label: string, cond: boolean, detail = '') => {
   }
 }
 
-const api = await request.newContext()
+const api = await request.newContext({ ignoreHTTPSErrors: process.env.IGNORE_TLS === '1' })
 // Пользователь создаётся на время проверки (на стенде открыт режим регистрации),
 // затем удаляется отдельным шагом.
 const reg = await api.post(`${BASE}/api/auth/register`, {
@@ -61,12 +61,20 @@ const ctx = await browser.newContext({
   deviceScaleFactor: 2,
   isMobile: true,
   hasTouch: true,
+  // Самоподписанный сертификат локального TLS-прокси (проверка сценария «домен за HTTPS»)
+  ignoreHTTPSErrors: process.env.IGNORE_TLS === '1',
   userAgent:
     'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
 })
 const page = await ctx.newPage()
 const errors: string[] = []
 page.on('pageerror', (e) => errors.push('pageerror: ' + e.message))
+
+const isHttps = BASE.startsWith('https://')
+// Проверяем и сам realtime: на HTTPS-странице адрес обязан быть wss://, иначе
+// браузер бросает SecurityError и роняет страницу (это и был баг с доменом).
+const wsUrls: string[] = []
+page.on('websocket', (ws) => wsUrls.push(ws.url()))
 // Смотрим, что клиент отправляет в проекцию дерева и что отвечает сервер.
 page.on('request', (r) => {
   if (r.url().includes('/events/tree')) console.log('  → PUT tree:', String(r.postData()).slice(0, 240))
@@ -81,8 +89,18 @@ page.on('console', (m) => {
 await page.goto(`${BASE}/login`, { waitUntil: 'networkidle' })
 const secure = (await page.evaluate(`window.isSecureContext`)) as boolean
 const hasRandomUUID = (await page.evaluate(`typeof crypto.randomUUID === 'function'`)) as boolean
-ok('незащищённый контекст (как на телефоне)', secure === false, `isSecureContext=${secure}`)
-ok('crypto.randomUUID отсутствует', hasRandomUUID === false, `randomUUID=${hasRandomUUID}`)
+// Ожидания зависят от протокола: по HTTP (доступ по IP) контекст незащищённый и
+// secure-context API отсутствуют; по HTTPS (домен) — наоборот.
+ok(
+  isHttps ? 'защищённый контекст (домен по HTTPS)' : 'незащищённый контекст (как на телефоне по IP)',
+  secure === isHttps,
+  `isSecureContext=${secure}, ожидалось ${isHttps}`,
+)
+ok(
+  isHttps ? 'crypto.randomUUID есть' : 'crypto.randomUUID отсутствует',
+  hasRandomUUID === isHttps,
+  `randomUUID=${hasRandomUUID}, ожидалось ${isHttps}`,
+)
 
 await page.fill('input[type=email]', EMAIL)
 await page.fill('input[type=password]', PASS)
@@ -193,6 +211,21 @@ if (await addSub.count()) {
 
 await page.screenshot({ path: `${OUT}/remote-mobile-project.png` })
 ok('нет ошибок в консоли', errors.length === 0, errors.slice(0, 3).join(' | '))
+
+// Realtime: на HTTPS ожидаем wss://, на HTTP — ws://. Отсутствие соединения не ошибка
+// (контент грузится по REST), но схема обязана совпадать с протоколом страницы.
+const collab = wsUrls.filter((u) => u.includes('/collab'))
+console.log('  websocket:', JSON.stringify(collab))
+if (collab.length) {
+  ok(
+    `адрес realtime — ${isHttps ? 'wss' : 'ws'}://`,
+    isHttps ? collab.every((u) => u.startsWith('wss://')) : collab.every((u) => u.startsWith('ws://')),
+    collab.join(', '),
+  )
+} else {
+  notes.push('realtime-соединение не открывалось (страница работает по REST)')
+}
+ok('страница не пустая при HTTPS/HTTP (нет SecurityError)', errors.every((e) => !/SecurityError/i.test(e)), errors.join(' | '))
 
 // уборка
 await api.delete(`${BASE}/api/projects/${projectId}`, { headers: auth })

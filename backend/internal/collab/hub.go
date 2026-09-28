@@ -70,7 +70,7 @@ func NewHub(logger *slog.Logger, secret string, ev *events.Service, allowedOrigi
 			if allowed[origin] {
 				return true
 			}
-			return sameHost(origin, r.Host)
+			return sameHost(origin, r)
 		},
 	}
 	return &Hub{
@@ -82,18 +82,51 @@ func NewHub(logger *slog.Logger, secret string, ev *events.Service, allowedOrigi
 	}
 }
 
-// sameHost сравнивает хост origin'а с хостом запроса (без схемы и порта по
-// умолчанию): http://192.168.13.66 и запрос на 192.168.13.66 — один и тот же стенд.
-func sameHost(origin, host string) bool {
-	origin = strings.TrimSpace(origin)
-	for _, prefix := range []string{"http://", "https://", "ws://", "wss://"} {
-		if strings.HasPrefix(strings.ToLower(origin), prefix) {
-			origin = origin[len(prefix):]
-			break
+// sameHost сравнивает ИМЯ хоста origin'а с именем хоста запроса.
+//
+// Сравнивать «как есть» нельзя: за reverse proxy (nginx proxy manager и любой
+// другой) заголовок Host доезжает без порта, а Origin браузер присылает с портом
+// (`https://host:8443`) — строки не совпадали, и WebSocket получал 403. Порт и
+// схема к делу не относятся: важно, что браузер обращается к тому же хосту, а
+// подделать Host в браузере нельзя. Дополнительно смотрим X-Forwarded-Host —
+// некоторые прокси переписывают Host на имя апстрима.
+func sameHost(origin string, r *http.Request) bool {
+	want := hostOnly(origin)
+	if want == "" {
+		return false
+	}
+	for _, candidate := range []string{r.Host, r.Header.Get("X-Forwarded-Host")} {
+		if hostOnly(candidate) == want {
+			return true
 		}
 	}
-	origin = strings.TrimSuffix(origin, "/")
-	return strings.EqualFold(origin, strings.TrimSpace(host))
+	return false
+}
+
+// hostOnly приводит «https://Host:port/path» к «host» (нижний регистр, без схемы,
+// порта и пути). IPv6 в скобках сохраняем как есть.
+func hostOnly(value string) string {
+	v := strings.ToLower(strings.TrimSpace(value))
+	if i := strings.Index(v, "://"); i >= 0 {
+		v = v[i+3:]
+	}
+	if i := strings.IndexAny(v, "/?#"); i >= 0 {
+		v = v[:i]
+	}
+	if strings.HasPrefix(v, "[") { // [::1]:8443
+		if i := strings.Index(v, "]"); i >= 0 {
+			return v[:i+1]
+		}
+		return v
+	}
+	// X-Forwarded-Host может содержать список через запятую — берём первый.
+	if i := strings.Index(v, ","); i >= 0 {
+		v = strings.TrimSpace(v[:i])
+	}
+	if i := strings.LastIndex(v, ":"); i >= 0 {
+		v = v[:i]
+	}
+	return v
 }
 
 // parseOrigins разбирает "http://a, http://b" в множество.

@@ -1,0 +1,34 @@
+# TLS-терминация перед локальным стендом — как у домена за nginx proxy manager.
+#
+# Нужно, чтобы проверять сценарий «приложение открыто по HTTPS-домену»: именно там
+# вылезает смешанный контент (ws:// на HTTPS-странице), проверка Origin за прокси и
+# доступность secure-context API.
+#
+# Запуск (из корня проекта):
+#
+#   docker network connect skyfraze_skyfraze-net sf-tls 2>/dev/null || true
+#   docker run -d --name sf-tls --network skyfraze_skyfraze-net -p 8443:8443 \
+#     -v "$PWD/deploy/tls-proxy/Caddyfile:/etc/caddy/Caddyfile:ro" \
+#     -v sf-caddy-data:/data -v sf-caddy-config:/config caddy:2-alpine
+#
+# Почему Caddy, а не nginx: он сам выпускает локальный сертификат (`tls internal`)
+# и умеет WebSocket без дополнительных заголовков Upgrade.
+#
+# Проверка:
+#   cd frontend
+#   REMOTE_URL=https://fraza.localtest.me:8443 IGNORE_TLS=1 MOBILE_SIZE=320x568 \
+#     TEMP_EMAIL=you@example.com npx tsx tests/remote-mobile-check.ts
+#
+# `fraza.localtest.me` — публичное имя, которое резолвится в 127.0.0.1. Обычный
+# `localhost` для этой проверки не годится: браузер считает его доверенным и НЕ
+# блокирует ws:// со страницы https://localhost — дефект не воспроизводится.
+
+{
+	admin off
+	auto_https disable_redirects
+}
+
+https://fraza.localtest.me:8443, https://localhost:8443 {
+	tls internal
+	reverse_proxy skyfraze-frontend:80
+}
