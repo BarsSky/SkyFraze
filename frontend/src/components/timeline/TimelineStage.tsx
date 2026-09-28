@@ -215,10 +215,21 @@ export function TimelineStage({ events, assetsById, projectTitle, actions, copyF
       const track = trackRef.current
       if (!track) return
       const root = getScrollRoot(track)
-      const box = visibleBox(root)
       const rect = track.getBoundingClientRect()
-      const pxPerUnit = rect.height / Math.max(1, model.totalWeight)
-      const delta = rect.top - box.top + units * pxPerUnit
+      // Прогресс стадия считает от ВЕРХА ОКНА (см. tick выше), а скролл идёт во
+      // вложенном контейнере (`main` под шапкой). Раньше цель считалась в
+      // координатах контейнера с pxPerUnit = высота трека / вес: переход целился
+      // на главную высоту выше и на столько же «не доезжал». На большом экране
+      // промах тонул в окне кадра, а на маленьком телефоне (шапка выше, трек
+      // делён на меньшее число пикселей) кнопка «дальше» вообще не двигала кадр.
+      const viewport = Math.max(1, window.innerHeight)
+      const scrollable = Math.max(1, rect.height - viewport)
+      const totalWeight = Math.max(0.0001, model.totalWeight)
+      // +2px: `unitsBeforeFrame` даёт НАЧАЛО кадра, а браузер округляет scrollTop
+      // до целых пикселей — без запаса прыжок вставал ровно на границу и читался
+      // как предыдущий кадр (на 320px кнопка «дальше» вообще не двигала кадр).
+      const target = Math.max(0, Math.min(scrollable, (units / totalWeight) * scrollable + 2))
+      const delta = rect.top + target
       const behavior: ScrollBehavior = prefersReducedMotion() ? 'auto' : 'smooth'
       if (root && root !== document.scrollingElement) {
         root.scrollTo({ top: root.scrollTop + delta, behavior })

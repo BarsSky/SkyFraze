@@ -524,6 +524,21 @@ html.sf-viewer-open body { overflow: hidden; }
   }
   /* Номер кадра уже говорит «фото 2 / 5» — мета-чипы в кадре-картинке лишние. */
   .sf-copy--photo .sf-copy__meta { display: none; }
+  /* Подпись кадра-картинки обязана быть предсказуемой по высоте: от неё зависит,
+     сколько экрана остаётся снимку. Заголовок — не больше двух строк, кнопки
+     «назад / дальше» не переносятся (в две строки панель выше на 45px и на
+     маленьком экране налезала на фотографию). */
+  .sf-copy--photo .sf-copy__title {
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .sf-copy--photo .sf-copy__nav { flex-wrap: nowrap; }
+  .sf-copy--photo .sf-copy__nav .sf-btn { flex: 1 1 0; min-width: 0; padding: 9px 12px; font-size: 0.84rem; }
+}
+
+/* Совсем маленькие телефоны (320×568): подпись занимает больше строк, поэтому
+   снимку отдаём больше места — иначе панель заходит на фотографию. */
+@media (max-width: 379px) {
+  .sf-scene__still--photo { padding-bottom: 44vh; }
 }
 
 /* Короткие экраны: маленький телефон в ландшафте (360px высоты) или очень узкий
@@ -538,7 +553,7 @@ html.sf-viewer-open body { overflow: hidden; }
     max-height: calc(100vh - var(--sf-header-h, 46px) - 124px - 12px);
   }
   /* Ландшафт телефона: высоты мало, под снимок оставляем больше половины экрана. */
-  .sf-scene__still--photo { padding: 1vh 1vw 42vh; }
+  .sf-scene__still--photo { padding: 1vh 1vw 52vh; }
   .sf-copy__title { font-size: clamp(1.3rem, 5vh, 1.8rem); }
   /* Кнопки «назад / дальше» прилипают к низу панели: на 360px высоты содержимое
      кадра всё равно прокручивается внутри, а навигация должна быть под рукой. */

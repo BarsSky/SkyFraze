@@ -164,7 +164,9 @@ async function runViewport(vp: { width: number; height: number; tag: string }) {
 
   const projectName = `Frame Test ${vp.tag} ${Date.now()}`
   await page.goto(`${BASE}/projects`)
-  await page.waitForTimeout(700)
+  // Ждём саму кнопку, а не фиксированную паузу: под нагрузкой (параллельные тесты
+  // на том же стенде) список проектов не успевал отрисоваться за 700 мс.
+  await page.waitForSelector('button:has-text("+ Новый проект")', { timeout: 30000 })
   await page.click('button:has-text("+ Новый проект")')
   await page.fill('input[placeholder="Название"]', projectName)
   await page.fill('textarea', 'Проверка кадров стадии.')
@@ -449,9 +451,12 @@ async function runViewport(vp: { width: number; height: number; tag: string }) {
     const afterBack = await viewerState()
     if (afterBack && afterBack.index !== 0) problems.push(`стрелка ← не вернула картинку (index=${afterBack.index})`)
 
-    // свайп: влево — следующая, вправо — предыдущая (на телефоне это жест пальцем)
+    // свайп: влево — следующая, вправо — предыдущая (на телефоне это жест пальцем).
+    // Смещение считаем от ширины экрана: на 320px точка старта +120px попадала на
+    // круглую стрелку «›», а жест, начатый на кнопке, свайпом не считается.
     const cx = vp.width / 2
     const cy = vp.height / 2
+    const dx = Math.round(vp.width * 0.3)
     const swipe = async (from: number, to: number) => {
       await page.mouse.move(cx + from, cy)
       await page.mouse.down()
@@ -461,11 +466,11 @@ async function runViewport(vp: { width: number; height: number; tag: string }) {
       await page.waitForTimeout(350)
       return viewerState()
     }
-    const afterSwipeLeft = await swipe(120, -140)
+    const afterSwipeLeft = await swipe(dx, -dx)
     if (afterSwipeLeft && afterSwipeLeft.index !== 1) {
       problems.push(`свайп влево не перелистнул картинку (index=${afterSwipeLeft.index})`)
     }
-    const afterSwipeRight = await swipe(-140, 140)
+    const afterSwipeRight = await swipe(-dx, dx)
     console.log(
       `[${vp.tag}] листание просмотрщика: стрелка → ${afterKey?.index}, стрелка ← ${afterBack?.index}, свайп влево ${afterSwipeLeft?.index}, свайп вправо ${afterSwipeRight?.index}`,
     )
@@ -593,19 +598,28 @@ async function runViewport(vp: { width: number; height: number; tag: string }) {
   const rowClick = (await page.evaluate(`(() => {
     const root = document.querySelector('.sf-root')
     const rows = Array.from(document.querySelectorAll('.ed-row'))
-    const row = rows[rows.length - 1]
-    if (!row) return { ok: false, stage: null, hitClass: null }
+    // Берём последнюю строку, которая целиком видна: на 320×568 панель редактора
+    // длиннее экрана, и нижняя строка оказывается за пределами вьюпорта —
+    // elementFromPoint по ней возвращает null, а это не перехват клика.
+    const visible = rows.filter((el) => {
+      const r = el.getBoundingClientRect()
+      return r.top >= 0 && r.bottom <= window.innerHeight && r.width > 0
+    })
+    const row = visible[visible.length - 1] ?? rows[rows.length - 1]
+    if (!row) return { ok: false, checked: false, stage: null, hitClass: null }
     const r = row.getBoundingClientRect()
-    const hit = document.elementFromPoint(r.left + r.width * 0.6, r.top + r.height / 2)
+    const inViewport = r.top >= 0 && r.bottom <= window.innerHeight
+    const hit = inViewport ? document.elementFromPoint(r.left + r.width * 0.6, r.top + r.height / 2) : null
     return {
       ok: true,
+      checked: inViewport,
       hitClass: hit ? (typeof hit.className === 'string' ? hit.className : hit.tagName) : null,
       inRow: !!(hit && hit.closest && hit.closest('.ed-row')),
       stage: root ? root.getAttribute('data-stage') : null,
     }
-  })()`)) as { ok: boolean; inRow?: boolean; hitClass?: string | null; stage?: string | null }
-  console.log(`[${vp.tag}] клик по строке редактора: в строке=${rowClick.inRow} (${rowClick.hitClass}), stage=${rowClick.stage}`)
-  if (!rowClick.inRow) problems.push(`клик по строке редактора перехватывает «${rowClick.hitClass}»`)
+  })()`)) as { ok: boolean; checked?: boolean; inRow?: boolean; hitClass?: string | null; stage?: string | null }
+  console.log(`[${vp.tag}] клик по строке редактора: проверено=${rowClick.checked}, в строке=${rowClick.inRow} (${rowClick.hitClass}), stage=${rowClick.stage}`)
+  if (rowClick.checked && !rowClick.inRow) problems.push(`клик по строке редактора перехватывает «${rowClick.hitClass}»`)
 
   // ── темы
   const darkBg = await page.evaluate(`getComputedStyle(document.body).backgroundColor`)
@@ -638,6 +652,9 @@ async function runViewport(vp: { width: number; height: number; tag: string }) {
     { width: 1440, height: 900, tag: 'desktop' },
     { width: 768, height: 1024, tag: 'tablet' },
     { width: 390, height: 844, tag: 'mobile' },
+    // 4" экран: здесь подпись кадра-картинки занимает больше строк, и панель
+    // налезала на фотографию — проверяем самый тесный случай.
+    { width: 320, height: 568, tag: 'mobile-small' },
   ]
   // ONLY_VP=desktop — быстрый прогон одного вьюпорта при отладке
   const filter = process.env.ONLY_VP

@@ -531,10 +531,11 @@ async function visualScreens(browser: Browser, errors: string[], slug: string | 
       applyProbe(await probe(page), 'login', vp.tag, name)
     }
 
-    await page.fill('input[type="email"]', EMAIL)
-    await page.fill('input[type="password"]', PASS)
-    await page.click('button[type="submit"]')
-    await page.waitForTimeout(1800)
+    // Вход — через хелпер login(): он ждёт попадания на страницу проектов и
+    // повторяет попытку. Фиксированная пауза не выдерживала на холодном стенде
+    // (первый вьюпорт медленнее всех): следующий переход обрывал ещё летящий
+    // запрос входа, и аудит уезжал на /login вместо стадии.
+    await login(page)
 
     for (const theme of THEMES) {
       console.log(`[visual] ${vp.tag}/${theme}`)
