@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { describeApiError } from '../lib/apiError'
+import { describeApiError, type ApiErrorSubject } from '../lib/apiError'
 
 interface Props {
   /** Ошибка как она пришла (ky HTTPError, TimeoutError, что угодно). */
@@ -11,6 +11,8 @@ interface Props {
   actions?: ReactNode
   /** Контекст для заголовка: «Лента», «История», «Админка». */
   what?: string
+  /** О чём ошибка: у 404 для человека и для истории разные подсказки. */
+  subject?: ApiErrorSubject
 }
 
 /**
@@ -21,8 +23,8 @@ interface Props {
  * Поэтому баннер всегда содержит (а) что случилось по-человечески, (б) подсказку,
  * (в) «Повторить» для временных сбоев и (г) минимум одну доступную ссылку.
  */
-export function ErrorBanner({ error, onRetry, actions, what }: Props) {
-  const info = describeApiError(error)
+export function ErrorBanner({ error, onRetry, actions, what, subject }: Props) {
+  const info = describeApiError(error, subject)
   return (
     <div className={`banner banner--${info.kind}`} role="alert" data-error-kind={info.kind}>
       <div className="banner__body">

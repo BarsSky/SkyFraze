@@ -210,6 +210,10 @@ func main() {
 	// (/api/projects/import) до param-ветки: chi выбирает статический сегмент вперёд
 	// параметрического, но проверить это в рантайме дешевле, чем ловить 404 у клиента.
 	r.With(authSvc.WithUser).Post("/api/projects/import", transferH.Import)
+	// Импорт папки с md: preview ничего не пишет, второй вызов создаёт проект.
+	// Оба пути статические и лежат под уже занятым /api/projects/import.
+	r.With(authSvc.WithUser).Post("/api/projects/import/markdown/preview", transferH.MarkdownPreview)
+	r.With(authSvc.WithUser).Post("/api/projects/import/markdown", transferH.MarkdownImport)
 
 	// projects
 	r.Mount("/api/projects", projH.Routes(authSvc))
@@ -282,6 +286,12 @@ func main() {
 		// Экспорт проекта целиком: архив с деревом, CRDT-снапшотом и вложениями.
 		// Чтение — viewer+ (читатель и так видит всё содержимое проекта).
 		r.Get("/export", transferH.Export)
+
+		// Выгрузка одной лентой Markdown: /export.md (файл) и /export.md?assets=1
+		// (zip с картинками). Отдельный статический сегмент рядом с /export —
+		// chi различает их по полному сегменту пути, а не по префиксу, поэтому
+		// /export не перехватывает /export.md (проверено тестом дерева маршрутов).
+		r.Get("/export.md", transferH.ExportMarkdown)
 	})
 
 	// global invitation acceptance

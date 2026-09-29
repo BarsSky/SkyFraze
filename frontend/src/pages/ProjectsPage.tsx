@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { listProjects, createProject, deleteProject, type Project } from '../api/projects'
 import { setPublication } from '../api/feed'
 import { exportProject, importProject } from '../api/transfer'
+import { exportStoryMarkdown } from '../api/storyFiles'
 import { ErrorBanner } from '../components/ErrorBanner'
+import { ImportFolderModal } from '../components/ImportFolderModal'
 import { copyText } from '../lib/clipboard'
 import { useAuthStore } from '../store/auth'
 
@@ -11,12 +13,14 @@ export function ProjectsPage() {
   const [list, setList] = useState<Project[]>([])
   const [error, setError] = useState<unknown>(null)
   const [openNew, setOpenNew] = useState(false)
+  const [openImportFolder, setOpenImportFolder] = useState(false)
   const [title, setTitle] = useState('')
   const [desc, setDesc] = useState('')
   const [note, setNote] = useState<string | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [importing, setImporting] = useState(false)
   const userId = useAuthStore((s) => s.user?.id)
+  const navigate = useNavigate()
 
   const load = useCallback(() => {
     listProjects()
@@ -30,6 +34,20 @@ export function ProjectsPage() {
   useEffect(() => {
     load()
   }, [load])
+
+  // Открытое меню выгрузки закрывается кликом мимо: `<details>` сам этого не делает,
+  // а оставленная висеть панель перекрывает кнопки соседних проектов.
+  useEffect(() => {
+    const onDocClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null
+      if (target?.closest('.dl-menu')) return
+      document
+        .querySelectorAll<HTMLDetailsElement>('details.dl-menu[open]')
+        .forEach((menu) => menu.removeAttribute('open'))
+    }
+    document.addEventListener('click', onDocClick)
+    return () => document.removeEventListener('click', onDocClick)
+  }, [])
 
   async function onCreate(e: React.FormEvent) {
     e.preventDefault()
@@ -66,6 +84,33 @@ export function ProjectsPage() {
     } finally {
       setBusyId(null)
     }
+  }
+
+  /**
+   * Выгрузка в Markdown: одной лентой или zip-архивом с главами по файлам и
+   * картинками. Второй вариант читается и человеком, и внешними инструментами, и
+   * им же можно перенести проект («Импорт папки» принимает такой zip).
+   */
+  async function onDownloadMarkdown(p: Project, assets: boolean) {
+    setBusyId(p.id)
+    setError(null)
+    try {
+      const name = await exportStoryMarkdown(p.id, { assets, projectTitle: p.title })
+      setNote(
+        assets
+          ? `Скачан «${name}»: текст, главы по файлам и картинки — папка для чтения и правок`
+          : `Скачан «${name}» — вся история одной лентой`,
+      )
+    } catch (e) {
+      setError(e)
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  /** Закрывает меню выгрузки, из которого пришло нажатие. */
+  function closeMenu(e: React.MouseEvent<HTMLButtonElement>) {
+    e.currentTarget.closest('details')?.removeAttribute('open')
   }
 
   /** Импорт: создаём проект у себя из архива, снятого с другого стенда. */
@@ -132,6 +177,15 @@ export function ProjectsPage() {
       <div className="row" style={{ justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
         <h2>Проекты</h2>
         <div className="row" style={{ flexWrap: 'wrap', gap: 8 }}>
+          {/* Импорт папки: md-файлы (или zip той же формы) → новый проект с предпросмотром */}
+          <button
+            type="button"
+            className="secondary"
+            title="Загрузить папку с md-файлами (или zip из выгрузки «.md + картинки») и создать из неё новый проект"
+            onClick={() => setOpenImportFolder(true)}
+          >
+            Импорт папки
+          </button>
           {/* Перенос проекта: скачать архив здесь — загрузить на другом стенде */}
           <label className="secondary pub-import" title="Загрузить архив .skyfraze.zip, чтобы перенести проект с другого стенда">
             {importing ? 'Импорт…' : 'Импорт проекта'}
@@ -238,6 +292,43 @@ export function ProjectsPage() {
                 >
                   {busyId === p.id ? '…' : 'Экспорт'}
                 </button>
+                {/* Две выгрузки в Markdown живут в одном меню: рядом с «Экспорт»
+                    три кнопки подряд превращали карточку на телефоне в столбик
+                    кнопок и вытесняли название проекта. */}
+                <details className="dl-menu">
+                  <summary
+                    className="dl-menu__toggle"
+                    title="Выгрузить историю в Markdown: одной лентой или zip с главами и картинками"
+                  >
+                    Markdown
+                  </summary>
+                  <div className="dl-menu__panel">
+                    <button
+                      type="button"
+                      className="dl-menu__item"
+                      disabled={busyId === p.id}
+                      onClick={(e) => {
+                        closeMenu(e)
+                        void onDownloadMarkdown(p, false)
+                      }}
+                    >
+                      <b>Скачать .md</b>
+                      <span className="muted">вся история одной лентой, ссылки на картинки</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="dl-menu__item"
+                      disabled={busyId === p.id}
+                      onClick={(e) => {
+                        closeMenu(e)
+                        void onDownloadMarkdown(p, true)
+                      }}
+                    >
+                      <b>.md + картинки</b>
+                      <span className="muted">zip: story.md, главы по файлам и assets/</span>
+                    </button>
+                  </div>
+                </details>
                 {isOwner && (
                   <button
                     className={p.is_public ? 'secondary' : undefined}
@@ -279,6 +370,17 @@ export function ProjectsPage() {
             ))}
           </div>
         </div>
+      )}
+
+      {/* Импорт папки с md: отдельное окно с предпросмотром дерева. */}
+      {openImportFolder && (
+        <ImportFolderModal
+          onClose={() => setOpenImportFolder(false)}
+          onCreated={(projectId) => {
+            setOpenImportFolder(false)
+            navigate(`/projects/${projectId}`)
+          }}
+        />
       )}
     </div>
   )

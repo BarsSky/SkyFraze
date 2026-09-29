@@ -1,0 +1,204 @@
+/* SkyFraze — перенос проекта: меню выгрузки в списке проектов и окно импорта
+   папки с md-файлами. Стили держим рядом с фичей: обе части — про один формат
+   (docs/import-export.md), и их раскладка не должна тянуть за собой ленту. */
+
+/* ── меню выгрузки у проекта ─────────────────────────────────────────── */
+/* У проекта уже есть «Экспорт» (архив переноса) и ещё пять действий, поэтому две
+   выгрузки в Markdown живут в одном меню. `<details>` даёт открытие-закрытие и
+   работу с клавиатуры без своего JS. */
+.dl-menu { position: relative; }
+/* Закрытое меню не участвует в раскладке: браузер прячет содержимое `<details>`
+   через content-visibility, но его ширина всё равно считалась — карточка
+   проекта растягивалась шире экрана (на 320px строка действий уезжала за край
+   и появлялась горизонтальная прокрутка списка). */
+.dl-menu:not([open]) > .dl-menu__panel { display: none; }
+.dl-menu__toggle {
+  display: inline-flex; align-items: center; gap: 6px;
+  min-height: 34px; padding: 8px 16px;
+  background: var(--bg-elev); color: var(--fg);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  font-size: 14px; cursor: pointer; list-style: none;
+  user-select: none;
+}
+/* Системный треугольник у summary заменяем своим: он крупнее и виден в тёмной теме. */
+.dl-menu__toggle::-webkit-details-marker { display: none; }
+.dl-menu__toggle::after { content: '▾'; font-size: 11px; color: var(--fg-muted); }
+.dl-menu[open] > .dl-menu__toggle::after { content: '▴'; }
+.dl-menu__toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.dl-menu__panel {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 60;
+  display: flex; flex-direction: column; gap: 4px;
+  width: min(280px, calc(100vw - 60px));
+  padding: 8px;
+  background: var(--bg-elev); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 24px 60px -24px rgba(0, 0, 0, 0.75);
+}
+.dl-menu__item {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  width: 100%; min-height: 34px; padding: 8px 10px;
+  background: transparent; color: var(--fg);
+  border: 0; border-radius: 6px; font-size: 14px; text-align: left;
+}
+.dl-menu__item:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.dl-menu__item .muted { font-size: 12px; line-height: 1.35; }
+
+/* ── окно импорта папки ──────────────────────────────────────────────── */
+.sf-import {
+  position: fixed; inset: 0; z-index: 95;
+  display: flex; align-items: center; justify-content: center;
+  padding: 2vh 2vw;
+  background: color-mix(in srgb, #000 62%, transparent);
+  backdrop-filter: blur(3px);
+}
+.sf-import__window {
+  display: flex; flex-direction: column;
+  width: min(760px, 96vw); max-height: min(92vh, 900px);
+  background: var(--bg-elev); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 14px;
+  box-shadow: 0 40px 120px -40px rgba(0, 0, 0, 0.85);
+  overflow: hidden;
+}
+.sf-import__head {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 10px 14px; border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+.sf-import__titles { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 200px; }
+.sf-import__titles .muted { font-size: 12px; }
+
+/* Прокручивается только тело окна: шапка и футер с кнопками всегда на виду. */
+.sf-import__body {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 14px;
+  padding: 14px;
+}
+/* Вступление окна: правило разбора и пояснение под ним — одним блоком, чтобы
+   общий gap тела окна не разрывал их на две далёкие строки. */
+.sf-import__intro { display: flex; flex-direction: column; gap: 4px; }
+.sf-import__hint { margin: 0; font-size: 0.86rem; }
+/* Правило разбора — не подсказка: его читают первым, поэтому без приглушения. */
+.sf-import__rule { color: var(--fg); font-weight: 600; }
+.sf-import__status { margin: 0; }
+.sf-import__chosen { margin: 0; font-size: 0.86rem; overflow-wrap: anywhere; }
+
+.sf-import__ways { display: flex; flex-wrap: wrap; gap: 10px; }
+.sf-import__way {
+  position: relative;
+  display: flex; flex-direction: column; gap: 2px; align-items: flex-start;
+  flex: 1 1 220px; min-height: 34px; padding: 10px 12px;
+  background: var(--bg); border: 1px dashed var(--border); border-radius: 10px;
+  cursor: pointer;
+}
+.sf-import__way:hover { border-color: var(--accent); }
+.sf-import__way:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sf-import__way.is-busy { opacity: 0.6; cursor: progress; }
+.sf-import__way .muted { font-size: 12px; }
+/* Системный диалог открывает скрытый input: он не должен занимать место в раскладке. */
+.sf-import__way input[type='file'] {
+  position: absolute; width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+.sf-import__title { display: flex; flex-direction: column; gap: 4px; font-size: 0.86rem; }
+
+.sf-import__stats {
+  display: flex; flex-wrap: wrap; gap: 6px 16px;
+  padding: 10px 12px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
+  font-size: 0.86rem;
+}
+.sf-import__stat b { font-size: 1rem; }
+
+.sf-import__warnings {
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--danger) 8%, var(--bg-elev));
+  border: 1px solid color-mix(in srgb, var(--danger) 40%, var(--border));
+  border-left-width: 4px; border-radius: 10px;
+  font-size: 0.86rem;
+}
+/* Предупреждений бывает столько же, сколько файлов: список тоже прокручивается. */
+.sf-import__warning-list {
+  margin: 6px 0 0; padding-left: 18px;
+  max-height: 160px; overflow-y: auto;
+}
+.sf-import__warning { overflow-wrap: anywhere; }
+
+.sf-import__section { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.sf-import__section-head {
+  display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline;
+  font-size: 0.9rem;
+}
+.sf-import__section-head .muted { font-size: 0.8rem; }
+.sf-import__empty { margin: 0; font-size: 0.86rem; }
+
+.sf-import__tree {
+  list-style: none; margin: 0; padding: 0;
+  max-height: 320px; overflow-y: auto;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
+}
+.sf-import__node {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  font-size: 0.9rem;
+}
+.sf-import__node:last-child { border-bottom: 0; }
+.sf-import__number {
+  flex: 0 0 auto; min-width: 3.2em;
+  font-family: ui-monospace, Menlo, monospace; font-size: 0.8rem;
+  color: var(--fg-muted);
+}
+.sf-import__node-title { flex: 1 1 140px; min-width: 0; overflow-wrap: anywhere; }
+.sf-import__chars { flex: 0 0 auto; font-size: 0.78rem; }
+/* Замечание события — второй строкой: подсказку по наведению на телефоне не увидеть. */
+.sf-import__node-note {
+  flex: 1 1 100%;
+  font-size: 0.78rem; color: var(--fg-muted); overflow-wrap: anywhere;
+}
+
+.sf-import__foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  padding: 10px 14px; border-top: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+.sf-import__foot-note { font-size: 0.8rem; }
+
+/* ── узкий экран ─────────────────────────────────────────────────────── */
+@media (max-width: 860px) {
+  /* Меню выгрузки: всплывающая панель на телефоне уезжала бы за край, поэтому
+     она встаёт в поток и занимает всю ширину карточки. min-width/max-width
+     нужны, чтобы содержимое меню не растянуло карточку проекта шире экрана
+     (у элементов во flex-строке по умолчанию min-width: auto). */
+  .dl-menu { flex: 1 1 100%; min-width: 0; max-width: 100%; }
+  .dl-menu__toggle { width: 100%; justify-content: space-between; min-height: 34px; }
+  .dl-menu__panel {
+    position: static; width: 100%; max-width: 100%; margin-top: 6px;
+    box-shadow: none;
+  }
+  .dl-menu__item { min-height: 34px; min-width: 0; }
+
+  /* Окно импорта — во всю видимую область, списки внутри прокручиваются. */
+  .sf-import { padding: 0; align-items: flex-start; }
+  .sf-import__window {
+    width: 100%; max-width: none; border-radius: 0; border: 0;
+    height: 100vh; max-height: 100vh;
+  }
+  .sf-import__body { padding: 12px 10px; }
+  .sf-import__ways { flex-direction: column; }
+  .sf-import__way { flex: 1 1 auto; }
+  .sf-import__head { padding: 8px 10px; }
+  .sf-import__foot { padding: 8px 10px; }
+  .sf-import__tree { max-height: 40vh; }
+  /* Цели нажатия: по «Создать проект» и «Отмена» нужно попадать пальцем. */
+  .sf-import__head button,
+  .sf-import__foot button { min-height: 34px; }
+}
+
+/* Динамические единицы точнее: адресная строка мобильного браузера меняет высоту. */
+@supports (height: 100dvh) {
+  @media (max-width: 860px) {
+    .sf-import__window { height: 100dvh; max-height: 100dvh; }
+  }
+}

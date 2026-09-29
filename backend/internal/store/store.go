@@ -609,6 +609,37 @@ func (s *Store) ReplaceEventTree(ctx context.Context, projectID uuid.UUID, by uu
 	return tx.Commit(ctx)
 }
 
+// InsertEventTree вставляет дерево событий НОВОГО проекта одной транзакцией.
+//
+// Отличие от ReplaceEventTree: тот синхронизирует проекцию (удаляет строки,
+// которых нет в payload, снимает блокировку проекта), а здесь проект только что
+// создан — удалять нечего, зато нужен event_date. Синхронизация проекта дату не
+// переносит: клиент присылает только id/parent/title/body. Импорту папки с md
+// дата нужна (front-matter `date`), поэтому вставка отдельная.
+//
+// Узлы должны идти в порядке «родители раньше детей» — за это отвечает
+// events.NormalizeTree, иначе FK parent_id не даст вставить ребёнка.
+func (s *Store) InsertEventTree(ctx context.Context, projectID, by uuid.UUID, nodes []Event) error {
+	if len(nodes) == 0 {
+		return nil
+	}
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	for _, n := range nodes {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO events (id, project_id, parent_id, position, depth, title, body, event_date, created_by, updated_by)
+			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9)`,
+			n.ID, projectID, n.ParentID, n.Position, n.Depth, n.Title, n.Body, n.EventDate, by); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
 // ProjectEventState — CRDT-снапшот проекта с ревизией.
 type ProjectEventState struct {
 	ProjectID uuid.UUID  `db:"project_id" json:"project_id"`

@@ -22,6 +22,23 @@ describe('describeApiError', () => {
     expect(info.hint).toMatch(/сняли с публикации|устарела/i)
   })
 
+  it('404 в каталоге резидентов говорит о человеке, а не об истории', () => {
+    const info = describeApiError({ response: { status: 404 } }, 'person')
+    expect(info.kind).toBe('notFound')
+    expect(info.title).toMatch(/профиль/i)
+    expect(info.hint).not.toMatch(/сняли с публикации|устарела/i)
+  })
+
+  it('отказ импорта показывает причину с сервера и не предлагает повтор', () => {
+    const info = describeApiError(
+      { response: { status: 400 }, message: 'слишком много файлов' },
+      'import',
+    )
+    expect(info.title).toMatch(/импорт/i)
+    expect(info.hint).toBe('слишком много файлов')
+    expect(info.retryable).toBe(false)
+  })
+
   it('5xx просит повторить, 403 — нет', () => {
     expect(describeApiError({ response: { status: 503 } })).toMatchObject({ kind: 'server', retryable: true })
     expect(describeApiError({ response: { status: 403 } })).toMatchObject({ kind: 'forbidden', retryable: false })

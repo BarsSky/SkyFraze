@@ -47,7 +47,8 @@ export async function importProject(file: File): Promise<ImportResult> {
     .json<ImportResult>()
 }
 
-function parseFilename(header: string | null): string | null {
+/** Имя файла из `Content-Disposition`; экспорт md в `storyFiles.ts` зовёт её же. */
+export function parseFilename(header: string | null): string | null {
   if (!header) return null
   const utf8 = /filename\*=UTF-8''([^;]+)/i.exec(header)
   if (utf8) {

@@ -8,6 +8,7 @@ import './styles/feed.css'
 import './styles/coauthors.css'
 import './styles/people.css'
 import './styles/markdown.css'
+import './styles/transfer.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

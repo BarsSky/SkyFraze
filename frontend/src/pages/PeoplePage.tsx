@@ -305,6 +305,12 @@ export function PeoplePage() {
           const profile = details[person.id]
           const isOpen = expanded === person.id
           const bio = person.bio ?? ''
+          // 404 у профиля — это «человек не найден», а не «историю сняли с публикации»:
+          // подсказку берём по предмету ошибки (subject), иначе текст врал бы.
+          const detailIssue =
+            detailError && detailError.id === person.id
+              ? describeApiError(detailError.error, 'person')
+              : null
           return (
             <article
               key={person.id}
@@ -346,16 +352,20 @@ export function PeoplePage() {
                 {isOpen && (
                   <div className="people__details">
                     {detailFor === person.id && <p className="muted">Загружаю публичные истории…</p>}
-                    {detailError?.id === person.id && (
-                      <p className="muted people__detail-error">
-                        {describeApiError(detailError.error).title}
-                        <button
-                          className="secondary"
-                          type="button"
-                          onClick={() => void loadDetail(person)}
-                        >
-                          Повторить
-                        </button>
+                    {detailIssue && (
+                      <p className="muted people__detail-error" role="alert">
+                        <span>
+                          <b>{detailIssue.title}.</b> {detailIssue.hint}
+                        </span>
+                        {detailIssue.retryable && (
+                          <button
+                            className="secondary"
+                            type="button"
+                            onClick={() => void loadDetail(person)}
+                          >
+                            Повторить
+                          </button>
+                        )}
                       </p>
                     )}
                     {profile && (

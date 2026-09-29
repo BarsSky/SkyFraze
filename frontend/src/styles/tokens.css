@@ -144,7 +144,13 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
 .error { color: var(--danger); margin: 8px 0; }
 .muted { color: var(--fg-muted); }
 .row { display: flex; gap: 12px; align-items: center; }
+/* Список карточек (проекты): grid-элемент по умолчанию не сжимается ниже
+   min-content своего содержимого, а в заголовке проекта стоит nowrap — из-за
+   этого карточка с длинным названием без пробелов растягивалась шире экрана и
+   список уезжал в горизонтальную прокрутку (на 320px кнопки обрезались).
+   min-width: 0 разрешает карточке сжаться, а заголовок обрезается многоточием. */
 .list { display: grid; gap: 8px; }
+.list > * { min-width: 0; }
 /* Навигация в шапке: «Лента» и «Мои проекты» — соседние ссылки, им нужен зазор
    на всех ширинах, а не только на мобильных (иначе текст слипается). */
 .auth-links { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; }

@@ -97,20 +97,20 @@ type AssetRecord struct {
 
 // ExportInfo — что получилось выгрузить (для заголовков ответа и лога).
 type ExportInfo struct {
-	Title     string
-	Events    int
-	Assets    int
-	HasState  bool
-	Bytes     int64
-	Filename  string
+	Title    string
+	Events   int
+	Assets   int
+	HasState bool
+	Bytes    int64
+	Filename string
 }
 
 // Result — итог импорта.
 type Result struct {
-	Project *store.Project `json:"project"`
-	Events  int            `json:"events"`
-	Assets  int            `json:"assets"`
-	HasState bool          `json:"has_state"`
+	Project  *store.Project `json:"project"`
+	Events   int            `json:"events"`
+	Assets   int            `json:"assets"`
+	HasState bool           `json:"has_state"`
 }
 
 type Service struct {
@@ -200,8 +200,10 @@ func (s *Service) Export(ctx context.Context, userID, projectID uuid.UUID, w io.
 			Width: a.Width, Height: a.Height, File: assetsDir + a.ID.String(),
 		})
 	}
+	var stateBytes []byte
 	if state != nil && len(state.YjsState) > 0 {
 		m.HasState = true
+		stateBytes = state.YjsState
 	}
 
 	counter := &countingWriter{w: w}
@@ -231,6 +233,22 @@ func (s *Service) Export(ctx context.Context, userID, projectID uuid.UUID, w io.
 			return nil, err
 		}
 		rc.Close()
+	}
+
+	// Человекочитаемая версия проекта: та же лента, что отдаёт
+	// GET /api/projects/{id}/export.md?assets=1, но ссылки указывают на файлы
+	// ЭТОГО архива (assets/<id>). Манифест и раскладку вложений не меняем —
+	// старые версии SkyFraze читают файлы по полю file, а новые просто находят
+	// рядом со манифестом ещё и story.md со story/. Импорт переноса эти файлы
+	// игнорирует (он ходит только по манифесту).
+	storyLane, storyFiles := newStory(p, evs, assets, stateBytes).archiveStoryFiles()
+	if err := writeZipFile(zw, storyFileName, storyLane); err != nil {
+		return nil, err
+	}
+	for _, f := range storyFiles {
+		if err := writeZipFile(zw, f.Name, f.Content); err != nil {
+			return nil, err
+		}
 	}
 	if err := zw.Close(); err != nil {
 		return nil, err
