@@ -255,6 +255,115 @@ async function checkNarrowStage(
     `поля со своей прокруткой: ${textFrame.innerScrollers}, overflow-y=${textFrame.overflowY}`,
   )
   await shot(page, `${vp.tag}-text-frame`)
+
+  // ── Жест над листом листает историю, а не упирается в лист.
+  // Лист лежит в fixed-слое, и его прокрутка — последняя в цепочке: за ней нет
+  // прокручиваемого предка (страница едет во вложенном main). Раньше палец над
+  // текстом не двигал ничего, а дойдя до конца длинного текста — не переходил к
+  // картинкам. TimelineStage доводит остаток жеста до трека.
+  await scrollTop(page)
+  await settleFrame(page)
+  const mainTop = async () =>
+    Number((await page.evaluate(`document.querySelector('.layout main')?.scrollTop ?? 0`)) ?? 0)
+  const drag = async (dy: number) => {
+    await page.evaluate(`(() => {
+      const copy = document.querySelector('.sf-copy')
+      const target = copy.querySelector('.sf-copy__scroll') || copy
+      const rect = target.getBoundingClientRect()
+      const x = Math.round(rect.left + rect.width / 2)
+      const y = Math.round(rect.top + Math.min(rect.height - 20, 90))
+      const mk = (cy) => new Touch({ identifier: 1, target, clientX: x, clientY: cy })
+      const opts = (cy) => ({ bubbles: true, cancelable: true, composed: true, touches: [mk(cy)], targetTouches: [mk(cy)], changedTouches: [mk(cy)] })
+      target.dispatchEvent(new TouchEvent('touchstart', opts(y)))
+      for (let i = 1; i <= 6; i++) target.dispatchEvent(new TouchEvent('touchmove', opts(y - (${dy} * i) / 6)))
+      target.dispatchEvent(new TouchEvent('touchend', { bubbles: true, cancelable: true, composed: true, touches: [], targetTouches: [], changedTouches: [mk(y - ${dy})] }))
+    })()`)
+    await page.waitForTimeout(220)
+  }
+  const beforeSwipe = await mainTop()
+  // Если текст не влезает в лист (бывает на 320×568), сначала листается сам текст —
+  // поэтому свайп проверяем с НИЗА листа: именно там палец раньше «зависал».
+  const sheetOverflows = (await page.evaluate(`(() => {
+    const copy = document.querySelector('.sf-copy')
+    const sc = copy.querySelector('.sf-copy__scroll') || copy
+    return sc.scrollHeight > sc.clientHeight + 1
+  })()`)) as boolean
+  if (sheetOverflows) {
+    await page.evaluate(`(() => {
+      const copy = document.querySelector('.sf-copy')
+      const sc = copy.querySelector('.sf-copy__scroll') || copy
+      sc.scrollTop = sc.scrollHeight
+    })()`)
+    await page.waitForTimeout(200)
+  }
+  await drag(150)
+  const swipeShift = (await mainTop()) - beforeSwipe
+  ok(
+    'свайп по листу листает историю',
+    swipeShift > 60,
+    `история сдвинулась на ${Math.round(swipeShift)}px при свайпе 150px${sheetOverflows ? ' (текст не влезал — свайп с низа листа)' : ''}`,
+  )
+
+  // ── Текст длиннее экрана: пока лист может прокручиваться, жест остаётся его;
+  // на самом низу — уходит на кадры (там палец и «зависал»).
+  // Текст в редакторе для этого не правим: правка гоняет сохранение состояния и
+  // даёт лишние конфликты ревизий, а проверяем мы жест, а не редактор. Вместо
+  // этого ужимаем поле стилем — содержимое перестаёт влезать, как при длинном тексте.
+  await page.evaluate(`(() => {
+    const style = document.createElement('style')
+    style.id = 'sf-test-tight'
+    style.textContent = '.sf-copy .sf-copy__scroll { max-height: 120px !important }'
+    document.head.appendChild(style)
+  })()`)
+  await page.waitForTimeout(250)
+  const longText = (await page.evaluate(`(() => {
+    const copy = document.querySelector('.sf-copy')
+    const sc = copy.querySelector('.sf-copy__scroll') || copy
+    return { overflows: sc.scrollHeight > sc.clientHeight + 1, scrollTop: sc.scrollTop, rest: sc.scrollHeight - sc.clientHeight }
+  })()`)) as Record<string, any>
+  console.log(`[${vp.tag}] ужатое поле текста: ${JSON.stringify(longText)}`)
+  if (longText.overflows) {
+    const wheel = async (deltaY: number) => {
+      await page.evaluate(`(() => {
+        const copy = document.querySelector('.sf-copy')
+        const sc = copy.querySelector('.sf-copy__scroll') || copy
+        const r = sc.getBoundingClientRect()
+        sc.dispatchEvent(new WheelEvent('wheel', {
+          deltaY: ${deltaY}, bubbles: true, cancelable: true,
+          clientX: Math.round(r.left + r.width / 2), clientY: Math.round(r.top + 40),
+        }))
+      })()`)
+      await page.waitForTimeout(220)
+    }
+    // Лист ещё может прокручиваться — жест остаётся ему, кадры не двигаются.
+    const beforeMid = await mainTop()
+    await wheel(40)
+    const midShift = (await mainTop()) - beforeMid
+    ok(
+      'середина длинного текста не двигает кадры',
+      Math.abs(midShift) <= 2,
+      `история ушла на ${Math.round(midShift)}px вместо того, чтобы листать текст`,
+    )
+    // Лист на самом низу — дальше жест ведёт трек, к картинкам и следующему событию.
+    await page.evaluate(`(() => {
+      const copy = document.querySelector('.sf-copy')
+      const sc = copy.querySelector('.sf-copy__scroll') || copy
+      sc.scrollTop = sc.scrollHeight
+    })()`)
+    await page.waitForTimeout(200)
+    const beforeBottom = await mainTop()
+    await wheel(80)
+    const bottomShift = (await mainTop()) - beforeBottom
+    ok(
+      'с конца длинного текста жест ведёт к картинкам',
+      bottomShift > 40,
+      `история сдвинулась на ${Math.round(bottomShift)}px`,
+    )
+  } else {
+    problems.push(`[${vp.tag}] ужатое поле текста не переполнилось — проверить переход от текста к кадрам не удалось`)
+  }
+  await page.evaluate(`document.getElementById('sf-test-tight')?.remove()`)
+  await page.waitForTimeout(200)
   await scrollTop(page)
 }
 

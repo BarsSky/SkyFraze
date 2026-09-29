@@ -529,9 +529,9 @@ html.sf-viewer-open body { overflow: hidden; }
        и авто-поля центрируют (при заданных left и right они забирают остаток). */
     margin-left: auto; margin-right: auto;
     max-height: none; height: auto;
-    /* Без overscroll-behavior: contain — когда текст длиннее экрана, доскроллив его
-       до конца, жест продолжает листать историю, а не упирается в лист. */
-    overflow: hidden; overscroll-behavior: auto;
+    /* contain: браузер не пытается продолжить жест за листом сам — жест до трека
+       доводит TimelineStage (у fixed-слоя прокручиваемого предка всё равно нет). */
+    overflow: hidden; overscroll-behavior: contain;
     /* Кадр появляется, а не «включается»: панель перемонтируется по key кадра,
        поэтому анимация играет на каждом новом элементе истории. Проявление — по
        времени (0.4с), а не по прогрессу скролла: после прыжка кнопкой «дальше»
@@ -555,7 +555,7 @@ html.sf-viewer-open body { overflow: hidden; }
     display: flex; flex-direction: column;
   }
   .sf-copy__scroll {
-    flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: auto;
+    flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
   }
   .sf-copy__nav { flex: 0 0 auto; margin-top: 12px; }
   .sf-copy__footer { flex: 0 0 auto; }

@@ -246,6 +246,72 @@ export function TimelineStage({ events, assetsById, projectTitle, actions, copyF
     return () => cancelAnimationFrame(raf)
   }, [model])
 
+  // ── Жест над листом кадра ведёт трек, а не упирается в лист.
+  //
+  // Лист лежит в fixed-слое (.sf-copylayer), поэтому его прокрутка — последняя в
+  // цепочке: за ней нет прокручиваемого предка (страница едет во вложенном `main`,
+  // а не в body). Отсюда две беды: палец над текстом не листал историю вообще, а
+  // дойдя до конца длинного текста — не переходил к картинкам. Здесь мы доводим
+  // скролл до трека сами. Браузеру не мешаем: пока лист (или поле текста внутри
+  // него) может прокручиваться, жест остаётся его — на трек уходит только то, что
+  // лист уже не может забрать.
+  useEffect(() => {
+    const track = trackRef.current
+    if (!track) return undefined
+    const root = getScrollRoot(track)
+    const pageBy = (dy: number) => {
+      if (!Number.isFinite(dy) || Math.abs(dy) < 0.5) return
+      if (root && root !== document.scrollingElement) root.scrollTop += dy
+      else window.scrollBy(0, dy)
+    }
+    /** Прокручиваемый элемент под пальцем: поле текста, а если текст короткий — лист. */
+    const scrollerOf = (target: EventTarget | null): HTMLElement | null => {
+      if (!(target instanceof Element)) return null
+      const copy = target.closest<HTMLElement>('.sf-copy')
+      if (!copy) return null
+      const inner = copy.querySelector<HTMLElement>('.sf-copy__scroll')
+      if (inner && inner.scrollHeight > inner.clientHeight + 1) return inner
+      return copy
+    }
+    const atEdge = (el: HTMLElement, dy: number): boolean => {
+      if (dy > 0) return el.scrollTop + el.clientHeight >= el.scrollHeight - 2
+      return el.scrollTop <= 2
+    }
+    const onWheel = (e: WheelEvent) => {
+      const scroller = scrollerOf(e.target)
+      if (scroller && atEdge(scroller, e.deltaY)) pageBy(e.deltaY)
+    }
+    let scroller: HTMLElement | null = null
+    let lastY = 0
+    const onTouchStart = (e: TouchEvent) => {
+      scroller = scrollerOf(e.target)
+      lastY = e.touches[0]?.clientY ?? 0
+    }
+    const onTouchMove = (e: TouchEvent) => {
+      if (!scroller) return
+      const y = e.touches[0]?.clientY
+      if (y === undefined) return
+      const dy = lastY - y
+      lastY = y
+      if (atEdge(scroller, dy)) pageBy(dy)
+    }
+    const onTouchEnd = () => {
+      scroller = null
+    }
+    document.addEventListener('wheel', onWheel, { passive: true })
+    document.addEventListener('touchstart', onTouchStart, { passive: true })
+    document.addEventListener('touchmove', onTouchMove, { passive: true })
+    document.addEventListener('touchend', onTouchEnd, { passive: true })
+    document.addEventListener('touchcancel', onTouchEnd, { passive: true })
+    return () => {
+      document.removeEventListener('wheel', onWheel)
+      document.removeEventListener('touchstart', onTouchStart)
+      document.removeEventListener('touchmove', onTouchMove)
+      document.removeEventListener('touchend', onTouchEnd)
+      document.removeEventListener('touchcancel', onTouchEnd)
+    }
+  }, [hasChapters])
+
   const jumpToUnits = useCallback(
     (units: number) => {
       const track = trackRef.current
