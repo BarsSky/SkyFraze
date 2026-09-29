@@ -661,6 +661,70 @@ async function visualScreens(browser: Browser, errors: string[], slug: string | 
         name = `${vp.tag}-${theme}-story`
         await shot(page, name)
         applyProbe(await probe(page), 'story', vp.tag, name)
+
+        // На телефоне подпись кадра-картинки — узкая полоса снизу, а снимок
+        // занимает почти всю сцену. В подписи не должно быть блока страницы
+        // (оценка и просмотры): он раздувал её до трети экрана, и снимку
+        // оставалось 117px из 568 — дефект ловится только замером.
+        if (vp.width <= 860) {
+          let caption: Record<string, any> | null = null
+          for (let i = 0; i < 40 && !caption; i++) {
+            caption = (await page.evaluate(`(() => {
+              const root = document.querySelector('.sf-root')
+              const copy = document.querySelector('.sf-copy--photo')
+              if (!root || root.getAttribute('data-frame-kind') !== 'image' || !copy) return null
+              const still = document.querySelector('.sf-scene[data-active="true"] img.sf-scene__still--photo')
+              const footer = copy.querySelector('.sf-copy__footer')
+              const r = copy.getBoundingClientRect()
+              const chips = document.querySelector('.sf-chips')
+              return {
+                h: Math.round(r.height),
+                vh: window.innerHeight,
+                chipsBottom: Math.round(chips ? chips.getBoundingClientRect().bottom : 0),
+                footerShown: !!footer && getComputedStyle(footer).display !== 'none',
+                photo: still
+                  ? Math.round(still.getBoundingClientRect().height - parseFloat(getComputedStyle(still).paddingBottom))
+                  : null,
+              }
+            })()`)) as Record<string, any> | null
+            if (caption) break
+            await page.evaluate(`(() => {
+              const main = document.querySelector('.layout main')
+              if (main) main.scrollTop = main.scrollTop + window.innerHeight * 0.5
+            })()`)
+            await page.waitForTimeout(200)
+          }
+          if (!caption) {
+            add({
+              severity: 'info', area: 'visual', screen: 'story', viewport: vp.tag,
+              check: 'кадр-картинка на телефоне', detail: 'в истории не нашлось кадра-картинки',
+              where: 'timelineModel (кадры вложений)',
+            })
+          } else {
+            const stage = Number(caption.vh) - Number(caption.chipsBottom)
+            if (caption.footerShown) {
+              add({
+                severity: 'warning', area: 'visual', screen: 'story', viewport: vp.tag,
+                check: 'блок страницы в подписи снимка', detail: `подпись ${caption.h}px из ${caption.vh}px`,
+                where: 'CSS .sf-copy--photo .sf-copy__footer', shot: name,
+              })
+            }
+            if (Number(caption.h) > Number(caption.vh) * 0.32) {
+              add({
+                severity: 'warning', area: 'visual', screen: 'story', viewport: vp.tag,
+                check: 'подпись кадра-картинки занимает много экрана', detail: `${caption.h}px из ${caption.vh}px`,
+                where: 'CSS .sf-copy--photo (компактная полоса) / --sf-photo-h', shot: name,
+              })
+            }
+            if (caption.photo !== null && Number(caption.photo) < stage * 0.45) {
+              add({
+                severity: 'warning', area: 'visual', screen: 'story', viewport: vp.tag,
+                check: 'снимку мало места в кадре', detail: `${caption.photo}px из ${Math.round(stage)}px сцены`,
+                where: 'CSS .sf-scene__still--photo (padding) / --sf-photo-h', shot: name,
+              })
+            }
+          }
+        }
       }
     }
 
