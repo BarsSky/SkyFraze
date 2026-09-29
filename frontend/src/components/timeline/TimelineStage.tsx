@@ -17,6 +17,8 @@ import {
   type TimelineFrame,
 } from './timelineModel'
 import { useTheme } from '../../store/theme'
+import { useMediaQuery } from '../../lib/useMediaQuery'
+import { DocumentTimeline } from './DocumentTimeline'
 import { SkyLayer } from './stage/SkyLayer'
 import { SceneFrame } from './stage/SceneFrame'
 import { CopyPanel } from './stage/CopyPanel'
@@ -76,6 +78,8 @@ function resolveAssets(assetIds: string[], lookup: Record<string, AssetLookup>):
  */
 export function TimelineStage({ events, assetsById, projectTitle, actions, copyFooter }: Props) {
   const [theme] = useTheme()
+  // Узкий экран — документ (см. DocumentTimeline), широкий — сцена с кадрами.
+  const isDocument = useMediaQuery('(max-width: 860px)')
   const trackRef = useRef<HTMLDivElement>(null)
   const stageActiveRef = useRef(true)
   const [meta, setMeta] = useState<EventMeta[]>([])
@@ -279,6 +283,20 @@ export function TimelineStage({ events, assetsById, projectTitle, actions, copyF
 
   // Автопереходов нет: создание события в редакторе не должно уводить стадию —
   // пользователь остаётся в редакторе и правит текст.
+
+  // На телефоне — обычный документ вместо сцены: текст главы, её картинки, текст
+  // под-события, его картинки, следующая глава. Один общий скролл, ничего не
+  // перекрывается, отдельные прокрутки для картинки и текста не нужны.
+  if (isDocument) {
+    return (
+      <DocumentTimeline
+        chapters={model.chapters}
+        projectTitle={projectTitle}
+        actions={actions}
+        copyFooter={copyFooter}
+      />
+    )
+  }
 
   if (!events || model.chapters.length === 0) {
     return (

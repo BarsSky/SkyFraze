@@ -158,8 +158,92 @@ async function scrollTop(page: Page): Promise<string | null> {
   return await settleFrame(page)
 }
 
-async function runViewport(vp: { width: number; height: number; tag: string }) {
-  const browser = await chromium.launch()
+/**
+ * Проверка мобильного режима: таймлайн — обычный документ (DocumentTimeline).
+ *
+ * На узких экранах сцены нет вовсе: кадры идут друг за другом в потоке (текст
+ * события, его картинки, текст под-события…), скролл один общий, своей прокрутки
+ * у текста нет — иначе палец над текстом крутит поле, а не историю.
+ */
+async function checkDocumentMode(
+  page: Page,
+  vp: { width: number; height: number; tag: string },
+  expectedFrames: string[],
+  errors: string[],
+  problems: string[],
+): Promise<{ errors: string[]; problems: string[] }> {
+  const ok = (label: string, cond: boolean, detail = '') => {
+    if (cond) console.log(`  ok   [${vp.tag}] ${label}`)
+    else {
+      console.log(`  FAIL [${vp.tag}] ${label}${detail ? ' — ' + detail : ''}`)
+      problems.push(`[${vp.tag}] ${label}${detail ? ' — ' + detail : ''}`)
+    }
+  }
+
+  const doc = (await page.evaluate(`(() => {
+    const blocks = Array.from(document.querySelectorAll('[data-doc-frame]'))
+    const bodies = Array.from(document.querySelectorAll('.sf-doc__event .sf-copy__body'))
+    const main = document.querySelector('.layout main')
+    return {
+      mode: document.querySelector('.sf-root')?.getAttribute('data-stage'),
+      kinds: blocks.map((b) => b.getAttribute('data-frame-kind')),
+      numbers: blocks.map((b) => b.getAttribute('data-frame-number')),
+      hasFixedLayers: !!document.querySelector('.sf-stage, .sf-track, .sf-copylayer'),
+      bodiesScroll: bodies.filter((b) => b.scrollHeight > b.clientHeight + 1).length,
+      bodiesOverflow: bodies.filter((b) => ['auto', 'scroll'].includes(getComputedStyle(b).overflowY)).length,
+      mainScrollable: main ? main.scrollHeight > main.clientHeight + 1 : false,
+      overflowX: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      editorsButton: !!Array.from(document.querySelectorAll('.sf-doc__actions button, .sf-doc__actions a'))
+        .find((el) => /Редактор/i.test(el.textContent || '')),
+    }
+  })()`)) as Record<string, any>
+  console.log(`[${vp.tag}] документ: ${JSON.stringify(doc)}`)
+
+  ok('включён режим документа', doc.mode === 'document', String(doc.mode))
+  ok('фиксированных слоёв сцены нет', doc.hasFixedLayers === false)
+  ok(
+    'у текста нет своей прокрутки',
+    Number(doc.bodiesScroll) === 0 && Number(doc.bodiesOverflow) === 0,
+    `со своей прокруткой: ${doc.bodiesScroll}, overflow: ${doc.bodiesOverflow}`,
+  )
+  ok('документ прокручивается целиком', doc.mainScrollable === true)
+  ok('нет горизонтального выезда', Number(doc.overflowX) <= 0, String(doc.overflowX))
+  ok('кнопка «Редакторы» на месте', doc.editorsButton === true)
+
+  const kinds = doc.kinds as string[]
+  const numbers = doc.numbers as string[]
+  const eventNumbers = numbers.filter((_, i) => kinds[i] === 'event')
+  const head = eventNumbers.slice(0, expectedFrames.length).join(',')
+  ok(`кадры-события идут по порядку (${head})`, head === expectedFrames.join(','), head)
+  ok(
+    'картинки идут сразу после своего события',
+    kinds.every((kind, i) => kind !== 'image' || kinds[i - 1] === 'event'),
+    kinds.join(','),
+  )
+
+  // Прокрутка: страница едет целиком, полоса событий остаётся на виду.
+  await page.evaluate(`(() => { const m = document.querySelector('.layout main'); if (m) m.scrollTop = m.scrollTop + window.innerHeight })()`)
+  await page.waitForTimeout(700)
+  const scrolled = (await page.evaluate(`(() => {
+    const chips = document.querySelector('.sf-doc__chips')
+    const r = chips?.getBoundingClientRect()
+    return {
+      position: chips ? getComputedStyle(chips).position : null,
+      visible: r ? r.top >= -1 && r.bottom <= window.innerHeight : false,
+      top: document.querySelector('.layout main')?.scrollTop ?? 0,
+    }
+  })()`)) as Record<string, any>
+  ok('прокрутка сдвинула документ', Number(scrolled.top) > 0, String(scrolled.top))
+  ok(
+    'переключатель событий липнет и виден',
+    scrolled.position === 'sticky' && scrolled.visible === true,
+    JSON.stringify(scrolled),
+  )
+  await shot(page, `${vp.tag}-document`)
+  return { errors, problems }
+}
+
+async function runViewport(vp: { width: number; height: number; tag: string }) {  const browser = await chromium.launch()
   const ctx: BrowserContext = await browser.newContext({
     viewport: { width: vp.width, height: vp.height },
     reducedMotion: 'reduce',
@@ -232,6 +316,13 @@ async function runViewport(vp: { width: number; height: number; tag: string }) {
   await scrollTop(page)
 
   const expectedFrames = ['01', '01.1', '01.1.1', '01.2']
+
+  // ── на узких экранах таймлайн — документ (DocumentTimeline), а не сцена:
+  //    кадры идут друг за другом в потоке, скролл один общий.
+  if (vp.width <= 860) {
+    return await checkDocumentMode(page, vp, expectedFrames, errors, problems)
+  }
+
   const first = await readFrame(page)
   console.log(`[${vp.tag}] старт: глава=${first.chapter} кадр=${first.frameNumber} кадров в главе=${first.framesInChapter}`)
 

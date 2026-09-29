@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import { eventFrames, type TimelineChapter } from '../timelineModel'
 
 interface Props {
@@ -13,12 +14,29 @@ interface Props {
  * активной главы (под-события). Заменяет вертикальный маршрут на ≤1280px.
  *
  * Кадры-картинки в чипы не попадают: это иллюстрации события, а не шаги.
+ * Активный чип подкручивается в видимую часть полосы: она прокручивается по
+ * горизонтали, и при переходе к следующей главе чип иначе остаётся за краем.
  */
 export function ChapterChips({ chapters, activeChapter, activeFrame, onChapter, onFrame }: Props) {
   const chapter = chapters[activeChapter]
   const events = chapter ? eventFrames(chapter.frames) : []
+  const listRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const list = listRef.current
+    if (!list) return
+    const active = list.querySelector<HTMLElement>('.sf-chip.is-active')
+    if (!active) return
+    // block: 'nearest' — подкрутка чипа не должна двигать страницу по вертикали.
+    try {
+      active.scrollIntoView({ inline: 'center', block: 'nearest' })
+    } catch {
+      /* старые браузеры без объекта настроек — не критично */
+    }
+  }, [activeChapter, activeFrame])
+
   return (
-    <div className="sf-chips" role="navigation" aria-label="Главы и под-события">
+    <div className="sf-chips" role="navigation" aria-label="Главы и под-события" ref={listRef}>
       {chapters.map((ch, ci) => (
         <button
           key={ch.id}

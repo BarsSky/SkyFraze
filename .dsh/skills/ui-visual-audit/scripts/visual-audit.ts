@@ -593,10 +593,16 @@ async function visualScreens(browser: Browser, errors: string[], slug: string | 
         continue
       }
       await page.waitForTimeout(2500)
+      // На узких экранах таймлайн — документ (нет трека): прокручиваем его целиком,
+      // на широких — трек, который переключает кадры сцены.
+      const isDocument = (await page.evaluate(`!!document.querySelector('.sf-doc')`)) as boolean
       const geo = (await page.evaluate(`(() => {
         const main = document.querySelector('.layout main')
         const track = document.querySelector('.sf-track')
         const mr = main.getBoundingClientRect()
+        if (!track) {
+          return { top: 0, height: main.scrollHeight, viewport: main.clientHeight }
+        }
         const tr = track.getBoundingClientRect()
         return { top: mr.top * -1 + tr.top + main.scrollTop, height: tr.height, viewport: main.clientHeight }
       })()`)) as { top: number; height: number; viewport: number }
@@ -610,12 +616,31 @@ async function visualScreens(browser: Browser, errors: string[], slug: string | 
         if (i % Math.ceil(steps / 4) === 0) {
           const frame = (await page.evaluate(`(() => {
             const r = document.querySelector('.sf-root')
-            return r ? r.getAttribute('data-frame-number') : ''
+            if (!r) return ''
+            if (r.getAttribute('data-stage') === 'document') {
+              const line = window.innerHeight * 0.35
+              const nodes = Array.from(document.querySelectorAll('[data-doc-frame]'))
+              let best = nodes[0]
+              for (const node of nodes) if (node.getBoundingClientRect().top <= line) best = node
+              return best ? best.getAttribute('data-frame-number') : ''
+            }
+            return r.getAttribute('data-frame-number')
           })()`)) as string
           name = `${vp.tag}-${theme}-frame-${frame || i}`
           await shot(page, name)
           applyProbe(await probe(page), `timeline:${frame}`, vp.tag, name)
         }
+      }
+      if (isDocument) {
+        // Отдельный кадр-картинка: в документе фотография — самостоятельный блок.
+        await page.evaluate(`(() => {
+          const img = document.querySelector('.sf-doc__image')
+          if (img) img.scrollIntoView({ behavior: 'instant', block: 'center' })
+        })()`)
+        await page.waitForTimeout(700)
+        name = `${vp.tag}-${theme}-doc-image`
+        await shot(page, name)
+        applyProbe(await probe(page), 'timeline:image', vp.tag, name)
       }
 
       // редакторы

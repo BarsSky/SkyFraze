@@ -141,4 +141,10 @@
   .ed-row { min-height: 34px; } /* палец на телефоне: строки дерева — тоже цель нажатия */
   .ed-editor { padding: 12px; }
   .ed-assets__item { max-width: 100%; }
+  /* Кружки тонов фона — тоже цель нажатия: 30px пальцем не накрыть. */
+  .ed-tone { width: 34px; height: 34px; }
+  /* Чипы выбора фона («как у главы / тон / картинка») и подписи-ссылки: та же
+     причина — мелкая цель нажатия на телефоне. */
+  .ed-chip,
+  .ed-bg .ed-chip { min-height: 34px; display: inline-flex; align-items: center; }
 }

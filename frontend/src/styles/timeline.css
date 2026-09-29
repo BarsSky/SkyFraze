@@ -600,6 +600,67 @@ html.sf-viewer-open body { overflow: hidden; }
   .sf-copy__title { font-size: clamp(1.3rem, 5vh, 1.8rem); }
 }
 
+/* ── мобильный документ ───────────────────────────────────────────────────
+   На телефоне таймлайн — не сцена, а обычный документ: текст главы, её картинки,
+   текст под-события, его картинки, следующая глава. Один общий скролл: палец над
+   текстом крутит историю, а не отдельное поле, и ничего не перекрывается.
+   Разметку даёт DocumentTimeline, здесь только оформление потока. */
+.sf-root--doc {
+  display: flex; flex-direction: column;
+  min-height: 100%;
+  padding-bottom: 32px;
+}
+.sf-doc__head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; flex-wrap: wrap; padding: 10px 14px 6px;
+}
+.sf-doc__title { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; min-width: 0; }
+.sf-doc__mark { flex: 0 0 auto; display: block; }
+.sf-doc__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Переключатель событий липнет под шапкой приложения и остаётся на виду.
+   Фон непрозрачный: полупрозрачная полоса просвечивала заголовком, который
+   уезжает под неё при прокрутке. */
+.sf-doc__chips {
+  position: sticky; top: 0; z-index: 20;
+  background: var(--sf-bg);
+  border-bottom: 1px solid var(--border);
+  box-shadow: 0 8px 18px -14px rgba(0, 0, 0, 0.5);
+}
+.sf-doc .sf-chips {
+  position: static; padding: 8px 12px; background: transparent;
+}
+
+.sf-doc__body {
+  display: flex; flex-direction: column; gap: 28px;
+  width: 100%; max-width: 720px; margin: 0 auto;
+  padding: 18px 16px 0;
+}
+.sf-doc__event { display: flex; flex-direction: column; }
+.sf-doc__event .sf-copy__title { margin: 8px 0 0; font-size: clamp(1.5rem, 6vw, 2.1rem); }
+/* В документе текст течёт целиком: своя прокрутка внутри абзаца — ровно то, из-за
+   чего «скролл не работал». */
+.sf-doc__event .sf-copy__body { max-height: none; overflow: visible; }
+.sf-doc__event .sf-copy__meta { margin-top: 14px; }
+/* Строка вложенного события — та же кнопка, что и в кадре: номер и название
+   врозь, с зазором, клик ведёт к этому блоку ниже по документу. */
+.sf-doc__event .sf-copy__next-row { min-height: 34px; }
+
+.sf-doc__image { margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.sf-doc__shot {
+  padding: 0; border: 1px solid var(--border); background: var(--bg);
+  border-radius: 14px; overflow: hidden; cursor: zoom-in; line-height: 0;
+  transition: border-color 0.2s, transform 0.2s;
+}
+.sf-doc__shot:hover { border-color: var(--sf-accent); }
+.sf-doc__shot img { display: block; width: 100%; height: auto; }
+.sf-doc__image figcaption { font-size: 0.8rem; }
+
+.sf-doc__footer {
+  margin-top: 8px; padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .sf-pt { display: none; }
   .sf-hint i::after { animation: none; }
