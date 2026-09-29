@@ -215,11 +215,20 @@ async function checkDocumentMode(
   const eventNumbers = numbers.filter((_, i) => kinds[i] === 'event')
   const head = eventNumbers.slice(0, expectedFrames.length).join(',')
   ok(`кадры-события идут по порядку (${head})`, head === expectedFrames.join(','), head)
-  ok(
-    'картинки идут сразу после своего события',
-    kinds.every((kind, i) => kind !== 'image' || kinds[i - 1] === 'event'),
-    kinds.join(','),
-  )
+  // Картинка идёт после СВОЕГО события: её номер продолжает номер события
+  // («01·1» после «01»). У события может быть и несколько картинок подряд.
+  const orderOk = (() => {
+    let lastEvent = ''
+    for (let i = 0; i < kinds.length; i++) {
+      if (kinds[i] === 'event') {
+        lastEvent = numbers[i]
+        continue
+      }
+      if (!lastEvent || !numbers[i].startsWith(`${lastEvent}·`)) return false
+    }
+    return kinds.length > 0
+  })()
+  ok('картинки идут после своего события', orderOk, `${kinds.join(',')} / ${numbers.join(',')}`)
 
   // Прокрутка: страница едет целиком, полоса событий остаётся на виду.
   await page.evaluate(`(() => { const m = document.querySelector('.layout main'); if (m) m.scrollTop = m.scrollTop + window.innerHeight })()`)
