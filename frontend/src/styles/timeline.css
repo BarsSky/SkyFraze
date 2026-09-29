@@ -454,6 +454,10 @@ html.sf-viewer-open body { overflow: hidden; }
     background: linear-gradient(to bottom, color-mix(in srgb, var(--sf-bg) 92%, transparent), transparent);
   }
   .sf-chips::-webkit-scrollbar { display: none; }
+  /* Сцена начинается ПОД полосой чипов (её высоту стадия измеряет в --sf-chips-h):
+     картинка и фон главы рисуются ниже переключателя событий, поэтому при
+     прокрутке чипы остаются на виду и ничего не перекрывают. */
+  .sf-stage { top: calc(var(--sf-header-h, 46px) + 62px + var(--sf-chips-h, 50px)); }
 }
 
 @media (max-width: 860px) {
@@ -474,14 +478,23 @@ html.sf-viewer-open body { overflow: hidden; }
        Safari/Chrome) объявление с dvh отбрасывается целиком, панель теряла нижнюю
        привязку и уезжала за экран — оставался только фон стадии. */
     top: auto; bottom: calc(14px + env(safe-area-inset-bottom));
-    transform: none; width: auto; max-width: 560px;
-    /* Высота ограничена тем, что осталось между шапкой с чипами и краем экрана:
-       иначе на коротких экранах (маленький телефон, ландшафт) панель налезала на
-       чипы глав. Длинный текст прокручивается внутри панели. */
-    max-height: min(
-      52vh,
-      calc(100vh - var(--sf-header-h, 46px) - 124px - 28px)
+    /* На широком экране лист центрируется через translateY(-50%) — на телефоне
+       он прижат к низу, и этот сдвиг надо снять. */
+    transform: none;
+    width: auto; max-width: 560px;
+    /* Высота ограничена тем, что осталось между полосой чипов и краем экрана:
+       под картинку оставляем минимум 20vh, остальное — листу. Длинный текст
+       прокручивается внутри листа, поэтому обрезать его не приходится. */
+    --sf-sheet-max: min(
+      58vh,
+      calc(100vh - var(--sf-header-h, 46px) - 62px - var(--sf-chips-h, 50px) - 14px - 20vh)
     );
+    max-height: var(--sf-sheet-max);
+    /* Лист «раскрывается», пока кадр входит (--sf-frame-enter ставит TimelineStage):
+       он растёт ВВЕРХ, а низ с кнопками «назад/дальше» и блоком оценки остаётся на
+       месте. Сдвигать лист целиком нельзя — тогда кнопки на входе кадра оказываются
+       ниже сгиба, а они должны быть под рукой в любой момент. */
+    height: calc(var(--sf-sheet-max) * (0.55 + 0.45 * var(--sf-frame-enter, 1)));
     overflow: hidden; overscroll-behavior: contain;
     /* Плотный «лист» вместо прозрачной панели: на телефоне текст ложился прямо на
        иллюстрацию, и в светлой теме скрим не спасал — читалось плохо. Так текст
@@ -529,7 +542,10 @@ html.sf-viewer-open body { overflow: hidden; }
 @supports (height: 100dvh) {
   @media (max-width: 860px) {
     .sf-copy {
-      max-height: min(52dvh, calc(100dvh - var(--sf-header-h, 46px) - 124px - 28px));
+      --sf-sheet-max: min(
+        58dvh,
+        calc(100dvh - var(--sf-header-h, 46px) - 62px - var(--sf-chips-h, 50px) - 14px - 20dvh)
+      );
     }
   }
 }
@@ -545,7 +561,10 @@ html.sf-viewer-open body { overflow: hidden; }
      листа, иначе подпись накрывает нижнюю часть фотографии. */
   .sf-scene__still--photo { padding: 1vh 2vw calc(40vh + 20px); }
   .sf-copy--photo {
-    max-height: min(40vh, calc(100vh - var(--sf-header-h, 46px) - 124px - 28px));
+    --sf-sheet-max: min(
+      40vh,
+      calc(100vh - var(--sf-header-h, 46px) - 62px - var(--sf-chips-h, 50px) - 14px - 20vh)
+    );
   }
   /* Номер кадра уже говорит «фото 2 / 5» — мета-чипы в кадре-картинке лишние. */
   .sf-copy--photo .sf-copy__meta { display: none; }

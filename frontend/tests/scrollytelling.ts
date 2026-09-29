@@ -46,6 +46,12 @@ interface FrameSnapshot {
   toneVisible: boolean
   copyFits: boolean
   copyIssues: string[]
+  /** Вход кадра 0..1: пока он не завершён, лист копирайта на телефоне выезжает снизу. */
+  frameEnter: string
+  /** Верх листа в текущем (возможно, ещё въезжающем) состоянии. */
+  copyTopEntering: number | null
+  /** Верх листа в осевшем состоянии. */
+  copyTopSettled: number | null
 }
 
 async function readFrame(page: Page): Promise<FrameSnapshot> {
@@ -70,10 +76,18 @@ async function readFrame(page: Page): Promise<FrameSnapshot> {
       const own = el.getBoundingClientRect()
       if (own.left < -1 || own.right > window.innerWidth + 1) { fits = false; issues.push(name + ': вне экрана по X (элемент)') }
     }
+    // Пока кадр входит, лист копирайта на телефоне выезжает снизу — часть его
+    // законно ниже сгиба. Проверяем «осевшее» положение: временно помечаем вход
+    // завершённым, снимаем геометрию и возвращаем значение как было.
+    const enter = root ? (root.style.getPropertyValue('--sf-frame-enter') || '') : ''
+    const copyTopEntering = copy ? Math.round(copy.getBoundingClientRect().top) : null
+    if (root) root.style.setProperty('--sf-frame-enter', '1')
+    const copyTopSettled = copy ? Math.round(copy.getBoundingClientRect().top) : null
     check(copy, 'copy')
     check(title, 'title')
     check(document.querySelector('.sf-copy__body'), 'body')
     check(document.querySelector('.sf-copy__meta'), 'meta')
+    if (root) root.style.setProperty('--sf-frame-enter', enter || '1')
     return {
       stage: root ? root.getAttribute('data-stage') : null,
       chapter: root ? root.getAttribute('data-chapter') : null,
@@ -82,6 +96,9 @@ async function readFrame(page: Page): Promise<FrameSnapshot> {
       framesInChapter: root ? Number(root.getAttribute('data-frames-in-chapter')) : -1,
       frameTitle: title ? title.textContent : null,
       activeEditor: activeRow ? (activeRow.textContent || '').trim() : null,
+      frameEnter: enter,
+      copyTopEntering,
+      copyTopSettled,
       toneVisible: !!document.querySelector('.sf-scene[data-active="true"] .sf-scene__tone'),
       copyFits: fits,
       copyIssues: issues,
@@ -258,14 +275,29 @@ async function runViewport(vp: { width: number; height: number; tag: string }) {
   // ── проход по кадрам первой главы: каждый под-событие — свой развёрнутый экран
   const editorBefore = first.activeEditor
   const seen: string[] = [first.frameNumber ?? '']
+  // На телефоне лист копирайта выезжает снизу, пока кадр входит: убеждаемся, что
+  // он действительно поднимается, а не стоит на месте.
+  let slideSeen = false
+  const noteSlide = (snap: FrameSnapshot) => {
+    if (snap.copyTopEntering !== null && snap.copyTopSettled !== null && snap.copyTopEntering > snap.copyTopSettled) {
+      slideSeen = true
+    }
+  }
+  noteSlide(first)
   for (let guard = 0; guard < 8; guard++) {
     const snapshot = await readFrame(page)
+    noteSlide(snapshot)
     if (!snapshot.copyFits) problems.push(`кадр ${snapshot.frameNumber}: ${snapshot.copyIssues.join('; ')}`)
     if (snapshot.frameIndex > 0) await shot(page, `${vp.tag}-frame-${(snapshot.frameNumber ?? '').replace('.', '_')}`)
     if (!(await nextFrame(page))) break
     const after = await readFrame(page)
+    noteSlide(after)
     seen.push(after.frameNumber ?? '')
     if (after.chapter !== first.chapter) break
+  }
+  if (vp.width <= 860) {
+    console.log(`[${vp.tag}] лист кадра выезжает снизу: ${slideSeen}`)
+    if (!slideSeen) problems.push('лист кадра не выезжает снизу при входе кадра (на телефоне текст должен раскрываться по мере прокрутки)')
   }
   const expectedNumbers = expectedFrames
   console.log(`[${vp.tag}] кадры первой главы: ${seen.join(' → ')}`)

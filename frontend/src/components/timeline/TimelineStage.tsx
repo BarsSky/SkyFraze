@@ -151,6 +151,33 @@ export function TimelineStage({ events, assetsById, projectTitle, actions, copyF
   const accents = theme === 'light' ? CHAPTER_ACCENTS_LIGHT : CHAPTER_ACCENTS_DARK
   const model = useMemo(() => buildTimelineModel(items, accents), [items, accents])
 
+  // Высота полосы чипов (переключение по событиям): сцена и лист кадра начинаются
+  // ПОД ней, поэтому чипы никогда не налезают на картинку. Зависимость от наличия
+  // глав: пока события не приехали, чипов в дереве нет, и замер без неё остался бы
+  // нулевым навсегда.
+  const hasChapters = model.chapters.length > 0
+  useEffect(() => {
+    const chips = document.querySelector<HTMLElement>('.sf-chips')
+    if (!chips) {
+      document.documentElement.style.setProperty('--sf-chips-h', '0px')
+      return undefined
+    }
+    const apply = () => {
+      const visible = getComputedStyle(chips).display !== 'none'
+      const h = visible ? Math.round(chips.getBoundingClientRect().height) : 0
+      document.documentElement.style.setProperty('--sf-chips-h', `${h}px`)
+    }
+    apply()
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(apply) : null
+    ro?.observe(chips)
+    window.addEventListener('resize', apply)
+    return () => {
+      ro?.disconnect()
+      window.removeEventListener('resize', apply)
+      document.documentElement.style.removeProperty('--sf-chips-h')
+    }
+  }, [hasChapters])
+
   // Плоский список кадров по всему таймлайну — для переходов «назад/дальше»
   // сквозь главы (а не только внутри текущей). Кадры-картинки тоже участвуют:
   // листать фотографии события нужно и кнопками, не только прокруткой.
@@ -291,7 +318,10 @@ export function TimelineStage({ events, assetsById, projectTitle, actions, copyF
       data-frame-kind={frame?.kind ?? ''}
       data-frame-index={state.frameIndex}
       data-frames-in-chapter={chapter ? eventFrames(chapter.frames).length : 0}
-      style={{ ['--sf-accent' as string]: accent }}
+      /* Вход кадра нужен и CSS: на телефоне лист копирайта выезжает снизу, пока
+         кадр входит (--sf-frame-enter 0→1 за первые 22% окна кадра), поэтому текст
+         раскрывается постепенно, а не вываливается целиком сразу. */
+      style={{ ['--sf-accent' as string]: accent, ['--sf-frame-enter' as string]: state.transition }}
     >
       <div className="sf-progress" aria-hidden>
         <span style={{ transform: `scaleX(${state.progress})` }} />
