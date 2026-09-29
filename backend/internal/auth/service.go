@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -32,17 +33,39 @@ var (
 	// ErrInvalidUsername — ник не подходит: короткий, длинный или с недопустимыми
 	// символами (латиница, цифры, точка, дефис, подчёркивание).
 	ErrInvalidUsername = errors.New("invalid username")
+	// ErrInvalidProfile — «о себе» или специализации не помещаются в пределы:
+	// 600 рун на резюме, 12 специализаций по 60 рун.
+	ErrInvalidProfile = errors.New("invalid profile")
 )
 
-// UpdateProfile меняет отображаемое имя и ник (@username). Пустые поля означают
-// «не трогать»: интерфейс отправляет только изменённое.
-func (s *Service) UpdateProfile(ctx context.Context, userID uuid.UUID, displayName, username string) (*store.User, error) {
+// maxBioRunes — предел «о себе»: это абзац для карточки каталога, а не глава.
+const maxBioRunes = 600
+
+// ProfileUpdate — всё, что можно поменять в профиле. nil-поле означает «не
+// прислали»: интерфейс отправляет только изменённое, и одно сохранение имени не
+// должно стирать «о себе», специализации или галочку «показывать меня».
+type ProfileUpdate struct {
+	DisplayName  string
+	Username     string
+	Bio          *string
+	Crafts       *[]string
+	Discoverable *bool
+}
+
+// UpdateProfile меняет профиль: имя, ник (@username), «о себе», специализации и
+// видимость в каталоге людей.
+//
+// Пустые имя и ник означают «не трогать» (как и раньше): ник подставляется
+// текущий, а непустой проверяется на допустимость. Пределы bio/crafts проверяются
+// здесь, а не в HTTP-слое: профиль правят и другие входы (например, одобрение
+// заявки), и правило должно быть одно.
+func (s *Service) UpdateProfile(ctx context.Context, userID uuid.UUID, upd ProfileUpdate) (*store.User, error) {
 	u, err := s.store.GetUserByID(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
 
-	name := strings.TrimSpace(displayName)
+	name := strings.TrimSpace(upd.DisplayName)
 	if name == "" {
 		name = u.DisplayName
 	}
@@ -50,16 +73,34 @@ func (s *Service) UpdateProfile(ctx context.Context, userID uuid.UUID, displayNa
 		return nil, ErrInvalidUsername
 	}
 
-	nick := store.NormalizeUsername(username)
-	if strings.TrimSpace(username) == "" {
+	nick := store.NormalizeUsername(upd.Username)
+	if strings.TrimSpace(upd.Username) == "" {
 		nick = u.Username
-	} else if !store.ValidUsername(username) {
+	} else if !store.ValidUsername(upd.Username) {
 		return nil, ErrInvalidUsername
 	}
-	if nick == u.Username && name == u.DisplayName {
-		return u, nil
+
+	change := store.ProfileUpdate{DisplayName: name, Username: nick}
+
+	if upd.Bio != nil {
+		bio := strings.TrimSpace(*upd.Bio)
+		if utf8.RuneCountInString(bio) > maxBioRunes {
+			return nil, ErrInvalidProfile
+		}
+		change.Bio = &bio
 	}
-	return s.store.UpdateProfile(ctx, userID, name, nick)
+	if upd.Crafts != nil {
+		// Тот же предел и та же чистка (пустые, дубли без учёта регистра), что у
+		// специализаций соавторов: специализация — одно понятие для обоих входов.
+		crafts, err := store.CleanCrafts(*upd.Crafts)
+		if err != nil {
+			return nil, ErrInvalidProfile
+		}
+		change.Crafts = &crafts
+	}
+	change.Discoverable = upd.Discoverable
+
+	return s.store.UpdateProfile(ctx, userID, change)
 }
 
 // Service — фасад auth-операций.

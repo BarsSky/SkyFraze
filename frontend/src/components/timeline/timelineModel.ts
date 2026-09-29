@@ -112,6 +112,31 @@ export const FRAME_WEIGHT_IMAGE = 0.72
 /** Картинками считаются вложения с таким началом MIME-типа. */
 export const IMAGE_MIME_PREFIX = 'image/'
 
+/**
+ * Сколько знаков текста кадра читается за одну единицу трека (≈92vh прокрутки).
+ *
+ * Нужно, чтобы длинный текст раскрывался ПО МЕРЕ ПРОКРУТКИ, а не прокручивался
+ * внутри листа: у листа своя прокрутка — последняя в цепочке (он в fixed-слое),
+ * поэтому палец над текстом упирался в его конец и дальше не шёл. Теперь кадр с
+ * длинным текстом получает трек длиннее, и весь текст проезжает сам.
+ */
+export const CHARS_PER_TEXT_UNIT = 900
+
+/** Потолок надбавки: даже очень длинная глава не должна стать бесконечным треком. */
+export const MAX_TEXT_UNITS = 24
+
+/**
+ * Надбавка к весу кадра за длину текста (в единицах трека).
+ *
+ * Текст, который влезает в экран, ничего не добавляет — кадр остаётся прежним.
+ * Дальше каждый экран текста даёт ещё одну единицу прокрутки.
+ */
+export function textUnits(title: string, body: string): number {
+  const chars = (title?.length ?? 0) + (body?.length ?? 0)
+  if (chars <= CHARS_PER_TEXT_UNIT) return 0
+  return Math.min(MAX_TEXT_UNITS, (chars - CHARS_PER_TEXT_UNIT) / CHARS_PER_TEXT_UNIT)
+}
+
 /** Доля кадра, отведённая на переход (кроссфейд фона/копирайта). */
 export const TRANSITION_BAND = 0.22
 
@@ -202,7 +227,9 @@ export function buildTimelineModel(items: StageEvent[], accents: string[]): Time
         background,
         assets: node.item.assets,
         childFrames: [],
-        weight: weightForDepth(depth),
+        // Вес = базовая доля экрана + надбавка за длину текста: длинная глава
+        // проезжает больше трека, и весь её текст успевает раскрыться.
+        weight: weightForDepth(depth) + textUnits(node.item.title, node.item.body),
       }
       frames.push(frame)
       frameCount++

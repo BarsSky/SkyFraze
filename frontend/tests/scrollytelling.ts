@@ -281,88 +281,70 @@ async function checkNarrowStage(
     await page.waitForTimeout(220)
   }
   const beforeSwipe = await mainTop()
-  // Если текст не влезает в лист (бывает на 320×568), сначала листается сам текст —
-  // поэтому свайп проверяем с НИЗА листа: именно там палец раньше «зависал».
-  const sheetOverflows = (await page.evaluate(`(() => {
-    const copy = document.querySelector('.sf-copy')
-    const sc = copy.querySelector('.sf-copy__scroll') || copy
-    return sc.scrollHeight > sc.clientHeight + 1
-  })()`)) as boolean
-  if (sheetOverflows) {
-    await page.evaluate(`(() => {
-      const copy = document.querySelector('.sf-copy')
-      const sc = copy.querySelector('.sf-copy__scroll') || copy
-      sc.scrollTop = sc.scrollHeight
-    })()`)
-    await page.waitForTimeout(200)
-  }
   await drag(150)
   const swipeShift = (await mainTop()) - beforeSwipe
   ok(
     'свайп по листу листает историю',
     swipeShift > 60,
-    `история сдвинулась на ${Math.round(swipeShift)}px при свайпе 150px${sheetOverflows ? ' (текст не влезал — свайп с низа листа)' : ''}`,
+    `история сдвинулась на ${Math.round(swipeShift)}px при свайпе 150px`,
   )
 
-  // ── Текст длиннее экрана: пока лист может прокручиваться, жест остаётся его;
-  // на самом низу — уходит на кадры (там палец и «зависал»).
-  // Текст в редакторе для этого не правим: правка гоняет сохранение состояния и
-  // даёт лишние конфликты ревизий, а проверяем мы жест, а не редактор. Вместо
-  // этого ужимаем поле стилем — содержимое перестаёт влезать, как при длинном тексте.
+  // ── Текст кадра ведёт прогресс прокрутки, а не собственное поле.
+  //
+  // Раньше у листа была своя прокрутка (последняя в цепочке — лист в fixed-слое),
+  // и палец над текстом упирался в её конец. Теперь положение текста задаёт
+  // прогресс кадра, а у поля прокрутки нет вовсе. Текст в редакторе не правим
+  // (правка гоняет сохранение и даёт конфликты ревизий) — добавляем абзац прямо в
+  // лист: важно не откуда взялся длинный текст, а что его ведёт прокрутка.
   await page.evaluate(`(() => {
-    const style = document.createElement('style')
-    style.id = 'sf-test-tight'
-    style.textContent = '.sf-copy .sf-copy__scroll { max-height: 120px !important }'
-    document.head.appendChild(style)
+    const sc = document.querySelector('.sf-copy__scroll')
+    const filler = document.createElement('p')
+    filler.id = 'sf-test-filler'
+    filler.textContent = 'Проверка раскрытия текста прокруткой. '.repeat(120)
+    filler.style.margin = '16px 0 0'
+    sc.appendChild(filler)
   })()`)
-  await page.waitForTimeout(250)
-  const longText = (await page.evaluate(`(() => {
+  await page.waitForTimeout(300)
+  const textMode = (await page.evaluate(`(() => {
+    const sc = document.querySelector('.sf-copy__scroll')
     const copy = document.querySelector('.sf-copy')
-    const sc = copy.querySelector('.sf-copy__scroll') || copy
-    return { overflows: sc.scrollHeight > sc.clientHeight + 1, scrollTop: sc.scrollTop, rest: sc.scrollHeight - sc.clientHeight }
-  })()`)) as Record<string, any>
-  console.log(`[${vp.tag}] ужатое поле текста: ${JSON.stringify(longText)}`)
-  if (longText.overflows) {
-    const wheel = async (deltaY: number) => {
-      await page.evaluate(`(() => {
-        const copy = document.querySelector('.sf-copy')
-        const sc = copy.querySelector('.sf-copy__scroll') || copy
-        const r = sc.getBoundingClientRect()
-        sc.dispatchEvent(new WheelEvent('wheel', {
-          deltaY: ${deltaY}, bubbles: true, cancelable: true,
-          clientX: Math.round(r.left + r.width / 2), clientY: Math.round(r.top + 40),
-        }))
-      })()`)
-      await page.waitForTimeout(220)
+    return {
+      sheetOverflow: getComputedStyle(copy).overflowY,
+      scrollOverflow: getComputedStyle(sc).overflowY,
+      max: sc.scrollHeight - sc.clientHeight,
+      top: sc.scrollTop,
+      frame: document.querySelector('.sf-root')?.getAttribute('data-frame-number'),
     }
-    // Лист ещё может прокручиваться — жест остаётся ему, кадры не двигаются.
-    const beforeMid = await mainTop()
-    await wheel(40)
-    const midShift = (await mainTop()) - beforeMid
-    ok(
-      'середина длинного текста не двигает кадры',
-      Math.abs(midShift) <= 2,
-      `история ушла на ${Math.round(midShift)}px вместо того, чтобы листать текст`,
-    )
-    // Лист на самом низу — дальше жест ведёт трек, к картинкам и следующему событию.
-    await page.evaluate(`(() => {
-      const copy = document.querySelector('.sf-copy')
-      const sc = copy.querySelector('.sf-copy__scroll') || copy
-      sc.scrollTop = sc.scrollHeight
-    })()`)
-    await page.waitForTimeout(200)
-    const beforeBottom = await mainTop()
-    await wheel(80)
-    const bottomShift = (await mainTop()) - beforeBottom
-    ok(
-      'с конца длинного текста жест ведёт к картинкам',
-      bottomShift > 40,
-      `история сдвинулась на ${Math.round(bottomShift)}px`,
-    )
-  } else {
-    problems.push(`[${vp.tag}] ужатое поле текста не переполнилось — проверить переход от текста к кадрам не удалось`)
+  })()`)) as Record<string, any>
+  console.log(`[${vp.tag}] текст кадра: ${JSON.stringify(textMode)}`)
+  ok(
+    'у листа кадра нет своей прокрутки',
+    textMode.sheetOverflow === 'hidden' && textMode.scrollOverflow === 'hidden',
+    `лист=${textMode.sheetOverflow}, поле=${textMode.scrollOverflow}`,
+  )
+  ok(
+    'длинный текст не влезает в кадр',
+    Number(textMode.max) > 200,
+    `запас прокрутки ${Math.round(Number(textMode.max))}px`,
+  )
+  const samples: number[] = []
+  for (let guard = 0; guard < 6; guard++) {
+    await page.evaluate(`(() => { const m = document.querySelector('.layout main'); if (m) m.scrollTop = m.scrollTop + window.innerHeight * 0.12 })()`)
+    await page.waitForTimeout(180)
+    const now = (await page.evaluate(`(() => {
+      const sc = document.querySelector('.sf-copy__scroll')
+      return { top: sc.scrollTop, frame: document.querySelector('.sf-root')?.getAttribute('data-frame-number') }
+    })()`)) as Record<string, any>
+    if (now.frame !== textMode.frame) break
+    samples.push(Number(now.top))
   }
-  await page.evaluate(`document.getElementById('sf-test-tight')?.remove()`)
+  const grown = samples.length > 1 && samples[samples.length - 1] > samples[0] + 40
+  ok(
+    'прокрутка раскрывает текст кадра',
+    grown,
+    `текст проехал ${samples.map((v) => Math.round(v)).join(' → ')}px из ${Math.round(Number(textMode.max))}px`,
+  )
+  await page.evaluate(`document.getElementById('sf-test-filler')?.remove()`)
   await page.waitForTimeout(200)
   await scrollTop(page)
 }

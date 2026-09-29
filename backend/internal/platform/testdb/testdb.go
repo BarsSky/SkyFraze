@@ -30,14 +30,34 @@ func URL() string {
 	return "postgres://skyfraze:skyfraze_dev@localhost:5432/skyfraze_test?sslmode=disable"
 }
 
-// schemaSteps — маркерная таблица каждой миграции. Применяем только те файлы,
-// чьей таблицы ещё нет: часть миграций не идемпотентна (0002 дропает legacy-колонку).
-var schemaSteps = []struct{ table, file string }{
-	{"users", "0001_init.up.sql"},
-	{"project_event_state", "0002_events_hierarchy.up.sql"},
-	{"project_ratings", "0003_public_feed.up.sql"},
-	{"registration_requests", "0004_admin_registration.up.sql"},
-	{"coauthor_links", "0005_coauthors.up.sql"},
+// schemaSteps — проба «миграция уже применена?» и файл. Применяем только те
+// файлы, чей объект ещё не создан: часть миграций не идемпотентна (0002 дропает
+// legacy-колонку).
+//
+// Проба — не всегда таблица: 0006 добавляет только колонки, поэтому проверяем
+// ровно тот объект, который создаёт миграция. Иначе существующая тестовая база
+// (например, skyfraze_coauthors, созданная до 0006) осталась бы без bio/crafts,
+// и упал бы уже не тест, а запрос.
+var schemaSteps = []struct{ probe, file string }{
+	{`SELECT EXISTS (SELECT 1 FROM information_schema.tables
+	                  WHERE table_schema='public' AND table_name='users')`,
+		"0001_init.up.sql"},
+	{`SELECT EXISTS (SELECT 1 FROM information_schema.tables
+	                  WHERE table_schema='public' AND table_name='project_event_state')`,
+		"0002_events_hierarchy.up.sql"},
+	{`SELECT EXISTS (SELECT 1 FROM information_schema.tables
+	                  WHERE table_schema='public' AND table_name='project_ratings')`,
+		"0003_public_feed.up.sql"},
+	{`SELECT EXISTS (SELECT 1 FROM information_schema.tables
+	                  WHERE table_schema='public' AND table_name='registration_requests')`,
+		"0004_admin_registration.up.sql"},
+	{`SELECT EXISTS (SELECT 1 FROM information_schema.tables
+	                  WHERE table_schema='public' AND table_name='coauthor_links')`,
+		"0005_coauthors.up.sql"},
+	{`SELECT EXISTS (SELECT 1 FROM information_schema.columns
+	                  WHERE table_schema='public' AND table_name='users'
+	                    AND column_name='discoverable')`,
+		"0006_people.up.sql"},
 }
 
 // Setup открывает отдельную БД для пакета (suffix), применяет миграции и
@@ -106,10 +126,8 @@ func applySchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
 	for _, step := range schemaSteps {
 		var exists bool
-		if err := pool.QueryRow(ctx,
-			`SELECT EXISTS (SELECT 1 FROM information_schema.tables
-			                 WHERE table_schema='public' AND table_name=$1)`, step.table).Scan(&exists); err != nil {
-			t.Fatalf("schema probe %s: %v", step.table, err)
+		if err := pool.QueryRow(ctx, step.probe).Scan(&exists); err != nil {
+			t.Fatalf("schema probe %s: %v", step.file, err)
 		}
 		if exists {
 			continue

@@ -9,6 +9,7 @@ import { FeedPage } from '../pages/FeedPage'
 import { PublicStoryPage } from '../pages/PublicStoryPage'
 import { AdminPage } from '../pages/AdminPage'
 import { CoauthorsPage } from '../pages/CoauthorsPage'
+import { PeoplePage } from '../pages/PeoplePage'
 import { RequireAuth } from '../components/RequireAuth'
 import { Header } from '../components/Header'
 import { useAuthStore } from '../store/auth'
@@ -71,6 +72,18 @@ export function App() {
               <div className="layout">
                 <Header />
                 <main><CoauthorsPage /></main>
+              </div>
+            </RequireAuth>
+          }
+        />
+        {/* Каталог резидентов: только вошедшим — это люди инсталляции, а не витрина */}
+        <Route
+          path="/people"
+          element={
+            <RequireAuth>
+              <div className="layout">
+                <Header />
+                <main><PeoplePage /></main>
               </div>
             </RequireAuth>
           }

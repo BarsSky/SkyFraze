@@ -39,6 +39,8 @@ export function MarkdownEditor({ value, onSave, onClose, title }: Props) {
   const [text, setText] = useState(value)
   const [mode, setMode] = useState<Mode>('split')
   const [diagramKind, setDiagramKind] = useState<string>(DIAGRAM_KINDS[0].id)
+  /** На телефоне панель вставок свёрнута: в строку она не влезает (см. CSS). */
+  const [insertsOpen, setInsertsOpen] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const windowRef = useRef<HTMLDivElement>(null)
   const restoreFocus = useRef<HTMLElement | null>(null)
@@ -54,6 +56,29 @@ export function MarkdownEditor({ value, onSave, onClose, title }: Props) {
     return () => {
       document.documentElement.classList.remove('sf-viewer-open')
       restoreFocus.current?.focus?.()
+    }
+  }, [])
+
+  // Экранная клавиатура на телефоне не меняет 100vh: окно оставалось во весь
+  // макетный экран, и футер с «Сохранить» уезжал под клавиатуру — редактор
+  // «уходил за край». Пишем фактическую видимую высоту и её смещение в CSS
+  // переменные, по ним окно и считается (--md-vvh / --md-vvtop).
+  useEffect(() => {
+    const vv = window.visualViewport
+    if (!vv) return undefined
+    const root = document.documentElement
+    const apply = () => {
+      root.style.setProperty('--md-vvh', `${Math.round(vv.height)}px`)
+      root.style.setProperty('--md-vvtop', `${Math.round(vv.offsetTop)}px`)
+    }
+    apply()
+    vv.addEventListener('resize', apply)
+    vv.addEventListener('scroll', apply)
+    return () => {
+      vv.removeEventListener('resize', apply)
+      vv.removeEventListener('scroll', apply)
+      root.style.removeProperty('--md-vvh')
+      root.style.removeProperty('--md-vvtop')
     }
   }, [])
 
@@ -141,34 +166,46 @@ export function MarkdownEditor({ value, onSave, onClose, title }: Props) {
           </button>
         </div>
 
-        <div className="md-editor__toolbar" role="toolbar" aria-label="Вставки Markdown">
-          {tools.map((tool) => (
-            <button key={tool.label} type="button" className="secondary" title={tool.title} onClick={tool.run}>
-              {tool.label}
-            </button>
-          ))}
-          <span className="md-editor__toolbar-sep" aria-hidden />
-          <select
-            value={diagramKind}
-            aria-label="Вид диаграммы"
-            onChange={(e) => setDiagramKind(e.target.value)}
-            style={{
-              background: 'var(--bg)', color: 'var(--fg)', border: '1px solid var(--border)',
-              borderRadius: 8, padding: '7px 9px', minWidth: 150,
-            }}
-          >
-            {DIAGRAM_KINDS.map((kind) => (
-              <option key={kind.id} value={kind.id}>{kind.label}</option>
-            ))}
-          </select>
+        <div className="md-editor__toolbar" role="toolbar" aria-label="Вставки Markdown" data-inserts={insertsOpen ? 'open' : 'closed'}>
+          {/* На телефоне кнопки вставок не влезают в строку (их пятнадцать плюс
+              выбор вида диаграммы) и раньше уезжали за правый край экрана.
+              Поэтому там они живут в сворачиваемой панели, а в строке остаётся
+              одна кнопка. На широком экране панель «раскрыта» всегда. */}
           <button
             type="button"
-            className="secondary"
-            title="Вставить диаграмму Mermaid"
-            onClick={() => apply(insertBlock(text, selection(), diagramSkeleton(diagramKind)))}
+            className="secondary md-editor__inserts-toggle"
+            aria-expanded={insertsOpen}
+            aria-controls="md-editor-inserts"
+            onClick={() => setInsertsOpen((open) => !open)}
           >
-            диаграмма
+            вставки {insertsOpen ? '▴' : '▾'}
           </button>
+          <div className="md-editor__inserts" id="md-editor-inserts">
+            {tools.map((tool) => (
+              <button key={tool.label} type="button" className="secondary" title={tool.title} onClick={tool.run}>
+                {tool.label}
+              </button>
+            ))}
+            <span className="md-editor__toolbar-sep" aria-hidden />
+            <select
+              className="md-editor__diagram"
+              value={diagramKind}
+              aria-label="Вид диаграммы"
+              onChange={(e) => setDiagramKind(e.target.value)}
+            >
+              {DIAGRAM_KINDS.map((kind) => (
+                <option key={kind.id} value={kind.id}>{kind.label}</option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className="secondary"
+              title="Вставить диаграмму Mermaid"
+              onClick={() => apply(insertBlock(text, selection(), diagramSkeleton(diagramKind)))}
+            >
+              диаграмма
+            </button>
+          </div>
         </div>
 
         <div className="md-editor__body" data-mode={mode}>

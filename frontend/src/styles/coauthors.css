@@ -89,6 +89,14 @@
 }
 .coauthors__form textarea { width: 100%; resize: vertical; }
 
+/* ── профиль: резюме, специализации, видимость в каталоге ───────────── */
+/* Метка обёрнута вокруг textarea, но по умолчанию строчная: без display:block
+   поле ввода и счётчик встают в одну строку с подписью. */
+.coauthors__bio { display: block; margin-top: 12px; }
+.coauthors__bio textarea { width: 100%; }
+.coauthors__counter { display: block; margin-top: 4px; text-align: right; font-size: 0.82rem; }
+.coauthors__profile-crafts { margin-top: 12px; }
+
 /* ── специализации ──────────────────────────────────────────────────── */
 .crafts { margin-top: 12px; }
 .crafts__catalog { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -137,7 +145,14 @@ span.craft-chip { cursor: default; }
   .coauthors__row { flex-direction: column; }
   .coauthors__actions { align-items: stretch; width: 100%; }
   .coauthors__actions--stack { min-width: 0; }
-  .coauthors__toggle { max-width: none; }
-  /* Цели нажатия на телефоне: чипы специализаций не мельче 32px. */
-  .craft-chip { min-height: 32px; }
+  /* Подпись переключателя — и есть цель нажатия (сам флажок 13px). В одну
+     строку она давала 21px по высоте: по такой галочке на телефоне не попасть. */
+  .coauthors__toggle { max-width: none; min-height: 34px; }
+  /* Кнопки профиля — тоже цели нажатия: глобальная кнопка на телефоне даёт
+     32px (line-height: normal в UA-стилях), а по «Сохранить профиль» нужно
+     попадать пальцем. */
+  [data-profile] button { min-height: 34px; }
+  /* Цели нажатия на телефоне: чипы специализаций не мельче 34px — по чипу
+     должно попадать пальцем и в фильтре каталога, и в профиле. */
+  .craft-chip { min-height: 34px; }
 }

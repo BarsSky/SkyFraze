@@ -123,6 +123,14 @@
 }
 .md-editor__toolbar button { min-width: 38px; }
 .md-editor__toolbar-sep { width: 1px; align-self: stretch; background: var(--border); margin: 0 4px; }
+/* Панель вставок на широком экране — это те же кнопки в общей строке: display:
+   contents оставляет их прямыми элементами flex-контейнера, ничего не меняя. */
+.md-editor__inserts { display: contents; }
+.md-editor__inserts-toggle { display: none; }
+.md-editor__diagram {
+  background: var(--bg); color: var(--fg); border: 1px solid var(--border);
+  border-radius: 8px; padding: 7px 9px; min-width: 150px;
+}
 
 .md-editor__body { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: 1fr 1fr; }
 .md-editor__body[data-mode='edit'] { grid-template-columns: 1fr; }
@@ -153,22 +161,35 @@
 }
 
 /* На телефоне «рядом» превращается в кашу: две колонки по 160px бесполезны,
-   поэтому там режимы «текст» и «предпросмотр» по очереди. Панель вставок едет
-   одной строкой с горизонтальной прокруткой — иначе пятнадцать кнопок занимают
-   пол-экрана, поле ввода схлопывается, а футер уезжает за пределы окна. */
+   поэтому там режимы «текст» и «предпросмотр» по очереди. Панель вставок раньше
+   ехала одной строкой с горизонтальной прокруткой — пятнадцать кнопок и выбор
+   вида диаграммы уходили за правый край, и добраться до них можно было только
+   свайпом по панели. Теперь панель сворачивается в кнопку «вставки» и
+   раскрывается сеткой с переносом: ни одна кнопка не за краем. */
 @media (max-width: 860px) {
-  .md-editor { padding: 0; }
-  .md-editor__window { width: 100vw; height: 100vh; border-radius: 0; border: 0; }
+  .md-editor { padding: 0; align-items: flex-start; }
+  /* Высота — по видимой области (--md-vvh ставит MarkdownEditor через
+     visualViewport): с открытой экранной клавиатурой 100vh не меняется, и футер
+     с «Сохранить» уезжал под клавиатуру. --md-vvtop сдвигает окно, если браузер
+     прокрутил страницу под клавиатурой. */
+  .md-editor__window {
+    width: 100%; max-width: none; border-radius: 0; border: 0;
+    height: var(--md-vvh, 100vh);
+    transform: translateY(calc(-1 * var(--md-vvtop, 0px)));
+  }
   .md-editor__body { grid-template-columns: 1fr; }
   .md-editor__body .md-editor__pane--preview { display: none; }
   .md-editor__body[data-mode='preview'] .md-editor__pane--preview { display: flex; }
   .md-editor__body[data-mode='preview'] .md-editor__pane--edit { display: none; }
 
-  .md-editor__toolbar {
-    flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none;
+  .md-editor__toolbar { flex-wrap: wrap; overflow: visible; padding: 8px 10px; }
+  .md-editor__inserts-toggle { display: inline-flex; }
+  .md-editor__inserts {
+    display: none; flex-wrap: wrap; gap: 6px; width: 100%; padding-top: 8px;
   }
-  .md-editor__toolbar::-webkit-scrollbar { display: none; }
-  .md-editor__toolbar > * { flex: 0 0 auto; }
+  .md-editor__toolbar[data-inserts='open'] .md-editor__inserts { display: flex; }
+  .md-editor__inserts .md-editor__toolbar-sep { display: none; }
+  .md-editor__diagram { min-width: 0; flex: 1 1 150px; }
   .md-editor__head { padding: 8px 10px; gap: 8px; }
   .md-editor__titles { flex: 1 1 100%; }
   .md-editor__modes { flex: 1 1 auto; }
@@ -182,8 +203,11 @@
   .md-editor__foot { padding: 8px 10px; }
 }
 
+/* Там, где динамические единицы есть, фолбэк точнее: высота окна — видимая
+   область (адресная строка мобильного браузера её меняет). Значение из
+   visualViewport (--md-vvh) по-прежнему главнее: оно учитывает и клавиатуру. */
 @supports (height: 100dvh) {
   @media (max-width: 860px) {
-    .md-editor__window { height: 100dvh; }
+    .md-editor__window { height: var(--md-vvh, 100dvh); }
   }
 }

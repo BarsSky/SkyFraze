@@ -107,6 +107,10 @@ type UserSearchResult struct {
 
 // SearchUsers ищет людей по нику (с начала строки) и по имени (в любом месте).
 // Сам себя и пустые запросы не возвращает.
+//
+// Скрытые (discoverable = false) не находятся и здесь: галочка «не показывать
+// меня» — это про видимость человека вообще, а не только про каталог, иначе
+// спрятаться было бы нельзя.
 func (s *Store) SearchUsers(ctx context.Context, viewerID uuid.UUID, query string, limit int) ([]UserSearchResult, error) {
 	pattern := escapeLike(strings.TrimSpace(query))
 	if len(pattern) < 2 {
@@ -129,6 +133,7 @@ func (s *Store) SearchUsers(ctx context.Context, viewerID uuid.UUID, query strin
 		          ON (l.requester_id = $1 AND l.addressee_id = u.id)
 		          OR (l.addressee_id = $1 AND l.requester_id = u.id)
 		  WHERE u.id <> $1
+		    AND u.discoverable
 		    AND (u.username ILIKE $2 || '%' OR u.display_name ILIKE '%' || $2 || '%')
 		  ORDER BY (u.username ILIKE $2 || '%') DESC, u.username
 		  LIMIT $3`,

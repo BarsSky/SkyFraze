@@ -68,6 +68,15 @@ type User struct {
 	// Username — ник для поиска людей (@nick). Подбирается при регистрации из
 	// email, меняется в профиле; уникален без учёта регистра.
 	Username string `db:"username" json:"username"`
+	// Bio — краткое «о себе» для каталога людей. Предел (600 рун) проверяет
+	// auth.Service: в store живёт только хранение.
+	Bio string `db:"bio" json:"bio"`
+	// Crafts — специализации человека на самом себе (витрина до знакомства), в
+	// отличие от crafts связи соавторов, где это договорённость про общее дело.
+	Crafts []string `db:"crafts" json:"crafts"`
+	// Discoverable — галочка «показывать меня»: выключенная убирает человека и
+	// из каталога, и из поиска соавторов.
+	Discoverable bool `db:"discoverable" json:"discoverable"`
 	// IsAdmin — администратор развёртывания: управляет режимом регистрации
 	// и рассматривает заявки. Назначается env ADMIN_EMAILS (или первый пользователь).
 	IsAdmin   bool      `db:"is_admin" json:"is_admin"`
@@ -75,7 +84,8 @@ type User struct {
 	UpdatedAt time.Time `db:"updated_at" json:"updated_at"`
 }
 
-const userColumns = `id, email, password_hash, display_name, username, is_admin, created_at, updated_at`
+const userColumns = `id, email, password_hash, display_name, username, bio, crafts,
+	discoverable, is_admin, created_at, updated_at`
 
 func (s *Store) CreateUser(ctx context.Context, email, hash, name string) (*User, error) {
 	return s.CreateUserWithHash(ctx, email, hash, name, false)
@@ -143,13 +153,32 @@ func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 		`SELECT `+userColumns+` FROM users ORDER BY created_at`)
 }
 
-// UpdateProfile меняет отображаемое имя и ник одной операцией: интерфейс
-// отправляет их вместе, а ник должен остаться уникальным.
-func (s *Store) UpdateProfile(ctx context.Context, userID uuid.UUID, displayName, username string) (*User, error) {
+// ProfileUpdate — правки профиля. nil-поле означает «не прислали»: интерфейс
+// отправляет только изменённое, и сохранение имени не должно стирать «о себе»,
+// специализации или галочку «показывать меня».
+type ProfileUpdate struct {
+	DisplayName  string
+	Username     string
+	Bio          *string
+	Crafts       *[]string
+	Discoverable *bool
+}
+
+// UpdateProfile меняет профиль одной операцией: интерфейс отправляет поля
+// вместе, а ник должен остаться уникальным.
+//
+// COALESCE вместо ветвлений в Go: одна и та же строка обновляет и «только имя»,
+// и весь профиль, поэтому нет риска, что какое-то сочетание полей забудет
+// дописать updated_at или снесёт чужое поле.
+func (s *Store) UpdateProfile(ctx context.Context, userID uuid.UUID, upd ProfileUpdate) (*User, error) {
 	u, err := qOne[User](ctx, s.Pool,
-		`UPDATE users SET display_name=$2, username=$3, updated_at=now()
+		`UPDATE users SET display_name=$2, username=$3,
+		        bio          = COALESCE($4, bio),
+		        crafts       = COALESCE($5::text[], crafts),
+		        discoverable = COALESCE($6, discoverable),
+		        updated_at=now()
 		  WHERE id=$1 RETURNING `+userColumns,
-		userID, displayName, username)
+		userID, upd.DisplayName, upd.Username, upd.Bio, upd.Crafts, upd.Discoverable)
 	if err != nil {
 		if isUsernameConflict(err) {
 			return nil, ErrAlreadyExists

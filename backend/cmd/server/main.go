@@ -22,6 +22,7 @@ import (
 	"github.com/skyfraze/backend/internal/collab"
 	"github.com/skyfraze/backend/internal/events"
 	"github.com/skyfraze/backend/internal/feed"
+	"github.com/skyfraze/backend/internal/people"
 	"github.com/skyfraze/backend/internal/platform"
 	"github.com/skyfraze/backend/internal/projects"
 	"github.com/skyfraze/backend/internal/storage"
@@ -128,6 +129,10 @@ func main() {
 	coauthorsSvc := coauthors.New(st)
 	coauthorsH := coauthors.NewHandler(coauthorsSvc, logger)
 
+	// люди: каталог зарегистрированных участников и публичные профили
+	peopleSvc := people.New(st)
+	peopleH := people.NewHandler(peopleSvc, logger)
+
 	feedSvc := feed.New(st, projSvc)
 	feedH := feed.NewHandler(feedSvc, logger)
 
@@ -187,10 +192,16 @@ func main() {
 		})
 	})
 
-	// соавторы: поиск людей по нику, заявки, специализации и доступ к закрытым
-	// проектам. Общий поиск — отдельным префиксом /api/users.
+	// соавторы: заявки, специализации и доступ к закрытым проектам человека.
 	r.Mount("/api/coauthors", coauthorsH.Routes(authSvc))
-	r.Mount("/api/users", coauthorsH.SearchRoutes(authSvc))
+
+	// люди: каталог участников (/api/users), публичный профиль (/api/users/{id})
+	// и поиск по нику и имени (/api/users/search). Все три ветки — одно дерево:
+	// два chi-роутера на одном префиксе не собрать. Статический /search и
+	// параметрический /{id} лежат рядом, и chi выбирает статический раньше —
+	// иначе поиск уходил бы в профиль с id="search" (проверено тестом
+	// people/handler_test.go).
+	r.Mount("/api/users", peopleH.Routes(authSvc, coauthorsH.Search))
 
 	// администрирование развёртывания: режим регистрации и заявки
 	r.Mount("/api/admin", adminH.Routes(authSvc, updateH))

@@ -32,16 +32,15 @@ var (
 	// ErrNotFound — связи нет или она не ваша.
 	ErrNotFound = errors.New("link not found")
 	// ErrInvalidCrafts — специализации не помещаются в разумные пределы.
-	ErrInvalidCrafts = errors.New("invalid crafts")
+	// Тот же предел, что у специализаций в профиле человека: чистку делает
+	// store.CleanCrafts, а сентинел нужен свой, чтобы вызывающий код не тащил
+	// store ради сравнения ошибки.
+	ErrInvalidCrafts = store.ErrInvalidCrafts
 )
 
-// Ограничения на специализации: список свободный (каталог подсказок живёт в
-// интерфейсе), но его нельзя превратить в свалку.
-const (
-	maxCrafts     = 12
-	maxCraftRunes = 60
-	maxMessage    = 500
-)
+// Ограничение на сопроводительное сообщение. Пределы специализаций (12 значений
+// по 60 рун) — общие с профилем человека и живут в store.CleanCrafts.
+const maxMessage = 500
 
 type Service struct {
 	store *store.Store
@@ -59,7 +58,7 @@ func (s *Service) Invite(ctx context.Context, requesterID, addresseeID uuid.UUID
 	if requesterID == addresseeID {
 		return nil, ErrSelf
 	}
-	crafts, err := cleanCrafts(crafts)
+	crafts, err := store.CleanCrafts(crafts)
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +96,7 @@ func (s *Service) Update(ctx context.Context, userID, linkID uuid.UUID, crafts *
 	var cleaned []string
 	if crafts != nil {
 		var err error
-		cleaned, err = cleanCrafts(*crafts)
+		cleaned, err = store.CleanCrafts(*crafts)
 		if err != nil {
 			return nil, err
 		}
@@ -145,30 +144,4 @@ func (s *Service) List(ctx context.Context, userID uuid.UUID) (*List, error) {
 // понимать, предложить приглашение или показать, что человек уже в круге.
 func (s *Service) Search(ctx context.Context, viewerID uuid.UUID, query string) ([]store.UserSearchResult, error) {
 	return s.store.SearchUsers(ctx, viewerID, query, 20)
-}
-
-// cleanCrafts приводит список специализаций к аккуратному виду: без пустых,
-// без дублей (регистр не важен), с ограничением длины и количества.
-func cleanCrafts(in []string) ([]string, error) {
-	if len(in) > maxCrafts {
-		return nil, ErrInvalidCrafts
-	}
-	seen := make(map[string]bool, len(in))
-	out := make([]string, 0, len(in))
-	for _, raw := range in {
-		craft := strings.TrimSpace(raw)
-		if craft == "" {
-			continue
-		}
-		if utf8.RuneCountInString(craft) > maxCraftRunes {
-			return nil, ErrInvalidCrafts
-		}
-		key := strings.ToLower(craft)
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		out = append(out, craft)
-	}
-	return out, nil
 }

@@ -22,6 +22,8 @@ export function Header() {
           <Link to="/feed">Лента</Link>
           {user && <Link className="header-nav__projects" to="/projects">Мои проекты</Link>}
           {user && <Link to="/coauthors">Соавторы</Link>}
+          {/* Каталог открытых людей: кто здесь есть и чем занимается */}
+          {user && <Link to="/people">Резиденты</Link>}
           {user?.is_admin && <Link to="/admin">Админка</Link>}
         </nav>
       </div>

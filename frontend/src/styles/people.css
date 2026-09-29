@@ -1,0 +1,116 @@
+/* SkyFraze — каталог резидентов (/people).
+   Страница стоит на тех же блоках, что и «Соавторы» (.coauthors__*, .craft-chip,
+   .crafts__*), поэтому здесь только то, чего у соавторов нет: строка каталога с
+   обрезкой резюме по строкам, фильтр специализаций и раскрытая часть. */
+
+/* ── строка каталога ─────────────────────────────────────────────────── */
+.people__row { gap: 12px; }
+.people__who { flex: 1 1 320px; }
+
+.people__headline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+  min-width: 0;
+}
+.people__name { overflow-wrap: anywhere; }
+/* Ник моноширинный и до 32 символов: без переноса он шире узкой карточки. */
+.people__nick { overflow-wrap: anywhere; }
+.people__public { font-size: 0.82rem; color: var(--fg-muted); }
+
+/* Резюме целиком лежит в DOM: в списке его подрезает CSS (три строки), в
+   раскрытой строке видно всё — данные не теряются. */
+.people__bio {
+  margin: 2px 0 0;
+  font-size: 0.92rem;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.people__bio.is-open {
+  display: block;
+  -webkit-line-clamp: unset;
+  overflow: visible;
+}
+
+.people__details { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.people__detail-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+.people__stories { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.people__stories-empty { margin: 0; font-size: 0.9rem; }
+.people__story-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.people__story-list li { min-width: 0; }
+/* Адрес истории длинный и без пробелов: переносим, а не выезжаем за карточку. */
+.people__story-link { overflow-wrap: anywhere; }
+
+.people__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-end;
+  flex: 0 0 auto;
+  max-width: 100%;
+}
+/* Цели нажатия на этой странице — не меньше 34px: глобальная кнопка даёт 32px,
+   потому что UA-стили браузера сбрасывают line-height в normal. Правило без
+   медиа-запроса: мобильная вёрстка здесь основная, а лишние 2px высоты на
+   широком экране ничего не ломают. */
+.people button { min-height: 34px; }
+.people__relation { overflow-wrap: anywhere; }
+/* Форма заявки занимает строку целиком, а не колонку рядом с именем. */
+.people__invite { flex: 1 1 100%; min-width: 0; }
+
+/* ── фильтр специализаций ────────────────────────────────────────────── */
+.people__filters { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+/* Своя формулировка специализации бывает длинной: чип переносит текст, а не
+   растягивает карточку. */
+.people__filters .craft-chip,
+.coauthors__crafts .craft-chip { max-width: 100%; overflow-wrap: anywhere; }
+.people__hint { margin: 6px 0 0; font-size: 0.86rem; }
+.people__count { margin: 10px 0 0; font-size: 0.86rem; }
+.people__self-note { margin: 0; font-size: 0.9rem; }
+.people__link { color: var(--accent); font-weight: 600; }
+
+/* ── пустой каталог и «никого не нашлось» ────────────────────────────── */
+.people__empty { padding: 8px 0 4px; }
+.people__empty-title { margin: 0 0 6px; }
+.people__empty-text { margin: 0 0 12px; max-width: 60ch; }
+.people__more { margin-top: 14px; display: flex; justify-content: center; }
+
+/* ── адаптив ─────────────────────────────────────────────────────────── */
+@media (max-width: 700px) {
+  /* Строка: сначала человек, под ним — кнопки во всю ширину. */
+  .people__row { flex-direction: column; }
+  .people__who { flex: 1 1 auto; }
+  .people__actions {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-start;
+    width: 100%;
+  }
+  /* Ссылки в строке — тоже цели нажатия: текстовая ссылка даёт ~21px. */
+  .people__link,
+  .people__story-link {
+    display: inline-flex;
+    align-items: center;
+    min-height: 34px;
+  }
+  .people__empty-title { font-size: 1.15rem; }
+}

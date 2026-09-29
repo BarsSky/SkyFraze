@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
+  CHARS_PER_TEXT_UNIT,
   FRAME_WEIGHT_CHAPTER,
   FRAME_WEIGHT_IMAGE,
   FRAME_WEIGHT_STEP,
   FRAME_WEIGHT_SUBSTEP,
+  MAX_TEXT_UNITS,
   TRANSITION_BAND,
   buildTimelineModel,
   chapterNumber,
@@ -12,6 +14,7 @@ import {
   frameLabel,
   resolveScrollState,
   stepNumber,
+  textUnits,
   unitsBeforeChapter,
   unitsBeforeFrame,
   type StageAsset,
@@ -66,6 +69,35 @@ describe('buildTimelineModel', () => {
     expect(weights).toEqual([FRAME_WEIGHT_CHAPTER, FRAME_WEIGHT_STEP, FRAME_WEIGHT_SUBSTEP, FRAME_WEIGHT_STEP])
     expect(model.chapters[0].weight).toBeCloseTo(weights.reduce((s, w) => s + w, 0))
     expect(model.totalWeight).toBeCloseTo(model.chapters.reduce((s, c) => s + c.weight, 0))
+  })
+
+  it('надбавка за текст: короткий текст ничего не добавляет', () => {
+    expect(textUnits('Заголовок', 'Короткий текст события')).toBe(0)
+    // Ровно на границе «один экран» надбавки ещё нет.
+    expect(textUnits('', 'x'.repeat(CHARS_PER_TEXT_UNIT))).toBe(0)
+    expect(textUnits('', 'x'.repeat(CHARS_PER_TEXT_UNIT + 1))).toBeGreaterThan(0)
+  })
+
+  it('надбавка за текст: каждый следующий экран текста удлиняет кадр', () => {
+    const one = textUnits('', 'x'.repeat(CHARS_PER_TEXT_UNIT * 2))
+    const two = textUnits('', 'x'.repeat(CHARS_PER_TEXT_UNIT * 3))
+    expect(one).toBeCloseTo(1)
+    expect(two).toBeCloseTo(2)
+    // Потолок: даже огромный текст не делает трек бесконечным.
+    expect(textUnits('', 'x'.repeat(CHARS_PER_TEXT_UNIT * 500))).toBe(MAX_TEXT_UNITS)
+  })
+
+  it('длинный текст удлиняет трек именно своего кадра', () => {
+    const long = 'Очень длинная глава. '.repeat(200)
+    const items = [ev('c1', null, 'Глава 1', 0, { body: long }), ev('c2', null, 'Глава 2', 1)]
+    const model = buildTimelineModel(items, ['#111111'])
+    const [first, second] = model.chapters
+    expect(first.frames[0].weight).toBeGreaterThan(FRAME_WEIGHT_CHAPTER)
+    expect(first.weight).toBeGreaterThan(FRAME_WEIGHT_CHAPTER)
+    // Соседняя глава с коротким текстом остаётся базовой.
+    expect(second.frames[0].weight).toBe(FRAME_WEIGHT_CHAPTER)
+    // И кадр с длинным текстом всё ещё проходится по кадрам по порядку.
+    expect(resolveScrollState(model, first.weight + 0.01).chapterIndex).toBe(1)
   })
 
   it('акценты глав идут по кругу палитры', () => {

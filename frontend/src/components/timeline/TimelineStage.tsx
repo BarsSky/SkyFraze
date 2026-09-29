@@ -204,6 +204,24 @@ export function TimelineStage({ events, assetsById, projectTitle, actions, copyF
     [model.chapters],
   )
 
+  // ── Текст кадра раскрывается прокруткой, а не собственной полосой листа.
+  //
+  // У листа была своя прокрутка — последняя в цепочке (лист в fixed-слое), из-за
+  // чего палец над текстом упирался в её конец. Теперь положение текста задаёт
+  // прогресс кадра: вес кадра вырос на длину текста (textUnits в модели), и за
+  // время кадра текст проезжает целиком. Ведём его прямо из кадрового цикла, а не
+  // через состояние: состояние квантовано (1/50 кадра), и на длинной главе шаг
+  // кванта — это сотни пикселей, текст дёргался бы.
+  const frameLocalRef = useRef(0)
+  const driveText = useCallback(() => {
+    const scroll = document.querySelector<HTMLElement>('.sf-copy__scroll')
+    if (!scroll) return
+    const max = scroll.scrollHeight - scroll.clientHeight
+    if (max <= 0) return
+    const target = Math.round(max * Math.min(1, Math.max(0, frameLocalRef.current)))
+    if (Math.abs(scroll.scrollTop - target) > 1) scroll.scrollTop = target
+  }, [])
+
   // ── Скролл → состояние кадра. Значения квантуются: плавность даёт CSS.
   useEffect(() => {
     const track = trackRef.current
@@ -219,6 +237,8 @@ export function TimelineStage({ events, assetsById, projectTitle, actions, copyF
       const passed = box.top - rect.top
       const progress = Math.max(0, Math.min(1, passed / scrollable))
       const next = resolveScrollState(model, progress * model.totalWeight)
+      frameLocalRef.current = next.frameLocal
+      driveText()
 
       // Стадия живёт, пока трек занимает существенную часть вьюпорта. Иначе её
       // fixed-слои перекрывают блок редакторов под треком и крадут клики.
@@ -244,7 +264,7 @@ export function TimelineStage({ events, assetsById, projectTitle, actions, copyF
     }
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
-  }, [model])
+  }, [model, driveText])
 
   // ── Жест над листом кадра ведёт трек, а не упирается в лист.
   //
@@ -252,9 +272,13 @@ export function TimelineStage({ events, assetsById, projectTitle, actions, copyF
   // цепочке: за ней нет прокручиваемого предка (страница едет во вложенном `main`,
   // а не в body). Отсюда две беды: палец над текстом не листал историю вообще, а
   // дойдя до конца длинного текста — не переходил к картинкам. Здесь мы доводим
-  // скролл до трека сами. Браузеру не мешаем: пока лист (или поле текста внутри
-  // него) может прокручиваться, жест остаётся его — на трек уходит только то, что
-  // лист уже не может забрать.
+  // жест до трека. Право на жест блок получает только если пользователь реально
+  // может его прокрутить: текст кадра ведёт прогресс кадра (см. эффект ниже), а не
+  // палец, поэтому обычно жест сразу идёт по треку.
+  const userScrollable = (el: HTMLElement): boolean => {
+    const overflowY = getComputedStyle(el).overflowY
+    return (overflowY === 'auto' || overflowY === 'scroll') && el.scrollHeight > el.clientHeight + 1
+  }
   useEffect(() => {
     const track = trackRef.current
     if (!track) return undefined
@@ -264,39 +288,50 @@ export function TimelineStage({ events, assetsById, projectTitle, actions, copyF
       if (root && root !== document.scrollingElement) root.scrollTop += dy
       else window.scrollBy(0, dy)
     }
-    /** Прокручиваемый элемент под пальцем: поле текста, а если текст короткий — лист. */
-    const scrollerOf = (target: EventTarget | null): HTMLElement | null => {
+    /** Лист кадра под пальцем (null — жест не над листом, это не наша забота). */
+    const sheetUnder = (target: EventTarget | null): HTMLElement | null => {
       if (!(target instanceof Element)) return null
-      const copy = target.closest<HTMLElement>('.sf-copy')
-      if (!copy) return null
+      return target.closest<HTMLElement>('.sf-copy')
+    }
+    /**
+     * Блок внутри листа, который пользователь может прокрутить сам.
+     * Своей прокрутки у листа нет ни на одной ширине (текст ведёт прогресс кадра),
+     * поэтому обычно это null — и тогда жест целиком ведёт трек.
+     */
+    const userScrollerIn = (copy: HTMLElement): HTMLElement | null => {
       const inner = copy.querySelector<HTMLElement>('.sf-copy__scroll')
-      if (inner && inner.scrollHeight > inner.clientHeight + 1) return inner
-      return copy
+      if (inner && userScrollable(inner)) return inner
+      return userScrollable(copy) ? copy : null
     }
     const atEdge = (el: HTMLElement, dy: number): boolean => {
       if (dy > 0) return el.scrollTop + el.clientHeight >= el.scrollHeight - 2
       return el.scrollTop <= 2
     }
     const onWheel = (e: WheelEvent) => {
-      const scroller = scrollerOf(e.target)
-      if (scroller && atEdge(scroller, e.deltaY)) pageBy(e.deltaY)
+      const copy = sheetUnder(e.target)
+      if (!copy) return
+      const scroller = userScrollerIn(copy)
+      if (!scroller || atEdge(scroller, e.deltaY)) pageBy(e.deltaY)
     }
-    let scroller: HTMLElement | null = null
+    let touchSheet: HTMLElement | null = null
+    let touchScroller: HTMLElement | null = null
     let lastY = 0
     const onTouchStart = (e: TouchEvent) => {
-      scroller = scrollerOf(e.target)
+      touchSheet = sheetUnder(e.target)
+      touchScroller = touchSheet ? userScrollerIn(touchSheet) : null
       lastY = e.touches[0]?.clientY ?? 0
     }
     const onTouchMove = (e: TouchEvent) => {
-      if (!scroller) return
+      if (!touchSheet) return
       const y = e.touches[0]?.clientY
       if (y === undefined) return
       const dy = lastY - y
       lastY = y
-      if (atEdge(scroller, dy)) pageBy(dy)
+      if (!touchScroller || atEdge(touchScroller, dy)) pageBy(dy)
     }
     const onTouchEnd = () => {
-      scroller = null
+      touchSheet = null
+      touchScroller = null
     }
     document.addEventListener('wheel', onWheel, { passive: true })
     document.addEventListener('touchstart', onTouchStart, { passive: true })
@@ -311,6 +346,23 @@ export function TimelineStage({ events, assetsById, projectTitle, actions, copyF
       document.removeEventListener('touchcancel', onTouchEnd)
     }
   }, [hasChapters])
+
+  // ── Текст кадра раскрывается прокруткой, а не собственной полосой листа.
+  //
+  // У листа была своя прокрутка — последняя в цепочке (лист в fixed-слое), из-за
+  // чего палец над текстом упирался в её конец. Теперь положение текста задаёт
+  // прогресс кадра: вес кадра вырос на длину текста (textUnits в модели), и за
+  // время кадра текст проезжает целиком. Плавное движение ведёт кадровый цикл
+  // (см. driveText), а здесь выставляем позицию сразу при смене кадра и при
+  // дорисовке содержимого (формулы, диаграммы, картинки меняют высоту текста).
+  useLayoutEffect(() => {
+    driveText()
+    const scroll = document.querySelector<HTMLElement>('.sf-copy__scroll')
+    if (!scroll || typeof ResizeObserver === 'undefined') return undefined
+    const ro = new ResizeObserver(() => driveText())
+    ro.observe(scroll)
+    return () => ro.disconnect()
+  }, [state.frame?.id, driveText])
 
   const jumpToUnits = useCallback(
     (units: number) => {

@@ -46,14 +46,6 @@ func (h *Handler) Routes(authSvc *auth.Service) http.Handler {
 	return r
 }
 
-// SearchRoutes — поиск людей: /api/users/search.
-func (h *Handler) SearchRoutes(authSvc *auth.Service) http.Handler {
-	r := chi.NewRouter()
-	r.Use(authSvc.WithUser)
-	r.Get("/search", h.Search)
-	return r
-}
-
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	uid, err := auth.UserIDFromCtx(r.Context())
 	if err != nil {
@@ -69,6 +61,9 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, list)
 }
 
+// Search — поиск людей по нику и имени. Монтируется как GET /api/users/search
+// внутри общего дерева /api/users (people.Handler.Routes): каталог, профиль и
+// поиск живут на одном префиксе, а два chi-роутера на нём не собрать.
 func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
 	uid, err := auth.UserIDFromCtx(r.Context())
 	if err != nil {

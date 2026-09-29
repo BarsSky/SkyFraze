@@ -49,22 +49,40 @@ type userPublic struct {
 	DisplayName string `json:"display_name"`
 	// Username — ник (@nick): по нему человека находят соавторы.
 	Username string `json:"username"`
-	IsAdmin  bool   `json:"is_admin"`
+	// Bio и Crafts — карточка человека в каталоге людей: что он о себе рассказал
+	// и за что берётся. Discoverable — галочка «не показывать меня».
+	Bio          string   `json:"bio"`
+	Crafts       []string `json:"crafts"`
+	Discoverable bool     `json:"discoverable"`
+	IsAdmin      bool     `json:"is_admin"`
 }
 
 func publicUser(u *store.User) userPublic {
+	// Пустой список должен уезжать как [], а не null: интерфейс итерирует по crafts
+	// и на null ломается.
+	crafts := u.Crafts
+	if crafts == nil {
+		crafts = []string{}
+	}
 	return userPublic{
 		ID: u.ID.String(), Email: u.Email, DisplayName: u.DisplayName,
-		Username: u.Username, IsAdmin: u.IsAdmin,
+		Username: u.Username, Bio: u.Bio, Crafts: crafts,
+		Discoverable: u.Discoverable, IsAdmin: u.IsAdmin,
 	}
 }
 
 type updateProfileReq struct {
 	DisplayName string `json:"display_name"`
 	Username    string `json:"username"`
+	// Указатели ради «не прислали — не меняем»: иначе сохранение одного имени
+	// стирало бы «о себе», специализации и галочку «показывать меня».
+	Bio          *string   `json:"bio"`
+	Crafts       *[]string `json:"crafts"`
+	Discoverable *bool     `json:"discoverable"`
 }
 
-// UpdateProfile — имя и ник. Ник уникален: 409, если занят.
+// UpdateProfile — имя, ник, «о себе», специализации и видимость в каталоге.
+// Ник уникален: 409, если занят.
 func (h *Handler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	uid, err := UserIDFromCtx(r.Context())
 	if err != nil {
@@ -76,11 +94,19 @@ func (h *Handler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	u, err := h.svc.UpdateProfile(r.Context(), uid, req.DisplayName, req.Username)
+	u, err := h.svc.UpdateProfile(r.Context(), uid, ProfileUpdate{
+		DisplayName:  req.DisplayName,
+		Username:     req.Username,
+		Bio:          req.Bio,
+		Crafts:       req.Crafts,
+		Discoverable: req.Discoverable,
+	})
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrInvalidUsername):
 			writeErr(w, http.StatusBadRequest, "invalid username")
+		case errors.Is(err, ErrInvalidProfile):
+			writeErr(w, http.StatusBadRequest, "invalid profile")
 		case errors.Is(err, store.ErrAlreadyExists):
 			writeErr(w, http.StatusConflict, "username taken")
 		default:

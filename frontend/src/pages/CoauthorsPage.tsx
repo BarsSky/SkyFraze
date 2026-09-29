@@ -13,10 +13,12 @@ import {
   type CoauthorList,
   type UserSearchResult,
 } from '../api/coauthors'
-import { updateProfile } from '../api/auth'
+import { updateProfile, type ProfilePatch } from '../api/auth'
 import { useAuthStore } from '../store/auth'
 import { ErrorBanner } from '../components/ErrorBanner'
-import { CRAFT_CATALOG, craftsOf } from '../lib/crafts'
+import { InviteForm } from '../components/coauthors/InviteForm'
+import { CraftPicker } from '../components/coauthors/CraftPicker'
+import { craftsOf } from '../lib/crafts'
 
 /**
  * Соавторы — круг людей, с которыми делается общее дело.
@@ -368,27 +370,58 @@ export function CoauthorsPage() {
   )
 }
 
-/** «Как вас найти»: имя и ник. Ник уникален — занятый вернёт понятную ошибку. */
+/** Предел резюме: столько же принимает сервер, счётчик предупреждает заранее. */
+const BIO_LIMIT = 600
+
+/**
+ * «Как вас найти»: имя, ник, резюме, специализации и видимость в каталоге.
+ *
+ * Один блок отвечает на два вопроса сразу: как человека находят по нику и что о
+ * нём узнают в каталоге резидентов. Ник уникален — занятый вернёт понятную
+ * ошибку, а не сырое «409».
+ */
 function ProfileCard() {
   const user = useAuthStore((s) => s.user)
   const [name, setName] = useState(user?.display_name ?? '')
   const [nick, setNick] = useState(user?.username ?? '')
+  const [bio, setBio] = useState(user?.bio ?? '')
+  const [crafts, setCrafts] = useState<string[]>(craftsOf(user?.crafts))
+  /** Отсутствие поля — не «скрыт»: на сервере видимость включена по умолчанию. */
+  const savedDiscoverable = user?.discoverable !== false
+  const [discoverable, setDiscoverable] = useState(savedDiscoverable)
   const [state, setState] = useState<'idle' | 'busy' | 'saved'>('idle')
   const [message, setMessage] = useState<string | null>(null)
 
   useEffect(() => {
     setName(user?.display_name ?? '')
     setNick(user?.username ?? '')
-  }, [user?.display_name, user?.username])
+    setBio(user?.bio ?? '')
+    setCrafts(craftsOf(user?.crafts))
+    setDiscoverable(user?.discoverable !== false)
+  }, [user?.display_name, user?.username, user?.bio, user?.crafts, user?.discoverable])
 
   const nickOk = validUsername(nick)
-  const changed = name.trim() !== (user?.display_name ?? '') || normalizeUsername(nick) !== (user?.username ?? '')
+  const savedCrafts = craftsOf(user?.crafts)
+  const sameCrafts =
+    crafts.length === savedCrafts.length && crafts.every((craft) => savedCrafts.includes(craft))
+
+  // Отправляем только изменённое: незатронутое поле сервер и так не трогает, а
+  // пустое значение в теле — это осознанная очистка (снять резюме, убрать все
+  // специализации, скрыться из каталога).
+  const patch: ProfilePatch = {}
+  if (name.trim() !== (user?.display_name ?? '')) patch.display_name = name.trim()
+  if (normalizeUsername(nick) !== (user?.username ?? '')) patch.username = normalizeUsername(nick)
+  if (bio.trim() !== (user?.bio ?? '')) patch.bio = bio.trim()
+  if (!sameCrafts) patch.crafts = crafts
+  if (discoverable !== savedDiscoverable) patch.discoverable = discoverable
+  const changed = Object.keys(patch).length > 0
 
   async function save() {
+    if (!changed) return
     setState('busy')
     setMessage(null)
     try {
-      await updateProfile({ display_name: name.trim(), username: normalizeUsername(nick) })
+      await updateProfile(patch)
       setState('saved')
       setMessage('Сохранено')
     } catch (e) {
@@ -401,7 +434,8 @@ function ProfileCard() {
     <section className="card" data-profile>
       <h3 style={{ marginTop: 0 }}>Как вас найти</h3>
       <p className="muted" style={{ marginTop: 0 }}>
-        Ник — это то, что человек вводит в поиске: <code>@{user?.username}</code>
+        Ник — это то, что человек вводит в поиске: <code>@{user?.username}</code>. Резюме
+        и специализации здесь же попадают в каталог резидентов.
       </p>
       <div className="row" style={{ gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
         <label style={{ flex: '1 1 220px' }}>
@@ -417,130 +451,52 @@ function ProfileCard() {
             placeholder="anna.design"
           />
         </label>
-        <button type="button" disabled={state === 'busy' || !nickOk || !changed} onClick={() => void save()}>
-          Сохранить
-        </button>
       </div>
       {!nickOk && nick.length > 0 && (
         <p className="ed-panel__note">Ник: от 3 до 32 символов, латиница, цифры, точка, дефис, подчёркивание.</p>
       )}
-      {message && <p className="muted" style={{ marginBottom: 0 }}>{message}</p>}
-    </section>
-  )
-}
 
-/** Форма заявки: сообщение и специализации, которые предлагает приглашающий. */
-function InviteForm({
-  person, busy, onCancel, onSubmit,
-}: {
-  person: UserSearchResult
-  busy: boolean
-  onCancel: () => void
-  onSubmit: (message: string, crafts: string[]) => void
-}) {
-  const [message, setMessage] = useState('')
-  const [crafts, setCrafts] = useState<string[]>([])
-  return (
-    <div className="coauthors__form" data-invite-form>
-      <h4 style={{ marginTop: 0 }}>
-        Заявка для {person.display_name} <span className="muted">@{person.username}</span>
-      </h4>
-      <label>
-        <span className="muted" style={{ display: 'block', marginBottom: 4 }}>Сообщение (необязательно)</span>
+      <label className="coauthors__bio">
+        <span className="muted" style={{ display: 'block', marginBottom: 4 }}>О себе</span>
         <textarea
-          rows={2}
-          value={message}
-          placeholder="Например: пишем роман про колонию — нужен человек на правописание"
-          onChange={(e) => setMessage(e.target.value)}
+          rows={3}
+          maxLength={BIO_LIMIT}
+          value={bio}
+          aria-label="О себе"
+          placeholder="Чем занимаетесь, что пишете и чем можете помочь в общем деле"
+          onChange={(e) => setBio(e.target.value)}
         />
+        <span className="muted coauthors__counter">{bio.length} / {BIO_LIMIT}</span>
       </label>
-      <CraftPicker initial={crafts} onChange={setCrafts} />
-      <div className="row" style={{ gap: 8, marginTop: 10 }}>
-        <button type="button" disabled={busy} onClick={() => onSubmit(message, crafts)}>
-          {busy ? 'Отправляю…' : 'Отправить заявку'}
-        </button>
-        <button type="button" className="secondary" onClick={onCancel}>Отмена</button>
+
+      <div className="coauthors__profile-crafts">
+        <span className="muted" style={{ display: 'block', marginBottom: 6 }}>
+          Специализации — что вы берёте на себя в общем деле
+        </span>
+        <CraftPicker initial={crafts} value={crafts} onChange={setCrafts} />
       </div>
-    </div>
-  )
-}
 
-/**
- * Выбор специализаций. Каталог — подсказки, поэтому рядом всегда есть своя
- * формулировка: «ответственный за карту подземелий» в каталог не занесёшь.
- */
-function CraftPicker({
-  initial, busy, onChange, onSave, onCancel,
-}: {
-  initial: string[]
-  busy?: boolean
-  onChange?: (crafts: string[]) => void
-  onSave?: (crafts: string[]) => void
-  onCancel?: () => void
-}) {
-  const [picked, setPicked] = useState<string[]>(initial)
-  const [custom, setCustom] = useState('')
-
-  const update = (next: string[]) => {
-    setPicked(next)
-    onChange?.(next)
-  }
-  const toggle = (craft: string) =>
-    update(picked.includes(craft) ? picked.filter((c) => c !== craft) : [...picked, craft])
-
-  function addCustom() {
-    const value = custom.trim()
-    if (!value || picked.some((c) => c.toLowerCase() === value.toLowerCase())) {
-      setCustom('')
-      return
-    }
-    update([...picked, value])
-    setCustom('')
-  }
-
-  return (
-    <div className="crafts" data-craft-picker>
-      <div className="crafts__catalog">
-        {CRAFT_CATALOG.map((craft) => (
-          <button
-            key={craft}
-            type="button"
-            className={picked.includes(craft) ? 'craft-chip is-picked' : 'craft-chip'}
-            aria-pressed={picked.includes(craft)}
-            onClick={() => toggle(craft)}
-          >
-            {craft}
-          </button>
-        ))}
-      </div>
-      <div className="crafts__custom">
+      <label className="coauthors__toggle">
         <input
-          value={custom}
-          placeholder="своя формулировка"
-          aria-label="Своя специализация"
-          onChange={(e) => setCustom(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault()
-              addCustom()
-            }
-          }}
+          type="checkbox"
+          checked={discoverable}
+          onChange={(e) => setDiscoverable(e.target.checked)}
         />
-        <button type="button" className="secondary" onClick={addCustom} disabled={custom.trim().length === 0}>
-          Добавить
+        <span>
+          Показывать меня в списке резидентов
+          <span className="muted" style={{ display: 'block' }}>
+            Включено по умолчанию: снимите галочку, чтобы скрыть себя из каталога и из
+            поиска людей.
+          </span>
+        </span>
+      </label>
+
+      <div className="row" style={{ gap: 12, marginTop: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+        <button type="button" disabled={state === 'busy' || !nickOk || !changed} onClick={() => void save()}>
+          {state === 'busy' ? 'Сохраняю…' : 'Сохранить профиль'}
         </button>
+        {message && <span className="muted">{message}</span>}
       </div>
-      {picked.length > 0 && (
-        <p className="muted" style={{ margin: '6px 0 0' }}>
-          Выбрано: {picked.join(' · ')}
-        </p>
-      )}
-      {onSave && (
-        <div className="row" style={{ gap: 8, marginTop: 8 }}>
-          <button type="button" disabled={busy} onClick={() => onSave(picked)}>Сохранить</button>
-          <button type="button" className="secondary" onClick={onCancel}>Отмена</button>
-        </div>
-      )}
-    </div>
+    </section>
   )
 }

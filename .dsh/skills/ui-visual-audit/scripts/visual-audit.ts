@@ -200,6 +200,13 @@ const PROBE = `(() => {
       while (cur) {
         const cs = getComputedStyle(cur)
         if ((cs.overflowY === 'auto' || cs.overflowY === 'scroll') && cur.scrollHeight > cur.clientHeight + 1) return true
+        // Лист кадра таймлайна прокручивается программно: его положение задаёт
+        // прогресс кадра (см. TimelineStage), поэтому содержимое ниже сгиба
+        // достижимо прокруткой истории, а не полосой самого листа.
+        if (
+          cur.classList && cur.classList.contains('sf-copy__scroll') &&
+          cur.scrollHeight > cur.clientHeight + 1
+        ) return true
         cur = cur.parentElement
       }
       return document.scrollingElement.scrollHeight > window.innerHeight + 1
@@ -580,6 +587,66 @@ async function visualScreens(browser: Browser, errors: string[], slug: string | 
           check: 'ник пользователя', detail: 'пустой ник — человека не найти поиском',
           where: 'auth/service.go (генерация ника) / ProfileCard',
         })
+      }
+
+      // резиденты: каталог зарегистрированных со специализациями и резюме.
+      // Проверяем не только вид, но и что поиск/фильтр реально сужают список:
+      // страница без строк или без реакции на поиск выглядит рабочей, но бесполезна.
+      await page.goto(`${BASE}/people`)
+      await page.waitForSelector('[data-people]', { timeout: 20000 }).catch(() => null)
+      await page.waitForTimeout(1200)
+      name = `${vp.tag}-${theme}-people`
+      await shot(page, name)
+      applyProbe(await probe(page), 'people', vp.tag, name)
+      const peopleState = (await page.evaluate(`(() => {
+        const first = document.querySelector('.people__row .people__nick')
+        return {
+          rows: document.querySelectorAll('.people__row').length,
+          crafts: document.querySelectorAll('.people__filters .craft-chip').length,
+          search: !!document.querySelector('input[aria-label="Поиск резидентов по нику или имени"]'),
+          count: (document.querySelector('[data-people-count]')?.textContent || '').trim(),
+          first: first ? first.textContent.trim() : null,
+        }
+      })()`)) as { rows: number; crafts: number; search: boolean; count: string; first: string | null }
+      if (!peopleState.search || peopleState.rows === 0) {
+        add({
+          severity: 'error', area: 'visual', screen: 'people', viewport: vp.tag,
+          check: 'каталог резидентов', detail: JSON.stringify(peopleState),
+          where: 'PeoplePage / GET /api/users', shot: name,
+        })
+      } else {
+        pass('people', vp.tag, `резидентов на странице: ${peopleState.rows}, ${peopleState.count}`)
+      }
+      if (peopleState.search && peopleState.first) {
+        // Поиск идёт от двух символов: берём часть ника первой строки.
+        const query = peopleState.first.replace('@', '').slice(0, 4)
+        await page.fill('input[aria-label="Поиск резидентов по нику или имени"]', query)
+        await page.waitForTimeout(1500)
+        const searched = (await page.evaluate(`(() => ({
+          rows: document.querySelectorAll('.people__row').length,
+          count: (document.querySelector('[data-people-count]')?.textContent || '').trim(),
+          first: (document.querySelector('.people__row .people__nick')?.textContent || '').trim(),
+        }))()`)) as { rows: number; count: string; first: string }
+        if (searched.rows === 0 || !searched.first.toLowerCase().includes(query.toLowerCase())) {
+          add({
+            severity: 'error', area: 'functional', screen: 'people', viewport: vp.tag,
+            check: 'поиск в каталоге', detail: `запрос «${query}» → ${searched.rows} строк, первая ${searched.first} (${searched.count})`,
+            where: 'PeoplePage (debounce) / store.CatalogUsers', shot: name,
+          })
+        } else {
+          pass('people-search', vp.tag, `«${query}» → ${searched.first} (${searched.count})`)
+        }
+        // Раскрытие строки: резюме и публичные истории человека.
+        await page.evaluate(`(() => { document.querySelector('.people__row .people__actions button')?.click() })()`)
+        await page.waitForTimeout(1200)
+        const opened = (await page.evaluate(`(!!document.querySelector('.people__details'))`)) as boolean
+        if (!opened) {
+          add({
+            severity: 'warning', area: 'visual', screen: 'people', viewport: vp.tag,
+            check: 'строка каталога не раскрывается', detail: 'нет .people__details после клика',
+            where: 'PeoplePage (toggle)', shot: name,
+          })
+        }
       }
 
       // timeline: проходим все кадры
