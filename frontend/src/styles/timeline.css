@@ -182,8 +182,48 @@
   position: absolute; left: clamp(18px, 5vw, 64px); top: 50%;
   transform: translateY(-50%); width: min(46vw, 560px);
   max-height: min(84vh, 860px); overflow-y: auto; overscroll-behavior: contain;
-  padding-right: 6px; scrollbar-width: thin;
+  padding-right: 6px;
   pointer-events: auto;
+}
+
+/* ── полоса прокрутки листа кадра ─────────────────────────────────────────
+   Длинный текст прокручивается внутри листа, и системная полоса (в тёмной теме
+   почти белая, в светлой — серая с дорожкой и стрелками) выбивалась из
+   оформления страницы. Своя: тонкий скруглённый ползунок цветом приглушённого
+   текста на прозрачной дорожке.
+
+   Сначала стандартные свойства — их понимают Firefox и новые Chrome/Safari. Но
+   Blink, увидев нестандартные значения scrollbar-width/color, перестаёт слушать
+   ::-webkit-scrollbar и рисует системную полосу вместе со стрелками — ровно то,
+   что и выбивалось из стиля. Поэтому там, где движок знает ::-webkit-scrollbar,
+   стандартные свойства возвращаются к auto и полоса рисуется псевдоэлементами:
+   получается одинаково во всех темах и без кнопок. */
+.sf-copy,
+.sf-copy__scroll {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--sf-ink-soft) 45%, transparent) transparent;
+}
+@supports selector(::-webkit-scrollbar) {
+  .sf-copy,
+  .sf-copy__scroll { scrollbar-width: auto; scrollbar-color: auto; }
+  .sf-copy::-webkit-scrollbar,
+  .sf-copy__scroll::-webkit-scrollbar { width: 6px; height: 6px; }
+  .sf-copy::-webkit-scrollbar-track,
+  .sf-copy__scroll::-webkit-scrollbar-track { background: transparent; }
+  .sf-copy::-webkit-scrollbar-thumb,
+  .sf-copy__scroll::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--sf-ink-soft) 40%, transparent);
+    border-radius: 999px;
+  }
+  .sf-copy::-webkit-scrollbar-thumb:hover,
+  .sf-copy__scroll::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--sf-accent) 70%, transparent);
+  }
+  .sf-copy::-webkit-scrollbar-corner,
+  .sf-copy__scroll::-webkit-scrollbar-corner { background: transparent; }
+  /* Кнопки-стрелки: без них полоса читается как часть страницы, а не как окно. */
+  .sf-copy::-webkit-scrollbar-button,
+  .sf-copy__scroll::-webkit-scrollbar-button { display: none; height: 0; }
 }
 .sf-copy__num {
   font-family: ui-monospace, Menlo, monospace;
