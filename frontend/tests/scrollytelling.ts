@@ -159,19 +159,19 @@ async function scrollTop(page: Page): Promise<string | null> {
 }
 
 /**
- * Проверка мобильного режима: таймлайн — обычный документ (DocumentTimeline).
+ * Проверка узкого экрана: элементы истории идут друг за другом ОТДЕЛЬНЫМИ кадрами,
+ * а переключает их прокрутка (та же сцена, что и на ПК, — fixed-слои и трек).
  *
- * На узких экранах сцены нет вовсе: кадры идут друг за другом в потоке (текст
- * события, его картинки, текст под-события…), скролл один общий, своей прокрутки
- * у текста нет — иначе палец над текстом крутит поле, а не историю.
+ * Кадр события на телефоне занят текстом: фотография под ним скрыта, иначе текст и
+ * картинка перекрывали друг друга. Снимок показывается своим кадром — во всю сцену,
+ * с короткой подписью внизу. Прокрутка листает кадры, а не тянет документ.
  */
-async function checkDocumentMode(
+async function checkNarrowStage(
   page: Page,
   vp: { width: number; height: number; tag: string },
   expectedFrames: string[],
-  errors: string[],
   problems: string[],
-): Promise<{ errors: string[]; problems: string[] }> {
+): Promise<void> {
   const ok = (label: string, cond: boolean, detail = '') => {
     if (cond) console.log(`  ok   [${vp.tag}] ${label}`)
     else {
@@ -180,76 +180,82 @@ async function checkDocumentMode(
     }
   }
 
-  const doc = (await page.evaluate(`(() => {
-    const blocks = Array.from(document.querySelectorAll('[data-doc-frame]'))
-    const bodies = Array.from(document.querySelectorAll('.sf-doc__event .sf-copy__body'))
-    const main = document.querySelector('.layout main')
+  // ── последовательность кадров, которую даёт ПРОКРУТКА (не кнопка «дальше»):
+  //    текст главы → её картинки → текст под-события → его картинки → …
+  await scrollTop(page)
+  const order: string[] = []
+  const kinds: string[] = []
+  for (let step = 0; step < 14; step++) {
+    const current = (await page.evaluate(`(() => {
+      const root = document.querySelector('.sf-root')
+      return root ? root.getAttribute('data-frame-number') + ':' + root.getAttribute('data-frame-kind') : ''
+    })()`)) as string
+    if (current && order[order.length - 1] !== current) {
+      order.push(current)
+      kinds.push(current.split(':')[1])
+    }
+    if (order.length > 1 && kinds[kinds.length - 1] === 'event' && order.length > expectedFrames.length + 1) break
+    await page.evaluate(`(() => { const m = document.querySelector('.layout main'); if (m) m.scrollTop = m.scrollTop + window.innerHeight * 0.6 })()`)
+    await page.waitForTimeout(180)
+  }
+  const events = order.filter((entry) => entry.endsWith(':event')).map((entry) => entry.split(':')[0])
+  console.log(`[${vp.tag}] прокрутка ведёт кадры: ${order.join(' → ')}`)
+  ok(
+    `прокрутка листает кадры по порядку (${events.slice(0, expectedFrames.length).join(',')})`,
+    events.slice(0, expectedFrames.length).join(',') === expectedFrames.join(','),
+    events.join(','),
+  )
+  // Картинка идёт сразу после СВОЕГО события (номер продолжает номер события:
+  // «01·1» после «01»). Здесь у событий ещё нет вложений — чередование текста и
+  // снимков проверяется ниже, когда картинки загружены в событие 01.1.
+
+  // ── кадр события: под текстом нет фотографии (она показывается своим кадром)
+  await scrollTop(page)
+  await settleFrame(page)
+  const textFrame = (await page.evaluate(`(() => {
+    const scene = document.querySelector('.sf-scene[data-active="true"]')
+    const visible = Array.from(scene ? scene.querySelectorAll('img') : [])
+      .filter((el) => getComputedStyle(el).display !== 'none')
+    const copy = document.querySelector('.sf-copy')
+    const r = copy ? copy.getBoundingClientRect() : null
     return {
-      mode: document.querySelector('.sf-root')?.getAttribute('data-stage'),
-      kinds: blocks.map((b) => b.getAttribute('data-frame-kind')),
-      numbers: blocks.map((b) => b.getAttribute('data-frame-number')),
-      hasFixedLayers: !!document.querySelector('.sf-stage, .sf-track, .sf-copylayer'),
-      bodiesScroll: bodies.filter((b) => b.scrollHeight > b.clientHeight + 1).length,
-      bodiesOverflow: bodies.filter((b) => ['auto', 'scroll'].includes(getComputedStyle(b).overflowY)).length,
-      mainScrollable: main ? main.scrollHeight > main.clientHeight + 1 : false,
-      overflowX: document.documentElement.scrollWidth - document.documentElement.clientWidth,
-      editorsButton: !!Array.from(document.querySelectorAll('.sf-doc__actions button, .sf-doc__actions a'))
-        .find((el) => /Редактор/i.test(el.textContent || '')),
+      kind: document.querySelector('.sf-root')?.getAttribute('data-frame-kind'),
+      photos: visible.length,
+      copyH: r ? Math.round(r.height) : 0,
+      copyTop: r ? Math.round(r.top) : 0,
+      chipsBottom: Math.round(document.querySelector('.sf-chips')?.getBoundingClientRect().bottom ?? 0),
+      innerScrollers: Array.from(document.querySelectorAll('.sf-copy__body'))
+        .filter((el) => el.scrollHeight > el.clientHeight + 1).length,
+      overflowY: getComputedStyle(document.querySelector('.sf-copy__body') || document.body).overflowY,
+      bodyFits: (() => {
+        const b = document.querySelector('.sf-copy__body')
+        if (!b) return true
+        const br = b.getBoundingClientRect()
+        const sc = b.closest('.sf-copy__scroll')
+        if (!sc) return true
+        const sr = sc.getBoundingClientRect()
+        // Текст длиннее окна кадра — нормально, если прокручивается САМ ЛИСТ,
+        // а не отдельное поле текста (иначе жест над текстом не листает историю).
+        return br.bottom <= sr.bottom + 1 || getComputedStyle(sc).overflowY === 'auto'
+      })(),
+      vh: window.innerHeight,
     }
   })()`)) as Record<string, any>
-  console.log(`[${vp.tag}] документ: ${JSON.stringify(doc)}`)
-
-  ok('включён режим документа', doc.mode === 'document', String(doc.mode))
-  ok('фиксированных слоёв сцены нет', doc.hasFixedLayers === false)
+  console.log(`[${vp.tag}] кадр события: ${JSON.stringify(textFrame)}`)
+  ok('кадр события — текстовый', textFrame.kind === 'event', String(textFrame.kind))
+  ok('под текстом нет фотографии', Number(textFrame.photos) === 0, `${textFrame.photos} фото в сцене`)
   ok(
-    'у текста нет своей прокрутки',
-    Number(doc.bodiesScroll) === 0 && Number(doc.bodiesOverflow) === 0,
-    `со своей прокруткой: ${doc.bodiesScroll}, overflow: ${doc.bodiesOverflow}`,
+    'кадр текста занимает сцену под чипами',
+    Number(textFrame.copyTop) >= Number(textFrame.chipsBottom) - 2 && Number(textFrame.copyH) > Number(textFrame.vh) * 0.6,
+    `top=${textFrame.copyTop}, chipsBottom=${textFrame.chipsBottom}, h=${textFrame.copyH} из ${textFrame.vh}`,
   )
-  ok('документ прокручивается целиком', doc.mainScrollable === true)
-  ok('нет горизонтального выезда', Number(doc.overflowX) <= 0, String(doc.overflowX))
-  ok('кнопка «Редакторы» на месте', doc.editorsButton === true)
-
-  const kinds = doc.kinds as string[]
-  const numbers = doc.numbers as string[]
-  const eventNumbers = numbers.filter((_, i) => kinds[i] === 'event')
-  const head = eventNumbers.slice(0, expectedFrames.length).join(',')
-  ok(`кадры-события идут по порядку (${head})`, head === expectedFrames.join(','), head)
-  // Картинка идёт после СВОЕГО события: её номер продолжает номер события
-  // («01·1» после «01»). У события может быть и несколько картинок подряд.
-  const orderOk = (() => {
-    let lastEvent = ''
-    for (let i = 0; i < kinds.length; i++) {
-      if (kinds[i] === 'event') {
-        lastEvent = numbers[i]
-        continue
-      }
-      if (!lastEvent || !numbers[i].startsWith(`${lastEvent}·`)) return false
-    }
-    return kinds.length > 0
-  })()
-  ok('картинки идут после своего события', orderOk, `${kinds.join(',')} / ${numbers.join(',')}`)
-
-  // Прокрутка: страница едет целиком, полоса событий остаётся на виду.
-  await page.evaluate(`(() => { const m = document.querySelector('.layout main'); if (m) m.scrollTop = m.scrollTop + window.innerHeight })()`)
-  await page.waitForTimeout(700)
-  const scrolled = (await page.evaluate(`(() => {
-    const chips = document.querySelector('.sf-doc__chips')
-    const r = chips?.getBoundingClientRect()
-    return {
-      position: chips ? getComputedStyle(chips).position : null,
-      visible: r ? r.top >= -1 && r.bottom <= window.innerHeight : false,
-      top: document.querySelector('.layout main')?.scrollTop ?? 0,
-    }
-  })()`)) as Record<string, any>
-  ok('прокрутка сдвинула документ', Number(scrolled.top) > 0, String(scrolled.top))
   ok(
-    'переключатель событий липнет и виден',
-    scrolled.position === 'sticky' && scrolled.visible === true,
-    JSON.stringify(scrolled),
+    'текст не заперт в собственной прокрутке',
+    Number(textFrame.innerScrollers) === 0 && textFrame.overflowY === 'visible' && textFrame.bodyFits === true,
+    `поля со своей прокруткой: ${textFrame.innerScrollers}, overflow-y=${textFrame.overflowY}`,
   )
-  await shot(page, `${vp.tag}-document`)
-  return { errors, problems }
+  await shot(page, `${vp.tag}-text-frame`)
+  await scrollTop(page)
 }
 
 async function runViewport(vp: { width: number; height: number; tag: string }) {  const browser = await chromium.launch()
@@ -326,10 +332,10 @@ async function runViewport(vp: { width: number; height: number; tag: string }) {
 
   const expectedFrames = ['01', '01.1', '01.1.1', '01.2']
 
-  // ── на узких экранах таймлайн — документ (DocumentTimeline), а не сцена:
-  //    кадры идут друг за другом в потоке, скролл один общий.
+  // ── узкий экран: та же сцена с треком, но элементы истории разделены по кадрам
+  //    (текст кадра события, снимок своим кадром) и листаются прокруткой.
   if (vp.width <= 860) {
-    return await checkDocumentMode(page, vp, expectedFrames, errors, problems)
+    await checkNarrowStage(page, vp, expectedFrames, problems)
   }
 
   const first = await readFrame(page)
@@ -375,11 +381,12 @@ async function runViewport(vp: { width: number; height: number; tag: string }) {
   // ── проход по кадрам первой главы: каждый под-событие — свой развёрнутый экран
   const editorBefore = first.activeEditor
   const seen: string[] = [first.frameNumber ?? '']
-  // На телефоне лист копирайта выезжает снизу, пока кадр входит: убеждаемся, что
-  // он действительно поднимается, а не стоит на месте.
+  // Пока кадр входит (--sf-frame-enter 0→1 за первые 22% окна кадра), лист копирайта
+  // на телефоне смещён и приглушён: текст раскрывается по мере прокрутки, а не
+  // вываливается целиком. Убеждаемся, что лист действительно «встаёт на место».
   let slideSeen = false
   const noteSlide = (snap: FrameSnapshot) => {
-    if (snap.copyTopEntering !== null && snap.copyTopSettled !== null && snap.copyTopEntering > snap.copyTopSettled) {
+    if (snap.copyTopEntering !== null && snap.copyTopSettled !== null && Math.abs(snap.copyTopEntering - snap.copyTopSettled) >= 4) {
       slideSeen = true
     }
   }
@@ -396,8 +403,8 @@ async function runViewport(vp: { width: number; height: number; tag: string }) {
     if (after.chapter !== first.chapter) break
   }
   if (vp.width <= 860) {
-    console.log(`[${vp.tag}] лист кадра выезжает снизу: ${slideSeen}`)
-    if (!slideSeen) problems.push('лист кадра не выезжает снизу при входе кадра (на телефоне текст должен раскрываться по мере прокрутки)')
+    console.log(`[${vp.tag}] лист кадра встаёт на место при входе: ${slideSeen}`)
+    if (!slideSeen) problems.push('лист кадра не двигается при входе кадра (на телефоне текст должен раскрываться по мере прокрутки)')
   }
   const expectedNumbers = expectedFrames
   console.log(`[${vp.tag}] кадры первой главы: ${seen.join(' → ')}`)
@@ -631,6 +638,33 @@ async function runViewport(vp: { width: number; height: number; tag: string }) {
   //    и только потом под-событие. Это и есть «прокрутка показывает картинки
   //    друг за другом до перехода к подсобытию».
   await scrollTop(page)
+
+  // На узких экранах проверяем именно ПРОКРУТКУ: текст события, его снимки один за
+  // другим, затем под-событие — каждый элемент на своём экране, а листает их скролл.
+  if (vp.width <= 860) {
+    await page.locator('.sf-copy__nav .sf-btn--primary').click() // 01.1 — событие с картинками
+    await settleFrame(page)
+    const walked: string[] = []
+    for (let step = 0; step < 16; step++) {
+      const current = (await page.evaluate(`(() => {
+        const r = document.querySelector('.sf-root')
+        return r ? r.getAttribute('data-frame-number') + ':' + r.getAttribute('data-frame-kind') : ''
+      })()`)) as string
+      if (current && walked[walked.length - 1] !== current) walked.push(current)
+      if (walked.some((entry) => entry.startsWith('01.1.1:'))) break
+      await page.evaluate(`(() => { const m = document.querySelector('.layout main'); if (m) m.scrollTop = m.scrollTop + window.innerHeight * 0.5 })()`)
+      await page.waitForTimeout(200)
+    }
+    const expectedWalk = ['01.1:event', '01.1·1:image', '01.1·2:image', '01.1.1:event']
+    console.log(`[${vp.tag}] прокрутка сквозь снимки: ${walked.join(' → ')}`)
+    if (walked.slice(0, expectedWalk.length).join(',') !== expectedWalk.join(',')) {
+      problems.push(
+        `прокрутка ведёт кадры не по порядку: ${walked.join(',')}, ожидалось ${expectedWalk.join(',')}`,
+      )
+    }
+    await scrollTop(page)
+  }
+
   await page.locator('.sf-copy__nav .sf-btn--primary').click() // 01.1 — событие с картинками
   await settleFrame(page)
   await page.locator('.sf-copy__nav .sf-btn--primary').click() // 01.1·1 — первый кадр-картинка
@@ -686,6 +720,13 @@ async function runViewport(vp: { width: number; height: number; tag: string }) {
         // проверяем: слой кадра сдвинут параллакс-трансформом и выходит на пиксель.
         photoFits: contentBottom > 0 && contentBottom <= window.innerHeight + 1,
         copyFits: c.top >= -1 && c.bottom <= window.innerHeight + 1,
+        // Подпись — узкая полоса: снимку остаётся почти весь экран. Внутри неё
+        // ничего не должно прокручиваться (иначе подпись обрезана).
+        captionShare: Math.round((c.height / window.innerHeight) * 100) / 100,
+        captionScrolls: (() => {
+          const sc = copy.querySelector('.sf-copy__scroll')
+          return sc ? sc.scrollHeight > sc.clientHeight + 1 : false
+        })(),
       }
     })()`)) as Record<string, any> | null
     console.log(`[${vp.tag}] раскладка кадра-картинки: ${JSON.stringify(photoLayout)}`)
@@ -698,6 +739,10 @@ async function runViewport(vp: { width: number; height: number; tag: string }) {
       if (!photoLayout.photoFits) problems.push(`снимок кадра-картинки не помещается на экране (низ ${photoLayout.photoBottom})`)
       if (!photoLayout.copyFits) problems.push('панель подписи кадра-картинки не помещается на экране')
       if (photoLayout.hit !== 'button') problems.push(`кнопка «дальше» на кадре-картинке не нажимается (клик → ${photoLayout.hit})`)
+      if (Number(photoLayout.captionShare) > 0.32) {
+        problems.push(`подпись кадра-картинки занимает ${photoLayout.captionShare} экрана — снимку мало места`)
+      }
+      if (photoLayout.captionScrolls) problems.push('подпись кадра-картинки прокручивается внутри себя')
     }
   }
 

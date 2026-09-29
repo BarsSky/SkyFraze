@@ -467,61 +467,73 @@ html.sf-viewer-open body { overflow: hidden; }
   .sf-topbar__actions { gap: 6px; }
   .sf-topbar__actions a { display: none; }
   .sf-chips { top: calc(var(--sf-header-h, 46px) + 62px); }
-  .sf-copylayer::before {
-    width: 100%; height: 64%; top: auto; bottom: 0;
-    background: linear-gradient(0deg, var(--sf-bg) 10%,
-      color-mix(in srgb, var(--sf-bg) 72%, transparent) 48%, transparent 100%);
+  /* Скрим на телефоне нужен только под подписью кадра-картинки: сам лист кадра
+     непрозрачный, и затемнять пол-экрана под ним незачем (раньше он гасил нижние
+     64% снимка). [data-theme] в селекторе — чтобы правило перебивало светлую тему,
+     у которой для ПК свой, боковой скрим. */
+  [data-theme] .sf-copylayer::before {
+    width: 100%; height: 30%; top: auto; bottom: 0;
+    background: linear-gradient(0deg, var(--sf-bg) 8%,
+      color-mix(in srgb, var(--sf-bg) 68%, transparent) 55%, transparent 100%);
   }
   .sf-copy {
     left: clamp(12px, 4vw, 24px); right: clamp(12px, 4vw, 24px);
-    /* vh, а не dvh: в браузерах без поддержки динамических единиц (старые мобильные
-       Safari/Chrome) объявление с dvh отбрасывается целиком, панель теряла нижнюю
-       привязку и уезжала за экран — оставался только фон стадии. */
-    top: auto; bottom: calc(14px + env(safe-area-inset-bottom));
-    /* На широком экране лист центрируется через translateY(-50%) — на телефоне
-       он прижат к низу, и этот сдвиг надо снять. */
-    transform: none;
-    width: auto; max-width: 560px;
-    /* Высота ограничена тем, что осталось между полосой чипов и краем экрана:
-       под картинку оставляем минимум 20vh, остальное — листу. Длинный текст
-       прокручивается внутри листа, поэтому обрезать его не приходится. */
-    --sf-sheet-max: min(
-      58vh,
-      calc(100vh - var(--sf-header-h, 46px) - 62px - var(--sf-chips-h, 50px) - 14px - 20vh)
-    );
-    max-height: var(--sf-sheet-max);
-    /* Лист «раскрывается», пока кадр входит (--sf-frame-enter ставит TimelineStage):
-       он растёт ВВЕРХ, а низ с кнопками «назад/дальше» и блоком оценки остаётся на
-       месте. Сдвигать лист целиком нельзя — тогда кнопки на входе кадра оказываются
-       ниже сгиба, а они должны быть под рукой в любой момент. */
-    height: calc(var(--sf-sheet-max) * (0.55 + 0.45 * var(--sf-frame-enter, 1)));
-    overflow: hidden; overscroll-behavior: contain;
+    /* Кадр события на телефоне — весь экран под текстом: картинка живёт своим
+       кадром (см. .sf-copy--photo), делить высоту не с кем. Верх — под полосой
+       чипов, низ — у края экрана, поэтому текст получает максимум строк, а не
+       прокручивается внутри маленького листа. */
+    top: calc(var(--sf-header-h, 46px) + 62px + var(--sf-chips-h, 50px) + 8px);
+    bottom: calc(10px + env(safe-area-inset-bottom));
+    width: auto; max-width: 640px;
+    /* На планшете лист уже не тянется во всю ширину: max-width ограничивает его,
+       и авто-поля центрируют (при заданных left и right они забирают остаток). */
+    margin-left: auto; margin-right: auto;
+    max-height: none; height: auto;
+    /* Без overscroll-behavior: contain — когда текст длиннее экрана, доскроллив его
+       до конца, жест продолжает листать историю, а не упирается в лист. */
+    overflow: hidden; overscroll-behavior: auto;
+    /* Кадр появляется, а не «включается»: панель перемонтируется по key кадра,
+       поэтому анимация играет на каждом новом элементе истории. Проявление — по
+       времени (0.4с), а не по прогрессу скролла: после прыжка кнопкой «дальше»
+       кадр стоит в самом начале окна, и привязанная к нему прозрачность оставила
+       бы лист навсегда приглушённым. Смещение же идёт от --sf-frame-enter (см.
+       ниже) — это уже движение читателя по треку. */
+    animation: sf-copy-in 0.4s var(--sf-ease) both;
+    transform: translateY(calc((1 - var(--sf-frame-enter, 1)) * -14px));
     /* Плотный «лист» вместо прозрачной панели: на телефоне текст ложился прямо на
        иллюстрацию, и в светлой теме скрим не спасал — читалось плохо. Так текст
-       всегда на своём фоне, а картинка занимает верх экрана. */
-    padding: 14px 16px calc(10px + env(safe-area-inset-bottom));
-    background: color-mix(in srgb, var(--sf-bg) 96%, transparent);
+       всегда на своём фоне, а картинка занимает кадр-картинку целиком. */
+    padding: 16px 18px calc(12px + env(safe-area-inset-bottom));
+    background: color-mix(in srgb, var(--sf-bg) 97%, transparent);
     backdrop-filter: blur(10px);
     border: 1px solid var(--surface-line, rgba(127, 127, 127, 0.25));
     border-radius: 16px;
     box-shadow: 0 18px 44px -26px rgba(0, 0, 0, 0.55);
+    /* Лист — колонка: содержимое кадра прокручивается, а кнопки «назад/дальше» и
+       блок оценки страницы остаются на виду. Со «липкой» навигацией это не
+       работало: sticky не подтягивает элемент в вид, если он ниже сгиба. */
+    display: flex; flex-direction: column;
   }
-  /* Лист — колонка: содержимое кадра прокручивается, а кнопки «назад/дальше» и
-     блок оценки остаются на виду. Со «липкой» навигацией это не работало: sticky
-     не подтягивает элемент в вид, если он ниже сгиба. */
-  .sf-copy { display: flex; flex-direction: column; }
   .sf-copy__scroll {
-    flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+    flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: auto;
   }
   .sf-copy__nav { flex: 0 0 auto; margin-top: 12px; }
   .sf-copy__footer { flex: 0 0 auto; }
   .sf-copy__title { font-size: clamp(1.5rem, 6vw, 2.2rem); }
-  .sf-copy__body { max-width: none; max-height: 24vh; }
+  /* Текст кадра течёт целиком: собственная прокрутка абзаца — ровно то, из-за чего
+     «скролл не работал над полем с текстом»: жест крутил поле, а не историю. */
+  .sf-copy__body { max-width: none; max-height: none; overflow: visible; }
+  /* Под текстом кадра события фотографии быть не должно: она показывается своим
+     кадром ниже по треку, а здесь только мешала читать. Тон и процедурная
+     иллюстрация остаются — они фон, а не второй сюжет. */
+  img.sf-scene__still:not(.sf-scene__still--photo) { display: none; }
   .sf-copy__nav .sf-btn { flex: 1 1 auto; text-align: center; }
   /* Подсказка «прокрутите» на телефоне лишняя: лист с кнопкой «дальше» и так
      понятен, а место она отнимает у картинки. */
   .sf-hint { display: none; }
-  .sf-scene__still { object-position: center 46%; }
+  /* Кадр-картинка показывается целиком и по центру — сдвиг для обычных фонов
+     (46% по вертикали, «небо» выше кадра) к ней не применяем. */
+  .sf-scene__still:not(.sf-scene__still--photo) { object-position: center 46%; }
   .sf-viewer__body { padding: 0 46px; }
   .sf-viewer__nav { width: 42px; height: 42px; font-size: 1.4rem; }
   .sf-viewer__nav--prev { left: 2px; }
@@ -537,128 +549,76 @@ html.sf-viewer-open body { overflow: hidden; }
   .sf-copy__next-row { min-height: 34px; }
 }
 
-/* Там, где динамические единицы поддерживаются, высоту листа считаем по
-   фактической видимой высоте: адресная строка мобильных браузеров её меняет. */
-@supports (height: 100dvh) {
-  @media (max-width: 860px) {
-    .sf-copy {
-      --sf-sheet-max: min(
-        58dvh,
-        calc(100dvh - var(--sf-header-h, 46px) - 62px - var(--sf-chips-h, 50px) - 14px - 20dvh)
-      );
-    }
-  }
-}
-
 /* ── кадр-картинка на узких экранах ───────────────────────────────────────
-   Фотография занимает верх экрана, подпись — компактную полосу снизу, поэтому
-   трек не закрывает саму картинку. Отступ снизу считаем в vh (а не в % от
-   ширины): на планшете 768px процент от ширины отнял бы у снимка пол-экрана.
-   Блок обязан идти ПОСЛЕ @supports выше: у .sf-copy и .sf-copy--photo
-   одинаковая специфичность, и последнее правило выигрывает. */
+   Здесь картинка и текст меняются местами: на телефоне кадр события занят
+   текстом, поэтому снимок показывается своим кадром — во всю сцену под чипами,
+   а подпись уходит в компактную полосу у нижнего края. Отступ снизу считаем в vh
+   (а не в % от ширины): на планшете 768px процент от ширины отнял бы у снимка
+   пол-экрана. Блок обязан идти ПОСЛЕ общего мобильного блока: у .sf-copy и
+   .sf-copy--photo одинаковая специфичность, и последнее правило выигрывает. */
 @media (max-width: 860px) {
-  /* Снимок занимает верх экрана, лист подписи — низ: отступ снизу равен высоте
-     листа, иначе подпись накрывает нижнюю часть фотографии. */
-  .sf-scene__still--photo { padding: 1vh 2vw calc(40vh + 20px); }
+  /* Снимок занимает всю сцену, подпись лежит поверх нижнего края: отступ снизу равен
+     высоте полосы подписи (--sf-photo-h ставит TimelineStage) плюс запас — слой
+     кадра едет параллакс-трансформом, и без запаса снимок заходил под панель.
+     Фолбэк в vh нужен до первого замера и если замер почему-то не случился. */
+  .sf-scene__still--photo { padding: 1vh 2vw min(38vh, calc(var(--sf-photo-h, 15vh) + 28px)); }
   .sf-copy--photo {
-    --sf-sheet-max: min(
-      40vh,
-      calc(100vh - var(--sf-header-h, 46px) - 62px - var(--sf-chips-h, 50px) - 14px - 20vh)
-    );
+    top: auto;
+    bottom: calc(10px + env(safe-area-inset-bottom));
+    /* Высота не задана: подпись короткая по построению (номер, одна строка
+       названия, кнопки), и снимку достаётся весь остальной экран. Мета-чипы и
+       eyebrow скрыты ниже — они и делали полосу высокой. */
+    max-height: none; height: auto;
   }
-  /* Номер кадра уже говорит «фото 2 / 5» — мета-чипы в кадре-картинке лишние. */
-  .sf-copy--photo .sf-copy__meta { display: none; }
+  /* Номер кадра уже говорит «фото 2 / 5» — мета-чипы и eyebrow тут лишние. */
+  .sf-copy--photo .sf-copy__meta,
+  .sf-copy--photo .sf-copy__eyebrow { display: none; }
   /* Подпись кадра-картинки обязана быть предсказуемой по высоте: от неё зависит,
-     сколько экрана остаётся снимку. Заголовок — не больше двух строк, кнопки
-     «назад / дальше» не переносятся (в две строки панель выше на 45px и на
-     маленьком экране налезала на фотографию). */
+     сколько экрана остаётся снимку. Заголовок — одна строка, кнопки «назад/дальше»
+     не переносятся (в две строки панель выше на 45px и на маленьком экране
+     налезала на фотографию). */
   .sf-copy--photo .sf-copy__title {
-    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+    display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical;
+    overflow: hidden; margin-top: 6px;
   }
-  .sf-copy--photo .sf-copy__nav { flex-wrap: nowrap; }
-  .sf-copy--photo .sf-copy__nav .sf-btn { flex: 1 1 0; min-width: 0; padding: 9px 12px; font-size: 0.84rem; }
+  .sf-copy--photo .sf-copy__num { font-size: 0.74rem; }
+  /* «Открыть в полный размер» — служебная строка, а не кнопка во всю ширину. */
+  .sf-copy--photo .sf-copy__scroll > .sf-btn {
+    margin-top: 8px; padding: 4px 0; min-height: 0;
+    border: 0; background: none; color: var(--sf-ink-soft); font-size: 0.8rem;
+  }
+  .sf-copy--photo .sf-copy__nav { flex-wrap: nowrap; margin-top: 10px; gap: 8px; }
+  /* Кнопки по содержимому, а не поровну: подпись «фото 2/2» длиннее, чем «назад», и
+     при равных долях обрезалась многоточием. */
+  .sf-copy--photo .sf-copy__nav .sf-btn {
+    flex: 0 1 auto; min-width: 0; padding: 9px 10px; font-size: 0.8rem;
+  }
 }
 
-/* Совсем маленькие телефоны (320×568): подпись занимает больше строк, поэтому
-   снимку отдаём больше места — иначе панель заходит на фотографию. */
+/* Совсем маленькие телефоны (320×568): подпись занимает те же пиксели, а сцены
+   меньше — снимку оставляем больше места, поэтому отступ не режем жёстко. */
 @media (max-width: 379px) {
-  .sf-scene__still--photo { padding-bottom: 44vh; }
+  .sf-scene__still--photo { padding-bottom: min(52vh, calc(var(--sf-photo-h, 15vh) + 24px)); }
 }
 
 /* Короткие экраны: маленький телефон в ландшафте (360px высоты) или очень узкий
-   аппарат. Подсказка и отступ снизу съедали место, которого и так нет, — отдаём
-   его листу копирайта, чтобы заголовок, текст и кнопки навигации читались.
-   ВАЖНО: блок идёт ПОСЛЕ @supports выше, иначе то правило перебивает bottom. */
+   аппарат. Отступ снизу съедал место, которого и так нет, — отдаём его листу
+   копирайта, чтобы заголовок, текст и кнопки навигации читались. */
 @media (max-width: 860px) and (max-height: 480px) {
   .sf-viewer__hint { display: none; }
-  .sf-copy {
-    bottom: calc(8px + env(safe-area-inset-bottom));
-    max-height: calc(100vh - var(--sf-header-h, 46px) - 124px - 12px);
-  }
-  /* Ландшафт телефона: высоты мало, под снимок оставляем больше половины экрана. */
-  .sf-scene__still--photo { padding: 1vh 1vw calc(42vh + 14px); }
+  /* Полосу подписи в ландшафте тянем на всю оставшуюся высоту: снимку и так
+     достаётся весь экран, а тексту в листе места нет. */
+  .sf-copy { bottom: calc(8px + env(safe-area-inset-bottom)); }
+  .sf-scene__still--photo { padding: 1vh 1vw min(60vh, calc(var(--sf-photo-h, 15vh) + 12px)); }
   .sf-copy__title { font-size: clamp(1.3rem, 5vh, 1.8rem); }
 }
 
-/* ── мобильный документ ───────────────────────────────────────────────────
-   На телефоне таймлайн — не сцена, а обычный документ: текст главы, её картинки,
-   текст под-события, его картинки, следующая глава. Один общий скролл: палец над
-   текстом крутит историю, а не отдельное поле, и ничего не перекрывается.
-   Разметку даёт DocumentTimeline, здесь только оформление потока. */
-.sf-root--doc {
-  display: flex; flex-direction: column;
-  min-height: 100%;
-  padding-bottom: 32px;
-}
-.sf-doc__head {
-  display: flex; align-items: center; justify-content: space-between;
-  gap: 10px; flex-wrap: wrap; padding: 10px 14px 6px;
-}
-.sf-doc__title { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; min-width: 0; }
-.sf-doc__mark { flex: 0 0 auto; display: block; }
-.sf-doc__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-/* Переключатель событий липнет под шапкой приложения и остаётся на виду.
-   Фон непрозрачный: полупрозрачная полоса просвечивала заголовком, который
-   уезжает под неё при прокрутке. */
-.sf-doc__chips {
-  position: sticky; top: 0; z-index: 20;
-  background: var(--sf-bg);
-  border-bottom: 1px solid var(--border);
-  box-shadow: 0 8px 18px -14px rgba(0, 0, 0, 0.5);
-}
-.sf-doc .sf-chips {
-  position: static; padding: 8px 12px; background: transparent;
-}
-
-.sf-doc__body {
-  display: flex; flex-direction: column; gap: 28px;
-  width: 100%; max-width: 720px; margin: 0 auto;
-  padding: 18px 16px 0;
-}
-.sf-doc__event { display: flex; flex-direction: column; }
-.sf-doc__event .sf-copy__title { margin: 8px 0 0; font-size: clamp(1.5rem, 6vw, 2.1rem); }
-/* В документе текст течёт целиком: своя прокрутка внутри абзаца — ровно то, из-за
-   чего «скролл не работал». */
-.sf-doc__event .sf-copy__body { max-height: none; overflow: visible; }
-.sf-doc__event .sf-copy__meta { margin-top: 14px; }
-/* Строка вложенного события — та же кнопка, что и в кадре: номер и название
-   врозь, с зазором, клик ведёт к этому блоку ниже по документу. */
-.sf-doc__event .sf-copy__next-row { min-height: 34px; }
-
-.sf-doc__image { margin: 0; display: flex; flex-direction: column; gap: 6px; }
-.sf-doc__shot {
-  padding: 0; border: 1px solid var(--border); background: var(--bg);
-  border-radius: 14px; overflow: hidden; cursor: zoom-in; line-height: 0;
-  transition: border-color 0.2s, transform 0.2s;
-}
-.sf-doc__shot:hover { border-color: var(--sf-accent); }
-.sf-doc__shot img { display: block; width: 100%; height: auto; }
-.sf-doc__image figcaption { font-size: 0.8rem; }
-
-.sf-doc__footer {
-  margin-top: 8px; padding-top: 18px;
-  border-top: 1px solid var(--border);
+/* Появление листа кадра: короткое проявление при перемонтировании панели (кадр
+   сменился). Смещение листа считает --sf-frame-enter, поэтому в анимации только
+   прозрачность — иначе она перебивала бы движение по скроллу. */
+@keyframes sf-copy-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -666,4 +626,5 @@ html.sf-viewer-open body { overflow: hidden; }
   .sf-hint i::after { animation: none; }
   .sf-scene__inner { will-change: auto; }
   .sf-btn:hover:not(:disabled) { transform: none; }
+  .sf-copy { animation: none; }
 }

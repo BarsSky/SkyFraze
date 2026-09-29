@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { yEnsureEventIds, yEventParentId, type YArray, type YMap } from '../../collab/yprovider'
 import { getScrollRoot, prefersReducedMotion, visibleBox } from './scrollRoot'
 import {
@@ -17,8 +17,6 @@ import {
   type TimelineFrame,
 } from './timelineModel'
 import { useTheme } from '../../store/theme'
-import { useMediaQuery } from '../../lib/useMediaQuery'
-import { DocumentTimeline } from './DocumentTimeline'
 import { SkyLayer } from './stage/SkyLayer'
 import { SceneFrame } from './stage/SceneFrame'
 import { CopyPanel } from './stage/CopyPanel'
@@ -74,12 +72,19 @@ function resolveAssets(assetIds: string[], lookup: Record<string, AssetLookup>):
  * (и их под-шаги), поэтому глава полностью «разворачивает» вложенность, прежде
  * чем трек перейдёт к следующей главе. Фон кадра настраивается на событии.
  *
+ * Раскладка одна и та же — fixed-сцена плюс трек прокрутки, — а ширина решает,
+ * что видно в кадре. На широком экране места хватает и на картинку, и на текст:
+ * фон кадра (в том числе фотография) остаётся позади копирайта. На телефоне на
+ * двоих места нет, поэтому элементы идут ДРУГ ЗА ДРУГОМ отдельными кадрами:
+ * текст главы → её картинки → текст под-события → его картинки → следующая глава.
+ * Кадр события занимает экран текстом (фотография под ним скрыта стилями — у неё
+ * есть собственный кадр), кадр-картинка показывает снимок с одной строкой подписи.
+ * Прокрутка всюду листает кадры, а не тянет «простыню» документа.
+ *
  * Стадия занимается только показом и навигацией: редактор — отдельный модуль.
  */
 export function TimelineStage({ events, assetsById, projectTitle, actions, copyFooter }: Props) {
   const [theme] = useTheme()
-  // Узкий экран — документ (см. DocumentTimeline), широкий — сцена с кадрами.
-  const isDocument = useMediaQuery('(max-width: 860px)')
   const trackRef = useRef<HTMLDivElement>(null)
   const stageActiveRef = useRef(true)
   const [meta, setMeta] = useState<EventMeta[]>([])
@@ -284,19 +289,30 @@ export function TimelineStage({ events, assetsById, projectTitle, actions, copyF
   // Автопереходов нет: создание события в редакторе не должно уводить стадию —
   // пользователь остаётся в редакторе и правит текст.
 
-  // На телефоне — обычный документ вместо сцены: текст главы, её картинки, текст
-  // под-события, его картинки, следующая глава. Один общий скролл, ничего не
-  // перекрывается, отдельные прокрутки для картинки и текста не нужны.
-  if (isDocument) {
-    return (
-      <DocumentTimeline
-        chapters={model.chapters}
-        projectTitle={projectTitle}
-        actions={actions}
-        copyFooter={copyFooter}
-      />
-    )
-  }
+  // Высота подписи кадра-картинки (--sf-photo-h): на телефоне снимок занимает сцену
+  // целиком, а подпись лежит поверх её нижнего края. Отступ снизу у снимка должен
+  // равняться высоте подписи — иначе либо подпись накрывает фотографию, либо между
+  // ними остаётся пустая полоса. Высоту мерим, а не считаем в vh: она зависит от
+  // длины названия, шрифта и safe-area. useLayoutEffect — чтобы до отрисовки кадра
+  // отступ уже был верным и снимок не «прыгал».
+  const frameId = state.frame?.id ?? ''
+  const frameKind = state.frame?.kind ?? ''
+  useLayoutEffect(() => {
+    const panel = document.querySelector<HTMLElement>('.sf-copy--photo')
+    const apply = () => {
+      const h = panel ? Math.round(panel.getBoundingClientRect().height) : 0
+      document.documentElement.style.setProperty('--sf-photo-h', `${h}px`)
+    }
+    apply()
+    const ro = panel && typeof ResizeObserver !== 'undefined' ? new ResizeObserver(apply) : null
+    if (ro && panel) ro.observe(panel)
+    window.addEventListener('resize', apply)
+    return () => {
+      ro?.disconnect()
+      window.removeEventListener('resize', apply)
+      document.documentElement.style.removeProperty('--sf-photo-h')
+    }
+  }, [frameId, frameKind])
 
   if (!events || model.chapters.length === 0) {
     return (
