@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { buildEventTree, flattenTree, type EventLike } from '../../collab/eventTree'
-import { yAddEvent, yDeleteEvent, yEventParentId, type YArray, type YMap } from '../../collab/yprovider'
+import { createPortal } from 'react-dom'
+import { buildEventTree, DEFAULT_MAX_DEPTH, type EventLike, type EventTreeNode } from '../../collab/eventTree'
+import { checkMove, type DropPlace, type MoveReject } from '../../collab/reorder'
+import {
+  yAddEvent,
+  yDeleteEvent,
+  yEventParentId,
+  yMoveSubtree,
+  type YArray,
+  type YMap,
+} from '../../collab/yprovider'
 import type { Asset } from '../../api/assets'
 import { EventEditor } from './EventEditor'
 import type { BackgroundValue } from './BackgroundPicker'
@@ -19,6 +28,9 @@ interface Props {
 
 interface NavRow {
   id: string
+  parentId: string | null
+  /** Иерархический номер («01», «01.2») — тот же, что у кадра в таймлайне. */
+  number: string
   depth: number
   title: string
   childCount: number
@@ -30,19 +42,125 @@ const SYNC_DEBOUNCE_MS = 900
 /** Совпадает с лимитом nginx (client_max_body_size) и бэкенда (assets.maxAssetSize). */
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
+/** Сдвиг, после которого нажатие становится перетаскиванием, а не выбором. */
+const DRAG_THRESHOLD_PX = 6
+
+/**
+ * Зоны сброса внутри строки:
+ *  - правая часть (от 62% ширины) — «вложить внутрь»;
+ *  - левая часть — «между»: верхняя половина строки — «перед», нижняя — «после».
+ *
+ * Поэтому «внутрь» не мешает попасть в зазор между соседями (там целятся по
+ * вертикали), а вложить можно только осознанно — уведя палец/курсор вправо.
+ */
+const INSIDE_ZONE_RATIO = 0.62
+
+/** Полоса у верхнего/нижнего края списка, в которой он сам подкручивается. */
+const AUTOSCROLL_EDGE_PX = 44
+const AUTOSCROLL_MAX_PX = 14
+
+/** Почему сюда нельзя — человеческий текст для подсказки под деревом. */
+const REJECT_TEXT: Record<MoveReject, string> = {
+  'unknown-source': 'перетаскиваемое событие не найдено',
+  'unknown-target': 'цель переноса не найдена',
+  self: 'событие нельзя вложить в само себя',
+  cycle: 'нельзя вложить событие в собственное поддерево',
+  depth: `глубже ${DEFAULT_MAX_DEPTH} уровней дерево не поддерживает`,
+}
+
+/** Что означает разрешённая цель — текст для строки-подсказки. */
+const DROP_TEXT: Record<DropPlace, string> = {
+  before: 'вставить перед строкой',
+  after: 'вставить после строки',
+  inside: 'вложить внутрь',
+}
+
+/** Куда указывает текущий жест: строка-цель и место в ней. */
+interface DropHint {
+  targetId: string | null
+  place: DropPlace
+  allowed: boolean
+  /** Текст причины, когда `allowed === false`. */
+  reason: string | null
+}
+
+/** Что рисуем, пока тащим: подпись под указателем и подсветка цели. */
+interface DragView {
+  id: string
+  x: number
+  y: number
+  label: string
+  hint: DropHint | null
+}
+
+interface GestureHandlers {
+  move: (event: PointerEvent) => void
+  up: (event: PointerEvent) => void
+  cancel: (event: PointerEvent) => void
+  key: (event: KeyboardEvent) => void
+  blur: () => void
+}
+
+/**
+ * Жест живёт отдельно от состояния: pointermove приходит десятками в секунду, и
+ * ждать рендера на каждое движение нельзя. В состоянии — только то, что видно
+ * человеку: подпись под указателем и подсветка цели сброса.
+ */
+interface DragGesture {
+  id: string
+  label: string
+  pointerId: number
+  startX: number
+  startY: number
+  x: number
+  y: number
+  /** Палец/стилус: вертикальный жест без захвата за ручку отдаём прокрутке. */
+  touch: boolean
+  fromGrip: boolean
+  /** 'wait' — ещё решаем, что это; 'drag' — тащим; 'scroll' — это прокрутка. */
+  mode: 'wait' | 'drag' | 'scroll'
+  hint: DropHint | null
+  handlers: GestureHandlers
+}
+
+/** Прямые дети строки в порядке отображения (для клавиатурных переносов). */
+function siblingsOf(rows: NavRow[], row: NavRow): NavRow[] {
+  return rows.filter((item) => item.parentId === row.parentId)
+}
+
+/** Классы подсветки цели: линия «между» строками или рамка «внутрь». */
+function dropClassFor(hint: DropHint): string {
+  const base = `ed-row--drop-${hint.place}`
+  return hint.allowed ? base : `${base} is-blocked`
+}
+
 /**
  * Модуль редактирования: навигатор по дереву, тулбар создания/удаления и
  * редактор выбранного события (текст, дата, вложения, фон кадра).
  *
  * Единственное место, где проект меняется: стадия (components/timeline)
  * намеренно только показывает и не переключает редактор.
+ *
+ * Перестановка событий — pointer-событиями, а не HTML5 drag-and-drop: на
+ * тач-устройствах он не работает. Тянем строку мышью или пальцем; обычный клик
+ * без сдвига продолжает выбирать событие, а перенос одной транзакцией делает
+ * `yMoveSubtree` (порядок в Y.Array + `parent_id`).
  */
 export function EditorsPanel({ events, assets, assetUrls, syncNote, onChanged, onUpload }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [filter, setFilter] = useState('')
   const [version, setVersion] = useState(0) // перерисовка после правок CRDT
   const [uploadNote, setUploadNote] = useState<string | null>(null)
+  const [drag, setDrag] = useState<DragView | null>(null)
+  /** Подсказка для клавиатурных переносов: что не получилось и почему. */
+  const [notice, setNotice] = useState<string | null>(null)
   const syncTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const navRef = useRef<HTMLElement | null>(null)
+  const gestureRef = useRef<DragGesture | null>(null)
+  const rowsRef = useRef<NavRow[]>([])
+  const autoscrollRef = useRef<number | null>(null)
+  /** Клик после настоящего перетаскивания не должен менять выбор. */
+  const suppressClickRef = useRef(false)
 
   // Подписка на CRDT: заголовки/дерево в навигаторе и полях должны обновляться.
   useEffect(() => {
@@ -61,10 +179,6 @@ export function EditorsPanel({ events, assets, assetUrls, syncNote, onChanged, o
     }, SYNC_DEBOUNCE_MS)
   }, [onChanged])
 
-  useEffect(() => () => {
-    if (syncTimer.current) clearTimeout(syncTimer.current)
-  }, [])
-
   const rows = useMemo<NavRow[]>(() => {
     void version
     if (!events) return []
@@ -73,14 +187,33 @@ export function EditorsPanel({ events, assets, assetUrls, syncNote, onChanged, o
       parentId: yEventParentId(m),
       title: ((m.get('title') as string | undefined) ?? '').trim(),
     })).filter((e) => e.id.length > 0)
-    return flattenTree(buildEventTree(flat, 4)).map((node) => ({
-      id: node.item.id,
-      depth: node.depth,
-      title: node.item.title || 'Без названия',
-      childCount: node.children.length,
-      isChapter: node.depth === 0,
-    }))
+
+    // Номер считаем обходом дерева: «01», «01.2», «01.2.1» — как в кадрах
+    // таймлайна, чтобы в подписи переноса число совпадало с видимым номером.
+    const out: NavRow[] = []
+    const walk = (node: EventTreeNode<(typeof flat)[number]>, number: string, parentId: string | null) => {
+      out.push({
+        id: node.item.id,
+        parentId,
+        number,
+        depth: node.depth,
+        title: node.item.title || 'Без названия',
+        childCount: node.children.length,
+        isChapter: node.depth === 0,
+      })
+      node.children.forEach((child, index) => walk(child, `${number}.${index + 1}`, node.item.id))
+    }
+    buildEventTree(flat, DEFAULT_MAX_DEPTH).forEach((root, index) => {
+      walk(root, String(index + 1).padStart(2, '0'), null)
+    })
+    return out
   }, [events, version])
+
+  // Обработчики жеста читают строки из ref: за время перетаскивания дерево
+  // может приехать от соавтора, и проверять ход надо по свежему состоянию.
+  useEffect(() => {
+    rowsRef.current = rows
+  }, [rows])
 
   // Первое событие выбирается автоматически; дальше выбор только ручной —
   // создание события не уводит ни редактор, ни стадию.
@@ -204,6 +337,304 @@ export function EditorsPanel({ events, assets, assetUrls, syncNote, onChanged, o
     setVersion((v) => v + 1)
   }
 
+  // ─── перетаскивание строк ────────────────────────────────────────────────
+
+  /** Проверка «можно ли сюда» и текст причины — тот же расчёт, что у переноса. */
+  function dropHint(dragId: string, targetId: string | null, place: DropPlace): DropHint {
+    const items = rowsRef.current.map((row) => ({ id: row.id, parentId: row.parentId }))
+    const check = checkMove(items, dragId, targetId, place)
+    return {
+      targetId,
+      place,
+      allowed: check.ok,
+      reason: check.ok ? null : REJECT_TEXT[check.reason],
+    }
+  }
+
+  /** Строка, по которой считаем зону сброса: правая часть — «внутрь». */
+  function hintFromRow(el: HTMLElement, gesture: DragGesture): DropHint {
+    const rect = el.getBoundingClientRect()
+    const ratio = rect.width > 0 ? (gesture.x - rect.left) / rect.width : 0.5
+    const half = rect.height > 0 ? (gesture.y - rect.top) / rect.height : 0.5
+    const place: DropPlace = ratio >= INSIDE_ZONE_RATIO ? 'inside' : half < 0.5 ? 'before' : 'after'
+    const targetId = el.dataset.eventId ?? ''
+    if (targetId === gesture.id) return hintOnSelf(gesture, place)
+    return dropHint(gesture.id, targetId || null, place)
+  }
+
+  /**
+   * Указатель на самой переносимой строке.
+   *
+   * «Внутрь себя» действительно нельзя — об этом честно сообщаем. А вот линии
+   * «перед собой» и «после себя» ничего не меняют: человек, который потянул
+   * строку на пару пикселей и отпустил, раньше видел «нельзя вложить в само
+   * себя» — то есть ошибка появлялась там, где переносить и не собирались.
+   * Теперь такие зоны нейтральны: подсветки нет, дерево не меняется, ошибки нет.
+   */
+  function hintOnSelf(gesture: DragGesture, place: DropPlace): DropHint {
+    if (place === 'inside') return dropHint(gesture.id, gesture.id, 'inside')
+    return { targetId: null, place: 'inside', allowed: false, reason: null }
+  }
+
+  /** Ближайшая строка под указателем (событие могло прийти от дочернего span). */
+  function rowElement(target: EventTarget | null): HTMLElement | null {
+    const el = target as HTMLElement | null
+    if (!el || typeof el.closest !== 'function') return null
+    return el.closest('.ed-row') as HTMLElement | null
+  }
+
+  /**
+   * Цель сброса по координатам — нужна, когда события указателя нет: список
+   * подкрутился сам, и строка под пальцем сменилась. Пусто под последней строкой
+   * (но внутри списка) — это «в конец верхнего уровня».
+   */
+  function hintAtPoint(gesture: DragGesture): DropHint | null {
+    const nav = navRef.current
+    if (!nav) return null
+    const rect = nav.getBoundingClientRect()
+    if (gesture.x < rect.left || gesture.x > rect.right) return null
+    if (gesture.y < rect.top || gesture.y > rect.bottom) return null
+    try {
+      if (typeof document.elementFromPoint === 'function') {
+        const el = rowElement(document.elementFromPoint(gesture.x, gesture.y))
+        if (el) return hintFromRow(el, gesture)
+      }
+    } catch {
+      /* jsdom и старые браузеры: просто покажем «в конец верхнего уровня» */
+    }
+    return dropHint(gesture.id, null, 'inside')
+  }
+
+  function stopAutoscroll() {
+    if (autoscrollRef.current !== null) {
+      cancelAnimationFrame(autoscrollRef.current)
+      autoscrollRef.current = null
+    }
+  }
+
+  /** Длинное дерево иначе не перетащить: у края списка он едет сам. */
+  function startAutoscroll() {
+    if (autoscrollRef.current !== null) return
+    const step = () => {
+      autoscrollRef.current = null
+      const gesture = gestureRef.current
+      if (!gesture || gesture.mode !== 'drag') return
+      const nav = navRef.current
+      if (nav) {
+        const rect = nav.getBoundingClientRect()
+        const fromTop = gesture.y - rect.top
+        const fromBottom = rect.bottom - gesture.y
+        let dy = 0
+        if (fromTop < AUTOSCROLL_EDGE_PX) {
+          dy = -Math.ceil(AUTOSCROLL_MAX_PX * (1 - Math.max(0, fromTop) / AUTOSCROLL_EDGE_PX))
+        } else if (fromBottom < AUTOSCROLL_EDGE_PX) {
+          dy = Math.ceil(AUTOSCROLL_MAX_PX * (1 - Math.max(0, fromBottom) / AUTOSCROLL_EDGE_PX))
+        }
+        if (dy !== 0) {
+          const before = nav.scrollTop
+          nav.scrollTop = before + dy
+          if (nav.scrollTop !== before) {
+            gesture.hint = hintAtPoint(gesture) ?? gesture.hint
+            publish(gesture)
+          }
+        }
+      }
+      autoscrollRef.current = requestAnimationFrame(step)
+    }
+    autoscrollRef.current = requestAnimationFrame(step)
+  }
+
+  function publish(gesture: DragGesture) {
+    setDrag({ id: gesture.id, x: gesture.x, y: gesture.y, label: gesture.label, hint: gesture.hint })
+  }
+
+  function detachGesture(gesture: DragGesture) {
+    window.removeEventListener('pointermove', gesture.handlers.move)
+    window.removeEventListener('pointerup', gesture.handlers.up)
+    window.removeEventListener('pointercancel', gesture.handlers.cancel)
+    window.removeEventListener('keydown', gesture.handlers.key, true)
+    window.removeEventListener('blur', gesture.handlers.blur)
+    stopAutoscroll()
+  }
+
+  /**
+   * Завершает жест. `commit` — обычное отпускание; Esc и потеря фокуса
+   * отменяют перенос, ничего не меняя в дереве.
+   */
+  function finishGesture(commit: boolean) {
+    const gesture = gestureRef.current
+    if (!gesture) return
+    gestureRef.current = null
+    detachGesture(gesture)
+    setDrag(null)
+
+    const moved = gesture.mode === 'drag'
+    // Перенос закончился не там, где начался: клик по строке под указателем
+    // уже не должен перебивать выбор.
+    if (moved) suppressClickRef.current = true
+    const hint = gesture.hint
+    if (!commit || !moved || !hint || !hint.allowed) return
+
+    if (yMoveSubtree(events, gesture.id, hint.targetId, hint.place)) {
+      setSelectedId(gesture.id) // после переноса событие остаётся выбранным
+      setNotice(`«${gesture.label}» перенесено`)
+      onChanged()
+    } else {
+      setNotice('Перенести не удалось: дерево изменилось')
+    }
+  }
+
+  function onPointerMove(event: PointerEvent, gesture: DragGesture) {
+    if (event.pointerId !== gesture.pointerId) return
+    gesture.x = event.clientX
+    gesture.y = event.clientY
+    if (gesture.mode === 'scroll') return
+
+    if (gesture.mode === 'wait') {
+      const dx = gesture.x - gesture.startX
+      const dy = gesture.y - gesture.startY
+      if (Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return
+      // Палец без захвата за ручку и явно вертикальный жест — это прокрутка
+      // списка, а не перенос: иначе длинное дерево не пролистать.
+      if (gesture.touch && !gesture.fromGrip && Math.abs(dy) > Math.abs(dx)) {
+        gesture.mode = 'scroll'
+        return
+      }
+      gesture.mode = 'drag'
+      startAutoscroll()
+    }
+
+    const el = rowElement(event.target)
+    gesture.hint = el ? hintFromRow(el, gesture) : hintAtPoint(gesture)
+    publish(gesture)
+  }
+
+  function onRowPointerDown(event: React.PointerEvent<HTMLButtonElement>, row: NavRow) {
+    if (event.pointerType === 'mouse' && event.button !== 0) return
+    // Тащить нечего: одна строка всегда остаётся на месте.
+    if (rows.length < 2) return
+    const active = gestureRef.current
+    if (active) {
+      // Второй палец: жестов одновременно не бывает, прежний отменяем.
+      if (active.pointerId === event.pointerId) return
+      finishGesture(false)
+    }
+    // Новый жест начинается с нажатия: флаг «клик после переноса» сбрасываем,
+    // иначе он съел бы первое нажатие после перетаскивания, за которым клик
+    // так и не пришёл.
+    suppressClickRef.current = false
+    setNotice(null)
+    const target = event.target as HTMLElement | null
+    const fromGrip = !!(target && typeof target.closest === 'function' && target.closest('.ed-row__grip'))
+
+    let gesture: DragGesture
+    const handlers: GestureHandlers = {
+      move: (e) => onPointerMove(e, gesture),
+      up: (e) => {
+        if (e.pointerId === gesture.pointerId) finishGesture(true)
+      },
+      cancel: (e) => {
+        if (e.pointerId === gesture.pointerId) finishGesture(false)
+      },
+      key: (e) => {
+        if (e.key !== 'Escape') return
+        e.preventDefault()
+        finishGesture(false)
+      },
+      blur: () => finishGesture(false),
+    }
+    gesture = {
+      id: row.id,
+      label: `${row.number} · ${row.title}`,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      x: event.clientX,
+      y: event.clientY,
+      touch: event.pointerType === 'touch' || event.pointerType === 'pen',
+      fromGrip,
+      mode: 'wait',
+      hint: null,
+      handlers,
+    }
+    gestureRef.current = gesture
+    window.addEventListener('pointermove', handlers.move)
+    window.addEventListener('pointerup', handlers.up)
+    window.addEventListener('pointercancel', handlers.cancel)
+    window.addEventListener('keydown', handlers.key, true)
+    window.addEventListener('blur', handlers.blur)
+  }
+
+  /** Клавиатура: та же арифметика, что у мыши, но без координат. */
+  function moveByKeyboard(row: NavRow, dir: 'up' | 'down' | 'in' | 'out') {
+    const siblings = siblingsOf(rows, row)
+    const at = siblings.findIndex((item) => item.id === row.id)
+    let targetId: string | null = null
+    let place: DropPlace = 'after'
+
+    if (dir === 'up') {
+      const prev = siblings[at - 1]
+      if (!prev) return setNotice('Выше соседей нет — переносить некуда')
+      targetId = prev.id
+      place = 'before'
+    } else if (dir === 'down') {
+      const next = siblings[at + 1]
+      if (!next) return setNotice('Ниже соседей нет — переносить некуда')
+      targetId = next.id
+      place = 'after'
+    } else if (dir === 'in') {
+      const prev = siblings[at - 1]
+      if (!prev) return setNotice('Вложить не во что: выше нет соседа')
+      targetId = prev.id
+      place = 'inside'
+    } else {
+      if (row.parentId === null) return setNotice('Это уже верхний уровень')
+      targetId = row.parentId
+      place = 'after'
+    }
+
+    const items = rowsRef.current.map((item) => ({ id: item.id, parentId: item.parentId }))
+    const check = checkMove(items, row.id, targetId, place)
+    if (!check.ok) return setNotice(`Нельзя: ${REJECT_TEXT[check.reason]}`)
+    if (!yMoveSubtree(events, row.id, targetId, place)) return setNotice('Перенести не удалось')
+
+    setSelectedId(row.id)
+    setNotice(`«${row.title}» перенесено`)
+    onChanged()
+  }
+
+  function onRowKeyDown(event: React.KeyboardEvent<HTMLButtonElement>, row: NavRow) {
+    if (!event.altKey) return
+    const dir =
+      event.key === 'ArrowUp' ? 'up'
+        : event.key === 'ArrowDown' ? 'down'
+          : event.key === 'ArrowRight' ? 'in'
+            : event.key === 'ArrowLeft' ? 'out'
+              : null
+    if (!dir) return
+    event.preventDefault()
+    moveByKeyboard(row, dir)
+  }
+
+  // Завершение жеста при уходе со страницы: без этого слушатели окна остались бы.
+  useEffect(() => () => {
+    if (syncTimer.current) clearTimeout(syncTimer.current)
+    const gesture = gestureRef.current
+    if (gesture) detachGesture(gesture)
+    stopAutoscroll()
+  }, [])
+
+  const hint = drag?.hint ?? null
+  const hintText = drag
+    ? !hint
+      ? 'Отпустите над строкой списка, чтобы перенести'
+      : hint.allowed
+        ? hint.targetId === null
+          ? 'Отпустите: в конец верхнего уровня'
+          : `Отпустите: ${DROP_TEXT[hint.place]}`
+        : `Сюда нельзя: ${hint.reason}`
+    : notice
+
   return (
     <section className="ed-panel" data-editor-panel>
       <div className="ed-panel__head">
@@ -229,27 +660,64 @@ export function EditorsPanel({ events, assets, assetUrls, syncNote, onChanged, o
 
       {syncNote && <p className="muted ed-panel__note">{syncNote}</p>}
       {uploadNote && <p className="ed-panel__note ed-panel__note--upload">{uploadNote}</p>}
+      {hintText && (
+        <p
+          className={[
+            'ed-drag-note',
+            drag && hint && !hint.allowed ? 'ed-drag-note--no' : '',
+          ].filter(Boolean).join(' ')}
+          role="status"
+          aria-live="polite"
+        >
+          {drag && <span className="ed-drag-note__label">{drag.label} → </span>}
+          {hintText}
+        </p>
+      )}
 
       <div className="ed-panel__grid">
-        <nav className="ed-nav" aria-label="Список событий">
-          {visibleRows.map((row) => (
-            <button
-              key={row.id}
-              type="button"
-              className={[
-                'ed-row',
-                row.isChapter ? 'ed-row--chapter' : 'ed-row--sub',
-                row.id === selectedId ? 'ed-row--active' : '',
-              ].filter(Boolean).join(' ')}
-              style={{ marginLeft: Math.min(row.depth, 4) * 14 }}
-              onClick={() => setSelectedId(row.id)}
-              title={row.title}
-            >
-              <span className="ed-row__mark">{row.isChapter ? '#' : '└'}</span>
-              <span className="ed-row__name">{row.title}</span>
-              {row.childCount > 0 && <span className="ed-row__badge">{row.childCount}</span>}
-            </button>
-          ))}
+        <nav
+          className={drag ? 'ed-nav ed-nav--dragging' : 'ed-nav'}
+          aria-label="Список событий"
+          ref={navRef}
+        >
+          {visibleRows.map((row) => {
+            const rowHint = drag?.hint && drag.hint.targetId === row.id ? drag.hint : null
+            return (
+              <button
+                key={row.id}
+                type="button"
+                className={[
+                  'ed-row',
+                  row.isChapter ? 'ed-row--chapter' : 'ed-row--sub',
+                  row.id === selectedId ? 'ed-row--active' : '',
+                  row.id === drag?.id ? 'ed-row--dragging' : '',
+                  rowHint ? dropClassFor(rowHint) : '',
+                ].filter(Boolean).join(' ')}
+                // Отступ — padding, а не margin: строка остаётся внутри списка и
+                // на 320px ничего не выезжает вбок.
+                style={{ paddingLeft: 8 + Math.min(row.depth, 4) * 14 }}
+                data-event-id={row.id}
+                data-depth={row.depth}
+                onClick={() => {
+                  // Клик после перетаскивания выбор не меняет: он уже выставлен.
+                  if (suppressClickRef.current) {
+                    suppressClickRef.current = false
+                    return
+                  }
+                  setSelectedId(row.id)
+                }}
+                onPointerDown={(e) => onRowPointerDown(e, row)}
+                onKeyDown={(e) => onRowKeyDown(e, row)}
+                title={`${row.number} ${row.title} — тяните мышью или пальцем; Alt+↑/↓ порядок среди соседей, Alt+→ вложить, Alt+← на уровень выше`}
+                aria-label={`${row.number} ${row.title}. Перетаскивание мышью или пальцем. Alt со стрелками: вверх/вниз — порядок среди соседей, вправо — вложить в предыдущего соседа, влево — поднять на уровень.`}
+              >
+                <span className="ed-row__grip" aria-hidden="true">⠿</span>
+                <span className="ed-row__mark">{row.isChapter ? '#' : '└'}</span>
+                <span className="ed-row__name">{row.title}</span>
+                {row.childCount > 0 && <span className="ed-row__badge">{row.childCount}</span>}
+              </button>
+            )
+          })}
           {visibleRows.length === 0 && <p className="muted">Ничего не найдено.</p>}
         </nav>
 
@@ -282,6 +750,15 @@ export function EditorsPanel({ events, assets, assetUrls, syncNote, onChanged, o
           )}
         </div>
       </div>
+
+      {/* Подпись переноса — в body: список прокручивается (`overflow`), и внутри
+          навигатора подсказку обрезало бы. */}
+      {drag && createPortal(
+        <div className="ed-drag-ghost" style={{ left: drag.x, top: drag.y }} aria-hidden="true">
+          {drag.label}
+        </div>,
+        document.body,
+      )}
     </section>
   )
 }

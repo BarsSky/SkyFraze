@@ -42,6 +42,10 @@
   border-radius: 6px; padding: 6px 8px;
   color: var(--fg); font-size: 13px; text-align: left; cursor: pointer;
   transition: border-color 0.2s, background 0.2s;
+  /* position — для линии-индикатора переноса. touch-action: pan-y оставляет
+     вертикальный свайп прокруткой списка: перенос пальцем начинается за ручку
+     или горизонтальным движением (см. EditorsPanel). */
+  position: relative; touch-action: pan-y;
 }
 .ed-row:hover { border-color: var(--fg-muted); }
 .ed-row--sub { background: transparent; }
@@ -52,6 +56,49 @@
   flex: 0 0 auto; color: var(--fg-muted); font-size: 12px;
   border: 1px solid var(--border); border-radius: 999px; padding: 0 6px;
 }
+
+/* ─── перенос строк дерева ──────────────────────────────────────────────────
+   Ручка — зона захвата для пальца (touch-action: none: отданный прокрутке
+   вертикальный жест здесь не сработал бы). */
+.ed-row__grip {
+  flex: 0 0 auto; width: 20px; min-height: 18px;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--fg-muted); font-size: 15px; line-height: 1;
+  cursor: grab; touch-action: none; user-select: none;
+}
+.ed-row__grip:active { cursor: grabbing; }
+.ed-row--dragging { opacity: 0.5; }
+.ed-nav--dragging { cursor: grabbing; user-select: none; -webkit-user-select: none; }
+
+/* Цель сброса: «перед/после» — линия на краю строки, «внутрь» — рамка. */
+.ed-row--drop-before::before,
+.ed-row--drop-after::after {
+  content: ''; position: absolute; left: 0; right: 0; height: 2px;
+  background: var(--accent); border-radius: 2px;
+}
+.ed-row--drop-before::before { top: -3px; }
+.ed-row--drop-after::after { bottom: -3px; }
+.ed-row--drop-inside { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+/* Запрещённая цель: индикатор красный — «сюда нельзя», а не молчание. */
+.ed-row--drop-before.is-blocked::before,
+.ed-row--drop-after.is-blocked::after { background: var(--danger); }
+.ed-row--drop-inside.is-blocked {
+  border-color: var(--danger); box-shadow: inset 0 0 0 1px var(--danger);
+}
+
+/* Подпись переноса («номер · название») едет за указателем и не ловит клики. */
+.ed-drag-ghost {
+  position: fixed; z-index: 90; pointer-events: none;
+  transform: translate(14px, 12px);
+  max-width: 260px; padding: 6px 10px; border-radius: 6px;
+  background: var(--bg-elev); border: 1px solid var(--accent); color: var(--fg);
+  font-size: 12px; line-height: 1.3;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  box-shadow: 0 8px 20px rgb(0 0 0 / 0.35);
+}
+.ed-drag-note { font-size: 12px; margin: 0 0 12px; color: var(--fg-muted); }
+.ed-drag-note--no { color: var(--danger); }
+.ed-drag-note__label { color: var(--fg); font-weight: 600; }
 
 .ed-editor {
   background: var(--bg-elev); border: 1px solid var(--border);
@@ -139,6 +186,8 @@
   .ed-panel__grid { grid-template-columns: 1fr; }
   .ed-nav { max-height: 40vh; }
   .ed-row { min-height: 34px; } /* палец на телефоне: строки дерева — тоже цель нажатия */
+  /* Зона захвата для переноса пальцем — не меньше той же цели нажатия. */
+  .ed-row__grip { width: 34px; min-height: 34px; }
   .ed-editor { padding: 12px; }
   .ed-assets__item { max-width: 100%; }
   /* Кружки тонов фона — тоже цель нажатия: 30px пальцем не накрыть. */

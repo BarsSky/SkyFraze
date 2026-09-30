@@ -169,6 +169,66 @@ func TestParseMarkdown_FrontMatter(t *testing.T) {
 	}
 }
 
+// Заголовок из front-matter, а `# H1` в файле остался: так пишет наша выгрузка,
+// и строку H1 надо убрать — иначе в приложении заголовок и тот же текст в теле.
+// Убираем только совпадающий H1: чужой заголовок в тексте — часть текста.
+func TestParseMarkdown_FrontMatterTitleDropsOwnHeadline(t *testing.T) {
+	parsed, err := parseFolder(t, map[string]string{
+		"01-Пролог.md": "---\ntitle: Пролог\n---\n\n" +
+			"<!-- skyfraze: number=01 id=x kind=event -->\n# 01 Пролог\nТекст главы.\n",
+		"02-Мир.md":    "---\ntitle: Мир\n---\n\n# Мир\nОписание мира.\n",
+		"03-Другой.md": "---\ntitle: Заголовок\n---\n\n# Другой заголовок\nТекст.\n",
+		"04-Дефис.md":  "---\ntitle: - С минусом\n---\n\n# 04 - С минусом\nТекст.\n",
+	})
+	if err != nil {
+		t.Fatalf("разбор: %v", err)
+	}
+	want := []collectedTree{
+		{Number: "01", Depth: 0, Title: "Пролог", Path: "01-Пролог.md", Body: "Текст главы."},
+		{Number: "02", Depth: 0, Title: "Мир", Path: "02-Мир.md", Body: "Описание мира."},
+		{Number: "03", Depth: 0, Title: "Заголовок", Path: "03-Другой.md", Body: "# Другой заголовок\nТекст."},
+		{Number: "04", Depth: 0, Title: "- С минусом", Path: "04-Дефис.md", Body: "Текст."},
+	}
+	got := treeOf(parsed)
+	if len(got) != len(want) {
+		t.Fatalf("событий %d, ожидалось %d: %+v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("событие #%d:\n получено %+v\n ожидалось %+v", i, got[i], want[i])
+		}
+	}
+}
+
+// Front-matter в кавычках: так выгрузка пишет заголовки со служебными символами
+// (`:`, кавычки, `#`, обратный слэш) — импорт обязан вернуть их ровно теми же,
+// без кавычек и без экранирующих слэшей.
+func TestParseMarkdown_FrontMatterQuotedValue(t *testing.T) {
+	parsed, err := parseFolder(t, map[string]string{
+		"01-Сборка.md": "---\ntitle: \"Сборка: «Прометей-7» \\\"старт\\\"\"\ndate: \"2026-01-15\"\n---\n\nТекст.\n",
+		"02-Путь.md":   "---\ntitle: \"C:\\\\верфь\"\n---\n\nТекст.\n",
+	})
+	if err != nil {
+		t.Fatalf("разбор: %v", err)
+	}
+	want := []collectedTree{
+		{Number: "01", Depth: 0, Title: `Сборка: «Прометей-7» "старт"`, Path: "01-Сборка.md", Body: "Текст."},
+		{Number: "02", Depth: 0, Title: `C:\верфь`, Path: "02-Путь.md", Body: "Текст."},
+	}
+	got := treeOf(parsed)
+	if len(got) != len(want) {
+		t.Fatalf("событий %d, ожидалось %d: %+v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("событие #%d:\n получено %+v\n ожидалось %+v", i, got[i], want[i])
+		}
+	}
+	if d := parsed.Events[0].Date; d == nil || d.Format("2006-01-02") != "2026-01-15" {
+		t.Errorf("дата в кавычках не разобралась: %v", parsed.Events[0].Date)
+	}
+}
+
 // Глубже четырёх уровней приложение не умеет: файл не берём и предупреждаем
 // (не молчаливое обрезание).
 func TestParseMarkdown_DepthLimit(t *testing.T) {

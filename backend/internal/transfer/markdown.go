@@ -187,12 +187,13 @@ type storyFile struct {
 }
 
 // storyFiles печатает по файлу на событие: имя `<номер>-<заголовок>.md`,
-// внутри машинный комментарий, H1 с номером и телом — ровно это и есть формат
-// обратного импорта (docs/import-export.md, п. 2).
+// внутри front-matter, машинный комментарий, H1 с номером и телом — ровно это и
+// есть формат обратного импорта (docs/import-export.md, п. 2).
 func (st *story) storyFiles(link func(store.Asset) string) []storyFile {
 	out := make([]storyFile, 0, len(st.Frames))
 	for _, f := range st.Frames {
 		var b strings.Builder
+		b.WriteString(yamlFrontMatter(f))
 		b.WriteString(storyComment(f))
 		b.WriteString("# " + frameHeadline(f) + "\n")
 		if body := strings.TrimRight(f.Event.Body, "\n"); body != "" {
@@ -263,6 +264,68 @@ func writeImageLines(b *strings.Builder, f storyFrame, link func(store.Asset) st
 // однозначно (docs/import-export.md, п. 1.1).
 func storyComment(f storyFrame) string {
 	return fmt.Sprintf("<!-- skyfraze: number=%s id=%s kind=event -->\n", f.Number, f.Event.ID)
+}
+
+// yamlFrontMatter — необязательный блок front-matter в начале файла story/:
+// `title` (точный заголовок события) и `date` (только если дата есть). Без него
+// дата, поставленная в приложении, в файлах терялась бы — и круговой обмен
+// «выгрузка → импорт» её не сохранял (импорт читает эти же поля, см.
+// markdown_import.go). Нет ни заголовка, ни даты — нет и блока: пустой
+// front-matter только засорил бы файл.
+func yamlFrontMatter(f storyFrame) string {
+	var b strings.Builder
+	if title := oneLine(f.Event.Title); title != "" {
+		b.WriteString("title: " + yamlScalar(title) + "\n")
+	}
+	if f.Event.EventDate != nil {
+		b.WriteString("date: " + f.Event.EventDate.Format("2006-01-02") + "\n")
+	}
+	if b.Len() == 0 {
+		return ""
+	}
+	return "---\n" + b.String() + "---\n\n"
+}
+
+// yamlScalar печатает значение front-matter: простым текстом, если это безопасно,
+// иначе в двойных кавычках с экранированием `"` и `\`. Импорт разбирает плоские
+// пары `ключ: значение` (frontMatterValue в markdown_import.go), но файлы читает
+// ещё и человек с pandoc — значение обязано пережить и обычный YAML.
+func yamlScalar(v string) string {
+	if !yamlNeedsQuotes(v) {
+		return v
+	}
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, r := range v {
+		if r == '"' || r == '\\' {
+			b.WriteByte('\\')
+		}
+		b.WriteRune(r)
+	}
+	b.WriteByte('"')
+	return b.String()
+}
+
+// yamlNeedsQuotes — требует ли значение кавычек: пустое или с ведущими и
+// замыкающими пробелами, с кавычками или обратным слэшем, с двоеточием или
+// решёткой в начале и конце, с «опасной» парой (`: `, ` #`), а также
+// начинающееся с индикатора YAML (`-`, `?`, `[`, `{`, `#` и им подобных).
+// Всё это YAML прочитал бы иначе, чем мы записали.
+func yamlNeedsQuotes(v string) bool {
+	if v == "" || strings.TrimSpace(v) != v {
+		return true
+	}
+	switch v[0] {
+	case '-', '?', ':', ',', '[', ']', '{', '}', '#', '&', '*', '!', '|', '>', '\'', '"', '%', '@', '`':
+		return true
+	}
+	if strings.ContainsAny(v, "\"'\\") {
+		return true
+	}
+	if strings.HasSuffix(v, ":") {
+		return true
+	}
+	return strings.Contains(v, ": ") || strings.Contains(v, " #") || strings.HasSuffix(v, "#")
 }
 
 // frameHeadline — «01.1 Сборка на орбитальной верфи»: номер кадра плюс заголовок.

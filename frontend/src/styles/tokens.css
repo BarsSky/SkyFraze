@@ -136,6 +136,13 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
   z-index: 70;
   transition: padding 0.2s ease;
 }
+/* Пока на экране сцена таймлайна, шапка непрозрачная: сквозь «стекло» просвечивал
+   текст кадра, и название главы визуально смешивалось с шапкой (класс ставит
+   TimelineStage). На остальных страницах полупрозрачность остаётся. */
+html.sf-stage-on .layout header {
+  background: var(--bg);
+  backdrop-filter: none;
+}
 .layout main {
   padding: 24px;
   overflow: auto;
@@ -151,9 +158,27 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
    min-width: 0 разрешает карточке сжаться, а заголовок обрезается многоточием. */
 .list { display: grid; gap: 8px; }
 .list > * { min-width: 0; }
-/* Навигация в шапке: «Лента» и «Мои проекты» — соседние ссылки, им нужен зазор
-   на всех ширинах, а не только на мобильных (иначе текст слипается). */
-.auth-links { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; }
+/* Навигация в шапке: пилюли того же вида, что чипы и переключатели на страницах
+   (см. .sf-chip, .craft-chip, .ed-chip) — одинаковая форма и состояния в обеих
+   темах. Активный раздел подсвечен тоном акцента, остальные проявляются при
+   наведении, поэтому «где я сейчас» видно без отдельной заливки фона. */
+.auth-links { display: flex; flex-wrap: nowrap; gap: 4px; align-items: center; }
+.auth-links a {
+  display: inline-flex; align-items: center; min-height: 30px;
+  padding: 4px 12px; border-radius: 999px;
+  border: 1px solid transparent;
+  color: var(--fg-muted); font-size: 0.94rem; text-decoration: none;
+  white-space: nowrap;
+  transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease;
+}
+.auth-links a:hover {
+  background: var(--chip-bg); color: var(--fg); text-decoration: none;
+}
+.auth-links a[aria-current='page'] {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  color: var(--fg); font-weight: 600;
+}
 
 /* Знак SkyFraze рядом с названием: рисунок тот же, что в favicon.svg */
 .brand {
@@ -167,6 +192,23 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
 .brand svg { flex: 0 0 auto; display: block; }
 .brand__name { white-space: nowrap; }
 
+/* Кто вошёл: имя и ник, ведут в профиль. Email убран из строки (он остался в
+   подсказке) — из-за него навигация не помещалась на средних экранах. */
+.header-user {
+  color: var(--fg-muted); font-size: 0.9rem; text-decoration: none;
+  max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.header-user:hover { color: var(--fg); text-decoration: none; }
+
+/* Средние экраны: имя вошедшего и подпись темы уступают место навигации — так
+   шапка остаётся ОДНОЙ строкой до планшета, а не переносится с одинокой ссылкой
+   во второй строке. Тема и так узнаётся по значку ☾/☀ (подсказка остаётся). */
+@media (max-width: 1180px) {
+  .header-user { display: none; }
+  .header-theme__label { display: none; }
+  .header-theme { min-width: 34px; justify-content: center; }
+}
+
 /* Мобильные цели нажатия: ссылки и кнопки не меньше 34px по высоте */
 @media (max-width: 860px) {
   .layout header a,
@@ -176,7 +218,8 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
     align-items: center;
     min-height: 34px;
   }
-  .auth-links { gap: 10px; }
+  .auth-links { gap: 6px; }
+  .auth-links a { padding: 5px 12px; }
   /* Шапка должна УМЕЩАТЬСЯ в ширину экрана. Если она вылезает, мобильный браузер
      расширяет layout viewport и масштабирует страницу целиком — после чего
      фиксированные слои стадии, посчитанные от vh, оказываются за пределами

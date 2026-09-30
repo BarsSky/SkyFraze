@@ -197,6 +197,14 @@
      доводит до трека TimelineStage (см. эффект про жест). */
   overflow: hidden; overscroll-behavior: contain;
 }
+/* Текст длиннее окна кадра: строки уходят за срез и появляются из-за него — им
+   нужны мягкие края, иначе обрыв читается как обрезанный текст. Класс ставит
+   TimelineStage только при реальном переполнении: короткому тексту маска
+   затенила бы сам заголовок. */
+.sf-copy__scroll--long {
+  mask-image: linear-gradient(to bottom, transparent 0, #000 22px, #000 calc(100% - 14px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 22px, #000 calc(100% - 14px), transparent 100%);
+}
 
 /* ── полоса прокрутки листа кадра ─────────────────────────────────────────
    Длинный текст прокручивается внутри листа, и системная полоса (в тёмной теме

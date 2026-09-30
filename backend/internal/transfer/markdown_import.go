@@ -19,13 +19,18 @@ package transfer
 //     в то же дерево;
 //   - файл без префикса — в конец своего уровня, номера выдаются подряд;
 //   - заголовок: front-matter `title:` → первый `# H1` → имя файла без номера и
-//     расширения. Если заголовок взят из `# H1`, строка из тела убирается: в
-//     приложении заголовок показывается отдельно, и в тексте он был бы дублем.
-//     Из H1 (и из имени) дополнительно срезается номер, если он там ровно такой
-//     же, как в имени файла: так выгрузка (`# 01.1 Сборка`) читается обратно без
-//     номера в заголовке;
+//     расширения. Заголовок в приложении показывается отдельно, поэтому строка
+//     `# H1` убирается из тела — и когда заголовок взят из неё, и когда он пришёл
+//     из front-matter, а H1 в файле остался (так пишет наша выгрузка). Во втором
+//     случае строку убираем, только если её текст совпадает с заголовком после
+//     снятия номера кадра: чужой H1 — часть текста, трогать его нельзя. Из H1 (и
+//     из имени) дополнительно срезается номер, если он там ровно такой же, как в
+//     имени файла: так выгрузка (`# 01.1 Сборка`) читается обратно без номера;
 //   - front-matter — необязательный плоский YAML: `title`, `date` (YYYY-MM-DD),
-//     `bg`. `bg` принимаем, но не применяем: настройки фона живут только в CRDT;
+//     `bg`. Значение может быть в двойных кавычках — так выгрузка пишет заголовки
+//     со служебными символами, — тогда кавычки снимаются, а `\"` и `\\`
+//     разэкранируются. `bg` принимаем, но не применяем: настройки фона живут
+//     только в CRDT;
 //   - глубина больше 4 — предупреждение и отказ от файла (не молчаливое
 //     обрезание), как MaxDepth в событиях;
 //   - кодировка UTF-8 (BOM допускается), CRLF нормализуется; нечитаемый файл —
@@ -512,11 +517,19 @@ func parseMarkdownFile(path string, data []byte) *markdownItem {
 	// строки круговой обмен «выгрузили → загрузили» не сошёлся бы по телам.
 	body = skyfrazeCommentRe.ReplaceAllString(body, "")
 
-	title := strings.TrimSpace(strings.Trim(fm["title"], `"'`))
+	title := frontMatterValue(fm["title"])
 	if title == "" {
 		if m := h1Re.FindStringSubmatchIndex(body); m != nil {
 			title = stripNumberPrefix(strings.TrimSpace(body[m[2]:m[3]]), item.rawNum)
 			// Заголовок показывается отдельно от текста, поэтому строку убираем.
+			body = strings.TrimLeft(body[:m[0]]+body[m[1]:], "\n")
+		}
+	} else if m := h1Re.FindStringSubmatchIndex(body); m != nil {
+		// Заголовок пришёл из front-matter, а H1 в файле остался — так пишет наша
+		// выгрузка. Строку убираем, только если это тот же заголовок (с тем же
+		// номером кадра): иначе H1 — часть текста, и в приложении он был бы дублем
+		// заголовка только в первом случае.
+		if h1Title(strings.TrimSpace(body[m[2]:m[3]]), item.rawNum) == title {
 			body = strings.TrimLeft(body[:m[0]]+body[m[1]:], "\n")
 		}
 	}
@@ -530,7 +543,7 @@ func parseMarkdownFile(path string, data []byte) *markdownItem {
 	}
 	item.title = title
 
-	if d := strings.TrimSpace(strings.Trim(fm["date"], `"'`)); d != "" {
+	if d := frontMatterValue(fm["date"]); d != "" {
 		parsed, err := time.Parse("2006-01-02", d)
 		if err != nil {
 			item.warnings = append(item.warnings,
@@ -582,6 +595,52 @@ func splitFrontMatter(text string) (map[string]string, string) {
 		fm[strings.TrimSpace(key)] = strings.TrimSpace(value)
 	}
 	return fm, body
+}
+
+// frontMatterValue читает значение плоской пары front-matter: снимает кавычки и
+// разэкранирует ровно то, что пишет выгрузка (`"` и `\`, см. yamlScalar в
+// markdown.go). Без этого заголовок с кавычкой вернулся бы из файла с обратными
+// слэшами — то есть с лишними символами, которых автор не писал. Остальные
+// обратные слэши не трогаем: такого экранирования выгрузка не делает, и значение
+// остаётся ровно таким, как его записал человек.
+func frontMatterValue(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if len(raw) >= 2 && raw[0] == '"' && raw[len(raw)-1] == '"' {
+		body := raw[1 : len(raw)-1]
+		var b strings.Builder
+		b.Grow(len(body))
+		for i := 0; i < len(body); i++ {
+			if body[i] == '\\' && i+1 < len(body) && (body[i+1] == '\\' || body[i+1] == '"') {
+				i++ // `\\` → `\`, `\"` → `"`
+			}
+			b.WriteByte(body[i])
+		}
+		return strings.TrimSpace(b.String())
+	}
+	if len(raw) >= 2 && raw[0] == '\'' && raw[len(raw)-1] == '\'' {
+		// YAML в одинарных кавычках экранирует саму кавычку удвоением.
+		return strings.TrimSpace(strings.ReplaceAll(raw[1:len(raw)-1], "''", "'"))
+	}
+	// Без кавычек: одиночные кавычки по краям — мусор от чужого редактора, и
+	// раньше их срезал Trim.
+	return strings.Trim(raw, "\"'")
+}
+
+// h1Title — текст H1 без ведущего номера кадра: «01.1 Сборка» → «Сборка». Номер
+// снимается, только если он ровно такой же, как в имени файла (как и в
+// stripNumberPrefix), но дефисы и точки самого заголовка не трогаются: сравнение
+// с front-matter должно быть точным, а заголовок вполне может начинаться с
+// дефиса.
+func h1Title(h1, rawNum string) string {
+	h1 = strings.TrimSpace(h1)
+	if rawNum == "" || !strings.HasPrefix(h1, rawNum) {
+		return h1
+	}
+	rest := strings.TrimPrefix(h1, rawNum)
+	if rest == "" || !strings.ContainsRune(" \t-—.", rune(rest[0])) {
+		return h1
+	}
+	return strings.TrimSpace(rest)
 }
 
 // parseNumberPrefix читает `01-`, `01.1-`, `01.1.1-` из имени файла. nil —

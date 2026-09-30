@@ -22,7 +22,9 @@ export function SceneFrame({ frame, local }: { frame: TimelineFrame; local: numb
         <div className="sf-scene__tone" style={{ background: toneGradient(background.tone) }} />
       ) : (
         <div className="sf-scene__still sf-scene__still--generated">
-          <EventIllustration eventId={frame.id} title={frame.title} phase={0.5} />
+          {/* Палитра сцены берётся из акцента главы, поэтому глава и её под-события
+              выглядят как одна история, а светлая тема получает светлый фон. */}
+          <EventIllustration eventId={frame.id} title={frame.title} accent={frame.accent} phase={local} />
         </div>
       )}
       <div className="sf-scene__vignette" />

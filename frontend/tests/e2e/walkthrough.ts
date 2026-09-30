@@ -1,4 +1,4 @@
-// Скрипт проходит по всему UI: register → projects → timeline → settings → assets upload → team invite → logout → login.
+﻿// Скрипт проходит по всему UI: register → projects → timeline → settings → assets upload → team invite → logout → login.
 // Снимает скриншоты на desktop (1440x900), tablet (768x1024) и mobile (390x844).
 // Запуск: npx tsx tests/e2e/walkthrough.ts
 
@@ -113,7 +113,7 @@ async function fullWalk(context: BrowserContext, tag: string): Promise<{ errors:
   await shot(page, `${tag}-09-settings-invite-sent`)
 
   // 7. logout
-  await page.getByRole('button', { name: /Logout/ }).click()
+  await page.getByRole('button', { name: /Выйти|Logout/ }).click()
   await page.waitForURL(/\/login$/)
   await shot(page, `${tag}-10-login`)
 
@@ -202,3 +202,4 @@ async function fullWalk(context: BrowserContext, tag: string): Promise<{ errors:
   console.error('FATAL:', e)
   process.exit(1)
 })
+

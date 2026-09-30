@@ -152,6 +152,21 @@ export function PeoplePage() {
   }
 
   /**
+   * Явный поиск: Enter в поле и кнопка «Найти» применяют запрос сразу, не ожидая
+   * паузы после набора. Если дебаунс уже применил ровно этот запрос (эффект ниже
+   * ничего не перезапустит), повторяем его сами — иначе нажатие выглядело бы как
+   * «ничего не произошло».
+   */
+  function submitSearch(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (query.trim() === debounced.trim()) {
+      void load(activeQuery, craft, 0)
+      return
+    }
+    setDebounced(query)
+  }
+
+  /**
    * Что делать со строкой: пригласить или объяснить, почему нельзя. Повторную
    * заявку кнопка не предлагает — связь приходит вместе с человеком.
    */
@@ -224,14 +239,17 @@ export function PeoplePage() {
       )}
 
       <section className="card">
-        <div className="coauthors__search">
+        <form className="coauthors__search" role="search" onSubmit={submitSearch}>
           <input
             value={query}
             placeholder="Поиск по нику (@nick) или имени"
             aria-label="Поиск резидентов по нику или имени"
             onChange={(e) => setQuery(e.target.value)}
           />
-        </div>
+          {/* Кнопка нужна не только ради Enter: явное нажатие применяет запрос
+              сразу, а не после паузы набора. */}
+          <button type="submit" className="secondary">Найти</button>
+        </form>
         {trimmed.length === 1 && (
           <p className="muted people__hint">
             Поиск идёт от двух символов — пока показан весь каталог.

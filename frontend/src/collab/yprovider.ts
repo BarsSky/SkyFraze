@@ -2,6 +2,7 @@ import * as Y from 'yjs'
 import { useEffect, useState } from 'react'
 import { useAuthStore } from '../store/auth'
 import { buildEventTree } from './eventTree'
+import { moveEvent, type DropPlace } from './reorder'
 import { randomId } from '../lib/uuid'
 import { collabSocketUrl } from './socketUrl'
 import { getEventState, listEventRows, putEventState, syncEventTree, type FlatEventNode } from '../api/events'
@@ -436,6 +437,73 @@ export function yMoveEvent(events: YArray, id: string, newParentId: string | nul
 
   if (newParentId) target.set('parent_id', newParentId)
   else target.delete('parent_id')
+  return true
+}
+
+/**
+ * Переносит событие вместе с его поддеревом в новую позицию дерева.
+ *
+ * Порядок в Y.Array = порядок отображения, поэтому перенос — это сдвиг одной
+ * записи в массиве плюс `parent_id` у её корня: потомки остаются на своих
+ * местах и «приезжают» под нового родителя сами, ничего разбирать не нужно.
+ * Проверку (цикл, глубина) и целевую позицию считает чистая `moveEvent`, здесь
+ * она только применяется к Y.Array — одной транзакцией, чтобы соавторы увидели
+ * перенос целиком, а не промежуточное состояние.
+ *
+ * Запись пересоздаётся копией: Yjs не умеет перемещать уже вставленный тип
+ * (`insert` того же Y.Map падает — тип интегрируется в документ ровно один раз).
+ * Копия несёт тот же `id` и все поля, поэтому потомки и ссылки не рвутся,
+ * `buildEventTree` схлопывает возможный дубликат id и дерево остаётся целым.
+ * Цена: правка того же события соавтором ровно в момент переноса может
+ * потеряться — это ограничение самого Yjs, а не расчёта позиции.
+ *
+ * Возвращает false, если перенос запрещён (неизвестный id, цикл, глубина > 4).
+ */
+export function yMoveSubtree(
+  events: YArray,
+  id: string,
+  targetId: string | null,
+  place: DropPlace,
+): boolean {
+  // Один снимок массива: индексы из него же и применяем, иначе параллельная
+  // правка соавтора сдвинула бы позиции между чтением и записью.
+  const snapshot = events.toArray() as YMap[]
+  const flat = snapshot.map((m) => ({
+    id: (m.get('id') as string | undefined) ?? '',
+    parentId: yEventParentId(m),
+  }))
+  const next = moveEvent(flat, id, targetId, place)
+  if (!next) return false
+
+  const from = flat.findIndex((e) => e.id === id)
+  const to = next.findIndex((e) => e.id === id)
+  if (from < 0 || to < 0) return false
+
+  const moved = snapshot[from]
+  const parentId = next[to].parentId
+
+  const applyParent = (map: YMap) => {
+    if (parentId) map.set('parent_id', parentId)
+    else map.delete('parent_id')
+  }
+
+  const apply = () => {
+    // Уровень поменялся, порядок — нет: тип трогать не нужно, правим поле.
+    if (from === to) {
+      applyParent(moved)
+      return
+    }
+    // `to` посчитан для массива без переносимой записи — сначала удаляем,
+    // потом вставляем копию по этому индексу.
+    const copy = moved.clone()
+    applyParent(copy)
+    events.delete(from, 1)
+    events.insert(to, [copy])
+  }
+
+  const doc = events.doc
+  if (doc) doc.transact(apply, 'reorder')
+  else apply()
   return true
 }
 

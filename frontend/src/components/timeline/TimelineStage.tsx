@@ -93,6 +93,16 @@ export function TimelineStage({ events, assetsById, projectTitle, actions, copyF
   )
   const [stageActive, setStageActive] = useState(true)
 
+  // Пока сцена на экране, шапка приложения должна быть плотной: она полупрозрачная
+  // («стекло» с блюром), и текст кадра, уходя под неё, просвечивал — название главы
+  // визуально смешивалось с шапкой. Класс на <html> ловит CSS; вне сцены стекло
+  // возвращается (список проектов, лента).
+  useEffect(() => {
+    const root = document.documentElement
+    root.classList.toggle('sf-stage-on', stageActive)
+    return () => root.classList.remove('sf-stage-on')
+  }, [stageActive])
+
   // Фиксированные слои стадии не должны заезжать под шапку приложения: на телефоне
   // шапка переносится и становится выше, и кнопка «Редакторы» оказывалась под ней.
   // Поэтому высоту шапки измеряем и отдаём в CSS переменной --sf-header-h.
@@ -218,6 +228,13 @@ export function TimelineStage({ events, assetsById, projectTitle, actions, copyF
     if (!scroll) return
     const max = scroll.scrollHeight - scroll.clientHeight
     if (max <= 0) return
+    // Переполнение помечаем классом: по нему CSS добавляет листу мягкие края,
+    // чтобы уходящие за срез строки не обрывались резкой линией. Короткому тексту
+    // класс не ставим — там маска затенила бы сам заголовок.
+    const long = max > 24
+    if (scroll.classList.contains('sf-copy__scroll--long') !== long) {
+      scroll.classList.toggle('sf-copy__scroll--long', long)
+    }
     const target = Math.round(max * Math.min(1, Math.max(0, frameLocalRef.current)))
     if (Math.abs(scroll.scrollTop - target) > 1) scroll.scrollTop = target
   }, [])

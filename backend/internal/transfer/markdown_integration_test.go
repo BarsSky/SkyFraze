@@ -250,7 +250,9 @@ func TestExportMarkdownZip_ContentsAndTransferImport(t *testing.T) {
 }
 
 // Круговой обмен: выгрузка zip → разбор тем же импортом → дерево совпадает
-// (номера, заголовки, вложенность, тела). Это обязательное свойство формата.
+// (номера, заголовки, вложенность, тела), а заголовок и дата переживают круг
+// целиком: выгрузка пишет их в front-matter, импорт читает оттуда же и не
+// задваивает заголовок строкой H1. Это обязательное свойство формата.
 func TestMarkdownRoundTrip(t *testing.T) {
 	e := setup(t)
 	ctx := context.Background()
@@ -269,10 +271,12 @@ func TestMarkdownRoundTrip(t *testing.T) {
 	want := []struct {
 		number, title, body string
 		depth               int
+		// date — дата события в виде ГГГГ-ММ-ДД ("" — даты нет).
+		date string
 	}{
-		{"01", "Глава 1", "Текст главы.", 0},
-		{"01.1", "Под-событие", "Текст под-события.", 1},
-		{"01.1.1", "Под-шаг", "Текст под-шага.", 2},
+		{"01", "Глава 1", "Текст главы.", 0, "2024-05-17"},
+		{"01.1", "Под-событие", "Текст под-события.", 1, ""},
+		{"01.1.1", "Под-шаг", "Текст под-шага.", 2, ""},
 	}
 	if parsed.ProjectTitle != "Галактическая сага" {
 		t.Errorf("название проекта не восстановилось: %q", parsed.ProjectTitle)
@@ -285,6 +289,14 @@ func TestMarkdownRoundTrip(t *testing.T) {
 		if got.Number != w.number || got.Title != w.title || got.Body != w.body || got.Depth != w.depth {
 			t.Errorf("кадр #%d: получено {%s %d %q %q}, ожидалось {%s %d %q %q}",
 				i, got.Number, got.Depth, got.Title, got.Body, w.number, w.depth, w.title, w.body)
+		}
+		if dateOf(got.Date) != w.date {
+			t.Errorf("дата кадра #%d: получено %q, ожидалось %q", i, dateOf(got.Date), w.date)
+		}
+		// Заголовок взят из front-matter, а H1 в файле остался: в теле его быть
+		// не должно, иначе в приложении заголовок задвоится.
+		if strings.HasPrefix(got.Body, "# ") {
+			t.Errorf("в теле кадра #%d остался H1: %q", i, got.Body)
 		}
 	}
 
@@ -313,12 +325,129 @@ func TestMarkdownRoundTrip(t *testing.T) {
 		if evs[i].Position != 0 {
 			t.Errorf("позиция события #%d: %d", i, evs[i].Position)
 		}
+		if dateOf(evs[i].EventDate) != w.date {
+			t.Errorf("дата события #%d в базе: %v, ожидалось %q", i, evs[i].EventDate, w.date)
+		}
 	}
 	if evs[0].ParentID != nil || evs[1].ParentID == nil || *evs[1].ParentID != evs[0].ID {
 		t.Error("вложенность верхнего уровня не сохранилась")
 	}
 	if evs[2].ParentID == nil || *evs[2].ParentID != evs[1].ID {
 		t.Error("вложенность под-шага не сохранилась")
+	}
+}
+
+// dateOf — дата события в виде ГГГГ-ММ-ДД, "" — даты нет.
+func dateOf(d *time.Time) string {
+	if d == nil {
+		return ""
+	}
+	return d.Format("2006-01-02")
+}
+
+// Front-matter на «неудобных» заголовках: двоеточие, кавычки, решётка и обратный
+// слэш обязаны пережить и файл (значение в кавычках с экранированием), и круг
+// «выгрузка → импорт» — байт в байт.
+func TestMarkdownRoundTrip_QuotedTitles(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	owner := e.user(t, "owner@example.com")
+	p, err := e.proj.Create(ctx, owner, "Служебные символы", "")
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	date := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
+	titles := []string{
+		"Сборка: «Прометей-7»",
+		`Он сказал "старт" и ушёл`,
+		"#1 старт",
+		`C:\верфь`,
+	}
+	rows := make([]store.Event, 0, len(titles))
+	for i, title := range titles {
+		row := store.Event{
+			ID: uuid.New(), ProjectID: p.ID, Position: i, Depth: 0,
+			Title: title, Body: "Тело события.",
+		}
+		if i == 0 {
+			row.EventDate = &date
+		}
+		rows = append(rows, row)
+	}
+	if err := e.st.InsertEventTree(ctx, p.ID, owner, rows); err != nil {
+		t.Fatalf("events: %v", err)
+	}
+
+	var buf bytes.Buffer
+	if _, err := e.transfer.ExportMarkdownZip(ctx, owner, p.ID, &buf); err != nil {
+		t.Fatalf("export zip: %v", err)
+	}
+	entries := readZipEntries(t, buf.Bytes())
+
+	var storyFiles strings.Builder
+	for name, content := range entries {
+		if strings.HasPrefix(name, "story/") {
+			storyFiles.Write(content)
+		}
+	}
+	// Значение со служебным символом выгрузка пишет в двойных кавычках и
+	// экранирует `"` и `\` — ровно то, что снимет импорт.
+	for _, want := range []string{
+		"title: \"Сборка: «Прометей-7»\"",
+		"title: \"Он сказал \\\"старт\\\" и ушёл\"",
+		"title: \"#1 старт\"",
+		"title: \"C:\\\\верфь\"",
+		"date: 2026-01-15",
+	} {
+		if !strings.Contains(storyFiles.String(), want) {
+			t.Errorf("в front-matter выгрузки нет %q:\n%s", want, storyFiles.String())
+		}
+	}
+
+	parsed, err := transfer.ParseMarkdownZip(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
+	if err != nil {
+		t.Fatalf("разбор архива: %v", err)
+	}
+	if len(parsed.Events) != len(titles) {
+		t.Fatalf("событий %d, ожидалось %d: %+v", len(parsed.Events), len(titles), parsed.Events)
+	}
+	for i, title := range titles {
+		got := parsed.Events[i]
+		if got.Title != title {
+			t.Errorf("заголовок кадра #%d: получено %q, ожидалось %q", i, got.Title, title)
+		}
+		if strings.HasPrefix(got.Body, "# ") {
+			t.Errorf("в теле кадра #%d остался H1: %q", i, got.Body)
+		}
+		want := ""
+		if i == 0 {
+			want = "2026-01-15"
+		}
+		if dateOf(got.Date) != want {
+			t.Errorf("дата кадра #%d: получено %q, ожидалось %q", i, dateOf(got.Date), want)
+		}
+	}
+
+	imported, err := e.transfer.ImportMarkdown(ctx, owner, parsed, "")
+	if err != nil {
+		t.Fatalf("import markdown: %v", err)
+	}
+	evs, err := e.st.ListEvents(ctx, imported.ID)
+	if err != nil || len(evs) != len(titles) {
+		t.Fatalf("событий в базе: %d (err=%v)", len(evs), err)
+	}
+	for i, title := range titles {
+		if evs[i].Title != title || evs[i].Body != "Тело события." {
+			t.Errorf("событие #%d в базе: %+v, ожидался заголовок %q", i, evs[i], title)
+		}
+		want := ""
+		if i == 0 {
+			want = "2026-01-15"
+		}
+		if dateOf(evs[i].EventDate) != want {
+			t.Errorf("дата события #%d в базе: %v, ожидалось %q", i, evs[i].EventDate, want)
+		}
 	}
 }
 

@@ -1,278 +1,312 @@
 import { useMemo } from 'react'
+import { useTheme } from '../../store/theme'
+import {
+  hashString,
+  hsl,
+  sceneKind,
+  scenePalette,
+  type SceneKind,
+  type ScenePalette,
+} from '../../lib/scenePalette'
 
 /**
- * Процедурный генератор SVG-иллюстраций для событий таймлайна.
- * Используется как fallback когда у события нет загруженного ассета.
+ * Процедурный фон кадра: используется, когда у события не выбрана картинка.
  *
- * Каждая иллюстрация детерминирована по event.id (через простой hash)
- * → один и тот же event всегда получает ту же картинку.
+ * Палитра выводится из акцента главы и темы (см. lib/scenePalette.ts), поэтому
+ * глава и её под-события выглядят как одна история, а светлая тема получает
+ * светлую сцену, а не тёмный космос. Композиция выбирается по id события и
+ * детерминирована: одно событие — одна и та же картинка.
  *
- * Theme palette — cinematic dark sci-fi (тёплые/холодные акценты).
+ * Сцены намеренно абстрактные и низкоконтрастные: они фон для текста, а не
+ * вторая сюжетная линия. Ни гора, ни корабль, ни орбита не «привязаны» к жанру —
+ * подходит и космосу, и фэнтези, и документу.
  */
-
 interface Props {
   eventId: string
   title: string
+  /** Акцент главы (`frame.accent`) — из него строится палитра сцены. */
+  accent?: string
   width?: number
   height?: number
-  /** 0..1 — фаза анимации */
+  /** 0..1 — фаза анимации (параллакс при прокрутке) */
   phase?: number
 }
 
-// cinematic palettes: [bg1, bg2, accent1, accent2, glow]
-const PALETTES: Array<[string, string, string, string, string]> = [
-  ['#0a0d18', '#1a0d2e', '#58a6ff', '#a371f7', '#3fb950'], // запуск в космос (cool)
-  ['#0d1820', '#1a2030', '#39c5cf', '#58a6ff', '#7d8590'], // сигналы (cold)
-  ['#1a0d0d', '#2e1010', '#d29922', '#f85149', '#ffa657'], // теория/открытие (warm)
-  ['#0a0a0a', '#1a1a1a', '#7d8590', '#58a6ff', '#f85149'], // протесты (mono)
-  ['#1f0d0d', '#3d1818', '#f85149', '#ff7b72', '#d29922'], // битва/инцидент (red)
-  ['#0d1a1f', '#1a2030', '#a371f7', '#58a6ff', '#39c5cf'], // восстание ИИ (purple)
-  ['#1a1a0d', '#2e2e10', '#d29922', '#58a6ff', '#7d8590'], // подготовка (industrial)
-]
-
-function hashStr(s: string): number {
-  let h = 5381
-  for (let i = 0; i < s.length; i++) {
-    h = ((h << 5) + h) ^ s.charCodeAt(i)
-  }
-  return Math.abs(h)
-}
-
-export function EventIllustration({ eventId, title, width = 1200, height = 700, phase = 0 }: Props) {
-  const palette = useMemo(() => {
-    const idx = hashStr(eventId || title) % PALETTES.length
-    return PALETTES[idx]
-  }, [eventId, title])
-
-  const variant = useMemo(() => {
-    // Выбираем «сцену» по hash — разные композиции для разных событий
-    const v = hashStr(eventId + 'scene') % 4
-    return v
-  }, [eventId])
-
-  const [bg1, bg2, accent1, accent2, glow] = palette
-
-  // Параметры, зависящие от фазы (для тонкой анимации при прокрутке)
-  const t = phase
-  const starDrift = t * 12 // пикселей сдвига
+export function EventIllustration({ eventId, title, accent, width = 1200, height = 700, phase = 0 }: Props) {
+  const [theme] = useTheme()
+  const palette = useMemo(() => scenePalette(accent ?? '#6FB3C9', theme), [accent, theme])
+  const kind = useMemo(() => sceneKind(eventId || title), [eventId, title])
+  const seed = useMemo(() => hashString(`${eventId}:detail`), [eventId])
+  // Уникальный суффикс градиентов: до этого в компоненте были жёсткие id вида
+  // `planet-x`/`blur-x`, которые нигде не определены, и часть сцены не рисовалась.
+  const uid = useMemo(() => `scene${hashString(eventId || title).toString(36)}`, [eventId, title])
 
   return (
     <svg
       viewBox={`0 0 ${width} ${height}`}
       preserveAspectRatio="xMidYMid slice"
-      style={{
-        width: '100%',
-        height: '100%',
-        display: 'block',
-      }}
+      style={{ width: '100%', height: '100%', display: 'block' }}
       role="img"
       aria-label={title}
     >
       <defs>
-        <radialGradient id={`bg-${eventId}`} cx="50%" cy="60%" r="80%">
-          <stop offset="0%" stopColor={bg2} />
-          <stop offset="100%" stopColor={bg1} />
+        <radialGradient id={`${uid}-sky`} cx="50%" cy="42%" r="85%">
+          <stop offset="0%" stopColor={palette.bg2} />
+          <stop offset="100%" stopColor={palette.bg1} />
         </radialGradient>
-        <radialGradient id={`glow-${eventId}`} cx="50%" cy="50%" r="50%">
-          <stop offset="0%" stopColor={glow} stopOpacity="0.6" />
-          <stop offset="60%" stopColor={accent1} stopOpacity="0.2" />
-          <stop offset="100%" stopColor={accent1} stopOpacity="0" />
+        <radialGradient id={`${uid}-glow`} cx="50%" cy="50%" r="50%">
+          <stop offset="0%" stopColor={palette.glow} stopOpacity="0.55" />
+          <stop offset="55%" stopColor={palette.glow} stopOpacity="0.18" />
+          <stop offset="100%" stopColor={palette.glow} stopOpacity="0" />
         </radialGradient>
-        <linearGradient id={`planet-${eventId}`} x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stopColor={accent1} />
-          <stop offset="100%" stopColor={accent2} />
+        <linearGradient id={`${uid}-ridge`} x1="0%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%" stopColor={palette.ridge} stopOpacity="0.55" />
+          <stop offset="100%" stopColor={palette.ridge} stopOpacity="0.95" />
         </linearGradient>
-        <filter id={`blur-${eventId}`} x="-20%" y="-20%" width="140%" height="140%">
-          <feGaussianBlur stdDeviation="6" />
-        </filter>
       </defs>
 
-      {/* Background */}
-      <rect width={width} height={height} fill={`url(#bg-${eventId})`} />
-
-      {/* Звёзды — детерминированные по hash */}
-      {Array.from({ length: 80 }).map((_, i) => {
-        const h = hashStr(eventId + 'star' + i)
-        const x = (h * 37) % width
-        const y = (h * 71) % height
-        const r = ((h >> 3) % 5) / 10 + 0.3
-        const opacity = ((h >> 5) % 100) / 200 + 0.3
-        return (
-          <circle
-            key={i}
-            cx={x}
-            cy={y}
-            r={r}
-            fill="#fff"
-            opacity={opacity}
-          />
-        )
-      })}
-
-      {/* Параллакс слой звёзд (медленнее) */}
-      <g transform={`translate(${-starDrift * 0.3} 0)`}>
-        {Array.from({ length: 30 }).map((_, i) => {
-          const h = hashStr(eventId + 'far' + i)
-          const x = ((h * 53) % width) + starDrift
-          const y = ((h * 89) % height)
-          return <circle key={i} cx={x} cy={y} r={1.2} fill="#fff" opacity={0.4} />
-        })}
-      </g>
-
-      {/* Glow halo */}
-      <circle
-        cx={width / 2}
-        cy={height * 0.5}
-        r={Math.min(width, height) * 0.4}
-        fill={`url(#glow-${eventId})`}
-      />
-
-      {/* Scene-specific composition */}
-      {variant === 0 && (
-        // Большая планета + кольца (как Сатурн)
-        <ScenePlanetRinged width={width} height={height} accent1={accent1} accent2={accent2} />
-      )}
-      {variant === 1 && (
-        // Корабль с траекторией
-        <SceneShipTrajectory width={width} height={height} accent1={accent1} accent2={accent2} phase={phase} />
-      )}
-      {variant === 2 && (
-        // Звёздное скопление + лучи
-        <SceneStarCluster width={width} height={height} accent1={accent1} accent2={accent2} glow={glow} />
-      )}
-      {variant === 3 && (
-        // Горизонт планеты
-        <SceneHorizon width={width} height={height} accent1={accent1} accent2={accent2} glow={glow} phase={phase} />
-      )}
-
-      {/* Vignette */}
-      <rect width={width} height={height} fill={`url(#bg-${eventId})`} opacity={0.15} style={{ mixBlendMode: 'multiply' as React.CSSProperties['mixBlendMode'] }} />
+      <rect width={width} height={height} fill={`url(#${uid}-sky)`} />
+      <Scene kind={kind} palette={palette} width={width} height={height} seed={seed} phase={phase} uid={uid} />
+      {/* Плотная вуаль по краям: текст кадра всегда читается поверх сцены. */}
+      <rect width={width} height={height} fill={`url(#${uid}-glow)`} opacity="0.5" />
     </svg>
   )
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Scene compositions
-// ─────────────────────────────────────────────────────────────────────────────
-
-function ScenePlanetRinged({ width, height, accent1, accent2 }: { width: number; height: number; accent1: string; accent2: string }) {
-  const cx = width * 0.7
-  const cy = height * 0.5
-  const r = Math.min(width, height) * 0.18
-  return (
-    <g>
-      {/* Back-side of ring */}
-      <ellipse cx={cx} cy={cy} rx={r * 1.9} ry={r * 0.4} fill="none" stroke={accent2} strokeWidth={3} opacity={0.5} />
-      {/* Planet */}
-      <circle cx={cx} cy={cy} r={r} fill={`url(#planet-${'x'})`}>
-        <animate attributeName="opacity" values="0.95;1;0.95" dur="6s" repeatCount="indefinite" />
-      </circle>
-      {/* Surface details */}
-      <ellipse cx={cx - r * 0.3} cy={cy - r * 0.2} rx={r * 0.4} ry={r * 0.15} fill={accent2} opacity={0.3} />
-      <ellipse cx={cx + r * 0.4} cy={cy + r * 0.3} rx={r * 0.3} ry={r * 0.1} fill={accent2} opacity={0.4} />
-      {/* Front-side of ring */}
-      <ellipse cx={cx} cy={cy} rx={r * 1.9} ry={r * 0.4} fill="none" stroke={accent1} strokeWidth={4} opacity={0.85} mask={`url(#ringMask)`} />
-      {/* Moon */}
-      <circle cx={width * 0.25} cy={height * 0.3} r={r * 0.18} fill={accent1} opacity={0.6} />
-    </g>
-  )
+function Scene({
+  kind, palette, width, height, seed, phase, uid,
+}: {
+  kind: SceneKind
+  palette: ScenePalette
+  width: number
+  height: number
+  seed: number
+  phase: number
+  uid: string
+}) {
+  const drift = phase * 14
+  switch (kind) {
+    case 'ridges':
+      return <SceneRidges palette={palette} width={width} height={height} seed={seed} drift={drift} uid={uid} />
+    case 'aurora':
+      return <SceneAurora palette={palette} width={width} height={height} seed={seed} drift={drift} />
+    case 'horizon':
+      return <SceneHorizon palette={palette} width={width} height={height} seed={seed} drift={drift} uid={uid} />
+    case 'contours':
+      return <SceneContours palette={palette} width={width} height={height} seed={seed} drift={0} />
+    case 'dust':
+      return <SceneDust palette={palette} width={width} height={height} seed={seed} drift={drift} />
+    case 'orbits':
+      return <SceneOrbits palette={palette} width={width} height={height} seed={seed} drift={drift} />
+  }
 }
 
-function SceneShipTrajectory({ width, height, accent1, accent2, phase }: { width: number; height: number; accent1: string; accent2: string; phase: number }) {
-  // Корабль движется по параболе слева направо
-  const progress = (phase % 1 + 1) % 1 // 0..1
-  const x = width * 0.1 + width * 0.8 * progress
-  const y = height * 0.7 - Math.sin(progress * Math.PI) * height * 0.4
+/** Хребты: три слоя мягких горных силуэтов, свет из-за дальней гряды. */
+function SceneRidges({ palette, width, height, seed, drift, uid }: SceneProps & { uid: string }) {
+  const layers = [0.52, 0.64, 0.78]
   return (
     <g>
-      {/* Trajectory path */}
-      <path
-        d={`M ${width * 0.05} ${height * 0.7} Q ${width * 0.5} ${height * 0.2} ${width * 0.95} ${height * 0.7}`}
-        fill="none"
-        stroke={accent1}
-        strokeWidth={2}
-        strokeDasharray="8 12"
-        opacity={0.5}
-      />
-      {/* Engine glow */}
-      <circle cx={x} cy={y} r={40} fill={accent2} opacity={0.4} filter="url(#blur-x)" />
-      {/* Ship body */}
-      <g transform={`translate(${x}, ${y}) rotate(${progress * 30 - 15})`}>
-        <ellipse cx={0} cy={0} rx={32} ry={8} fill={accent1} />
-        <ellipse cx={0} cy={0} rx={20} ry={5} fill={accent2} />
-        <polygon points="-32,0 -42,-4 -42,4" fill={accent1} />
-        <polygon points="-32,0 -38,-8 -36,-3 -38,3 -36,8" fill={accent2} />
+      <circle cx={width * 0.68} cy={height * 0.34} r={Math.min(width, height) * 0.22} fill={`url(#${uid}-glow)`} />
+      {layers.map((base, layer) => {
+        const y = height * base
+        const amp = 26 + layer * 22
+        const points: string[] = []
+        for (let i = 0; i <= 12; i++) {
+          const x = (width / 12) * i
+          const wobble = Math.sin((i + (seed % 7)) * (1.1 + layer * 0.4)) * amp
+          points.push(`${x.toFixed(0)} ${(y + wobble - drift * (0.2 + layer * 0.1)).toFixed(0)}`)
+        }
+        return (
+          <path
+            key={layer}
+            d={`M 0 ${height} L ${points.join(' L ')} L ${width} ${height} Z`}
+            fill={`url(#${uid}-ridge)`}
+            opacity={0.35 + layer * 0.22}
+          />
+        )
+      })}
+      <g opacity="0.5">
+        {Array.from({ length: 24 }).map((_, i) => {
+          const h = hashString(`${seed}:dust${i}`)
+          return (
+            <circle
+              key={i}
+              cx={((h * 37) % width)}
+              cy={((h * 71) % (height * 0.5))}
+              r={((h >> 3) % 4) / 6 + 0.4}
+              fill={palette.dust}
+              opacity={0.35}
+            />
+          )
+        })}
       </g>
     </g>
   )
 }
 
-function SceneStarCluster({ width, height, accent1, accent2, glow }: { width: number; height: number; accent1: string; accent2: string; glow: string }) {
-  // Большое светило в центре + лучи
-  const cx = width / 2
-  const cy = height * 0.55
+/** Аврора: полосы света с синусоидальным краем. */
+function SceneAurora({ palette, width, height, seed, drift }: SceneProps) {
+  const bands = [0.3, 0.42, 0.56]
   return (
     <g>
-      {/* Core glow */}
-      <circle cx={cx} cy={cy} r={180} fill={glow} opacity={0.3} />
-      <circle cx={cx} cy={cy} r={80} fill={glow} opacity={0.6} />
-      <circle cx={cx} cy={cy} r={28} fill="#fff" />
-      {/* Light rays */}
-      {Array.from({ length: 16 }).map((_, i) => {
-        const angle = (i / 16) * Math.PI * 2
-        const x2 = cx + Math.cos(angle) * 280
-        const y2 = cy + Math.sin(angle) * 280
+      {bands.map((base, band) => {
+        const y = height * base
+        const points: string[] = []
+        for (let i = 0; i <= 16; i++) {
+          const x = (width / 16) * i
+          const wave = Math.sin((i / 16) * Math.PI * 2 + band + (seed % 5)) * (34 + band * 18)
+          points.push(`${x.toFixed(0)} ${(y + wave - drift * 0.4).toFixed(0)}`)
+        }
+        const color = band % 2 === 0 ? palette.accent1 : palette.accent2
         return (
-          <line
-            key={i}
-            x1={cx}
-            y1={cy}
-            x2={x2}
-            y2={y2}
-            stroke={accent1}
-            strokeWidth={1.5}
-            opacity={0.4}
+          <path
+            key={band}
+            d={`M 0 ${y + 130} L ${points.join(' L ')} L ${width} ${y + 130} Z`}
+            fill={color}
+            opacity={0.12 + band * 0.05}
           />
         )
       })}
-      {/* Orbit ring */}
-      <ellipse cx={cx} cy={cy} rx={220} ry={60} fill="none" stroke={accent2} strokeWidth={1.5} opacity={0.5} />
-      <circle cx={cx + 220} cy={cy} r={6} fill={accent2} />
+      <ellipse cx={width * 0.5} cy={height * 1.02} rx={width * 0.7} ry={height * 0.22} fill={palette.ridge} opacity={0.5} />
     </g>
   )
 }
 
-function SceneHorizon({ width, height, accent1, accent2, glow, phase }: { width: number; height: number; accent1: string; accent2: string; glow: string; phase: number }) {
-  // Горизонт планеты снизу, силуэты кораблей/деревьев/башен
-  const groundY = height * 0.7
+/** Горизонт: кривая планеты, тонкая атмосфера и мягкое светило. */
+function SceneHorizon({ palette, width, height, seed, drift }: SceneProps) {
+  const groundY = height * (0.66 + ((seed % 5) - 2) * 0.01)
   return (
     <g>
-      {/* Sky gradient (above) */}
-      <rect x={0} y={0} width={width} height={groundY} fill={accent1} opacity={0.15} />
-      {/* Ground curve */}
+      <circle cx={width * 0.42} cy={groundY - height * 0.1} r={Math.min(width, height) * 0.16} fill={palette.glow} opacity="0.5" />
       <path
-        d={`M 0 ${groundY} Q ${width / 2} ${groundY - 60} ${width} ${groundY} L ${width} ${height} L 0 ${height} Z`}
-        fill={accent1}
-        opacity={0.5}
+        d={`M 0 ${groundY} Q ${width / 2} ${groundY - 70} ${width} ${groundY} L ${width} ${height} L 0 ${height} Z`}
+        fill={palette.ridge}
+        opacity="0.85"
       />
-      {/* Distant glow (sunrise) */}
-      <circle cx={width * 0.5} cy={groundY - 30} r={120} fill={glow} opacity={0.4} />
-      <circle cx={width * 0.5} cy={groundY - 30} r={60} fill={accent2} opacity={0.6} />
-      {/* Silhouettes */}
-      {[0.1, 0.25, 0.55, 0.78, 0.92].map((x, i) => {
-        const h = 30 + ((i * 47) % 60)
+      {/* Атмосферная полоса над горизонтом */}
+      <path
+        d={`M 0 ${groundY} Q ${width / 2} ${groundY - 70} ${width} ${groundY}`}
+        fill="none"
+        stroke={palette.accent1}
+        strokeWidth="2"
+        opacity="0.35"
+      />
+      {/* Редкие силуэты на горизонте — намёк на «что-то есть», без конкретики */}
+      {[0.18, 0.36, 0.62, 0.84].map((x, i) => {
+        const h = 16 + ((seed + i * 37) % 34)
         return (
           <rect
             key={i}
-            x={width * x - 8}
-            y={groundY - h}
-            width={16}
+            x={width * x - drift * 0.1}
+            y={groundY - h - 4}
+            width={7}
             height={h}
-            fill="#000"
-            opacity={0.7}
+            fill={palette.ridge}
+            opacity="0.75"
           />
         )
       })}
     </g>
   )
+}
+
+/** Контуры: топографическая карта — ровные кольца и мелкая сетка. */
+function SceneContours({ palette, width, height, seed }: SceneProps) {
+  const cx = width * (0.3 + ((seed % 5) * 0.1))
+  const cy = height * (0.45 + ((seed % 3) * 0.06))
+  return (
+    <g>
+      {Array.from({ length: 9 }).map((_, i) => {
+        const k = 1 + i * 0.55
+        return (
+          <ellipse
+            key={i}
+            cx={cx}
+            cy={cy}
+            rx={Math.min(width, height) * 0.12 * k}
+            ry={Math.min(width, height) * 0.08 * k}
+            fill="none"
+            stroke={i % 3 === 0 ? palette.accent2 : palette.accent1}
+            strokeWidth={i % 3 === 0 ? 1.6 : 1}
+            opacity={0.22}
+          />
+        )
+      })}
+      <g opacity="0.14">
+        {Array.from({ length: 10 }).map((_, i) => (
+          <line key={i} x1={0} y1={(height / 10) * i} x2={width} y2={(height / 10) * i} stroke={palette.ridge} strokeWidth="1" />
+        ))}
+      </g>
+    </g>
+  )
+}
+
+/** Пыль: мягкие облака света и мелкая взвесь — «космос» без конкретных тел. */
+function SceneDust({ palette, width, height, seed, drift }: SceneProps) {
+  return (
+    <g>
+      {Array.from({ length: 5 }).map((_, i) => {
+        const h = hashString(`${seed}:cloud${i}`)
+        const cx = (h * 43) % width
+        const cy = (h * 97) % height
+        const r = Math.min(width, height) * (0.16 + ((h >> 4) % 20) / 100)
+        return (
+          <circle
+            key={i}
+            cx={cx - drift * (0.1 + i * 0.03)}
+            cy={cy}
+            r={r}
+            fill={i % 2 === 0 ? palette.accent1 : palette.accent2}
+            opacity={0.1}
+          />
+        )
+      })}
+      {Array.from({ length: 70 }).map((_, i) => {
+        const h = hashString(`${seed}:star${i}`)
+        return (
+          <circle
+            key={i}
+            cx={((h * 37) % width) - drift * 0.2}
+            cy={(h * 71) % height}
+            r={((h >> 3) % 5) / 8 + 0.4}
+            fill={palette.dust}
+            opacity={(((h >> 5) % 60) + 25) / 100}
+          />
+        )
+      })}
+    </g>
+  )
+}
+
+/** Орбиты: эллипсы и точки — спокойный «технический» фон. */
+function SceneOrbits({ palette, width, height, seed, drift }: SceneProps) {
+  const cx = width * 0.55
+  const cy = height * 0.5
+  return (
+    <g>
+      <circle cx={cx} cy={cy} r={Math.min(width, height) * 0.1} fill={palette.accent1} opacity="0.35" />
+      {Array.from({ length: 5 }).map((_, i) => {
+        const rx = Math.min(width, height) * (0.2 + i * 0.12)
+        const ry = rx * (0.32 + ((seed + i) % 4) * 0.05)
+        const angle = ((seed % 360) + i * 47) * (Math.PI / 180)
+        const px = cx + Math.cos(angle) * rx
+        const py = cy + Math.sin(angle) * ry
+        return (
+          <g key={i}>
+            <ellipse cx={cx} cy={cy} rx={rx} ry={ry} fill="none" stroke={palette.accent2} strokeWidth="1.2" opacity="0.28" />
+            <circle cx={px - drift * 0.2} cy={py} r={3 + (i % 3)} fill={palette.accent1} opacity="0.6" />
+          </g>
+        )
+      })}
+    </g>
+  )
+}
+
+interface SceneProps {
+  palette: ScenePalette
+  width: number
+  height: number
+  seed: number
+  drift: number
+  uid?: string
 }

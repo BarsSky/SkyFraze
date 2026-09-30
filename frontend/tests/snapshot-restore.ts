@@ -1,4 +1,4 @@
-// Фокусный тест: добавить события → logout → login → проверить восстановление
+﻿// Фокусный тест: добавить события → logout → login → проверить восстановление
 import { chromium, type BrowserContext } from 'playwright'
 import * as fs from 'fs'
 import * as path from 'path'
@@ -72,7 +72,7 @@ async function shot(page: any, name: string) {
   console.log('LOCAL doc events:', beforeCount)
 
   // 4. Logout
-  await page.getByRole('button', { name: /Logout/ }).click()
+  await page.getByRole('button', { name: /Выйти|Logout/ }).click()
   await page.waitForURL(/\/login$/)
   await shot(page, '04-login')
 
@@ -107,3 +107,4 @@ async function shot(page: any, name: string) {
 
   await browser.close()
 })().catch((e) => { console.error('FATAL', e); process.exit(1) })
+
