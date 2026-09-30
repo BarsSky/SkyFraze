@@ -1,15 +1,19 @@
-// Package collab — WebSocket-relay для Yjs.
+// Package collab — WebSocket-relay для Yjs с серверным слиянием.
 //
 // Протокол:
 //  1. клиент шлёт HTTP Upgrade на /api/projects/{id}/collab?token=<JWT>
 //  2. после Upgrade — bidirectional поток бинарных Yjs-апдейтов (ws.BinaryMessage)
-//  3. периодический snapshot каждой активной комнаты сохраняется в Postgres
+//  3. комната держит СВОЙ документ: апдейты клиентов применяются к нему, а в базу
+//     снапшот пишет один писатель — сервер (см. persist)
 //
-// Hub держит in-memory rooms per project. CRDT разрешает конфликты на клиенте;
-// сервер только маршрутизирует байты и сохраняет снапшоты.
+// До Фазы 3 сервер только маршрутизировал байты, а снапшот писал каждый клиент
+// своим debounce'ом: N вкладок конкурировали за одну ревизию (шторм 409), каждая
+// перезаписывала yjs_state целиком. Теперь серверный документ — источник правды
+// для снапшота, а клиенты пишут по REST только если realtime у них не поднялся.
 package collab
 
 import (
+	"bytes"
 	"context"
 	"log/slog"
 	"net/http"
@@ -21,16 +25,26 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/skyfraze/backend/internal/auth"
+	"github.com/skyfraze/backend/internal/collab/yjs"
 	"github.com/skyfraze/backend/internal/events"
 )
 
 const (
-	writeWait         = 10 * time.Second
-	pongWait          = 60 * time.Second
-	pingPeriod        = (pongWait * 9) / 10
-	snapshotPeriod    = 30 * time.Second
+	writeWait      = 10 * time.Second
+	pongWait       = 60 * time.Second
+	pingPeriod     = (pongWait * 9) / 10
+	snapshotPeriod = 30 * time.Second
+	// flushPeriod — как часто сервер сохраняет слитое состояние, если в комнате
+	// что-то менялось. Заметно чаще прежних 30 с: клиенты почти перестали писать
+	// сами, и задержка сохранения теперь и есть окно потери правок при падении
+	// сервера. Пишем только «грязные» комнаты, поэтому цена — один UPDATE.
+	flushPeriod       = 5 * time.Second
 	maxMessageSize    = 16 * 1024 * 1024
 	closePolicyFailed = 4401
+	// presencePrefix — начало кадра присутствия (см. frontend/src/collab/awareness.ts).
+	// Присутствие едет тем же сокетом, что и CRDT, но документом не является:
+	// такие кадры только релеятся, применять их к серверному документу нельзя.
+	presencePrefix = "sfp1:"
 )
 
 // Hub — реестр комнат.
@@ -141,13 +155,16 @@ func parseOrigins(s string) map[string]bool {
 	return out
 }
 
-// Run — фоновая задача snapshot-периодичности.
+// Run — фоновая задача сохранения снапшотов.
 func (h *Hub) Run(ctx context.Context) {
-	t := time.NewTicker(snapshotPeriod)
+	t := time.NewTicker(flushPeriod)
 	defer t.Stop()
 	for {
 		select {
 		case <-ctx.Done():
+			// Последнее сохранение при остановке: иначе правки за последний
+			// flushPeriod исчезли бы вместе с процессом.
+			h.flushAll(context.Background())
 			return
 		case <-t.C:
 			h.snapshotActiveRooms(ctx)
@@ -163,9 +180,19 @@ func (h *Hub) snapshotActiveRooms(ctx context.Context) {
 	}
 	h.mu.RUnlock()
 	for _, r := range rooms {
-		if r.HasClients() {
-			r.persistFromAnyClient(ctx, h.ev)
-		}
+		r.persistFromAnyClient(ctx, h.ev)
+	}
+}
+
+func (h *Hub) flushAll(ctx context.Context) {
+	h.mu.RLock()
+	rooms := make([]*Room, 0, len(h.rooms))
+	for _, r := range h.rooms {
+		rooms = append(rooms, r)
+	}
+	h.mu.RUnlock()
+	for _, r := range rooms {
+		r.persistFromAnyClient(ctx, h.ev)
 	}
 }
 
@@ -242,13 +269,29 @@ func (h *Hub) addClient(conn *websocket.Conn, userID, projectID uuid.UUID) *clie
 		projectID: projectID,
 		room:      room,
 		closed:    make(chan struct{}),
+		// Право записи выясняем один раз при подключении: апдейты наблюдателя к
+		// серверному документу не применяются, иначе он обошёл бы проверку прав.
+		canWrite: h.ev.CanEdit(context.Background(), userID, projectID),
 	}
 	room.mu.Lock()
 	room.clients[c] = struct{}{}
 	room.mu.Unlock()
 
-	// отправим последний снапшот подключившемуся
-	if state, _, err := h.ev.GetYjsState(context.Background(), userID, projectID); err == nil && len(state) > 0 {
+	// Серверный документ комнаты: из него пишется снапшот и в него применяются
+	// апдейты клиентов. Загружаем до первого сообщения — иначе первый апдейт
+	// пришлось бы буферизовать «до загрузки».
+	room.ensureDoc(context.Background(), h.ev, userID, projectID)
+
+	// Подключившемуся отдаём состояние КОМНАТЫ: в нём уже есть серверная миграция
+	// текста (title_text/body_text), которой в снапшоте базы может ещё не быть.
+	// Если документа нет (не загрузился) — отдаём снапшот из базы, как раньше:
+	// клиент всё равно пришлёт своё состояние, и слияние произойдёт у него.
+	if state := room.state(); len(state) > 0 {
+		select {
+		case c.send <- state:
+		default:
+		}
+	} else if state, _, err := h.ev.GetYjsState(context.Background(), userID, projectID); err == nil && len(state) > 0 {
 		select {
 		case c.send <- state:
 		default:
@@ -259,11 +302,20 @@ func (h *Hub) addClient(conn *websocket.Conn, userID, projectID uuid.UUID) *clie
 
 func (h *Hub) leave(c *client) {
 	c.room.mu.Lock()
+	removed := false
 	if _, ok := c.room.clients[c]; ok {
 		delete(c.room.clients, c)
 		close(c.closed)
+		removed = true
 	}
+	empty := len(c.room.clients) == 0
 	c.room.mu.Unlock()
+
+	if removed && empty {
+		// Последний ушёл — сохраняем сразу, не дожидаясь тика: комната вот-вот
+		// исчезнет из реестра, и её «грязное» состояние иначе потерялось бы.
+		c.room.persistFromAnyClient(context.Background(), h.ev)
+	}
 	h.removeIfEmpty(c.projectID)
 }
 
@@ -273,6 +325,19 @@ type Room struct {
 
 	mu      sync.RWMutex
 	clients map[*client]struct{}
+
+	// Серверная копия документа (Фаза 3). docMu защищает документ, флаг «есть что
+	// сохранять» и автора последней правки; clients/му — отдельная блокировка,
+	// потому что рассылка идёт под ней, а применение апдейта — нет.
+	docMu  sync.Mutex
+	doc    *yjs.Doc
+	dirty  bool
+	lastBy uuid.UUID
+	// loading предотвращает параллельные загрузки документа, когда в комнату
+	// одновременно заходят несколько клиентов.
+	loading bool
+	// migratedEvents — сколько событий было при последней проверке миграции текста.
+	migratedEvents int
 }
 
 func (r *Room) HasClients() bool {
@@ -281,12 +346,136 @@ func (r *Room) HasClients() bool {
 	return len(r.clients) > 0
 }
 
-// persistFromAnyClient — best-effort snapshot.
-func (r *Room) persistFromAnyClient(_ context.Context, _ *events.Service) {
-	// В MVP серверный merge Yjs-апдейтов не реализован (требует y-go bindings).
-	// Реальный snapshot пишется из REST PUT /state.
-	// Здесь — заглушка, которая лишь проверяет, что в комнате есть клиенты.
-	_ = r
+// ensureDoc загружает снапшот проекта в серверный документ (один раз на комнату).
+//
+// Ошибку загрузки не запоминаем навсегда: если база мигнула, следующий вошедший
+// клиент попробует снова, а комната без документа просто ничего не сохраняет —
+// клиенты в этом случае пишут снапшот по REST, как до Фазы 3.
+func (r *Room) ensureDoc(ctx context.Context, ev *events.Service, userID, projectID uuid.UUID) {
+	r.docMu.Lock()
+	if r.doc != nil || r.loading {
+		r.docMu.Unlock()
+		return
+	}
+	r.loading = true
+	r.docMu.Unlock()
+
+	state, _, err := ev.GetYjsState(ctx, userID, projectID)
+	var doc *yjs.Doc
+	if err == nil {
+		doc, err = yjs.FromState(state)
+	}
+
+	r.docMu.Lock()
+	r.loading = false
+	if err != nil {
+		r.docMu.Unlock()
+		return
+	}
+	r.doc = doc
+	r.migratedEvents = doc.EventCount()
+	// Миграция старого текста — здесь, а не на клиенте: сервер единственный
+	// писатель, поэтому ветка Y.Text на ключе ровно одна. Клиент, создавший её
+	// сам, рисковал проиграть LWW соседу, сделавшему то же самое одновременно.
+	if created := doc.EnsureTextFields(); created > 0 {
+		r.dirty = true
+	}
+	r.docMu.Unlock()
+}
+
+// state — полное состояние документа комнаты (пусто, если документ не загружен).
+func (r *Room) state() []byte {
+	r.docMu.Lock()
+	defer r.docMu.Unlock()
+	if r.doc == nil {
+		return nil
+	}
+	return r.doc.EncodeState()
+}
+
+// applyUpdate применяет апдейт клиента к серверному документу.
+//
+// Ошибка означает, что апдейт не наш (битый или чужой формат): рассылать его
+// дальше нельзя — у остальных он тоже не применится, а клиент считал бы, что
+// правку приняли. Валидные, но «ранние» апдейты (не хватает причин-предков) Yjs
+// ставит в очередь и применит позже, так что отдельного случая для них нет.
+//
+// Второе возвращаемое значение — «сервер мигрировал текст»: событие появилось без
+// `title_text`/`body_text` (засев из базы, импорт, старое событие), и поля завёл
+// сервер. Такую правку нужно разослать всем: иначе клиент остался бы со скалярной
+// строкой и, начав печатать, создал бы свою ветку `Y.Text` — то есть ровно ту
+// гонку, из-за которой миграция и переехала на сервер.
+func (r *Room) applyUpdate(by uuid.UUID, data []byte) (bool, error) {
+	r.docMu.Lock()
+	defer r.docMu.Unlock()
+	if r.doc == nil {
+		// Документа нет (не загрузился): не мешаем релею работать как раньше.
+		return false, nil
+	}
+	if err := r.doc.Apply(data); err != nil {
+		return false, err
+	}
+	r.dirty = true
+	r.lastBy = by
+
+	// Миграция перепроверяется только при изменении числа событий: полный обход
+	// документа на каждой букве не нужен, а появление события её как раз и требует.
+	migrated := false
+	if count := r.doc.EventCount(); count != r.migratedEvents {
+		if created := r.doc.EnsureTextFields(); created > 0 {
+			r.dirty = true
+			migrated = true
+		}
+		r.migratedEvents = count
+	}
+	return migrated, nil
+}
+
+// broadcastState рассылает всем в комнате полное состояние документа.
+//
+// Нужно после серверной миграции текста и при подключении: разницы по вектору
+// состояния мы пока не считаем, а состояние проекта — десятки килобайт, и такие
+// рассылки редки (появление события, миграция).
+func (r *Room) broadcastState() {
+	state := r.state()
+	if len(state) == 0 {
+		return
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for c := range r.clients {
+		select {
+		case c.send <- state:
+		default:
+		}
+	}
+}
+
+// persistFromAnyClient сохраняет слитое состояние комнаты в базу (один писатель).
+//
+// Флаг «грязно» снимается ДО записи: апдейт, пришедший во время сохранения, снова
+// его поставит, и следующий тик запишет и его. Обратный порядок потерял бы правку,
+// пришедшую в окне между кодированием и записью.
+func (r *Room) persistFromAnyClient(ctx context.Context, ev *events.Service) {
+	r.docMu.Lock()
+	doc, dirty, by := r.doc, r.dirty, r.lastBy
+	if doc == nil || !dirty {
+		r.docMu.Unlock()
+		return
+	}
+	state := doc.EncodeState()
+	r.dirty = false
+	r.docMu.Unlock()
+
+	if by == uuid.Nil {
+		by = uuid.Nil // снапшот без известного автора (например, только загрузка)
+	}
+	if _, err := ev.SaveYjsStateServer(ctx, r.projectID, by, state); err != nil {
+		// Не сохранилось — вернуть флаг: следующий тик попробует снова.
+		r.docMu.Lock()
+		r.dirty = true
+		r.docMu.Unlock()
+	}
 }
 
 // broadcast — рассылает обновление всем клиентам в комнате кроме отправителя.
@@ -312,6 +501,9 @@ type client struct {
 	projectID uuid.UUID
 	room      *Room
 	closed    chan struct{}
+	// canWrite — роль editor+ на момент подключения. Наблюдателю CRDT-апдейты
+	// писать нельзя: это был бы обход проверки прав REST-ручек.
+	canWrite bool
 }
 
 func (c *client) reader(h *Hub) {
@@ -335,7 +527,37 @@ func (c *client) reader(h *Hub) {
 		if len(data) == 0 {
 			continue
 		}
+		// Кадр присутствия документом не является: он едет тем же сокетом и
+		// релеится всем — в том числе от наблюдателя, который тоже присутствует в
+		// проекте, хоть и не пишет.
+		if bytes.HasPrefix(data, []byte(presencePrefix)) {
+			c.room.broadcast(c, data)
+			continue
+		}
+		// Наблюдатель прав не имеет: его апдейты не применяем и не рассылаем —
+		// иначе он менял бы документ в обход проверки прав REST-ручек.
+		if !c.canWrite {
+			h.logger.Warn("collab: update from read-only client ignored",
+				"project", c.projectID, "user", c.userID, "bytes", len(data))
+			continue
+		}
+		// Апдейт сначала применяется к серверному документу (из него пишется
+		// снапшот), и только применённый уходит остальным: битые байты им тоже
+		// не подойдут, а клиент-отправитель считал бы правку принятой.
+		migrated, err := c.room.applyUpdate(c.userID, data)
+		if err != nil {
+			// Отброшенный апдейт — всегда повод посмотреть: у клиента правка
+			// есть, а в снапшот она не попадёт.
+			h.logger.Warn("collab: update rejected",
+				"project", c.projectID, "user", c.userID, "bytes", len(data), "err", err)
+			continue
+		}
 		c.room.broadcast(c, data)
+		if migrated {
+			// Сервер завёл текстовые поля — об этом должны узнать все, иначе клиент
+			// продолжит писать в скалярную строку и создаст свою ветку Y.Text.
+			c.room.broadcastState()
+		}
 	}
 }
 

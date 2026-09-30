@@ -3,7 +3,6 @@ import * as Y from 'yjs'
 import {
   applyLocalEdit,
   ensureText,
-  migrateTextFields,
   setText,
   textDiff,
   textString,
@@ -122,38 +121,6 @@ describe('одновременный набор двух авторов', () => 
     expect(merged).toContain('Общее начало')
   })
 
-  it('две одновременные миграции дают один текст и общий исходный смысл', () => {
-    const left = makeDoc()
-    const right = makeDoc()
-    addEvent(left.events, { title: 'Глава первая', body: 'Текст' })
-    Y.applyUpdate(right.doc, Y.encodeStateAsUpdate(left.doc))
-
-    // Оба клиента мигрируют одно и то же событие, не видя друг друга.
-    expect(migrateTextFields(left.events)).toBe(2)
-    expect(migrateTextFields(right.events)).toBe(2)
-    Y.applyUpdate(left.doc, Y.encodeStateAsUpdate(right.doc))
-    Y.applyUpdate(right.doc, Y.encodeStateAsUpdate(left.doc))
-
-    const onLeft = textString(left.events.get(0) as YMap, 'body')
-    const onRight = textString(right.events.get(0) as YMap, 'body')
-    // LWW выбрал одну ветку — одинаковую на обоих клиентах, и текст не удвоился.
-    expect(onLeft).toBe(onRight)
-    expect(onLeft).toBe('Текст')
-  })
-
-  it('миграция идемпотентна: второй прогон ничего не делает', () => {
-    const { events } = makeDoc()
-    addEvent(events, { title: 'Глава', body: 'Текст' })
-    expect(migrateTextFields(events)).toBe(2)
-    expect(migrateTextFields(events)).toBe(0)
-    expect(textString(events.get(0) as YMap, 'title')).toBe('Глава')
-  })
-
-  it('миграция не трогает событие без текстовых полей', () => {
-    const { events } = makeDoc()
-    addEvent(events, { bg_kind: 'tone' })
-    expect(migrateTextFields(events)).toBe(0)
-  })
 })
 
 describe('локальная правка при чужой вставке рядом', () => {

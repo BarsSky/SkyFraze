@@ -742,6 +742,42 @@ func (s *Store) SaveProjectEventState(
 	return revision, nil
 }
 
+// SaveProjectEventStateServer — запись снапшота сервером, без проверки базовой ревизии.
+//
+// С Фазы 3 снапшот пишет один писатель — сервер: он держит документ комнаты,
+// применяет к нему апдейты клиентов и сохраняет слитое состояние. Оптимистичная
+// блокировка нужна там, где пишут конкурирующие клиенты; у сервера конкурентов
+// нет, а проверка базы только мешала бы: пока он сохранял, чужая вкладка успевала
+// записать своё, и сервер получал бы конфликт сам с собой.
+//
+// Клиентский путь (`SaveProjectEventState`) остаётся для тех, у кого нет realtime:
+// за прокси без Upgrade и в мобильной сети сокет не поднимается, и правки нужно
+// сохранить по REST — там ревизия по-прежнему обязательна.
+func (s *Store) SaveProjectEventStateServer(
+	ctx context.Context, projectID, by uuid.UUID, state []byte,
+) (int64, error) {
+	var revision int64
+	err := s.Pool.QueryRow(ctx,
+		`INSERT INTO project_event_state (project_id, yjs_state, revision, updated_by, updated_at)
+		 VALUES ($1, $2, 1, $3, now())
+		 ON CONFLICT (project_id) DO UPDATE
+		    SET yjs_state=EXCLUDED.yjs_state,
+		        revision=project_event_state.revision + 1,
+		        updated_by=EXCLUDED.updated_by,
+		        updated_at=now()
+		 RETURNING revision`,
+		projectID, state, by).Scan(&revision)
+	if err != nil {
+		// Проект могли удалить, пока комната жила: это не ошибка сервера.
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+			return 0, ErrNotFound
+		}
+		return 0, err
+	}
+	return revision, nil
+}
+
 // ========================== Assets ==========================
 
 type Asset struct {

@@ -18,7 +18,11 @@
  *     иначе старая строка. Так читают стадия, публичная страница и проекция дерева:
  *     страница только для чтения не должна менять документ.
  *   - `ensureText` — создаёт `Y.Text` из старой строки (одной транзакцией), если его
- *     ещё нет. Вызывается при первой правке поля и при миграции проекта.
+ *     ещё нет: нужен при первой правке поля. Проект целиком мигрирует СЕРВЕР
+ *     (`backend/internal/collab/yjs`, EnsureTextFields) — он единственный писатель,
+ *     и ветка Y.Text на ключе получается ровно одна. Клиент, мигрирующий сам, мог
+ *     проиграть LWW соседу, сделавшему то же самое одновременно, и правки в его
+ *     ветке стали бы невидимыми.
  *   - `setText` — правка: считает минимальный диф к текущему тексту и применяет его.
  *     Целиком значение не перезаписывается, иначе смысл `Y.Text` терялся бы.
  */
@@ -188,50 +192,4 @@ export function applyLocalEdit(
   }
   if (doc) doc.transact(apply, 'text-edit')
   else apply()
-}
-
-/**
- * Ленивая миграция всего проекта: у каждого события появляются `title_text` и
- * `body_text` из старых строк. Возвращает число событий, которые пришлось завести.
- *
- * Вызывается один раз при загрузке проекта, до того как редакторы станут доступны
- * для ввода, и результат сразу сохраняется: иначе два клиента, открывшие проект
- * одновременно, мигрировали бы каждый по-своему, и один из вариантов проиграл бы
- * LWW уже с набранным текстом.
- */
-export function migrateTextFields(events: Y.Array<YMap>): number {
-  let migrated = 0
-  const changes: Array<{ map: YMap; fields: TextField[] }> = []
-
-  for (const map of events.toArray() as YMap[]) {
-    const fields: TextField[] = []
-    for (const field of ['title', 'body'] as TextField[]) {
-      if (map.get(key(field)) instanceof Y.Text) continue
-      // Не заводим текст там, где его и не было: у события без единого поля
-      // (мусор в документе) незачем создавать две пустые ветки.
-      if (typeof map.get(field) !== 'string') continue
-      fields.push(field)
-    }
-    if (fields.length > 0) changes.push({ map, fields })
-  }
-
-  if (changes.length === 0) return 0
-
-  const doc = events.doc
-  const apply = () => {
-    for (const { map, fields } of changes) {
-      for (const field of fields) {
-        ensureText(map, field)
-        migrated += 1
-      }
-    }
-  }
-  // Одна транзакция на проект: миграция должна уехать одним апдейтом, а не
-  // десятками мелких сообщений в сокет.
-  if (doc) {
-    doc.transact(apply, 'text-migrate')
-  } else {
-    apply()
-  }
-  return migrated
 }

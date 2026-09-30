@@ -485,6 +485,10 @@ cd frontend && npx tsx tests/presence.ts
 # набор двух авторов в одном поле — ни один символ не теряется
 cd frontend && npx tsx tests/text-merge.ts
 
+# E2E серверного писателя (Фаза 3): снапшот пишет сервер, из браузеров нет ни одного
+# PUT /events/state. Фикстуры для серверного CRDT: npx tsx tests/yjs-fixtures.ts
+cd frontend && npx tsx tests/server-persistence.ts
+
 # E2E даты события: засев из базы, мета-чип в кадре, запись и очистка через проекцию
 cd frontend && npx tsx tests/event-date.ts
 

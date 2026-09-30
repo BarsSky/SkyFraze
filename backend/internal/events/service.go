@@ -73,6 +73,26 @@ func (s *Service) SaveYjsState(
 	return s.store.SaveProjectEventState(ctx, projectID, userID, state, baseRevision)
 }
 
+// CanEdit — может ли пользователь менять проект.
+//
+// Нужен хабу: апдейты от клиента применяются к серверному документу ТОЛЬКО от тех,
+// кто вправе писать. Иначе наблюдатель обошёл бы проверку прав: REST-ручки его не
+// пускают, а правка через CRDT-апдейт попала бы в снапшот и разошлась всем.
+func (s *Service) CanEdit(ctx context.Context, userID, projectID uuid.UUID) bool {
+	return s.proj.RequireEditor(ctx, userID, projectID) == nil
+}
+
+// SaveYjsStateServer — запись слитого состояния сервером (Фаза 3).
+//
+// В отличие от SaveYjsState базовая ревизия не проверяется: у серверного писателя
+// нет конкурентов, он и есть автор снапшота. Права проверяет вызывающий: сюда
+// попадает только то, что уже слито из апдейтов клиентов с правом записи.
+func (s *Service) SaveYjsStateServer(
+	ctx context.Context, projectID, by uuid.UUID, state []byte,
+) (int64, error) {
+	return s.store.SaveProjectEventStateServer(ctx, projectID, by, state)
+}
+
 // ListTree — дерево событий проекта (чтение: viewer+).
 func (s *Service) ListTree(ctx context.Context, userID, projectID uuid.UUID) ([]TreeEvent, error) {
 	if err := s.proj.RequireViewer(ctx, userID, projectID); err != nil {

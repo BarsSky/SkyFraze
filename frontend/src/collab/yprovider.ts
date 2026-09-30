@@ -10,7 +10,7 @@ import { OFFLINE_AFTER_ATTEMPTS, type CollabStatus } from './connection'
 import { connectTabChannel, createTabChannel } from './broadcast'
 import { dateFromServer, dateToServer } from './eventDate'
 import { createPresence, type PeerState } from './awareness'
-import { ensureText, migrateTextFields, textString, titleString } from './text'
+import { ensureText, textString, titleString } from './text'
 import {
   clearDeferredState,
   defaultStorage,
@@ -429,17 +429,12 @@ export function useCollab(projectId: string): CollabHandle | null {
         }
       }
 
-      // Фаза 2: у событий из старых снапшотов текст лежит скалярными строками.
-      // Заводим `title_text`/`body_text` из них одной транзакцией и сразу
-      // сохраняем: два клиента, открывшие проект одновременно, иначе мигрировали бы
-      // каждый по-своему, и проигравшая ветка LWW унесла бы уже набранный текст.
-      if (active) {
-        const migrated = migrateTextFields(events)
-        if (migrated > 0) {
-          console.log(`[yprovider] миграция текста: полей ${migrated}`)
-          void flushNow()
-        }
-      }
+      // Фаза 2: текст события живёт в `title_text`/`body_text`. Мигрирует старые
+      // снапшоты СЕРВЕР (collab/yjs, EnsureTextFields) — он единственный писатель,
+      // поэтому ветка Y.Text на ключе ровно одна. Клиент делает это только для
+      // правки поля (ensureText внутри setText), когда realtime недоступен: иначе
+      // два клиента, открывшие проект одновременно, создали бы по своему Y.Text и
+      // правки проигравшего стали бы невидимыми (LWW на ключе).
     }
 
     // Двусторонний канал вкладок одного пользователя (см. broadcast.ts):
@@ -489,9 +484,22 @@ export function useCollab(projectId: string): CollabHandle | null {
     }
 
     /**
+     * Пишем ли снапшот по REST.
+     *
+     * Фаза 3: пока сокет открыт, единственный писатель снапшота — сервер. Он
+     * держит документ комнаты, применяет к нему те же апдейты, что мы отправляем,
+     * и сохраняет слитое состояние сам (а при уходе последнего клиента — сразу).
+     * Клиентский REST-путь остаётся для тех, у кого realtime не поднялся: за
+     * прокси без Upgrade, в мобильной сети, при закрытом WebSocket. Раньше писали
+     * все и всегда — N вкладок конкурировали за одну ревизию, отсюда шторм 409.
+     */
+    const writesSnapshot = (): boolean => !(ws && ws.readyState === WebSocket.OPEN)
+
+    /**
      * Одна запись снапшота с восстановлением после 409 (см. `commitSnapshot`).
      */
     const doSave = async (): Promise<void> => {
+      if (!writesSnapshot()) return
       const result = await commitSnapshot(Y.encodeStateAsUpdate(doc), revision, {
         put: (state, base) => putEventState(projectId, state, base),
         fetchRemote: mergeRemoteState,
@@ -565,6 +573,11 @@ export function useCollab(projectId: string): CollabHandle | null {
       // (таймаут остаётся страховкой на случай падения вкладки).
       presence.leave()
       if (!active || !canWrite()) return
+      // С открытым сокетом сохранять нечего и незачем: последние апдейты уже у
+      // сервера в документе комнаты, а уход последнего клиента заставляет его
+      // записать снапшот сразу (Фаза 3). Запас в localStorage в этом случае тоже
+      // не нужен — он приводил бы к повторной отправке того же состояния.
+      if (!writesSnapshot()) return
       const state = Y.encodeStateAsUpdate(doc)
       saveDeferredState(projectId, state, revision, defaultStorage())
       const safe = new Uint8Array(new ArrayBuffer(state.byteLength))
