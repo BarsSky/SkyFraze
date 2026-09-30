@@ -481,6 +481,69 @@ async function runViewport(vp: { width: number; height: number; tag: string }) {
   if (first.framesInChapter !== expectedFrames.length) {
     problems.push(`кадров в первой главе ${first.framesInChapter}, ожидалось ${expectedFrames.length}`)
   }
+
+  // ── шапка должна помещаться в экран без горизонтального панорамирования, а
+  //    переключатель темы и «Выйти» — быть на виду. Раньше на телефоне имя
+  //    вошедшего (178px) оставалось в шапке из-за конфликта специфичности с
+  //    правилом мобильных целей нажатия и выдавливало навигацию в 39px: половина
+  //    шапки уезжала за край, и до кнопок приходилось долистывать вбок.
+  if (vp.width <= 860) {
+    const headerFit = (await page.evaluate(`(() => {
+      const header = document.querySelector('.layout header') || document.querySelector('header')
+      const nav = document.querySelector('.auth-links')
+      const user = document.querySelector('.header-user')
+      const inside = (el) => {
+        if (!el) return false
+        const b = el.getBoundingClientRect()
+        return b.right <= window.innerWidth + 1 && b.left >= -1
+      }
+      const btns = Array.from(document.querySelectorAll('header > .row:last-child button, header > .row:last-child a'))
+      const navRect = nav ? nav.getBoundingClientRect() : null
+      const links = nav
+        ? Array.from(nav.querySelectorAll('a')).map((a) => {
+            const b = a.getBoundingClientRect()
+            return { text: (a.textContent || '').trim(), reachable: b.right - navRect.left <= nav.scrollWidth + 1 }
+          })
+        : []
+      return {
+        headerScroll: header.scrollWidth,
+        headerClient: header.clientWidth,
+        docScroll: document.documentElement.scrollWidth,
+        width: window.innerWidth,
+        userDisplay: user ? getComputedStyle(user).display : 'нет',
+        buttonsInside: btns.length > 0 && btns.every(inside),
+        buttonCount: btns.length,
+        unreachable: links.filter((l) => !l.reachable).map((l) => l.text),
+      }
+    })()`)) as {
+      headerScroll: number
+      headerClient: number
+      docScroll: number
+      width: number
+      userDisplay: string
+      buttonsInside: boolean
+      buttonCount: number
+      unreachable: string[]
+    }
+    if (headerFit.headerScroll > headerFit.headerClient + 1) {
+      problems.push(`шапка панорамируется вбок (${headerFit.headerScroll} > ${headerFit.headerClient})`)
+    }
+    if (headerFit.docScroll > headerFit.width + 1) {
+      problems.push(`документ шире экрана: ${headerFit.docScroll} > ${headerFit.width}`)
+    }
+    if (headerFit.userDisplay !== 'none') {
+      problems.push(`шапка: имя вошедшего видно на телефоне (display: ${headerFit.userDisplay}) и выдавливает навигацию`)
+    }
+    if (!headerFit.buttonsInside) {
+      problems.push(`шапка: кнопки темы и выхода не помещаются в экран (кнопок ${headerFit.buttonCount})`)
+    }
+    if (headerFit.unreachable.length) {
+      problems.push(`шапка: ссылки недостижимы даже прокруткой — ${headerFit.unreachable.join(', ')}`)
+    }
+    console.log(
+      `[${vp.tag}] шапка: ${headerFit.headerScroll}/${headerFit.headerClient}px, кнопки на экране=${headerFit.buttonsInside}, имя=${headerFit.userDisplay}`,
+    )
+  }
   await shot(page, `${vp.tag}-frame-1`)
 
   // ── проход по кадрам первой главы: каждый под-событие — свой развёрнутый экран

@@ -211,7 +211,13 @@ html.sf-stage-on .layout header {
 
 /* Мобильные цели нажатия: ссылки и кнопки не меньше 34px по высоте */
 @media (max-width: 860px) {
-  .layout header a,
+  /* Имя вошедшего здесь скрываем ПОВТОРНО: правило целей нажатия ниже по
+     специфичности сильнее `.header-user{display:none}` из блока 1180px, и на
+     телефоне имя (178px) оставалось в шапке, выдавливая навигацию в 39px —
+     из-за этого половина шапки уезжала за край экрана, а кнопки «Выйти» и темы
+     приходилось искать горизонтальной прокруткой. Профиль доступен по «Соавторы». */
+  .header-user { display: none; }
+  .layout header a:not(.header-user),
   .layout header button,
   .auth-links a {
     display: inline-flex;
@@ -226,9 +232,12 @@ html.sf-stage-on .layout header {
      видимой области: «элементы уходят за экран».
      Раньше переносили строки, но с появлением ссылок «Соавторы» и «Админка» у
      вошедшего администратора шапка стала занимать три строки — это четверть
-     экрана, и текст в кадре читать уже негде. Теперь шапка — одна строка с
-     горизонтальной прокруткой: переполнение остаётся ВНУТРИ неё, layout viewport
-     не расширяется, высоту стадия по-прежнему измеряет сама (--sf-header-h). */
+     экрана, и текст в кадре читать уже негде. Потом шапку целиком сделали
+     прокручиваемой — и вместе с ней за край уезжали переключатель темы и «Выйти»:
+     до них приходилось долистывать вбок (замечено на телефоне).
+     Теперь прокручивается ТОЛЬКО навигация, а бренд, тема и выход закреплены:
+     переполнение остаётся внутри полосы навигации, layout viewport не
+     расширяется, а нужные кнопки всегда на виду. */
   .layout header {
     flex-wrap: nowrap;
     gap: 8px;
@@ -237,9 +246,17 @@ html.sf-stage-on .layout header {
     scrollbar-width: none;
   }
   .layout header::-webkit-scrollbar { display: none; }
-  .layout header > .row { flex: 0 0 auto; flex-wrap: nowrap; }
-  .layout header > .row:first-child { min-width: 0; }
-  .auth-links { flex-wrap: nowrap; }
+  .layout header > .row { flex-wrap: nowrap; }
+  .layout header > .row:first-child { flex: 1 1 auto; min-width: 0; }
+  .layout header > .row:last-child { flex: 0 0 auto; }
+  .auth-links {
+    flex: 1 1 auto;
+    min-width: 0;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .auth-links::-webkit-scrollbar { display: none; }
   .brand { min-height: 34px; }
   /* Узкая шапка: у переключателя темы остаётся только значок ☾/☀, слово
      «тёмная» отнимало 60px у ссылок. Минимальная ширина — чтобы цель нажатия
@@ -258,6 +275,16 @@ html.sf-stage-on .layout header {
     align-items: center;
     min-height: 34px;
   }
+}
+
+/* Совсем узкий телефон: имя бренда уступает место навигации — знак остаётся,
+   название видно в подсказке ссылки. Без этого полосе навигации остаётся
+   меньше 150px, и в ней помещается одна пилюля из четырёх. Знак при этом
+   остаётся полноценной целью нажатия: сам рисунок 24px шириной, поэтому
+   ссылке задаём минимум 44px (иначе по ней не попасть пальцем). */
+@media (max-width: 420px) {
+  .brand__name { display: none; }
+  .brand { min-width: 44px; justify-content: center; }
 }
 
 /* Empty-state страницы проекта */
