@@ -333,9 +333,12 @@ func (s *Service) SyncTree(
 			Depth:     n.Depth,
 			Title:     n.Title,
 			Body:      n.Body,
-			EventDate: n.EventDate,
-			CreatedBy: &userID,
-			UpdatedBy: &userID,
+			// Дата в проекции — «не пришла / очищена / значение» (см. EventDatePatch):
+			// отсутствие поля не должно стирать дату, которую клиент не видел.
+			EventDate:    n.EventDate.Value,
+			EventDateSet: n.EventDate.Set,
+			CreatedBy:    &userID,
+			UpdatedBy:    &userID,
 		})
 	}
 	if err := s.store.ReplaceEventTreeChecked(ctx, projectID, userID, rows, baseRevision); err != nil {

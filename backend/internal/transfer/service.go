@@ -358,7 +358,10 @@ func (s *Service) Import(ctx context.Context, userID uuid.UUID, b *ParsedBundle)
 		eventIDs = append(eventIDs, e.ID)
 		nodes = append(nodes, events.NodeInput{
 			ID: e.ID, ParentID: e.ParentID, Position: e.Position,
-			Title: e.Title, Body: e.Body, EventDate: e.EventDate,
+			Title: e.Title, Body: e.Body,
+			// В манифесте дата у события есть всегда (пусто — значит «её нет»),
+			// поэтому здесь она авторитетна, а не «не пришла».
+			EventDate: events.EventDatePatch{Set: true, Value: e.EventDate},
 		})
 	}
 	normalized, err := events.NormalizeTree(nodes)
@@ -438,8 +441,12 @@ func (s *Service) Import(ctx context.Context, userID uuid.UUID, b *ParsedBundle)
 	for _, n := range normalized {
 		rows = append(rows, store.Event{
 			ID: n.ID, ProjectID: p.ID, ParentID: n.ParentID, Position: n.Position,
-			Depth: n.Depth, Title: n.Title, Body: n.Body, EventDate: n.EventDate,
-			CreatedBy: &userID, UpdatedBy: &userID,
+			Depth: n.Depth, Title: n.Title, Body: n.Body, EventDate: n.EventDate.Value,
+			// Импорт архива авторитетен по датам: в манифесте они есть всегда
+			// (у событий без даты — пусто), поэтому отсутствие даты здесь означает
+			// «её и не было», и старую дату в базе перезаписываем как есть.
+			EventDateSet: true,
+			CreatedBy:    &userID, UpdatedBy: &userID,
 		})
 	}
 	if len(rows) > 0 {

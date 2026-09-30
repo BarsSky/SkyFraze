@@ -477,6 +477,9 @@ cd frontend && npx tsx tests/admin-registration.ts
 # устаревшая ревизия снапшота дерева (409 → merge → повтор)
 cd frontend && npx tsx tests/realtime-phase0.ts
 
+# E2E даты события: засев из базы, мета-чип в кадре, запись и очистка через проекцию
+cd frontend && npx tsx tests/event-date.ts
+
 # E2E переноса проекта: экспорт архива → импорт → проверка глав и картинок
 cd frontend && npx tsx tests/project-transfer.ts
 ```

@@ -10,6 +10,7 @@ import {
   yEnsureEventIds,
   yEventId,
   yEventParentId,
+  yFlatTree,
   yMoveEvent,
   yMoveSubtree,
 } from './yprovider'
@@ -385,5 +386,31 @@ describe('yprovider — запись снапшота (commitSnapshot)', () => {
     // Повтор ровно один: третьего запроса нет, и правка не считается сохранённой.
     expect(put).toHaveBeenCalledTimes(2)
     expect(result).toEqual({ ok: false, revision: 12 })
+  })
+})
+
+describe('yprovider — дата в проекции дерева', () => {
+  it('дата уходит на сервер в RFC3339 (он ждёт time.Time)', () => {
+    const { arr } = makeArray()
+    const chapter = yAddEvent(arr, 'Глава', 'текст')
+    chapter.set('event_date', '2789-04-12')
+    const payload = yFlatTree(arr)
+    expect(payload[0].event_date).toBe('2789-04-12T00:00:00Z')
+  })
+
+  it('без даты в CRDT поля нет вовсе: сервер не трогает дату, которую клиент не видел', () => {
+    const { arr } = makeArray()
+    yAddEvent(arr, 'Глава', 'текст')
+    const payload = yFlatTree(arr)
+    expect('event_date' in payload[0]).toBe(false)
+  })
+
+  it('очищенная дата уходит пустой: это осознанное «убрать дату из базы»', () => {
+    const { arr } = makeArray()
+    const chapter = yAddEvent(arr, 'Глава', 'текст')
+    chapter.set('event_date', '2026-01-01')
+    chapter.set('event_date', '')
+    const payload = yFlatTree(arr)
+    expect(payload[0].event_date).toBeNull()
   })
 })

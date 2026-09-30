@@ -163,9 +163,10 @@ func TestParseMarkdown_FrontMatter(t *testing.T) {
 	if !hasWarning(parsed.Warnings, "настройка фона") {
 		t.Errorf("нет предупреждения про bg: %v", parsed.Warnings)
 	}
-	// Дата в базу попадёт, но в CRDT-засев не входит — об этом обязаны сказать.
-	if !hasWarning(parsed.Warnings, "CRDT-засев не входит") {
-		t.Errorf("нет предупреждения про дату и CRDT: %v", parsed.Warnings)
+	// А про дату предупреждать больше не о чем: засев CRDT теперь несёт
+	// event_date, поэтому дата видна первому редактору и попадает в кадр.
+	if hasWarning(parsed.Warnings, "CRDT-засев") {
+		t.Errorf("устаревшее предупреждение про дату и CRDT: %v", parsed.Warnings)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -176,5 +177,79 @@ func TestReplaceEventTreeChecked_StaleRevisionRejected(t *testing.T) {
 	}
 	if len(rows) != 2 {
 		t.Fatalf("после свежей проекции событий %d, ожидалось 2", len(rows))
+	}
+}
+
+// Дата события в проекции дерева: «не пришла» — не трогать, null — очистить,
+// значение — записать. Без этого различия проекция клиента, который даты не
+// видел (старый снапшот, импорт без CRDT), стирала бы её молча.
+func TestReplaceEventTree_EventDateIsThreeState(t *testing.T) {
+	pool := testdb.Setup(t, "store")
+	testdb.Truncate(t, pool,
+		"project_ratings", "project_views", "registration_requests", "app_settings",
+		"project_event_state", "sessions", "invitations", "event_assets", "assets",
+		"events", "team_memberships", "projects", "users")
+
+	ctx := context.Background()
+	st := store.New(pool)
+	user, err := st.CreateUser(ctx, "owner3@example.com", "hash", "Владелец")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	project, err := projects.New(st).Create(ctx, user.ID, "Проект", "описание")
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	eventID := uuid.New()
+	date := time.Date(2024, time.May, 17, 0, 0, 0, 0, time.UTC)
+	// Импорт: дата пришла и записывается.
+	if err := st.ReplaceEventTree(ctx, project.ID, user.ID, []store.Event{{
+		ID: eventID, ProjectID: project.ID, Position: 0, Depth: 0, Title: "Глава", Body: "текст",
+		EventDate: &date, EventDateSet: true,
+	}}); err != nil {
+		t.Fatalf("seed с датой: %v", err)
+	}
+	dateOf := func() *time.Time {
+		ev, err := st.GetEvent(ctx, project.ID, eventID)
+		if err != nil {
+			t.Fatalf("get event: %v", err)
+		}
+		return ev.EventDate
+	}
+	if got := dateOf(); got == nil || got.Format("2006-01-02") != "2024-05-17" {
+		t.Fatalf("дата в базе: %v, ожидалась 2024-05-17", got)
+	}
+
+	// Проекция клиента, который даты не видел: поля нет — дата остаётся.
+	if err := st.ReplaceEventTree(ctx, project.ID, user.ID, []store.Event{{
+		ID: eventID, ProjectID: project.ID, Position: 0, Depth: 0, Title: "Глава", Body: "текст",
+	}}); err != nil {
+		t.Fatalf("проекция без даты: %v", err)
+	}
+	if got := dateOf(); got == nil {
+		t.Fatal("дата стёрта проекцией без поля event_date — так быть не должно")
+	}
+
+	// Редактор очистил дату: поле пришло пустым — дата очищается.
+	if err := st.ReplaceEventTree(ctx, project.ID, user.ID, []store.Event{{
+		ID: eventID, ProjectID: project.ID, Position: 0, Depth: 0, Title: "Глава", Body: "текст",
+		EventDateSet: true,
+	}}); err != nil {
+		t.Fatalf("проекция с очисткой даты: %v", err)
+	}
+	if got := dateOf(); got != nil {
+		t.Fatalf("дата после очистки: %v, ожидалось пусто", got)
+	}
+
+	// И снова записывается, если пришла значением.
+	if err := st.ReplaceEventTree(ctx, project.ID, user.ID, []store.Event{{
+		ID: eventID, ProjectID: project.ID, Position: 0, Depth: 0, Title: "Глава", Body: "текст",
+		EventDate: &date, EventDateSet: true,
+	}}); err != nil {
+		t.Fatalf("проекция с датой: %v", err)
+	}
+	if got := dateOf(); got == nil {
+		t.Fatal("дата не записалась из проекции")
 	}
 }

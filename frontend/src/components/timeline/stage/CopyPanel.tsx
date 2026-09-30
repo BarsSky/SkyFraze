@@ -7,6 +7,7 @@ import {
 } from '../timelineModel'
 import { ImageViewer } from '../../ImageViewer'
 import { MarkdownBlock } from '../../MarkdownBlock'
+import { dateLabel } from '../../../collab/eventDate'
 
 interface Props {
   chapter: TimelineChapter
@@ -51,6 +52,9 @@ export function CopyPanel({
   const position = eventPosition(chapter.frames, frame)
   const photoIndex = frame.imageIndex ?? 0
   const photoCount = frame.imageCount ?? 1
+  // Дата события — мета-чип в кадре (поле в редакторе так и подписано). Пустая
+  // или непонятная дата чипа не создаёт: строка «дата: » хуже, чем её отсутствие.
+  const dateText = dateLabel(frame.eventDate)
   const viewerImages = images.map((asset) => ({ id: asset.id, url: asset.url, caption: frame.title }))
 
   return (
@@ -94,6 +98,7 @@ export function CopyPanel({
             {frame.isChapter && (
               <li>{position.total > 1 ? `кадров в главе: ${position.total}` : 'без под-событий'}</li>
             )}
+            {dateText && <li>дата: {dateText}</li>}
             {images.length > 0 && <li>картинок: {images.length}</li>}
           </ul>
 

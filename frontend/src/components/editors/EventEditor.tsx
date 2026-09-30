@@ -113,8 +113,10 @@ export function EventEditor({
           value={eventDate}
           onChange={(e) => {
             const value = e.target.value
-            if (value) ymap.set('event_date', value)
-            else ymap.delete('event_date')
+            // Пустая строка, а не delete: для проекции дерева «поля нет» значит
+            // «дату не трогать» (клиент мог её не видеть), а пустое значение —
+            // осознанную очистку даты в базе.
+            ymap.set('event_date', value)
             onChange?.()
           }}
         />

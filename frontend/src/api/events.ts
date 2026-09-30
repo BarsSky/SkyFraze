@@ -38,6 +38,11 @@ export interface FlatEventNode {
   position?: number
   title: string
   body: string
+  /**
+   * Дата события в RFC3339 (сервер ждёт `*time.Time`) или `null`, если даты нет.
+   * `null` — это осознанное «очистить дату»: так редактор убирает её из базы.
+   */
+  event_date?: string | null
 }
 
 export async function listEventTree(projectId: string): Promise<EventNode[]> {
@@ -56,6 +61,7 @@ export async function listEventRows(projectId: string): Promise<FlatEventNode[]>
         position: n.position,
         title: n.title ?? '',
         body: n.body ?? '',
+        event_date: n.event_date ?? null,
       })
       if (n.children?.length) walk(n.children)
     }

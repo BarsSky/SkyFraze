@@ -8,6 +8,7 @@ import { collabSocketUrl } from './socketUrl'
 import { createReconnectLoop, type ReconnectLoop } from './backoff'
 import { OFFLINE_AFTER_ATTEMPTS, type CollabStatus } from './connection'
 import { connectTabChannel, createTabChannel } from './broadcast'
+import { dateFromServer, dateToServer } from './eventDate'
 import {
   clearDeferredState,
   defaultStorage,
@@ -365,6 +366,11 @@ export function useCollab(projectId: string): CollabHandle | null {
                 if (row.parent_id) m.set('parent_id', row.parent_id)
                 m.set('title', row.title)
                 m.set('body', row.body)
+                // Дата из базы: у импортированного проекта (архив снят с проекта
+                // без CRDT) она есть только в таблице events, и без этой строки
+                // первый редактор её просто не видел.
+                const date = dateFromServer(row.event_date)
+                if (date) m.set('event_date', date)
                 events.push([m])
               }
             }, 'seed')
@@ -815,13 +821,20 @@ export function yFlatTree(events: YArray): FlatEventNode[] {
   for (const m of events.toArray() as YMap[]) {
     const id = (m.get('id') as string | undefined) ?? ''
     if (!id) continue
-    out.push({
+    const node: FlatEventNode = {
       id,
       parent_id: yEventParentId(m),
       position: position++,
       title: ((m.get('title') as string | undefined) ?? '').trim(),
       body: ((m.get('body') as string | undefined) ?? '').trim(),
-    })
+    }
+    // Дату отправляем, только если она есть в CRDT: для сервера отсутствие поля
+    // значит «не трогать дату в базе» (клиент мог её не видеть — старый снапшот,
+    // импортированный проект), а пустое значение — осознанную очистку. Без этого
+    // выставленная в редакторе дата оставалась только в CRDT, а проекция затирала
+    // дату, приехавшую из импорта.
+    if (m.has('event_date')) node.event_date = dateToServer(m.get('event_date'))
+    out.push(node)
   }
   return out
 }

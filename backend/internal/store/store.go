@@ -366,10 +366,14 @@ type Event struct {
 	Title     string     `db:"title" json:"title"`
 	Body      string     `db:"body" json:"body"`
 	EventDate *time.Time `db:"event_date" json:"event_date,omitempty"`
-	CreatedBy *uuid.UUID `db:"created_by" json:"created_by,omitempty"`
-	UpdatedBy *uuid.UUID `db:"updated_by" json:"updated_by,omitempty"`
-	CreatedAt time.Time  `db:"created_at" json:"created_at"`
-	UpdatedAt time.Time  `db:"updated_at" json:"updated_at"`
+	// EventDateSet — дата пришла в payload'е (пусть и пустая): только тогда
+	// проекция дерева вправе её менять. Клиент, который даты не видел (старый
+	// снапшот, импорт без CRDT), поля не присылает, и дата в базе остаётся.
+	EventDateSet bool       `db:"-" json:"-"`
+	CreatedBy    *uuid.UUID `db:"created_by" json:"created_by,omitempty"`
+	UpdatedBy    *uuid.UUID `db:"updated_by" json:"updated_by,omitempty"`
+	CreatedAt    time.Time  `db:"created_at" json:"created_at"`
+	UpdatedAt    time.Time  `db:"updated_at" json:"updated_at"`
 }
 
 const eventColumns = `id, project_id, parent_id, position, depth, title, body,
@@ -620,19 +624,23 @@ func (s *Store) replaceEventTree(
 	for _, n := range nodes {
 		var id uuid.UUID
 		err := tx.QueryRow(ctx,
-			`INSERT INTO events (id, project_id, parent_id, position, depth, title, body, created_by, updated_by)
-			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8)
+			`INSERT INTO events (id, project_id, parent_id, position, depth, title, body, event_date, created_by, updated_by)
+			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9)
 			 ON CONFLICT (id) DO UPDATE
 			    SET parent_id=EXCLUDED.parent_id,
 			        position=EXCLUDED.position,
 			        depth=EXCLUDED.depth,
 			        title=EXCLUDED.title,
 			        body=EXCLUDED.body,
+			        -- Дату меняем, только если она пришла в payload'е ($10):
+			        -- иначе проекция клиента, который её не видел, стёрла бы дату.
+			        event_date=CASE WHEN $10 THEN EXCLUDED.event_date ELSE events.event_date END,
 			        updated_by=EXCLUDED.updated_by,
 			        updated_at=now()
 			  WHERE events.project_id = EXCLUDED.project_id
 			  RETURNING id`,
-			n.ID, projectID, n.ParentID, n.Position, n.Depth, n.Title, n.Body, by).Scan(&id)
+			n.ID, projectID, n.ParentID, n.Position, n.Depth, n.Title, n.Body, n.EventDate, by,
+			n.EventDateSet).Scan(&id)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				// id принадлежит другому проекту — не даём «перетащить» чужое событие

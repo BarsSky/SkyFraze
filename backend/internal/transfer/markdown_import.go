@@ -46,11 +46,11 @@ package transfer
 //
 // Отдельно про CRDT (это важно понимать при чтении ImportMarkdown): у нового
 // проекта снапшота нет, и первый подключившийся редактор засеивает пустой Y.Doc
-// из таблицы events, но засев берёт только id/parent_id/title/body
+// из таблицы events, а засев берёт id/parent_id/title/body и дату события
 // (frontend/src/collab/yprovider.ts). Поэтому импорт заполняет ровно эти поля —
-// дерево в редакторе появится корректно, — а event_date в засев не входит и в
-// интерфейсе не покажется; об этом честно предупреждаем в отчёте, но в базу дату
-// сохраняем.
+// дерево в редакторе появляется корректно, включая даты из front-matter, —
+// а фон кадров и привязки вложений в засев не входят: они живут только в CRDT,
+// и md-выгрузка их не переносит (см. docs/import-export.md).
 
 import (
 	"archive/zip"
@@ -170,7 +170,8 @@ type ParsedMarkdownEvent struct {
 	Chars    int
 	Warnings []string
 
-	// Date — дата события из front-matter; в базу попадает, в CRDT-засев нет.
+	// Date — дата события из front-matter: сохраняется в базе и попадает в
+	// CRDT-засев, поэтому видна первому редактору и в кадре.
 	Date *time.Time
 
 	// Body — текст события; для импорта он же уходит в базу.
@@ -855,13 +856,9 @@ func (c *markdownCollector) build() (*ParsedMarkdown, error) {
 		return nil, fmt.Errorf("%w: событий больше %d", ErrMarkdownTooLarge, markdownMaxEvents)
 	}
 
-	// Дата события в базу попадёт, а в CRDT-засев — нет: редактор засеивает
-	// пустой Y.Doc только id/parent_id/title/body, поэтому дата в кадре не
-	// покажется, пока её не выставят руками.
-	if hasDates(parsed.Events) {
-		parsed.Warnings = append(parsed.Warnings,
-			"дата события сохранена в проекте, но в CRDT-засев не входит: первый редактор не покажет её в кадре")
-	}
+	// Дата события попадает и в базу, и в CRDT-засев (редактор читает её из
+	// таблицы events вместе с id/parent_id/title/body), поэтому предупреждать
+	// здесь не о чем — только про то, что действительно не переносится.
 	if parsed.Stats.ImageLinks > 0 {
 		parsed.Warnings = append(parsed.Warnings, fmt.Sprintf(
 			"картинки не переносятся: %d ссылок", parsed.Stats.ImageLinks))
@@ -1183,15 +1180,6 @@ func flatten(n *markdownNode) []*markdownNode {
 	return out
 }
 
-func hasDates(list []ParsedMarkdownEvent) bool {
-	for _, e := range list {
-		if e.Date != nil {
-			return true
-		}
-	}
-	return false
-}
-
 // ---------- импорт ----------
 
 // ImportMarkdown создаёт НОВЫЙ проект владельца по разобранной папке.
@@ -1222,8 +1210,8 @@ func (s *Service) ImportMarkdown(
 	}
 
 	// Заполняем ровно те поля, которые попадут в CRDT-засев
-	// (id/parent_id/title/body), плюс event_date: его в базу сохраняем, но в
-	// засев оно не входит (см. комментарий к пакету).
+	// (id/parent_id/title/body/event_date); фон кадров и вложения засев не несёт
+	// (см. комментарий к пакету).
 	rows := make([]store.Event, 0, len(parsed.Events))
 	for _, e := range parsed.Events {
 		var parentID *uuid.UUID

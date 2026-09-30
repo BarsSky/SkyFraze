@@ -451,8 +451,9 @@ func TestMarkdownRoundTrip_QuotedTitles(t *testing.T) {
 	}
 }
 
-// Импорт сохраняет дату из front-matter (в базу) и честно предупреждает, что в
-// CRDT-засев она не попадёт: засев берёт только id/parent_id/title/body.
+// Импорт сохраняет дату из front-matter в базу и больше не предупреждает о CRDT:
+// засев пустого Y.Doc из таблицы событий несёт event_date, поэтому дата видна
+// первому редактору (и уезжает обратно в базу вместе с проекцией дерева).
 func TestImportMarkdown_SavesDateAndWarns(t *testing.T) {
 	e := setup(t)
 	ctx := context.Background()
@@ -472,8 +473,8 @@ func TestImportMarkdown_SavesDateAndWarns(t *testing.T) {
 	if p.Title != "Своё название" {
 		t.Errorf("поле title запроса должно побеждать: %q", p.Title)
 	}
-	if !hasWarning(parsed.Warnings, "CRDT-засев не входит") {
-		t.Errorf("нет предупреждения про дату и CRDT: %v", parsed.Warnings)
+	if hasWarning(parsed.Warnings, "CRDT-засев") {
+		t.Errorf("устаревшее предупреждение про дату и CRDT: %v", parsed.Warnings)
 	}
 	evs, err := e.st.ListEvents(ctx, p.ID)
 	if err != nil || len(evs) != 2 {

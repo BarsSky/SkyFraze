@@ -70,6 +70,8 @@ export interface TimelineFrame {
   imageCount?: number
   /** номер события-владельца: у кадра-картинки своя нумерация, подпись — от события */
   ownerNumber?: string
+  /** дата события (`YYYY-MM-DD`) — мета-чип в кадре; у картинки берётся от события */
+  eventDate?: string | null
 }
 
 export interface TimelineChapter extends TimelineFrame {
@@ -227,6 +229,7 @@ export function buildTimelineModel(items: StageEvent[], accents: string[]): Time
         background,
         assets: node.item.assets,
         childFrames: [],
+        eventDate: node.item.eventDate ?? null,
         // Вес = базовая доля экрана + надбавка за длину текста: длинная глава
         // проезжает больше трека, и весь её текст успевает раскрыться.
         weight: weightForDepth(depth) + textUnits(node.item.title, node.item.body),
@@ -256,6 +259,7 @@ export function buildTimelineModel(items: StageEvent[], accents: string[]): Time
           background: { kind: 'asset', assetUrl: image.url, tone: accent },
           assets: node.item.assets,
           childFrames: [],
+          eventDate: node.item.eventDate ?? null,
           weight: FRAME_WEIGHT_IMAGE,
           image,
           imageIndex,

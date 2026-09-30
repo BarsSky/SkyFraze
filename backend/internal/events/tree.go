@@ -1,9 +1,11 @@
 package events
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -19,12 +21,45 @@ var ErrValidation = errors.New("validation failed")
 
 // NodeInput — событие в плоском payload'е (создание/синхронизация дерева).
 type NodeInput struct {
-	ID        uuid.UUID  `json:"id"`
-	ParentID  *uuid.UUID `json:"parent_id"`
-	Position  int        `json:"position"`
-	Title     string     `json:"title"`
-	Body      string     `json:"body"`
-	EventDate *time.Time `json:"event_date,omitempty"`
+	ID        uuid.UUID      `json:"id"`
+	ParentID  *uuid.UUID     `json:"parent_id"`
+	Position  int            `json:"position"`
+	Title     string         `json:"title"`
+	Body      string         `json:"body"`
+	EventDate EventDatePatch `json:"event_date"`
+}
+
+// EventDatePatch — дата события с различением «не пришла» и «очищена».
+//
+// Проекция дерева приходит от клиента, который мог дату и не видеть: у старых
+// снапшотов её в CRDT нет вовсе, а у импортированного проекта она есть только в
+// таблице events. Если считать отсутствие поля очисткой, первая же проекция
+// такого клиента сотрёт дату — ровно то, от чего защищает ревизия снапшота.
+// Поэтому состояний три:
+//   - поля нет в JSON        → Set=false: дату в базе не трогаем;
+//   - поле null или ""       → Set=true, Value=nil: дату очищаем;
+//   - поле с датой           → Set=true, Value=<дата>: дату записываем.
+//
+// «Поля нет» получается само собой: encoding/json не вызывает UnmarshalJSON для
+// отсутствующего ключа, а Set выставляется только внутри него.
+type EventDatePatch struct {
+	Set   bool
+	Value *time.Time
+}
+
+func (p *EventDatePatch) UnmarshalJSON(data []byte) error {
+	p.Set = true
+	text := strings.TrimSpace(string(data))
+	if text == "null" || text == `""` {
+		p.Value = nil
+		return nil
+	}
+	var t time.Time
+	if err := json.Unmarshal(data, &t); err != nil {
+		return err
+	}
+	p.Value = &t
+	return nil
 }
 
 // NormalizedNode — проверенный узел с вычисленной глубиной и позицией.
