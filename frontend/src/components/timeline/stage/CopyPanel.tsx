@@ -65,31 +65,13 @@ export function CopyPanel({
           страницы (оценка, просмотры) остаются на виду: на телефоне до кнопок
           «назад/дальше» иначе приходилось докручивать. */}
       <div className="sf-copy__scroll">
-        {/* Шапка кадра липнет к верху листа: текст уезжает ПОД неё, поэтому
-            всегда видно, какая сейчас глава или под-событие, и подпись не
-            смешивается с проезжающими строками. */}
-        <div className="sf-copy__head">
-          {isPhoto ? (
-            <>
-              <div className="sf-copy__num">
-                {frame.ownerNumber ?? frame.number} · фото {photoIndex + 1} / {photoCount}
-              </div>
-              <span className="sf-copy__eyebrow">{frame.eyebrow}</span>
-              <h2 className="sf-copy__title sf-copy__title--photo">{frame.title || 'Без названия'}</h2>
-            </>
-          ) : (
-            <>
-              <div className="sf-copy__num">
-                {frame.number} · {position.index} / {position.total}
-              </div>
-              <span className="sf-copy__eyebrow">{frame.eyebrow}</span>
-              <h2 className="sf-copy__title">{frame.title || 'Без названия'}</h2>
-            </>
-          )}
-        </div>
-
         {isPhoto ? (
           <>
+            <div className="sf-copy__num">
+              {frame.ownerNumber ?? frame.number} · фото {photoIndex + 1} / {photoCount}
+            </div>
+            <span className="sf-copy__eyebrow">{frame.eyebrow}</span>
+            <h2 className="sf-copy__title sf-copy__title--photo">{frame.title || 'Без названия'}</h2>
             <ul className="sf-copy__meta">
               <li>глава {chapter.number}: {chapter.title}</li>
               {photoCount > 1 && <li>картинок у события: {photoCount}</li>}
@@ -100,6 +82,11 @@ export function CopyPanel({
           </>
         ) : (
           <>
+            <div className="sf-copy__num">
+              {frame.number} · {position.index} / {position.total}
+            </div>
+            <span className="sf-copy__eyebrow">{frame.eyebrow}</span>
+            <h2 className="sf-copy__title">{frame.title || 'Без названия'}</h2>
             {frame.body && <MarkdownBlock source={frame.body} className="sf-copy__body" />}
 
           <ul className="sf-copy__meta">
