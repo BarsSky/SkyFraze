@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import * as Y from 'yjs'
 import { colorFor, initialsOf, type PeerState } from '../../collab/awareness'
+import { setText, textString } from '../../collab/text'
 import { yAddEvent } from '../../collab/yprovider'
 import { EditorsPanel } from './EditorsPanel'
 
@@ -22,9 +23,9 @@ vi.mock('./EventEditor', () => ({
   }) => (
     <input
       aria-label="Заголовок события"
-      value={(ymap.get('title') as string | undefined) ?? ''}
+      value={textString(ymap, 'title')}
       onChange={(e) => {
-        ymap.set('title', e.target.value)
+        setText(ymap, 'title', e.target.value)
         onChange?.()
         onTyping?.()
       }}

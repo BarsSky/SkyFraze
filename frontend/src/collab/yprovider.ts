@@ -10,6 +10,7 @@ import { OFFLINE_AFTER_ATTEMPTS, type CollabStatus } from './connection'
 import { connectTabChannel, createTabChannel } from './broadcast'
 import { dateFromServer, dateToServer } from './eventDate'
 import { createPresence, type PeerState } from './awareness'
+import { ensureText, migrateTextFields, textString, titleString } from './text'
 import {
   clearDeferredState,
   defaultStorage,
@@ -427,6 +428,18 @@ export function useCollab(projectId: string): CollabHandle | null {
           console.log('[yprovider] seed from REST error:', String(e))
         }
       }
+
+      // Фаза 2: у событий из старых снапшотов текст лежит скалярными строками.
+      // Заводим `title_text`/`body_text` из них одной транзакцией и сразу
+      // сохраняем: два клиента, открывшие проект одновременно, иначе мигрировали бы
+      // каждый по-своему, и проигравшая ветка LWW унесла бы уже набранный текст.
+      if (active) {
+        const migrated = migrateTextFields(events)
+        if (migrated > 0) {
+          console.log(`[yprovider] миграция текста: полей ${migrated}`)
+          void flushNow()
+        }
+      }
     }
 
     // Двусторонний канал вкладок одного пользователя (см. broadcast.ts):
@@ -657,10 +670,21 @@ export function yAddEvent(
 ): YMap {
   const m = new Y.Map<unknown>()
   m.set('id', randomId())
+  // Старые строки пишем ровно один раз — при создании: вкладка со старым бандлом
+  // (открытая в момент обновления) покажет по ним хоть что-то. Дальше источник
+  // правды — Y.Text, и эти поля не обновляются.
   m.set('title', title)
   m.set('body', body)
   m.set('created_at', new Date().toISOString())
   if (opts.parentId) m.set('parent_id', opts.parentId)
+  // Текстовые поля — сразу: новое событие живёт по правилам Фазы 2, а не
+  // доезжает до них ленивой миграцией при следующем открытии проекта.
+  const titleText = new Y.Text()
+  if (title.length > 0) titleText.insert(0, title)
+  m.set('title_text', titleText)
+  const bodyText = new Y.Text()
+  if (body.length > 0) bodyText.insert(0, body)
+  m.set('body_text', bodyText)
   if (typeof opts.position === 'number') {
     const at = Math.max(0, Math.min(events.length, opts.position))
     events.insert(at, [m])
@@ -885,8 +909,11 @@ export function yFlatTree(events: YArray): FlatEventNode[] {
       id,
       parent_id: yEventParentId(m),
       position: position++,
-      title: ((m.get('title') as string | undefined) ?? '').trim(),
-      body: ((m.get('body') as string | undefined) ?? '').trim(),
+      // Текст читается через `textString`: у события из старого снапшота он ещё
+      // лежит скалярной строкой, у нового — в Y.Text. Проекция обязана видеть оба,
+      // иначе правки перестали бы доезжать до серверной модели.
+      title: titleString(m),
+      body: textString(m, 'body').trim(),
     }
     // Дату отправляем, только если она есть в CRDT: для сервера отсутствие поля
     // значит «не трогать дату в базе» (клиент мог её не видеть — старый снапшот,

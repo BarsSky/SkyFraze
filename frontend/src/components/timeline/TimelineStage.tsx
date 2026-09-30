@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { yEnsureEventIds, yEventParentId, type YArray, type YMap } from '../../collab/yprovider'
+import { textString, titleString } from '../../collab/text'
 import { getScrollRoot, prefersReducedMotion, visibleBox } from './scrollRoot'
 import {
   CHAPTER_ACCENTS_DARK,
@@ -134,8 +135,8 @@ export function TimelineStage({ events, assetsById, projectTitle, actions, copyF
           .map((m) => ({
             id: (m.get('id') as string | undefined) ?? '',
             parentId: yEventParentId(m),
-            title: ((m.get('title') as string | undefined) ?? '').trim(),
-            body: ((m.get('body') as string | undefined) ?? '').trim(),
+            title: titleString(m),
+            body: textString(m, 'body').trim(),
             assetIds: ((m.get('assets') as string[] | undefined) ?? []).filter(Boolean),
             bgKind: normalizeBgKind(m.get('bg_kind')),
             bgTone: (m.get('bg_tone') as string | undefined) || undefined,

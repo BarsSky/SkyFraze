@@ -5,6 +5,7 @@ import { EditorsPanel } from '../components/editors/EditorsPanel'
 import { PresenceBar } from '../components/collab/PresenceBar'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { useCollab, yAddEvent, type YMap } from '../collab/yprovider'
+import { titleString } from '../collab/text'
 import { connectionNotice } from '../collab/connection'
 import { listAssets, uploadAsset, type Asset } from '../api/assets'
 import { useAssetObjectUrls } from '../api/assetObject'
@@ -95,7 +96,7 @@ export function ProjectTimelinePage() {
       (events.toArray() as YMap[])
         .map((m) => ({
           id: (m.get('id') as string | undefined) ?? '',
-          title: ((m.get('title') as string | undefined) ?? '').trim(),
+          title: titleString(m),
         }))
         .filter((event) => event.id.length > 0)
     const update = () => {

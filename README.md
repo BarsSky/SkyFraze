@@ -481,6 +481,10 @@ cd frontend && npx tsx tests/realtime-phase0.ts
 # друга через сервер, «печатает…» появляется и гаснет, уход убирает карточку
 cd frontend && npx tsx tests/presence.ts
 
+# E2E текста события (Фаза 2): миграция старых снапшотов на Y.Text и одновременный
+# набор двух авторов в одном поле — ни один символ не теряется
+cd frontend && npx tsx tests/text-merge.ts
+
 # E2E даты события: засев из базы, мета-чип в кадре, запись и очистка через проекцию
 cd frontend && npx tsx tests/event-date.ts
 

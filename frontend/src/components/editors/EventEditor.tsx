@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { Asset } from '../../api/assets'
 import type { YMap } from '../../collab/yprovider'
+import { applyLocalEdit, ensureText, setText, textString, type TextField } from '../../collab/text'
 import { ImageViewer } from '../ImageViewer'
 import { MarkdownBlock } from '../MarkdownBlock'
 import { MarkdownEditor } from '../MarkdownEditor'
@@ -33,6 +34,43 @@ const eventDateText = (value: unknown): string => {
 }
 
 /**
+ * Текст поля, пока в нём стоит человек.
+ *
+ * Почему так, а не «обновлять поле из CRDT и восстанавливать каретку». Пока идёт
+ * набор, чужие правки приезжают постоянно, и каждое обновление `value` из React
+ * переписывает DOM — а вместе с ним уезжает каретка. Восстанавливать её при
+ * каждом апдейте можно только приблизительно, и ошибка в один символ сдвигает
+ * следующую букву (это воспроизводилось живым набором двух авторов и выглядело
+ * как перемешанный текст). Поэтому пока поле в фокусе, его содержимым владеет
+ * человек: правки уходят в `Y.Text` дифом, чужие в поле не подставляются, а после
+ * потери фокуса поле показывает уже слитый текст. Состояние соавторов при этом
+ * видно — в баре присутствия и «печатает…».
+ */
+function useFieldDraft(field: TextField, ymap: YMap, write: (field: TextField, mine: string, next: string) => void) {
+  const [draft, setDraft] = useState<string | null>(null)
+  const remote = textString(ymap, field)
+  const value = draft ?? remote
+
+  // Смена события (или проекта) черновик сбрасывает: он относится к прошлому полю.
+  useEffect(() => {
+    setDraft(null)
+  }, [ymap])
+
+  return {
+    value,
+    focused: draft !== null,
+    onFocus: () => setDraft(textString(ymap, field)),
+    onBlur: () => setDraft(null),
+    onChange: (el: HTMLInputElement | HTMLTextAreaElement) => {
+      const mine = draft ?? textString(ymap, field)
+      const next = el.value
+      setDraft(next)
+      write(field, mine, next)
+    },
+  }
+}
+
+/**
  * Редактор одного события: заголовок, текст, дата, вложения и фон кадра.
  * Всё редактирование проекта живёт здесь — стадия ничего не меняет.
  *
@@ -42,8 +80,27 @@ const eventDateText = (value: unknown): string => {
 export function EventEditor({
   ymap, assets, images, assetUrls, onUpload, onAttach, onDetach, onBackgroundChange, background, onChange, onTyping,
 }: Props) {
-  const title = (ymap.get('title') as string | undefined) ?? ''
-  const body = (ymap.get('body') as string | undefined) ?? ''
+  /**
+   * Записать правку поля.
+   *
+   * Если CRDT с момента, когда человек начал править, не менялся, достаточно
+   * обычного дифа. Если менялся (соавтор успел вставить своё), диф от CRDT стёр бы
+   * его буквы — тогда применяется только локальная дельта (`applyLocalEdit`),
+   * которая чужой текст не удаляет никогда.
+   */
+  const editField = (field: TextField, mine: string, next: string) => {
+    const text = ensureText(ymap, field)
+    const remote = text.toString()
+    if (remote === mine) setText(ymap, field, next)
+    else applyLocalEdit(text, mine, next, remote)
+  }
+
+  // Заголовок и текст: пока поле в фокусе, его содержимым владеет человек
+  // (см. useFieldDraft), а в CRDT каждая правка уходит дифом.
+  const titleField = useFieldDraft('title', ymap, editField)
+  const bodyField = useFieldDraft('body', ymap, editField)
+  const title = titleField.value
+  const body = bodyField.value
   const attachedIds = ((ymap.get('assets') as string[] | undefined) ?? []).filter(Boolean)
   const eventDate = eventDateText(ymap.get('event_date'))
   const [viewer, setViewer] = useState<number | null>(null)
@@ -59,8 +116,10 @@ export function EventEditor({
         <span className="ed-field__label">Заголовок</span>
         <input
           value={title}
+          onFocus={titleField.onFocus}
+          onBlur={titleField.onBlur}
           onChange={(e) => {
-            ymap.set('title', e.target.value)
+            titleField.onChange(e.currentTarget)
             onChange?.()
             onTyping?.()
           }}
@@ -76,8 +135,10 @@ export function EventEditor({
         </span>
         <textarea
           value={body}
+          onFocus={bodyField.onFocus}
+          onBlur={bodyField.onBlur}
           onChange={(e) => {
-            ymap.set('body', e.target.value)
+            bodyField.onChange(e.currentTarget)
             onChange?.()
             onTyping?.()
           }}
@@ -100,13 +161,13 @@ export function EventEditor({
           value={body}
           title={title}
           onSave={(next) => {
-            ymap.set('body', next)
+            setText(ymap, 'body', next)
             onChange?.()
           }}
           onAdopt={(next) => {
             // Осознанно взяли версию соавтора: это такая же запись в CRDT, как
             // сохранение, поэтому дерево синхронизируем тем же путём.
-            ymap.set('body', next)
+            setText(ymap, 'body', next)
             onChange?.()
           }}
           onClose={() => setMdOpen(false)}

@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { buildEventTree, DEFAULT_MAX_DEPTH, type EventLike, type EventTreeNode } from '../../collab/eventTree'
 import { checkMove, type DropPlace, type MoveReject } from '../../collab/reorder'
 import { editingPeers, typingLabel, type PeerState } from '../../collab/awareness'
+import { titleString } from '../../collab/text'
 import {
   yAddEvent,
   yDeleteEvent,
@@ -270,7 +271,7 @@ export function EditorsPanel({ events, assets, assetUrls, syncNote, onChanged, o
     const flat: Array<EventLike & { title: string }> = (events.toArray() as YMap[]).map((m) => ({
       id: (m.get('id') as string | undefined) ?? '',
       parentId: yEventParentId(m),
-      title: ((m.get('title') as string | undefined) ?? '').trim(),
+      title: titleString(m),
     })).filter((e) => e.id.length > 0)
 
     // Номер считаем обходом дерева: «01», «01.2», «01.2.1» — как в кадрах
@@ -353,7 +354,7 @@ export function EditorsPanel({ events, assets, assetUrls, syncNote, onChanged, o
     if (!events || !selectedMap || !selectedId) return
     const arr = events.toArray() as YMap[]
     const descendants = countDescendants(arr, selectedId)
-    const title = ((selectedMap.get('title') as string | undefined) ?? '').trim() || '(без названия)'
+    const title = titleString(selectedMap) || '(без названия)'
     const warn = descendants > 0
       ? `Удалить «${title}» вместе с ${descendants} вложенным(и) событием(ями)?`
       : `Удалить «${title}»?`
