@@ -308,8 +308,13 @@ func (s *Service) DeleteEvent(ctx context.Context, userID, projectID, eventID uu
 // SyncTree — идемпотентная синхронизация проекции дерева целиком (запись: editor+).
 // Используется клиентом после локальных правок CRDT: сервер проверяет инварианты
 // (циклы/глубина/чужой проект) и возвращает каноническое дерево.
+//
+// baseRevision — ревизия снапшота, которую клиент считал актуальной. Если она
+// устарела (кто-то сохранил снапшот раньше), проекция не применяется и
+// возвращается store.ErrRevisionConflict: иначе устаревший клиент удалил бы
+// чужие события, которых нет в его локальном CRDT.
 func (s *Service) SyncTree(
-	ctx context.Context, userID, projectID uuid.UUID, nodes []NodeInput,
+	ctx context.Context, userID, projectID uuid.UUID, nodes []NodeInput, baseRevision int64,
 ) ([]TreeEvent, error) {
 	if err := s.proj.RequireEditor(ctx, userID, projectID); err != nil {
 		return nil, err
@@ -333,7 +338,7 @@ func (s *Service) SyncTree(
 			UpdatedBy: &userID,
 		})
 	}
-	if err := s.store.ReplaceEventTree(ctx, projectID, userID, rows); err != nil {
+	if err := s.store.ReplaceEventTreeChecked(ctx, projectID, userID, rows, baseRevision); err != nil {
 		return nil, err
 	}
 	return s.ListTree(ctx, userID, projectID)

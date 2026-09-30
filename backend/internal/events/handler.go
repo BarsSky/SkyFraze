@@ -225,6 +225,20 @@ func (h *Handler) SyncTree(_ *auth.Service) http.HandlerFunc {
 		if !ok {
 			return
 		}
+		// Проекция строится из локального CRDT, поэтому без базовой ревизии
+		// запись означала бы «клиент, не видевший чужих правок, удаляет чужие
+		// события». Требуем её так же, как в PUT /state.
+		raw := r.Header.Get(baseRevisionHeader)
+		if raw == "" {
+			writeErr(w, http.StatusPreconditionRequired,
+				"missing "+baseRevisionHeader+" header")
+			return
+		}
+		base, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || base < 0 {
+			writeErr(w, http.StatusBadRequest, "invalid "+baseRevisionHeader)
+			return
+		}
 		var nodes []NodeInput
 		if err := json.NewDecoder(io.LimitReader(r.Body, maxTreeBody)).Decode(&nodes); err != nil {
 			writeErr(w, http.StatusBadRequest, "invalid json")
@@ -234,8 +248,15 @@ func (h *Handler) SyncTree(_ *auth.Service) http.HandlerFunc {
 			writeErr(w, http.StatusRequestEntityTooLarge, "too many events")
 			return
 		}
-		tree, err := h.svc.SyncTree(r.Context(), uid, pid, nodes)
+		tree, err := h.svc.SyncTree(r.Context(), uid, pid, nodes, base)
 		if err != nil {
+			if errors.Is(err, store.ErrRevisionConflict) {
+				// Отдаём актуальную ревизию: клиент перечитает снапшот,
+				// смержит его в свой CRDT и повторит проекцию.
+				w.Header().Set(revisionHeader, h.currentRevision(r, uid, pid))
+				writeErr(w, http.StatusConflict, "snapshot revision conflict")
+				return
+			}
 			h.fail(w, err, "sync tree")
 			return
 		}

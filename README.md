@@ -1,4 +1,4 @@
-﻿# SkyFraze
+# SkyFraze
 
 Веб-платформа для совместной (по приглашениям) разработки сюжетов игр / кино / мультфильмов / книг:
 проект разбивается на главы и под-события, каждое событие показывается отдельным «кадром»
@@ -472,6 +472,13 @@ cd frontend && npx tsx tests/public-feed.ts
 
 # E2E администрирования: заявка → одобрение/отклонение → вход, режимы регистрации
 cd frontend && npx tsx tests/admin-registration.ts
+
+# E2E realtime (Фаза 0): вкладка без realtime, две вкладки браузера, обрыв сокета,
+# устаревшая ревизия снапшота дерева (409 → merge → повтор)
+cd frontend && npx tsx tests/realtime-phase0.ts
+
+# E2E переноса проекта: экспорт архива → импорт → проверка глав и картинок
+cd frontend && npx tsx tests/project-transfer.ts
 ```
 
 Основные наборы (`scrollytelling.ts`, `public-feed.ts`, `admin-registration.ts`, скилл

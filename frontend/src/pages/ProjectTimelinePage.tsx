@@ -4,6 +4,7 @@ import { TimelineStage, type AssetLookup } from '../components/timeline/Timeline
 import { EditorsPanel } from '../components/editors/EditorsPanel'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { useCollab, yAddEvent } from '../collab/yprovider'
+import { connectionNotice } from '../collab/connection'
 import { listAssets, uploadAsset, type Asset } from '../api/assets'
 import { useAssetObjectUrls } from '../api/assetObject'
 import type { Project } from '../api/projects'
@@ -22,22 +23,37 @@ export function ProjectTimelinePage() {
   const [assets, setAssets] = useState<Asset[]>([])
   const [eventsCount, setEventsCount] = useState<number>(-1) // -1 = loading
   const [syncNote, setSyncNote] = useState<string | null>(null)
+  const [connectionNote, setConnectionNote] = useState<string | null>(null)
   const [error, setError] = useState<unknown>(null)
   const [attempt, setAttempt] = useState(0)
 
   const collab = useCollab(projectId)
   const events = collab?.events
   const realtime = collab?.connected ?? false
+  const connectionStatus = collab?.status ?? 'connecting'
+  const reconnectAttempt = collab?.reconnectAttempt ?? 0
 
   // Realtime может быть недоступен (прокси, мобильная сеть, закрытый WebSocket):
   // работать можно, но люди должны понимать, почему правки не летят другим сразу.
+  // Разные состояния — разные сообщения: «переподключаюсь…» (связь была и
+  // возвращается) и «realtime недоступен» (повторы не помогают) — это не одно и
+  // то же, и раньше наружу торчал только флаг «не подключено».
+  //
+  // Сообщение о связи живёт отдельно от сообщения о проекции дерева: раньше оба
+  // писались в одну строку, и «серверная копия обновлена» от проекции выглядело
+  // как ответ на разрыв соединения.
+  const connectionMessage = connectionNotice(connectionStatus, reconnectAttempt)
   useEffect(() => {
-    if (!collab || realtime) return
-    const timer = setTimeout(() => {
-      setSyncNote((note) => note ?? 'realtime недоступен: правки сохраняются, но другие вкладки увидят их после перезагрузки')
-    }, 4000)
+    if (!collab || !connectionMessage) {
+      setConnectionNote(null)
+      return undefined
+    }
+    if (realtime) return undefined
+    // Первые секунды разрыва ничего не показываем: короткое переподключение
+    // человеку видеть не нужно, и мигание текста раздражает.
+    const timer = setTimeout(() => setConnectionNote(connectionMessage), 4000)
     return () => clearTimeout(timer)
-  }, [collab, realtime])
+  }, [collab, connectionMessage, realtime])
 
   useEffect(() => {
     getProject(projectId)
@@ -88,6 +104,8 @@ export function ProjectTimelinePage() {
       setSyncNote('только чтение: ваша роль не позволяет менять таймлайн')
     } else if (res.reason === 'rejected') {
       setSyncNote('сервер отклонил структуру дерева (цикл/глубина)')
+    } else if (res.reason === 'conflict') {
+      setSyncNote('сервер обгоняет по ревизии: проекция дерева не применилась, повторю позже')
     } else {
       setSyncNote('не удалось синхронизировать дерево с сервером')
     }
@@ -182,7 +200,7 @@ export function ProjectTimelinePage() {
           events={events}
           assets={assets}
           assetUrls={assetUrls}
-          syncNote={syncNote}
+          syncNote={connectionNote ?? syncNote}
           onChanged={() => {
             void pushTree()
           }}

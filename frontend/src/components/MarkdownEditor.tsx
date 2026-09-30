@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { MarkdownBlock } from './MarkdownBlock'
+import { resolveLiveText } from '../collab/liveText'
 import {
   DIAGRAM_KINDS,
   codeSkeleton,
@@ -19,6 +20,12 @@ interface Props {
   value: string
   /** Сохранение: пишем в CRDT только по кнопке или Ctrl+Enter. */
   onSave: (value: string) => void
+  /**
+   * Взять версию соавтора из CRDT вместо собственного черновика. Отдельное
+   * действие: без него «Сохранить» затирало бы чужую правку, а автоматически
+   * подменять текст под руками у печатающего — хуже, чем конфликт.
+   */
+  onAdopt?: (value: string) => void
   onClose: () => void
   /** Заголовок окна — обычно название события. */
   title?: string
@@ -34,8 +41,14 @@ type Mode = 'split' | 'edit' | 'preview'
  * (на широком экране), панель вставок для тех, кто разметку не помнит, и подсказка
  * по синтаксису для тех, кто пишет её руками. Предпросмотр — тот же рендер, что и
  * в кадре таймлайна, поэтому «как вижу здесь» совпадает с «как увидят читатели».
+ *
+ * Окно живое: пока оно открыто, чужие правки больше не теряются. Если человек
+ * ничего не печатал, текст молча обновляется на пришедший из CRDT; если печатает —
+ * ничего не затирается, но появляется предупреждение и кнопка «взять версию
+ * соавтора». Правило «что делать» целиком живёт в `resolveLiveText` и покрыто
+ * тестом, здесь только его исполнение.
  */
-export function MarkdownEditor({ value, onSave, onClose, title }: Props) {
+export function MarkdownEditor({ value, onSave, onAdopt, onClose, title }: Props) {
   const [text, setText] = useState(value)
   const [mode, setMode] = useState<Mode>('split')
   const [diagramKind, setDiagramKind] = useState<string>(DIAGRAM_KINDS[0].id)
@@ -44,8 +57,47 @@ export function MarkdownEditor({ value, onSave, onClose, title }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const windowRef = useRef<HTMLDivElement>(null)
   const restoreFocus = useRef<HTMLElement | null>(null)
+  /**
+   * Версия текста, которую человек считает «сохранённой» последней. Не то же
+   * самое, что props.value после сохранения: пока идёт merge с соавтором,
+   * значение в CRDT успевает измениться, и сравнивать черновик нужно с базой.
+   */
+  const [base, setBase] = useState(value)
+  /** Есть ли чужая правка, которую мы не стали применять автоматически. */
+  const [conflict, setConflict] = useState(false)
+  /** Последнее значение CRDT, на которое мы уже отреагировали. */
+  const valueRef = useRef(value)
 
-  const dirty = text !== value
+  const dirty = text !== base
+
+  /**
+   * Реакция на изменения `value` из CRDT.
+   *
+   * `valueRef` хранит последнее увиденное значение: эффект перезапускается и на
+   * локальные правки (`text`/`base` — его зависимости), и без этой проверки
+   * «изменением» считался бы каждый такой перезапуск.
+   */
+  useEffect(() => {
+    const remote = value
+    if (remote === valueRef.current) return
+    valueRef.current = remote
+    const decision = resolveLiveText({ local: text, base, remote })
+    setBase(decision.base)
+    if (decision.action === 'adopt') {
+      setText(decision.text)
+      setConflict(false)
+    } else if (decision.action === 'notify') {
+      setConflict(true)
+    }
+  }, [value, text, base])
+
+  /** Принять версию соавтора: это запись в CRDT, а не только замена текста в окне. */
+  const adopt = useCallback(() => {
+    setText(valueRef.current)
+    setBase(valueRef.current)
+    setConflict(false)
+    onAdopt?.(valueRef.current)
+  }, [onAdopt])
 
   // Фокус уходит в окно, страница под ним не прокручивается; при закрытии
   // возвращаем и фокус, и прокрутку.
@@ -83,6 +135,10 @@ export function MarkdownEditor({ value, onSave, onClose, title }: Props) {
   }, [])
 
   const save = useCallback(() => {
+    // После сохранения значение из CRDT снова становится базовым: конфликта
+    // с соавтором больше нет, и предупреждение в окне гаснет вместе с ним.
+    setBase(text)
+    setConflict(false)
     onSave(text)
     onClose()
   }, [onSave, onClose, text])
@@ -165,6 +221,19 @@ export function MarkdownEditor({ value, onSave, onClose, title }: Props) {
             закрыть ✕
           </button>
         </div>
+
+        {/* Чужая правка при несохранённом черновике: ничего не затираем, но и не
+            молчим. Кнопка — явное действие человека, а не автомат. */}
+        {conflict && (
+          <div className="md-editor__alert" role="status" aria-live="polite">
+            <span className="md-editor__alert-text">
+              Соавтор изменил текст. Ваши несохранённые правки не тронуты.
+            </span>
+            <button type="button" className="secondary" onClick={adopt}>
+              взять версию соавтора
+            </button>
+          </div>
+        )}
 
         <div className="md-editor__toolbar" role="toolbar" aria-label="Вставки Markdown" data-inserts={insertsOpen ? 'open' : 'closed'}>
           {/* На телефоне кнопки вставок не влезают в строку (их пятнадцать плюс

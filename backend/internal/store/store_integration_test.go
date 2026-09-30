@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -105,5 +106,75 @@ func TestReplaceEventTree_ConcurrentSyncDoesNotDeadlock(t *testing.T) {
 	}
 	if roots != 1 {
 		t.Fatalf("после параллельных сохранений корней %d, ожидался 1 (событий всего %d)", roots, len(rows))
+	}
+}
+
+// Проекция дерева собирается из локального CRDT вкладки. Если вкладка не видела
+// чужих правок (снапшот уже сохранили), её payload не содержит чужих событий — и
+// полная замена дерева их удалила бы. Ревизионная проверка обязана это отсечь,
+// а «свежий» клиент с актуальной ревизией — проходить.
+func TestReplaceEventTreeChecked_StaleRevisionRejected(t *testing.T) {
+	pool := testdb.Setup(t, "store")
+	testdb.Truncate(t, pool,
+		"project_ratings", "project_views", "registration_requests", "app_settings",
+		"project_event_state", "sessions", "invitations", "event_assets", "assets",
+		"events", "team_memberships", "projects", "users")
+
+	ctx := context.Background()
+	st := store.New(pool)
+	user, err := st.CreateUser(ctx, "owner2@example.com", "hash", "Владелец")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	project, err := projects.New(st).Create(ctx, user.ID, "Проект", "описание")
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	chapter := uuid.New()
+	seed := []store.Event{
+		{ID: chapter, ProjectID: project.ID, Position: 0, Depth: 0, Title: "Глава", Body: "текст"},
+	}
+	// Снапшота ещё нет: базовой считается нулевая ревизия.
+	if err := st.ReplaceEventTreeChecked(ctx, project.ID, user.ID, seed, 0); err != nil {
+		t.Fatalf("первая запись с ревизией 0: %v", err)
+	}
+
+	// Кто-то сохранил снапшот — ревизия стала 1.
+	revision, err := st.SaveProjectEventState(ctx, project.ID, user.ID, []byte("state"), 0)
+	if err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+	if revision != 1 {
+		t.Fatalf("ревизия снапшота %d, ожидалась 1", revision)
+	}
+
+	// Устаревший клиент (видел ревизию 0) пытается снести дерево целиком.
+	stale := []store.Event{}
+	if err := st.ReplaceEventTreeChecked(ctx, project.ID, user.ID, stale, 0); !errors.Is(err, store.ErrRevisionConflict) {
+		t.Fatalf("устаревшая проекция: ожидался ErrRevisionConflict, получено %v", err)
+	}
+	rows, err := st.ListEvents(ctx, project.ID)
+	if err != nil {
+		t.Fatalf("list events: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("после отклонённой проекции событий %d, ожидалось 1", len(rows))
+	}
+
+	// Актуальный клиент (прочитал ревизию 1) пишет успешно.
+	fresh := []store.Event{
+		{ID: chapter, ProjectID: project.ID, Position: 0, Depth: 0, Title: "Глава", Body: "текст"},
+		{ID: uuid.New(), ProjectID: project.ID, ParentID: &chapter, Position: 0, Depth: 1, Title: "Новое", Body: "текст"},
+	}
+	if err := st.ReplaceEventTreeChecked(ctx, project.ID, user.ID, fresh, revision); err != nil {
+		t.Fatalf("свежая проекция: %v", err)
+	}
+	rows, err = st.ListEvents(ctx, project.ID)
+	if err != nil {
+		t.Fatalf("list events: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("после свежей проекции событий %d, ожидалось 2", len(rows))
 	}
 }

@@ -1,7 +1,10 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import * as Y from 'yjs'
 import { buildEventTree, flattenTree } from './eventTree'
 import {
+  applyPendingState,
+  commitSnapshot,
+  shouldClearPending,
   yAddEvent,
   yDeleteEvent,
   yEnsureEventIds,
@@ -233,5 +236,154 @@ describe('yprovider — перенос поддерева (yMoveSubtree)', () =>
     expect(yEventParentId(mapById(arr, l3Id)!)).toBe(l2Id)
     expect(yEventParentId(mapById(arr, rootId)!)).toBeNull()
     expect(tree(arr)).toEqual(['root', '  l1', '    l2', '      l3', 'other', '  other-child'])
+  })
+})
+
+/**
+ * Отложенное состояние (Фаза 0.4): запас с прошлого закрытия вкладки нужно слить
+ * с серверным снапшотом, а убрать его — только когда он точно внутри
+ * сохранённого состояния.
+ */
+describe('yprovider — отложенное состояние', () => {
+  const titles = (doc: Y.Doc) =>
+    (doc.getArray<Y.Map<unknown>>('events').toArray() as Y.Map<unknown>[]).map((m) => m.get('title'))
+
+  it('сливает серверный снапшот и запас: не теряется ни то, ни другое', () => {
+    const server = new Y.Doc()
+    yAddEvent(server.getArray<Y.Map<unknown>>('events'), 'Серверная глава')
+    const serverState = Y.encodeStateAsUpdate(server)
+
+    const local = new Y.Doc()
+    Y.applyUpdate(local, serverState)
+    yAddEvent(local.getArray<Y.Map<unknown>>('events'), 'Правка перед закрытием')
+    const pending = { update: Y.encodeStateAsUpdate(local), baseRevision: 828 }
+
+    const reopened = new Y.Doc()
+    expect(applyPendingState(reopened, serverState, pending)).toBe(true)
+    expect(titles(reopened)).toEqual(['Серверная глава', 'Правка перед закрытием'])
+  })
+
+  it('без запаса просто применяет серверное состояние', () => {
+    const server = new Y.Doc()
+    yAddEvent(server.getArray<Y.Map<unknown>>('events'), 'Глава')
+    const reopened = new Y.Doc()
+    expect(applyPendingState(reopened, Y.encodeStateAsUpdate(server), null)).toBe(false)
+    expect(titles(reopened)).toEqual(['Глава'])
+  })
+
+  it('сломанный запас не роняет открытие проекта', () => {
+    const reopened = new Y.Doc()
+    const broken = { update: new Uint8Array([255, 255, 255]), baseRevision: 0 }
+    expect(() => applyPendingState(reopened, new Uint8Array(0), broken)).not.toThrow()
+  })
+
+  it('запас убираем только когда он действительно внутри сохранённого состояния', () => {
+    const doc = new Y.Doc()
+    yAddEvent(doc.getArray<Y.Map<unknown>>('events'), 'Глава')
+    const pending = { update: Y.encodeStateAsUpdate(doc), baseRevision: 1 }
+
+    // Содержимое запаса слито в doc — запись можно подтвердить, запас не нужен.
+    expect(shouldClearPending(pending, Y.encodeStateAsUpdate(doc))).toBe(true)
+
+    // Состояние без запаса (например, запись не удалась, и doc откатили) —
+    // запас обязан остаться, иначе правка исчезнет.
+    const other = new Y.Doc()
+    yAddEvent(other.getArray<Y.Map<unknown>>('events'), 'Другое')
+    expect(shouldClearPending(pending, Y.encodeStateAsUpdate(other))).toBe(false)
+    expect(shouldClearPending(null, Y.encodeStateAsUpdate(doc))).toBe(false)
+  })
+})
+
+/**
+ * Запись снапшота с ревизией: единственный путь сохранения (debounce,
+ * safety-net, повтор после отложенного состояния). Проверяем восстановление
+ * после 409 и, главное, что неудача не выдаётся за успех — иначе запас
+ * удалялся бы вместе с несохранённой правкой.
+ */
+describe('yprovider — запись снапшота (commitSnapshot)', () => {
+  const bytes = (...values: number[]) => new Uint8Array(values)
+
+  it('успешная запись отдаёт новую ревизию с сервера', async () => {
+    const put = vi.fn().mockResolvedValue({ ok: true, revision: 9 })
+    const fetchRemote = vi.fn()
+
+    const result = await commitSnapshot(bytes(1), 8, {
+      put,
+      fetchRemote,
+      encodeState: () => bytes(2),
+    })
+
+    expect(result).toEqual({ ok: true, revision: 9 })
+    expect(put).toHaveBeenCalledTimes(1)
+    // База — та, что была на руках, а не выдуманная.
+    expect(put.mock.calls[0][1]).toBe(8)
+    expect(fetchRemote).not.toHaveBeenCalled()
+  })
+
+  it('без ревизии в ответе оставляет прежнюю базу', async () => {
+    const result = await commitSnapshot(bytes(1), 8, {
+      put: async () => ({ ok: true }),
+      fetchRemote: async () => null,
+      encodeState: () => bytes(2),
+    })
+    expect(result).toEqual({ ok: true, revision: 8 })
+  })
+
+  it('при 409 перечитывает состояние, мержит и повторяет один раз', async () => {
+    const put = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, conflict: true, currentRevision: 12 })
+      .mockResolvedValueOnce({ ok: true, revision: 13 })
+    // mergeRemoteState уже слил серверное состояние в doc, поэтому encodeState
+    // возвращает другое (объединённое) содержимое.
+    const merged = bytes(1, 2)
+
+    const result = await commitSnapshot(bytes(1), 8, {
+      put,
+      fetchRemote: async () => 12,
+      encodeState: () => merged,
+    })
+
+    expect(result).toEqual({ ok: true, revision: 13 })
+    expect(put).toHaveBeenCalledTimes(2)
+    expect(put.mock.calls[0][1]).toBe(8)
+    // Повтор идёт на актуальной базе, а тело — уже слитое состояние.
+    expect(put.mock.calls[1][1]).toBe(12)
+    expect(Array.from(put.mock.calls[1][0])).toEqual([1, 2])
+  })
+
+  it('конфликт, который не удалось прочитать, отдаёт ok: false и ревизию с сервера', async () => {
+    const put = vi.fn().mockResolvedValue({ ok: false, conflict: true, currentRevision: 12 })
+    const result = await commitSnapshot(bytes(1), 8, {
+      put,
+      fetchRemote: async () => null,
+      encodeState: () => bytes(1),
+    })
+    // Успехом это не считается: запас в localStorage должен остаться.
+    expect(result).toEqual({ ok: false, revision: 12 })
+  })
+
+  it('ошибка сети отдаёт ok: false и не трогает базу', async () => {
+    const result = await commitSnapshot(bytes(1), 8, {
+      put: async () => ({ ok: false }),
+      fetchRemote: async () => null,
+      encodeState: () => bytes(1),
+    })
+    expect(result).toEqual({ ok: false, revision: 8 })
+  })
+
+  it('повтор после конфликта, который снова конфликтует, не выдаётся за успех', async () => {
+    const put = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, conflict: true, currentRevision: 12 })
+      .mockResolvedValueOnce({ ok: false, conflict: true, currentRevision: 14 })
+    const result = await commitSnapshot(bytes(1), 8, {
+      put,
+      fetchRemote: async () => 12,
+      encodeState: () => bytes(2),
+    })
+    // Повтор ровно один: третьего запроса нет, и правка не считается сохранённой.
+    expect(put).toHaveBeenCalledTimes(2)
+    expect(result).toEqual({ ok: false, revision: 12 })
   })
 })

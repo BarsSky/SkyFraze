@@ -1,18 +1,36 @@
 import * as Y from 'yjs'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useAuthStore } from '../store/auth'
 import { buildEventTree } from './eventTree'
 import { moveEvent, type DropPlace } from './reorder'
 import { randomId } from '../lib/uuid'
 import { collabSocketUrl } from './socketUrl'
-import { getEventState, listEventRows, putEventState, syncEventTree, type FlatEventNode } from '../api/events'
+import { createReconnectLoop, type ReconnectLoop } from './backoff'
+import { OFFLINE_AFTER_ATTEMPTS, type CollabStatus } from './connection'
+import { connectTabChannel, createTabChannel } from './broadcast'
+import {
+  clearDeferredState,
+  defaultStorage,
+  readDeferredState,
+  saveDeferredState,
+  type PendingState,
+} from './deferredState'
+import {
+  getEventState,
+  httpStatusOf,
+  listEventRows,
+  putEventState,
+  syncEventTree,
+  type FlatEventNode,
+  type PutStateResult,
+} from '../api/events'
 
 export type YArray = Y.Array<Y.Map<unknown>>
 export type YMap = Y.Map<unknown>
 
 export interface SyncTreeResult {
   ok: boolean
-  reason?: 'forbidden' | 'rejected' | 'error'
+  reason?: 'forbidden' | 'rejected' | 'error' | 'conflict'
   /** сколько узлов CRDT приведено к нормализованному дереву перед повтором */
   repaired?: number
 }
@@ -33,6 +51,14 @@ export interface CollabHandle {
   setWritable: (allowed: boolean | null) => void
   /** Открылось ли realtime-соединение: без него правки сохраняются, но не летят другим. */
   connected: boolean
+  /**
+   * Состояние соединения целиком: «подключаюсь», «открыто», «переподключаюсь»
+   * после обрыва, «связи нет». Нужно интерфейсу, чтобы отличить временный
+   * разрыв от «realtime тут недоступен вовсе» — это разные сообщения человеку.
+   */
+  status: CollabStatus
+  /** Сколько попыток переподключения подряд уже сделано (0 — соединение живо). */
+  reconnectAttempt: number
 }
 
 function authHeaders(extra?: Record<string, string>): Record<string, string> {
@@ -44,19 +70,56 @@ function authHeaders(extra?: Record<string, string>): Record<string, string> {
 }
 
 /**
- * Подключение к Yjs-серверу + REST snapshot.
+ * Одна запись снапшота с восстановлением после 409.
  *
- * Снапшот версионируется: сервер принимает запись только от известной базовой
- * ревизии (X-Skyfraze-Base-Revision). При 409 клиент перечитывает состояние,
- * мержит его в свой doc (CRDT не теряет правки) и повторяет запись один раз.
- * Структура дерева дополнительно проецируется на сервер (`syncTree`), где
- * проверяются циклы/глубина/принадлежность проекту.
+ * Вынесена отдельной функцией без доступа к состоянию эффекта (ревизия
+ * возвращается наружу), поэтому её можно проверить тестом с моками API. Это
+ * единственный путь сохранения — и debounce, и safety-net, и повтор при
+ * открытии проекта после отложенного состояния идут через неё.
+ *
+ * `fetchRemote` перечитывает серверное состояние и сливает его в doc перед
+ * повтором: CRDT-слияние сохраняет и чужие правки, и свои. `encodeState`
+ * вызывается заново после merge — состояние документа уже другое.
+ */
+export async function commitSnapshot(
+  state: Uint8Array,
+  baseRevision: number,
+  deps: {
+    put: (state: Uint8Array, base: number) => Promise<PutStateResult>
+    fetchRemote: () => Promise<number | null>
+    encodeState: () => Uint8Array
+  },
+): Promise<{ ok: boolean; revision: number }> {
+  const first = await deps.put(state, baseRevision)
+  if (first.ok) return { ok: true, revision: first.revision ?? baseRevision }
+  if (!first.conflict) return { ok: false, revision: baseRevision }
+
+  // Кто-то записал снапшот раньше: перечитываем, мержим и повторяем один раз.
+  const snapshot = await deps.fetchRemote()
+  const nextBase = first.currentRevision ?? snapshot ?? baseRevision
+  const retry = await deps.put(deps.encodeState(), nextBase)
+  if (retry.ok) return { ok: true, revision: retry.revision ?? nextBase }
+  return { ok: false, revision: nextBase }
+}
+
+/**
+ * Проекция дерева с ревизионной защитой.
+ *
+ * Проекция — полная замена серверного дерева, поэтому устаревший клиент
+ * (например, тот, что давно не получал апдейты) сносил чужие строки. Теперь
+ * уходит базовая ревизия снапшота (`X-Skyfraze-Base-Revision`) — ровно та же
+ * оптимистичная блокировка, что у `PUT /events/state`, и сервер её требует:
+ * без заголовка он отвечает 428, при устаревшей базе — 409 и дерево не
+ * трогает. Оба случая восстановимые: перечитываем состояние, сливаем его в doc
+ * (CRDT не теряет правки) и повторяем проекцию один раз на актуальной базе.
  */
 export function useCollab(projectId: string): CollabHandle | null {
   const [handle, setHandle] = useState<CollabHandle | null>(null)
   // Отдельным состоянием, а не полем handle: открытие сокета не должно
   // пересобирать документ и переподключаться.
   const [connected, setConnected] = useState(false)
+  const [status, setStatus] = useState<CollabStatus>('connecting')
+  const [reconnectAttempt, setReconnectAttempt] = useState(0)
 
   useEffect(() => {
     const doc = new Y.Doc()
@@ -67,19 +130,10 @@ export function useCollab(projectId: string): CollabHandle | null {
 
     const tok = useAuthStore.getState().accessToken
     const wsUrl = collabSocketUrl(projectId)
-    // WebSocket может быть недоступен по многим причинам: HTTPS-страница и ws://
-    // (браузер бросает SecurityError), прокси без поддержки Upgrade, блокировка в
-    // корпоративной сети. Ни один из этих случаев не должен ронять приложение:
-    // содержимое проекта грузится по REST (см. loadContent), а realtime — бонус.
     let ws: WebSocket | null = null
-    let wsOpened = false
-    try {
-      ws = new WebSocket(wsUrl + '?token=' + encodeURIComponent(tok ?? ''))
-      ws.binaryType = 'arraybuffer'
-    } catch (e) {
-      console.warn('[yprovider] realtime недоступен, работаем без него:', String(e))
-    }
     let active = true
+    /** Хоть раз соединение открывалось: признак «мы доверенный клиент» для записи. */
+    let wsOpened = false
     let revision = 0
     /**
      * Роль ещё не известна, пока страница не получила проект: за это время уже
@@ -88,9 +142,109 @@ export function useCollab(projectId: string): CollabHandle | null {
      */
     let writable: boolean | null = null
     let treeSynced = false
+    /** Отложенный на уходе со страницы апдейт — если он был, его надо слить и сохранить. */
+    let deferred: PendingState | null = null
 
     const canWrite = () => writable === true
+    const setStatusOf = (next: CollabStatus, attempt: number) => {
+      setStatus(next)
+      setConnected(next === 'open')
+      // Отдельное число, а не строка: интерфейс показывает «переподключаюсь…»
+      // и переключается на «связи нет» по числу неудачных попыток подряд.
+      setReconnectAttempt(next === 'open' ? 0 : attempt)
+    }
+    /**
+     * Одна попытка соединения.
+     *
+     * Живёт в цикле переподключения (`backoff.ts`), а не в одном `new WebSocket`
+     * на весь срок жизни страницы: после обрыва (сон ноутбука, смена сети,
+     * перезапуск бэкенда) клиент раньше оставался без realtime до перезагрузки —
+     * чужие правки не приезжали, свои уходили только в БД.
+     */
+    const openSocket = () => {
+      if (!active) return
+      // WebSocket может быть недоступен по многим причинам: HTTPS-страница и ws://
+      // (браузер бросает SecurityError), прокси без поддержки Upgrade, блокировка в
+      // корпоративной сети. Ни один из этих случаев не должен ронять приложение:
+      // содержимое проекта грузится по REST (см. loadContent), а realtime — бонус.
+      let socket: WebSocket
+      try {
+        socket = new WebSocket(wsUrl + '?token=' + encodeURIComponent(tok ?? ''))
+        socket.binaryType = 'arraybuffer'
+      } catch {
+        // Неудача создания — такая же неудача, как обрыв: планируем следующую
+        // попытку. Ошибку не пишем в консоль на каждой итерации: при долгом
+        // обрыве это спам, от которого вкладка тормозит сильнее самого обрыва.
+        loop.schedule()
+        return
+      }
+      ws = socket
 
+      socket.onopen = async () => {
+        if (!active) return
+        wsOpened = true
+        loop.reset()
+        setStatusOf('open', 0)
+        // Соединение могли открыть раньше, чем приехал снапшот: отправляем то, что
+        // уже есть. При переподключении это же досылает правки, накопленные в
+        // оффлайне, — CRDT-апдейт, а не перезапись состояния.
+        const update = Y.encodeStateAsUpdate(doc)
+        if (update.byteLength > 0 && socket.readyState === WebSocket.OPEN) {
+          try {
+            socket.send(update)
+          } catch {
+            /* ignore */
+          }
+        }
+        // Первичная проекция дерева на сервер: у проекта может быть история в
+        // CRDT и пустая реляционная модель (после миграции 0002). Роль к этому
+        // моменту может быть ещё не известна — тогда проекцию сделает setWritable.
+        if (canWrite() && !treeSynced) void syncTree()
+      }
+      socket.onclose = () => {
+        // Событие от уже заменённого сокета игнорируем: повтор планирует только
+        // актуальное соединение, поэтому двух серий повторов не бывает.
+        if (!active || ws !== socket) return
+        ws = null
+        setStatusOf(wsOpened ? 'reconnecting' : 'connecting', loop.attempt())
+        loop.schedule()
+      }
+      socket.onerror = () => {
+        // События error перед close может не быть вовсе, поэтому статус ставим
+        // только здесь, а не планируем повтор: браузер либо пришлёт close, либо
+        // переподключение уже запланировано. Иначе на один обрыв пришлось бы две
+        // серии повторов и шторм запросов к лежащему серверу.
+        if (!active) return
+        setStatusOf(wsOpened ? 'reconnecting' : 'connecting', loop.attempt())
+      }
+      socket.onmessage = (ev) => {
+        if (ev.data instanceof ArrayBuffer) {
+          applyRemoteUpdate(new Uint8Array(ev.data))
+        }
+      }
+    }
+
+    const loop: ReconnectLoop = createReconnectLoop({
+      connect: openSocket,
+      onAttemptFailed: (attempt) => {
+        // Счётчик показываем уже после третьей неудачи подряд: одна-две — это
+        // «мигнуло», а не «realtime тут недоступен».
+        const next: CollabStatus = wsOpened || attempt >= OFFLINE_AFTER_ATTEMPTS ? 'reconnecting' : 'connecting'
+        setStatusOf(next, attempt)
+      },
+    })
+
+    /**
+     * Проекция дерева с ревизионной защитой.
+     *
+     * Проекция — полная замена серверного дерева, поэтому устаревший клиент
+     * (например, тот, что давно не получал апдейты) сносил чужие строки. Теперь
+     * уходит базовая ревизия снапшота (`X-Skyfraze-Base-Revision`) — ровно та же
+     * оптимистичная блокировка, что у `PUT /events/state`, и сервер её требует:
+     * без заголовка он отвечает 428, при устаревшей базе — 409 и дерево не
+     * трогает. Оба случая восстановимые: перечитываем состояние, сливаем его в doc
+     * (CRDT не теряет правки) и повторяем проекцию один раз на актуальной базе.
+     */
     const syncTree = async (): Promise<SyncTreeResult> => {
       if (!canWrite()) return { ok: false, reason: 'forbidden' }
       const payload = yFlatTree(events)
@@ -98,21 +252,61 @@ export function useCollab(projectId: string): CollabHandle | null {
         treeSynced = true
         return { ok: true }
       }
+
+      /** Одна попытка. Conflict/428 не бросают: решение принимает вызывающий. */
+      const send = async (nodes: FlatEventNode[]) => {
+        const result = await syncEventTree(projectId, nodes, revision)
+        if (result.conflict) {
+          const snapshot = await mergeRemoteState()
+          if (snapshot !== null) revision = result.currentRevision ?? snapshot
+          else if (result.currentRevision !== undefined) revision = result.currentRevision
+          return { ok: false, reason: 'conflict' as const }
+        }
+        if (result.forbidden) return { ok: false, reason: 'forbidden' as const }
+        if (result.needsBase) return { ok: false, reason: 'needsBase' as const }
+        return { ok: true as const }
+      }
+
       try {
-        await syncEventTree(projectId, payload)
-        treeSynced = true
-        return { ok: true }
+        const first = await send(payload)
+        if (first.ok) {
+          treeSynced = true
+          return { ok: true }
+        }
+        if (first.reason === 'forbidden') return first
+        if (first.reason === 'conflict' || first.reason === 'needsBase') {
+          // Сервер отверг базу. Для 428 её могло просто не быть в руках (снапшот
+          // ещё не приехал или запрос состояния упал), для 409 — обогнать успел
+          // соавтор. В обоих случаях спасает одно: взять ревизию у сервера.
+          if (first.reason === 'needsBase') await mergeRemoteState()
+          const retry = await send(yFlatTree(events))
+          if (retry.ok) {
+            treeSynced = true
+            return { ok: true }
+          }
+          if (retry.reason === 'forbidden') return retry
+          // Отвергли и со второго раза — молчать нельзя: иначе страница бодро
+          // сообщит «копия обновлена», хотя проекция не прошла.
+          return { ok: false, reason: retry.reason === 'conflict' ? 'conflict' : 'error' }
+        }
+        return first
       } catch (e) {
-        const status = (e as { response?: Response })?.response?.status
+        const status = httpStatusOf(e)
         if (status === 403) return { ok: false, reason: 'forbidden' }
         if (status === 400) {
           // Сервер отклонил структуру (цикл/сирота/глубина): приводим CRDT
-          // к нормализованному виду и повторяем один раз.
+          // к нормализованному виду и повторяем один раз. База у повтора — текущая
+          // `revision`: при 400 проекция была отклонена целиком, ревизию снапшота
+          // это не меняет. Без заголовка сервер ответил бы 428, и починка
+          // иерархии никогда не долетела бы.
           const repaired = yRepairHierarchy(events)
           if (repaired > 0) {
             try {
-              await syncEventTree(projectId, yFlatTree(events))
-              return { ok: true, repaired }
+              const retry = await send(yFlatTree(events))
+              if (retry.ok) {
+                treeSynced = true
+                return { ok: true, repaired }
+              }
             } catch {
               /* ignore */
             }
@@ -132,15 +326,28 @@ export function useCollab(projectId: string): CollabHandle | null {
      * приезжает всегда, а WebSocket отвечает только за реальное время.
      */
     const loadContent = async (): Promise<void> => {
+      // Запас с прошлого закрытия вкладки: сначала серверный снапшот, затем
+      // отложенный апдейт. Порядок обязателен — слияние идёт поверх серверного
+      // состояния, поэтому локальная правка гарантированно в документе.
+      deferred = readDeferredState(projectId)
+      // ArrayBufferLike, а не ArrayBuffer: у StateSnapshot состояние приходит
+      // как Uint8Array<ArrayBufferLike>, у запаса — из base64-декодера.
+      let serverState: Uint8Array<ArrayBufferLike> = new Uint8Array(0)
       try {
         const snap = await getEventState(projectId)
         if (!active) return
         revision = snap.revision
-        if (snap.state.byteLength > 0) {
-          Y.applyUpdate(doc, snap.state, 'remote')
-        }
+        serverState = snap.state
       } catch (e) {
         console.log('[yprovider] snapshot fetch error:', String(e))
+      }
+
+      if (!active) return
+      if (applyPendingState(doc, serverState, deferred)) {
+        // Запас в документе; записать его можно только когда роль известна.
+        // Если роль уже пришла и есть соединение — пишем сразу, иначе это
+        // сделает `setWritable` или первый успешный debounce-save.
+        if (canWrite() && wsOpened) void flushNow()
       }
 
       // Снапшота нет, а дерево в базе есть — так выглядит проект, созданный через
@@ -168,32 +375,14 @@ export function useCollab(projectId: string): CollabHandle | null {
       }
     }
 
-    // Обработчики навешиваем только если сокет удалось создать.
-    if (ws) {
-      ws.onopen = async () => {
-        wsOpened = true
-        setConnected(true)
-        // Соединение могли открыть раньше, чем приехал снапшот: отправляем то, что
-        // уже есть, а остальное уйдёт через doc.on('update') после загрузки.
-        const update = Y.encodeStateAsUpdate(doc)
-        if (update.byteLength > 0 && ws) ws.send(update)
-        // Первичная проекция дерева на сервер: у проекта может быть история в
-        // CRDT и пустая реляционная модель (после миграции 0002). Роль к этому
-        // моменту может быть ещё не известна — тогда проекцию сделает setWritable.
-        if (active && canWrite() && !treeSynced) void syncTree()
-      }
-      ws.onclose = () => setConnected(false)
-      ws.onerror = () => setConnected(false)
-      ws.onmessage = (ev) => {
-        if (ev.data instanceof ArrayBuffer) {
-          try {
-            Y.applyUpdate(doc, new Uint8Array(ev.data), 'remote')
-          } catch {
-            /* ignore malformed */
-          }
-        }
-      }
-    }
+    // Двусторонний канал вкладок одного пользователя (см. broadcast.ts):
+    // локальные апдейты уходят соседним вкладкам, чужие приезжают сюда.
+    const tabChannel = createTabChannel(projectId, (update) => applyRemoteUpdate(update), doc)
+    const detachTabChannel = connectTabChannel(doc, tabChannel)
+
+    // Первое соединение с бэкендом — здесь, а не в конструкторе эффекта: до
+    // этого `applyRemoteUpdate`, `loop` и канал вкладок уже определены.
+    openSocket()
 
     let debounceTimer: ReturnType<typeof setTimeout> | null = null
     let pendingPromise: Promise<void> = Promise.resolve()
@@ -202,26 +391,52 @@ export function useCollab(projectId: string): CollabHandle | null {
     let saving = false
     let queued = false
 
-    const doSave = async () => {
-      const state = Y.encodeStateAsUpdate(doc)
-      const first = await putEventState(projectId, state, revision)
-      if (first.ok) {
-        revision = first.revision ?? revision
-        return
+    /**
+     * Применить апдейт, пришедший извне (сервер, соседняя вкладка, запас с
+     * прошлого закрытия). Origin 'remote' важен: без него `doc.on('update')`
+     * счёл бы этот апдейт своим и отправил обратно — бесконечное эхо.
+     */
+    function applyRemoteUpdate(update: Uint8Array): void {
+      if (update.byteLength === 0) return
+      try {
+        Y.applyUpdate(doc, update, 'remote')
+      } catch {
+        /* ignore malformed */
       }
-      if (first.conflict) {
-        // Кто-то записал снапшот раньше: перечитываем, мержим и повторяем.
-        try {
-          const snap = await getEventState(projectId)
-          revision = first.currentRevision ?? snap.revision
-          if (snap.state.byteLength > 0) {
-            Y.applyUpdate(doc, snap.state, 'remote')
-          }
-          const retry = await putEventState(projectId, Y.encodeStateAsUpdate(doc), revision)
-          if (retry.ok) revision = retry.revision ?? revision
-        } catch {
-          /* offline ok */
-        }
+    }
+
+    /**
+     * Перечитать серверный снапшот и слить его в doc. Возвращает новую ревизию
+     * или `null`, если прочитать не удалось: вызывающий тогда решает сам,
+     * повторять ли запись. Без этого 409 на проекции дерева оставил бы клиента
+     * на устаревшей базе.
+     */
+    async function mergeRemoteState(): Promise<number | null> {
+      try {
+        const snap = await getEventState(projectId)
+        if (snap.state.byteLength > 0) applyRemoteUpdate(snap.state)
+        return snap.revision
+      } catch {
+        return null
+      }
+    }
+
+    /**
+     * Одна запись снапшота с восстановлением после 409 (см. `commitSnapshot`).
+     */
+    const doSave = async (): Promise<void> => {
+      const result = await commitSnapshot(Y.encodeStateAsUpdate(doc), revision, {
+        put: (state, base) => putEventState(projectId, state, base),
+        fetchRemote: mergeRemoteState,
+        encodeState: () => Y.encodeStateAsUpdate(doc),
+      })
+      revision = result.revision
+      if (!result.ok) return // запас в localStorage остаётся до следующего раза
+      // Запас убираем только после подтверждённой записи: иначе он стёрся бы
+      // ровно в том случае, ради которого и делался (сеть/конфликт).
+      if (shouldClearPending(deferred, Y.encodeStateAsUpdate(doc))) {
+        clearDeferredState(projectId)
+        deferred = null
       }
     }
 
@@ -235,7 +450,7 @@ export function useCollab(projectId: string): CollabHandle | null {
       try {
         await doSave()
       } catch {
-        /* offline ok */
+        /* offline ok: запас в localStorage остаётся до следующего открытия */
       } finally {
         saving = false
       }
@@ -255,7 +470,10 @@ export function useCollab(projectId: string): CollabHandle | null {
     }
 
     doc.on('update', (update, origin) => {
-      if (origin === 'remote') return
+      // 'remote' — серверный апдейт, 'peer' — апдейт соседней вкладки из
+      // BroadcastChannel. Всё внешнее назад не отправляем: это было бы эхо,
+      // которое крутится между вкладками бесконечно.
+      if (origin === 'remote' || origin === 'peer') return
       if (ws && ws.readyState === WebSocket.OPEN) {
         try { ws.send(update) } catch { /* ignore */ }
       }
@@ -269,9 +487,16 @@ export function useCollab(projectId: string): CollabHandle | null {
 
     // Последняя запись при уходе со страницы: sendBeacon не умеет заголовки,
     // поэтому используем fetch с keepalive — он несёт базовую ревизию.
+    // Ответ никто не читает: страница уже уходит, и 409/обрыв сети здесь не
+    // видны. Поэтому перед отправкой состояние и базовая ревизия кладутся в
+    // localStorage — при следующем открытии проекта апдейт сольётся и сохранится.
+    // Флаг «сохранить на уходе» больше не зависит от `wsOpened`: клиент без
+    // realtime (прокси, мобильная сеть) раньше не сохранял на уходе вообще, и
+    // правки терялись молча. Роль `canWrite` уже проверена выше.
     const onUnload = () => {
-      if (!active || !wsOpened || !canWrite()) return
+      if (!active || !canWrite()) return
       const state = Y.encodeStateAsUpdate(doc)
+      saveDeferredState(projectId, state, revision, defaultStorage())
       const safe = new Uint8Array(new ArrayBuffer(state.byteLength))
       safe.set(state)
       try {
@@ -283,10 +508,19 @@ export function useCollab(projectId: string): CollabHandle | null {
           }),
           body: new Blob([safe]),
           keepalive: true,
+        }).then((resp) => {
+          // Успели получить ответ — запас больше не нужен. Приехал 409 или
+          // ошибка — запас остаётся, и следующее открытие проекта применит
+          // его через Yjs-слияние.
+          if (resp.ok) clearDeferredState(projectId)
         }).catch(() => {/* ignore */})
       } catch { /* ignore */ }
     }
+    // `beforeunload` — подстраховка: `pagehide` приходит не во всех сценариях
+    // закрытия вкладки (например, часть мобильных браузеров). Обработчик
+    // идемпотентен, поэтому двойной вызов ничего не ломает.
     window.addEventListener('pagehide', onUnload)
+    window.addEventListener('beforeunload', onUnload)
 
     /**
      * Страница сообщает роль, когда получила проект. Если запись разрешена и
@@ -296,12 +530,26 @@ export function useCollab(projectId: string): CollabHandle | null {
     const setWritable = (allowed: boolean | null) => {
       const previous = writable
       writable = allowed
-      if (allowed === true && previous !== true && active && wsOpened && !treeSynced) {
-        void syncTree()
+      if (allowed === true && previous !== true && active && !treeSynced) {
+        // Отложенный апдейт мог приехать до того, как стала известна роль:
+        // сохраняем его теперь, когда запись разрешена.
+        if (wsOpened) void syncTree()
+        if (deferred) void flushNow()
       }
     }
 
-    setHandle({ doc, events, wsUrl: () => wsUrl, save, flushNow, syncTree, setWritable, connected: false })
+    setHandle({
+      doc,
+      events,
+      wsUrl: () => wsUrl,
+      save,
+      flushNow,
+      syncTree,
+      setWritable,
+      connected: false,
+      status: 'connecting',
+      reconnectAttempt: 0,
+    })
     // Контент тянем сразу, не дожидаясь WebSocket (см. loadContent).
     void loadContent()
 
@@ -310,14 +558,18 @@ export function useCollab(projectId: string): CollabHandle | null {
       if (debounceTimer) clearTimeout(debounceTimer)
       clearInterval(safetyNet)
       window.removeEventListener('pagehide', onUnload)
+      window.removeEventListener('beforeunload', onUnload)
+      loop.stop()
+      detachTabChannel()
       // flush делаем ТОЛЬКО если WS-соединение успешно открылось (значит, мы доверенный клиент)
       if (wsOpened && canWrite()) void flushNow()
       try { ws?.close() } catch { /* ignore */ }
     }
   }, [projectId])
 
-  // connected живёт отдельно от handle: собираем актуальный объект при отдаче.
-  return handle ? { ...handle, connected } : null
+  // Состояние соединения живёт отдельно от handle: собираем актуальный объект
+  // при отдаче, чтобы интерфейс видел и «переподключаюсь…», и «связи нет».
+  return handle ? { ...handle, connected, status, reconnectAttempt } : null
 }
 
 /**
@@ -505,6 +757,55 @@ export function yMoveSubtree(
   if (doc) doc.transact(apply, 'reorder')
   else apply()
   return true
+}
+
+/**
+ * Слить отложенный апдейт (запас с прошлого закрытия вкладки) с серверным
+ * снапшотом. Порядок фиксирован: сначала серверное состояние, потом запас —
+ * иначе повторное открытие проекта потеряло бы серверную часть.
+ *
+ * Возвращает, был ли запас (для решения о записи), и не бросает: сломанный
+ * запас не должен ронять страницу проекта.
+ */
+export function applyPendingState(
+  doc: Y.Doc,
+  serverState: Uint8Array,
+  pending: PendingState | null,
+): boolean {
+  try {
+    if (serverState.byteLength > 0) Y.applyUpdate(doc, serverState, 'remote')
+    if (pending) Y.applyUpdate(doc, pending.update, 'remote')
+  } catch {
+    return false
+  }
+  return pending !== null
+}
+
+/**
+ * Пора ли убирать запас из localStorage.
+ *
+ * Только когда запись подтверждена И содержимое запаса уже внутри сохранённого
+ * состояния: иначе пришлось бы либо терять правку (стереть неподтверждённое),
+ * либо хранить запас вечно. Сравнение идёт по байтам `encodeStateAsUpdate`:
+ * запас — это тот же апдейт, поэтому после слияния он буквально содержится в
+ * снапшоте. Зависимости от внутренностей Yjs нет — только от его формата.
+ */
+export function shouldClearPending(pending: PendingState | null, savedState: Uint8Array): boolean {
+  return pending !== null && containsBytes(savedState, pending.update)
+}
+
+/** Есть ли `needle` внутри `haystack` как непрерывный фрагмент. */
+function containsBytes(haystack: Uint8Array, needle: Uint8Array): boolean {
+  if (needle.byteLength === 0) return true
+  if (needle.byteLength > haystack.byteLength) return false
+  const last = haystack.byteLength - needle.byteLength
+  outer: for (let at = 0; at <= last; at += 1) {
+    for (let i = 0; i < needle.byteLength; i += 1) {
+      if (haystack[at + i] !== needle[i]) continue outer
+    }
+    return true
+  }
+  return false
 }
 
 /** Плоский payload дерева для проекции на сервер. */

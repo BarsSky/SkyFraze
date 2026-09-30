@@ -96,6 +96,12 @@ export function EventEditor({
             ymap.set('body', next)
             onChange?.()
           }}
+          onAdopt={(next) => {
+            // Осознанно взяли версию соавтора: это такая же запись в CRDT, как
+            // сохранение, поэтому дерево синхронизируем тем же путём.
+            ymap.set('body', next)
+            onChange?.()
+          }}
           onClose={() => setMdOpen(false)}
         />
       )}

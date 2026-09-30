@@ -533,6 +533,25 @@ func (s *Store) ApplyEventMove(ctx context.Context, m EventMove) error {
 //  2. удаляем строки проекта, отсутствующие в payload (вместе с потомками);
 //  3. upsert'им payload (узлы уже отсортированы по глубине: родители раньше детей).
 func (s *Store) ReplaceEventTree(ctx context.Context, projectID uuid.UUID, by uuid.UUID, nodes []Event) error {
+	return s.replaceEventTree(ctx, projectID, by, nodes, nil)
+}
+
+// ReplaceEventTreeChecked — то же, но с проверкой базовой ревизии снапшота.
+//
+// Проекция строится из локального CRDT клиента: если он не видел чужих правок
+// (ревизия снапшота уже уехала вперёд), его payload снесёт строки, которых у него
+// нет. Поэтому клиент присылает ревизию, которую считает актуальной, а мы
+// сверяем её под тем же advisory-lock'ом, что и запись, и отдаём
+// ErrRevisionConflict при расхождении.
+func (s *Store) ReplaceEventTreeChecked(
+	ctx context.Context, projectID uuid.UUID, by uuid.UUID, nodes []Event, base int64,
+) error {
+	return s.replaceEventTree(ctx, projectID, by, nodes, &base)
+}
+
+func (s *Store) replaceEventTree(
+	ctx context.Context, projectID uuid.UUID, by uuid.UUID, nodes []Event, base *int64,
+) error {
 	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -546,6 +565,23 @@ func (s *Store) ReplaceEventTree(ctx context.Context, projectID uuid.UUID, by uu
 	// Блокировка транзакционная: снимается сама при COMMIT/ROLLBACK.
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1::text)::bigint)`, projectID.String()); err != nil {
 		return err
+	}
+
+	// Проверка ревизии — в той же транзакции, что и запись: иначе между проверкой
+	// и заменой успел бы пройти чужой снапшот, и мы всё равно затерли бы его дерево.
+	if base != nil {
+		revision := int64(0)
+		err := tx.QueryRow(ctx,
+			`SELECT revision FROM project_event_state WHERE project_id=$1`, projectID).Scan(&revision)
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+			revision = 0 // снапшота ещё нет: базовой считается нулевая ревизия
+		case err != nil:
+			return err
+		}
+		if revision != *base {
+			return ErrRevisionConflict
+		}
 	}
 
 	keep := make(map[uuid.UUID]bool, len(nodes))
