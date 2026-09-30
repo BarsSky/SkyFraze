@@ -477,6 +477,10 @@ cd frontend && npx tsx tests/admin-registration.ts
 # устаревшая ревизия снапшота дерева (409 → merge → повтор)
 cd frontend && npx tsx tests/realtime-phase0.ts
 
+# E2E присутствия (Фаза 1): два человека в двух браузерных контекстах видят друг
+# друга через сервер, «печатает…» появляется и гаснет, уход убирает карточку
+cd frontend && npx tsx tests/presence.ts
+
 # E2E даты события: засев из базы, мета-чип в кадре, запись и очистка через проекцию
 cd frontend && npx tsx tests/event-date.ts
 

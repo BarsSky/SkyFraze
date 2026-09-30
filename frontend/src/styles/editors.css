@@ -57,6 +57,28 @@
   border: 1px solid var(--border); border-radius: 999px; padding: 0 6px;
 }
 
+/* ─── кто из соседей правит строку ─────────────────────────────────────────
+   Инициалы на цвете человека (стабильный цвет из collab/awareness.ts) и, пока
+   он печатает, подпись оттуда же. Ничего интерактивного: цель нажатия — вся
+   строка, поэтому кружки заведомо меньше 32px и не ловят клики сами. */
+.ed-row__peers { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 2px; }
+.ed-row__peer {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border-radius: 50%;
+  border: 1px solid var(--surface-line);
+  /* Белый текст поверх цвета человека — как в баре присутствия: тон всегда
+     42% светлоты, поэтому контраст не зависит от темы. */
+  color: #fff; font-size: 10px; font-weight: 600; letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.ed-row__typing {
+  flex: 0 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--accent); font-size: 12px;
+}
+/* Полная подпись видна по умолчанию, короткая — только на узком экране. */
+.ed-row__typing-short { display: none; }
+
 /* ─── перенос строк дерева ──────────────────────────────────────────────────
    Ручка — зона захвата для пальца (touch-action: none: отданный прокрутке
    вертикальный жест здесь не сработал бы). */
@@ -186,6 +208,11 @@
   .ed-panel__grid { grid-template-columns: 1fr; }
   .ed-nav { max-height: 40vh; }
   .ed-row { min-height: 34px; } /* палец на телефоне: строки дерева — тоже цель нажатия */
+  /* Длинную подпись «Аня и Борис печатают…» рядом с именем на телефоне не
+     поместить: остаётся короткое «печатает…», а имя человека — в подсказке
+     маркера и в баре присутствия. */
+  .ed-row__typing-full { display: none; }
+  .ed-row__typing-short { display: inline; }
   /* Зона захвата для переноса пальцем — не меньше той же цели нажатия. */
   .ed-row__grip { width: 34px; min-height: 34px; }
   .ed-editor { padding: 12px; }

@@ -20,6 +20,11 @@ interface Props {
   background: BackgroundValue
   /** Уведомление об изменении текста — страница отложенно синхронизирует дерево. */
   onChange?: () => void
+  /**
+   * Ввод в заголовок или текст. Отдельно от `onChange`: там отложенная проекция
+   * дерева, здесь — «я печатаю» для соседей (панель гасит его по тишине).
+   */
+  onTyping?: () => void
 }
 
 const eventDateText = (value: unknown): string => {
@@ -35,7 +40,7 @@ const eventDateText = (value: unknown): string => {
  * стадии: смотреть картинку удобно и во время правки, не выходя из проекта.
  */
 export function EventEditor({
-  ymap, assets, images, assetUrls, onUpload, onAttach, onDetach, onBackgroundChange, background, onChange,
+  ymap, assets, images, assetUrls, onUpload, onAttach, onDetach, onBackgroundChange, background, onChange, onTyping,
 }: Props) {
   const title = (ymap.get('title') as string | undefined) ?? ''
   const body = (ymap.get('body') as string | undefined) ?? ''
@@ -57,6 +62,7 @@ export function EventEditor({
           onChange={(e) => {
             ymap.set('title', e.target.value)
             onChange?.()
+            onTyping?.()
           }}
           placeholder="Заголовок события"
         />
@@ -73,6 +79,7 @@ export function EventEditor({
           onChange={(e) => {
             ymap.set('body', e.target.value)
             onChange?.()
+            onTyping?.()
           }}
           rows={7}
           placeholder={'Описание события. Разметка: **жирный**, - список, | таблица |, $формула$'}

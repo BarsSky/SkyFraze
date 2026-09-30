@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { TimelineStage, type AssetLookup } from '../components/timeline/TimelineStage'
 import { EditorsPanel } from '../components/editors/EditorsPanel'
+import { PresenceBar } from '../components/collab/PresenceBar'
 import { ErrorBanner } from '../components/ErrorBanner'
-import { useCollab, yAddEvent } from '../collab/yprovider'
+import { useCollab, yAddEvent, type YMap } from '../collab/yprovider'
 import { connectionNotice } from '../collab/connection'
 import { listAssets, uploadAsset, type Asset } from '../api/assets'
 import { useAssetObjectUrls } from '../api/assetObject'
@@ -22,6 +23,8 @@ export function ProjectTimelinePage() {
   const [project, setProject] = useState<Project | null>(null)
   const [assets, setAssets] = useState<Asset[]>([])
   const [eventsCount, setEventsCount] = useState<number>(-1) // -1 = loading
+  /** Названия событий для бара присутствия: подпись «Аня правит …». */
+  const [eventTitles, setEventTitles] = useState<Array<{ id: string; title: string }>>([])
   const [syncNote, setSyncNote] = useState<string | null>(null)
   const [connectionNote, setConnectionNote] = useState<string | null>(null)
   const [error, setError] = useState<unknown>(null)
@@ -79,6 +82,31 @@ export function ProjectTimelinePage() {
     update()
     events.observe(update)
     return () => events.unobserve(update)
+  }, [events])
+
+  // Названия событий — подпись «кто что правит» в баре присутствия. Наблюдаем
+  // глубоко: заголовок меняется в редакторе, и подпись должна ехать за ним.
+  useEffect(() => {
+    if (!events) {
+      setEventTitles((prev) => (prev.length === 0 ? prev : []))
+      return undefined
+    }
+    const read = () =>
+      (events.toArray() as YMap[])
+        .map((m) => ({
+          id: (m.get('id') as string | undefined) ?? '',
+          title: ((m.get('title') as string | undefined) ?? '').trim(),
+        }))
+        .filter((event) => event.id.length > 0)
+    const update = () => {
+      const next = read()
+      // Сравнение по значению: observeDeep срабатывает и на текст события, а без
+      // проверки каждое нажатие в поле перерисовывало бы всю страницу.
+      setEventTitles((prev) => (sameEventTitles(prev, next) ? prev : next))
+    }
+    update()
+    events.observeDeep(update)
+    return () => events.unobserveDeep(update)
   }, [events])
 
   // Ассеты требуют авторизации: получаем blob-URL (иначе <img> отдаёт 401).
@@ -147,6 +175,15 @@ export function ProjectTimelinePage() {
     collab?.setWritable(canEdit)
   }, [collab, canEdit])
 
+  /**
+   * Кто сейчас в проекте. Один элемент на страницу: он либо над панелью
+   * редакторов (см. разметку), либо над стадией у читателя. Соседей нет — бар
+   * не рендерит ничего, поэтому «в проекте только вы» нигде не маячит.
+   */
+  const presenceBar = <PresenceBar peers={collab?.presence ?? []} events={eventTitles} />
+  /** Панель редакторов: только тем, кто может править, и только с событиями. */
+  const editorsShown = Boolean(events && eventsCount > 0 && showEditors)
+
   return (
     <div className="sf-page">
       {error != null && (
@@ -195,20 +232,51 @@ export function ProjectTimelinePage() {
         />
       )}
 
-      {events && eventsCount > 0 && showEditors && (
-        <EditorsPanel
-          events={events}
-          assets={assets}
-          assetUrls={assetUrls}
-          syncNote={connectionNote ?? syncNote}
-          onChanged={() => {
-            void pushTree()
-          }}
-          onUpload={uploadFile}
-        />
+      {/* Читателю и в пустом проекте панели редакторов нет, и бар остаётся
+          единственным местом про присутствие — в обычном потоке над стадией. У
+          редактора бар стоит рядом со строкой синхронизации, над панелью:
+          fixed-слои стадии (sf-stage, z-index 10, непрозрачный фон) закрывают
+          всё, что в потоке выше трека, поэтому «над стадией» у редактора было бы
+          не видно вовсе. */}
+      {!editorsShown && presenceBar}
+
+      {editorsShown && events && (
+        <>
+          {presenceBar}
+          <EditorsPanel
+            events={events}
+            assets={assets}
+            assetUrls={assetUrls}
+            syncNote={connectionNote ?? syncNote}
+            onChanged={() => {
+              void pushTree()
+            }}
+            onUpload={uploadFile}
+            presence={collab?.presence}
+            onEditing={collab?.setEditing}
+          />
+        </>
       )}
     </div>
   )
+}
+
+/**
+ * Совпадают ли списки названий событий по значению.
+ *
+ * Нужна, чтобы `observeDeep` на каждое нажатие в тексте события не перерисовывал
+ * страницу: ссылка на массив меняется всегда, а содержимое — только когда тронули
+ * заголовок или состав дерева.
+ */
+function sameEventTitles(
+  a: Array<{ id: string; title: string }>,
+  b: Array<{ id: string; title: string }>,
+): boolean {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i].id !== b[i].id || a[i].title !== b[i].title) return false
+  }
+  return true
 }
 
 /** Empty-state: единственное действие — создать первую главу. */

@@ -9,6 +9,7 @@ import { createReconnectLoop, type ReconnectLoop } from './backoff'
 import { OFFLINE_AFTER_ATTEMPTS, type CollabStatus } from './connection'
 import { connectTabChannel, createTabChannel } from './broadcast'
 import { dateFromServer, dateToServer } from './eventDate'
+import { createPresence, type PeerState } from './awareness'
 import {
   clearDeferredState,
   defaultStorage,
@@ -60,6 +61,16 @@ export interface CollabHandle {
   status: CollabStatus
   /** Сколько попыток переподключения подряд уже сделано (0 — соединение живо). */
   reconnectAttempt: number
+  /**
+   * Кто сейчас в проекте (без меня): имя, цвет, какое событие правит и печатает ли.
+   * Присутствие эфемерно — оно не попадает ни в снапшот, ни в базу.
+   */
+  presence: PeerState[]
+  /**
+   * Сказать соседям, какое событие я правлю и печатаю ли. Вызывается панелью
+   * редакторов: без этого «печатает…» и отметки у событий показывать нечего.
+   */
+  setEditing: (eventId: string | null, typing?: boolean) => void
 }
 
 function authHeaders(extra?: Record<string, string>): Record<string, string> {
@@ -121,6 +132,7 @@ export function useCollab(projectId: string): CollabHandle | null {
   const [connected, setConnected] = useState(false)
   const [status, setStatus] = useState<CollabStatus>('connecting')
   const [reconnectAttempt, setReconnectAttempt] = useState(0)
+  const [presence, setPresence] = useState<PeerState[]>([])
 
   useEffect(() => {
     const doc = new Y.Doc()
@@ -147,6 +159,31 @@ export function useCollab(projectId: string): CollabHandle | null {
     let deferred: PendingState | null = null
 
     const canWrite = () => writable === true
+    // Присутствие — эфемерное состояние поверх того же сокета: кадры присутствия
+    // уходят как обычные сообщения, хаб релеит их всем, кроме отправителя. В
+    // снапшот и базу они не попадают (см. collab/awareness.ts).
+    const authUser = useAuthStore.getState().user
+    const presence = createPresence({
+      user: {
+        id: authUser?.id ?? '',
+        name: authUser?.display_name || authUser?.username || authUser?.email || 'Соавтор',
+      },
+    })
+    const detachPresenceOut = presence.onOutgoing((frame) => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        try {
+          ws.send(frame)
+        } catch {
+          /* ignore: присутствие не стоит того, чтобы ронять вкладку */
+        }
+      }
+    })
+    const detachPresenceIn = presence.subscribe(setPresence)
+    if (typeof window !== 'undefined') {
+      // Диагностика, как и `window.__yjsDoc` выше: по присутствию нельзя «посмотреть
+      // глазами» кадры, а проверить транспорт без интерфейса нужно.
+      ;(window as any).__presence = presence
+    }
     const setStatusOf = (next: CollabStatus, attempt: number) => {
       setStatus(next)
       setConnected(next === 'open')
@@ -186,6 +223,9 @@ export function useCollab(projectId: string): CollabHandle | null {
         wsOpened = true
         loop.reset()
         setStatusOf('open', 0)
+        // Соседи узнают о нас сразу после подключения: после переподключения (или
+        // когда мы зашли позже всех) наше состояние иначе ждало бы удара.
+        presence.announce()
         // Соединение могли открыть раньше, чем приехал снапшот: отправляем то, что
         // уже есть. При переподключении это же досылает правки, накопленные в
         // оффлайне, — CRDT-апдейт, а не перезапись состояния.
@@ -219,8 +259,16 @@ export function useCollab(projectId: string): CollabHandle | null {
         setStatusOf(wsOpened ? 'reconnecting' : 'connecting', loop.attempt())
       }
       socket.onmessage = (ev) => {
+        // Текстовые кадры — присутствие; бинарные — CRDT (снапшот при подключении
+        // и апдейты соседей). `receive` сам решает по формату кадра, и если это не
+        // присутствие, байты уходят в Yjs как обычно.
+        if (typeof ev.data === 'string') {
+          presence.receive(ev.data)
+          return
+        }
         if (ev.data instanceof ArrayBuffer) {
-          applyRemoteUpdate(new Uint8Array(ev.data))
+          const bytes = new Uint8Array(ev.data)
+          if (!presence.receive(bytes)) applyRemoteUpdate(bytes)
         }
       }
     }
@@ -500,6 +548,9 @@ export function useCollab(projectId: string): CollabHandle | null {
     // realtime (прокси, мобильная сеть) раньше не сохранял на уходе вообще, и
     // правки терялись молча. Роль `canWrite` уже проверена выше.
     const onUnload = () => {
+      // Уходим из присутствия явно: соседи убирают нас сразу, а не по таймауту
+      // (таймаут остаётся страховкой на случай падения вкладки).
+      presence.leave()
       if (!active || !canWrite()) return
       const state = Y.encodeStateAsUpdate(doc)
       saveDeferredState(projectId, state, revision, defaultStorage())
@@ -555,6 +606,8 @@ export function useCollab(projectId: string): CollabHandle | null {
       connected: false,
       status: 'connecting',
       reconnectAttempt: 0,
+      presence: [],
+      setEditing: (eventId, typing) => presence.setEditing(eventId, typing),
     })
     // Контент тянем сразу, не дожидаясь WebSocket (см. loadContent).
     void loadContent()
@@ -567,15 +620,22 @@ export function useCollab(projectId: string): CollabHandle | null {
       window.removeEventListener('beforeunload', onUnload)
       loop.stop()
       detachTabChannel()
+      // Уход из присутствия и снятие таймеров: без этого вкладка оставалась бы
+      // «в проекте» до таймаута, а интервал удара жил бы после размонтирования.
+      presence.leave()
+      detachPresenceIn()
+      detachPresenceOut()
+      presence.close()
       // flush делаем ТОЛЬКО если WS-соединение успешно открылось (значит, мы доверенный клиент)
       if (wsOpened && canWrite()) void flushNow()
       try { ws?.close() } catch { /* ignore */ }
     }
   }, [projectId])
 
-  // Состояние соединения живёт отдельно от handle: собираем актуальный объект
-  // при отдаче, чтобы интерфейс видел и «переподключаюсь…», и «связи нет».
-  return handle ? { ...handle, connected, status, reconnectAttempt } : null
+  // Состояние соединения и присутствие живут отдельно от handle: собираем
+  // актуальный объект при отдаче, чтобы интерфейс видел и «переподключаюсь…»,
+  // и «печатает…» без пересоздания документа.
+  return handle ? { ...handle, connected, status, reconnectAttempt, presence } : null
 }
 
 /**

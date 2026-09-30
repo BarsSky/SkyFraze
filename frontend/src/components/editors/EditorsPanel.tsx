@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { buildEventTree, DEFAULT_MAX_DEPTH, type EventLike, type EventTreeNode } from '../../collab/eventTree'
 import { checkMove, type DropPlace, type MoveReject } from '../../collab/reorder'
+import { editingPeers, typingLabel, type PeerState } from '../../collab/awareness'
 import {
   yAddEvent,
   yDeleteEvent,
@@ -24,6 +25,17 @@ interface Props {
   onChanged: () => void
   /** Загрузка файла: страница сохраняет ассет и возвращает его. */
   onUpload: (file: File) => Promise<Asset | null>
+  /**
+   * Кто из соседей что правит (`collab.presence`, без меня). Отсюда — отметки у
+   * строк списка: без них «кто где» видно только в баре над панелью, а он
+   * остаётся наверху, когда правят поле в середине длинной формы.
+   */
+  presence?: PeerState[]
+  /**
+   * Сказать соседям, какое событие я правлю и печатаю ли
+   * (`collab.setEditing`). Необязательно: панель работает и без realtime.
+   */
+  onEditing?: (eventId: string | null, typing?: boolean) => void
 }
 
 interface NavRow {
@@ -38,6 +50,16 @@ interface NavRow {
 }
 
 const SYNC_DEBOUNCE_MS = 900
+
+/**
+ * Тишина, после которой «печатает…» гаснет.
+ *
+ * Состояние уходит соседям по одному разу на серию нажатий: держать `typing`
+ * вечно нельзя (человек отвлёкся — а у соседей он «печатает»), а слать кадр на
+ * каждую букву незачем — `setEditing` с тем же значением ничего не рассылает, но
+ * локальный вызов на каждый символ всё равно лишний.
+ */
+const TYPING_IDLE_MS = 1500
 
 /** Совпадает с лимитом nginx (client_max_body_size) и бэкенда (assets.maxAssetSize). */
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024
@@ -146,7 +168,7 @@ function dropClassFor(hint: DropHint): string {
  * без сдвига продолжает выбирать событие, а перенос одной транзакцией делает
  * `yMoveSubtree` (порядок в Y.Array + `parent_id`).
  */
-export function EditorsPanel({ events, assets, assetUrls, syncNote, onChanged, onUpload }: Props) {
+export function EditorsPanel({ events, assets, assetUrls, syncNote, onChanged, onUpload, presence, onEditing }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [filter, setFilter] = useState('')
   const [version, setVersion] = useState(0) // перерисовка после правок CRDT
@@ -161,6 +183,21 @@ export function EditorsPanel({ events, assets, assetUrls, syncNote, onChanged, o
   const autoscrollRef = useRef<number | null>(null)
   /** Клик после настоящего перетаскивания не должен менять выбор. */
   const suppressClickRef = useRef(false)
+  /** Событие, о котором я уже сообщил соседям как «правлю». */
+  const editingIdRef = useRef<string | null>(null)
+  /** Идёт ли сейчас серия нажатий: `true` уходит соседям один раз на серию. */
+  const typingRef = useRef(false)
+  const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /**
+   * Свежий `onEditing` для таймеров. Через ref, а не через замыкание: таймер
+   * «тишины» живёт дольше рендера, и устаревшая ссылка отправила бы состояние в
+   * уже размонтированную страницу.
+   */
+  const onEditingRef = useRef(onEditing)
+
+  useEffect(() => {
+    onEditingRef.current = onEditing
+  }, [onEditing])
 
   // Подписка на CRDT: заголовки/дерево в навигаторе и полях должны обновляться.
   useEffect(() => {
@@ -178,6 +215,54 @@ export function EditorsPanel({ events, assets, assetUrls, syncNote, onChanged, o
       onChanged()
     }, SYNC_DEBOUNCE_MS)
   }, [onChanged])
+
+  // ─── присутствие: что я правлю и печатаю ли ───────────────────────────────
+  //
+  // Соседи видят это в баре и отметками у строк. Состояние эфемерно и рассылается
+  // только на переходах: «открыл событие» → «печатаю» → «замолчал» → «закрыл».
+
+  /** Снять таймер тишины (смена события и уход со страницы его отменяют). */
+  const stopTyping = useCallback(() => {
+    if (typingTimer.current) {
+      clearTimeout(typingTimer.current)
+      typingTimer.current = null
+    }
+  }, [])
+
+  // Открытие и смена события: правлю это, но ещё не печатаю. Смена формы гасит
+  // незакрытую серию нажатий — иначе «печатает…» осталось бы у прошлого события.
+  useEffect(() => {
+    editingIdRef.current = selectedId
+    typingRef.current = false
+    stopTyping()
+    onEditingRef.current?.(selectedId, false)
+  }, [selectedId, stopTyping])
+
+  // Размонтирование (уход со страницы, смена проекта): без этого соседи держали
+  // бы меня «правящим» до таймаута призрака.
+  useEffect(() => () => {
+    stopTyping()
+    onEditingRef.current?.(null, false)
+  }, [stopTyping])
+
+  /**
+   * Ввод в заголовок или текст. Соседям уходит ровно одно `true` на серию
+   * нажатий и одно `false` через `TYPING_IDLE_MS` тишины.
+   */
+  const markTyping = useCallback(() => {
+    const eventId = editingIdRef.current
+    if (!eventId) return
+    if (!typingRef.current) {
+      typingRef.current = true
+      onEditingRef.current?.(eventId, true)
+    }
+    stopTyping()
+    typingTimer.current = setTimeout(() => {
+      typingTimer.current = null
+      typingRef.current = false
+      onEditingRef.current?.(editingIdRef.current, false)
+    }, TYPING_IDLE_MS)
+  }, [stopTyping])
 
   const rows = useMemo<NavRow[]>(() => {
     void version
@@ -682,6 +767,10 @@ export function EditorsPanel({ events, assets, assetUrls, syncNote, onChanged, o
         >
           {visibleRows.map((row) => {
             const rowHint = drag?.hint && drag.hint.targetId === row.id ? drag.hint : null
+            // Кто из соседей правит это событие. Список маленький (людей в
+            // проекте единицы), поэтому считаем на каждой строке, а не кэшируем.
+            const editors = presence ? editingPeers(presence, row.id) : []
+            const rowTyping = presence ? typingLabel(presence, row.id) : null
             return (
               <button
                 key={row.id}
@@ -714,6 +803,33 @@ export function EditorsPanel({ events, assets, assetUrls, syncNote, onChanged, o
                 <span className="ed-row__grip" aria-hidden="true">⠿</span>
                 <span className="ed-row__mark">{row.isChapter ? '#' : '└'}</span>
                 <span className="ed-row__name">{row.title}</span>
+                {/* Отметки соседей — до бейджа под-событий: имя строки обрезается
+                    многоточием, и «кто здесь» не должно уезжать за край первым. */}
+                {editors.length > 0 && (
+                  <span className="ed-row__peers">
+                    {editors.map((peer) => (
+                      <span
+                        key={peer.clientId}
+                        className="ed-row__peer"
+                        data-peer-editing={peer.name}
+                        title={`${peer.name} правит это событие`}
+                        aria-label={`${peer.name} правит это событие`}
+                        style={{ backgroundColor: peer.color }}
+                      >
+                        {peer.initials}
+                      </span>
+                    ))}
+                  </span>
+                )}
+                {rowTyping && (
+                  <span className="ed-row__typing">
+                    <span className="ed-row__typing-full">{rowTyping}</span>
+                    {/* Короткая подпись для узкого экрана: полная формулировка
+                        живёт только в collab/awareness.ts, какой вариант виден —
+                        решает CSS (см. styles/editors.css). */}
+                    <span className="ed-row__typing-short" aria-hidden="true">печатает…</span>
+                  </span>
+                )}
                 {row.childCount > 0 && <span className="ed-row__badge">{row.childCount}</span>}
               </button>
             )
@@ -740,6 +856,7 @@ export function EditorsPanel({ events, assets, assetUrls, syncNote, onChanged, o
                 onDetach={detach}
                 onBackgroundChange={changeBackground}
                 onChange={() => scheduleSync()}
+                onTyping={markTyping}
               />
               <p className="muted ed-editor__hint">
                 Изменения сохраняются автоматически; дерево синхронизируется с сервером.

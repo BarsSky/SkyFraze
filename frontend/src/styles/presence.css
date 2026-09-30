@@ -1,0 +1,105 @@
+/* SkyFraze — присутствие: кто сейчас в проекте, что правит и кто печатает.
+   Единственный «свой» цвет здесь — аватарка: её тон приходит из
+   collab/awareness.ts (стабильный хеш от id человека), всё остальное — токены
+   проекта, поэтому бар одинаково читается в тёмной и светлой темах. */
+
+.presence {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  /* На 320px строка переносится внутри бара, а не растягивает страницу: у
+     flex-элемента с длинным именем без min-width: 0 не сжималось бы ничего. */
+  max-width: 100%;
+  min-width: 0;
+  margin: 0 0 4px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--chip-bg);
+  color: var(--fg-soft);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.presence__lead {
+  flex: 0 0 auto;
+  color: var(--fg-muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.presence__list {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.presence__peer {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.presence__avatar {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1px solid var(--surface-line);
+  /* Белый текст поверх цвета человека. Тон аватарки всегда 42% светлоты
+     (awareness.ts), поэтому контраст держится на любом оттенке и от темы не
+     зависит — тот же приём, что у белого текста кнопок в tokens.css. */
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.presence__name,
+.presence__where {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.presence__name {
+  max-width: 14ch;
+  color: var(--fg);
+}
+
+.presence__where {
+  max-width: 24ch;
+  color: var(--fg-muted);
+}
+
+.presence__typing {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
+/* По умолчанию видна полная подпись из typingLabel. */
+.presence__typing-short { display: none; }
+
+/* Узкий экран: «Аня и Борис печатают…» рядом с именем уже не помещается, и
+   вместо переноса строки показываем короткое «печатает…» — состояние видно, а
+   имя человека остаётся на месте. */
+@media (max-width: 560px) {
+  .presence__typing-full { display: none; }
+  .presence__typing-short { display: inline; }
+  .presence__name { max-width: 10ch; }
+  .presence__where { max-width: 16ch; }
+}
