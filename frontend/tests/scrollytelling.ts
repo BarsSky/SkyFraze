@@ -359,14 +359,28 @@ async function runViewport(vp: { width: number; height: number; tag: string }) {
   const page = await ctx.newPage()
   const errors: string[] = []
   const problems: string[] = []
+  /** Конфликты ревизии: это часть протокола, а не сбой — см. обработчик ниже. */
+  let conflicts = 0
   page.on('console', (m) => {
     if (m.type() === 'error') {
       const url = m.location()?.url ?? ''
+      // 409 на проекции дерева — ожидаемый ответ оптимистичной блокировки:
+      // снапшот успел уехать вперёд, клиент перечитывает состояние и повторяет
+      // (Фаза 0.5). Как ошибку это не считаем, но количество печатаем: рост числа
+      // конфликтов — сигнал, что писателей слишком много.
+      if (/409/.test(m.text()) && /\/events\/(tree|state)/.test(url)) {
+        conflicts += 1
+        return
+      }
       errors.push(url ? `${m.text()} @ ${url}` : m.text())
     }
   })
   page.on('pageerror', (e) => errors.push('pageerror: ' + e.message))
   page.on('response', (res) => {
+    if (res.status() === 409 && /\/events\/(tree|state)/.test(res.url())) {
+      conflicts += 1
+      return
+    }
     if (res.status() >= 400) problems.push(`HTTP ${res.status()} ${res.url()}`)
   })
 
@@ -571,6 +585,51 @@ async function runViewport(vp: { width: number; height: number; tag: string }) {
       if (cut.length) problems.push(`маршрут: обрезанный текст «${cut[0].text}»`)
       if (low.length) problems.push(`маршрут: высота строки ${low[0].h}px < 32px`)
       console.log(`[${vp.tag}] маршрут: строк ${route.length}, кегль ${route[0].size}px, обрезано ${cut.length}`)
+    }
+
+    // Длинный маршрут (много глав) не должен заезжать под верхнюю панель: раньше
+    // карточка центрировалась по всему окну и при большой высоте уходила под
+    // кнопку «Редакторы» — она перекрывала первые главы списка.
+    const geometry = (await page.evaluate(`(() => {
+      const route = document.querySelector('.sf-route')
+      const topbar = document.querySelector('.sf-topbar')
+      const button = document.querySelector('.sf-topbar__actions button, .sf-topbar__actions a')
+      const chips = document.querySelector('.sf-chips')
+      const first = route ? route.querySelector('.sf-route__row') : null
+      const rect = (el) => (el ? el.getBoundingClientRect() : null)
+      const overlaps = (a, b) => Boolean(a && b && a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom)
+      const firstRect = rect(first)
+      const hit = firstRect
+        ? document.elementFromPoint(firstRect.left + firstRect.width / 2, firstRect.top + firstRect.height / 2)
+        : null
+      return {
+        overlapsButton: overlaps(rect(route), rect(button)),
+        overlapsTopbar: overlaps(rect(route), rect(topbar)),
+        overlapsChips: overlaps(rect(route), rect(chips)),
+        top: route ? Math.round(rect(route).top) : null,
+        topbarBottom: topbar ? Math.round(rect(topbar).bottom) : null,
+        firstClickable: Boolean(hit && route && route.contains(hit)),
+        hitTag: hit ? hit.tagName : null,
+      }
+    })()`)) as {
+      overlapsButton: boolean
+      overlapsTopbar: boolean
+      overlapsChips: boolean
+      top: number | null
+      topbarBottom: number | null
+      firstClickable: boolean
+      hitTag: string | null
+    }
+    if (geometry.overlapsButton || geometry.overlapsTopbar) {
+      problems.push(`маршрут: карточка перекрывает верхнюю панель (верх ${geometry.top}, панель до ${geometry.topbarBottom})`)
+    }
+    if (geometry.overlapsChips) problems.push('маршрут: карточка перекрывает полосу чипов')
+    if (geometry.top !== null && geometry.topbarBottom !== null && geometry.top < geometry.topbarBottom) {
+      problems.push(`маршрут: верх карточки ${geometry.top} выше низа панели ${geometry.topbarBottom}`)
+    }
+    if (!geometry.firstClickable) problems.push(`маршрут: первая строка не кликается (в центре ${geometry.hitTag})`)
+    if (!geometry.overlapsButton && !geometry.overlapsTopbar && geometry.firstClickable) {
+      console.log(`[${vp.tag}] маршрут: карточка ниже панели (${geometry.top} > ${geometry.topbarBottom}), первая строка кликается`)
     }
 
     const row = page.locator('.sf-route__row').nth(2)
@@ -916,10 +975,10 @@ async function runViewport(vp: { width: number; height: number; tag: string }) {
   if (atEditors.stage !== 'idle') problems.push(`на редакторах стадия=${atEditors.stage}`)
   await shot(page, `${vp.tag}-editors`)
 
-  console.log(`[${vp.tag}] ошибок консоли: ${errors.length}`)
+  console.log(`[${vp.tag}] ошибок консоли: ${errors.length}${conflicts ? `, конфликтов ревизии: ${conflicts}` : ''}`)
   for (const e of errors.slice(0, 6)) console.log(`  ! ${e}`)
   await browser.close()
-  return { errors, problems }
+  return { errors, problems, conflicts }
 }
 
 ;(async () => {
@@ -935,15 +994,21 @@ async function runViewport(vp: { width: number; height: number; tag: string }) {
   const filter = process.env.ONLY_VP
   const viewports = filter ? allViewports.filter((v) => v.tag === filter) : allViewports
   let totalErrors = 0
+  let totalConflicts = 0
   const allProblems: string[] = []
   for (const vp of viewports) {
     console.log(`\n=== ${vp.tag} ${vp.width}x${vp.height} ===`)
     const r = await runViewport(vp)
     totalErrors += r.errors.length
+    totalConflicts += r.conflicts
     for (const p of r.problems) allProblems.push(`[${vp.tag}] ${p}`)
   }
   console.log('\n========== SUMMARY ==========')
   console.log(`Errors: ${totalErrors}`)
   console.log(`Problems: ${allProblems.length}`)
+  // Конфликты ревизии — не сбой, а часть протокола (клиент перечитывает состояние
+  // и повторяет проекцию). Печатаем отдельно: их рост означает, что писателей
+  // слишком много и пора делать серверный merge (Фаза 3).
+  if (totalConflicts) console.log(`Конфликты ревизии (обработаны клиентом): ${totalConflicts}`)
   for (const p of allProblems) console.log(`  ! ${p}`)
 })().catch((e) => { console.error('FATAL', e); process.exit(1) })

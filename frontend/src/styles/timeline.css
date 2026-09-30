@@ -412,11 +412,20 @@ html.sf-viewer-open body { overflow: hidden; }
 /* ── маршрут справа: дерево глав и кадров ───────────────────────────────
    Карточка с постоянно видимыми подписями. Колонки: маркер на рельсе →
    номер (моно, выровнен по правому краю) → название (перенос до двух строк).
-   Состояния: is-passed / is-active у главы и кадра. */
+   Состояния: is-passed / is-active у главы и кадра.
+
+   Верх карточки ограничен свободной областью сцены (под шапкой, верхней панелью
+   и чипами) — так же, как у листа кадра. Раньше карточка центрировалась по всему
+   окну и при длинном маршруте (много глав) вырастала до 78vh: её верх оказывался
+   выше панели, и кнопка «Редакторы» перекрывала первые главы списка.
+   Центрирование оставлено (короткий маршрут стоит по центру), но центр считается
+   внутри свободной области, поэтому верх никогда не выходит за её начало. */
 .sf-route {
-  position: fixed; right: clamp(14px, 2.4vw, 30px); top: 50%;
+  position: fixed; right: clamp(14px, 2.4vw, 30px);
+  top: calc(var(--sf-free-top, 108px) + 10px + (100vh - var(--sf-free-top, 108px) - 34px) / 2);
   transform: translateY(-50%); z-index: 40;
-  width: 300px; max-height: 78vh; overflow-y: auto; overscroll-behavior: contain;
+  width: 300px; max-height: calc(100vh - var(--sf-free-top, 108px) - 34px);
+  overflow-y: auto; overscroll-behavior: contain;
   scrollbar-width: none;
   padding: 12px 14px 12px 12px;
   background: var(--surface-glass); backdrop-filter: blur(12px);
