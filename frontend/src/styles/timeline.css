@@ -7,6 +7,11 @@
   --sf-bg: var(--bg);
   --sf-ink: var(--fg);
   --sf-ink-soft: var(--fg-muted);
+  /* Верх свободной области сцены: под шапкой приложения, верхней панелью стадии
+     (~62px) и полосой чипов. Лист кадра центрируется и ограничивается по высоте
+     именно этой областью, иначе на планшете он уезжал верхом под панель и название
+     главы (первая строка листа) закрывалось пилюлей с названием проекта. */
+  --sf-free-top: calc(var(--sf-header-h, 46px) + 62px + var(--sf-chips-h, 0px));
 }
 [data-theme='light'] .sf-root {
   --sf-bg: #f4f6ec;
@@ -186,9 +191,14 @@
     transparent 100%);
 }
 .sf-copy {
-  position: absolute; left: clamp(18px, 5vw, 64px); top: 50%;
+  position: absolute; left: clamp(18px, 5vw, 64px);
+  /* Центр СВОБОДНОЙ области, а не всего окна: верх листа не должен заезжать под
+     верхнюю панель стадии и полосу чипов. Раньше лист центрировался по окну, и на
+     планшете его первая строка (номер и название главы) оказывалась под пилюлей с
+     названием проекта. */
+  top: calc(var(--sf-free-top, 108px) + 10px + (100vh - var(--sf-free-top, 108px) - 10px) / 2);
   transform: translateY(-50%); width: min(46vw, 560px);
-  max-height: min(84vh, 860px);
+  max-height: min(84vh, 860px, calc(100vh - var(--sf-free-top, 108px) - 40px));
   padding-right: 6px;
   pointer-events: auto;
   /* Лист — колонка, а прокручивается только его содержимое. Своей прокрутки у
