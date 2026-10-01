@@ -37,7 +37,17 @@ const preview: MarkdownImportPreview = {
     },
   ],
   warnings: ['в проект не попали файлов: 2 — на них нет ссылок в текстах событий'],
-  stats: { files: 2, events: 2, chars: 1200, imageLinks: 2, attachments: 1, missingFiles: 1, unusedFiles: 2 },
+  stats: {
+    files: 2,
+    events: 2,
+    chars: 1200,
+    imageLinks: 2,
+    attachments: 1,
+    missingFiles: 1,
+    unusedFiles: 2,
+    attachmentBytes: 2 * 1024 * 1024,
+  },
+  quotaBytes: 10 * 1024 * 1024,
 }
 
 /** Портал рендерит окно в body — оборачиваем в роутер: внутри бывает баннер ошибки. */
@@ -100,7 +110,16 @@ describe('ImportFolderModal', () => {
     mocks.preview.mockResolvedValue({
       ...preview,
       events: [],
-      stats: { files: 1, events: 0, chars: 0, imageLinks: 0, attachments: 0, missingFiles: 0, unusedFiles: 0 },
+      stats: {
+        files: 1,
+        events: 0,
+        chars: 0,
+        imageLinks: 0,
+        attachments: 0,
+        missingFiles: 0,
+        unusedFiles: 0,
+        attachmentBytes: 0,
+      },
     })
     show()
 
@@ -108,6 +127,34 @@ describe('ImportFolderModal', () => {
 
     await waitFor(() => expect(screen.getByText(/создавать нечего/i)).toBeInTheDocument())
     expect(screen.getByRole('button', { name: 'Создать проект' })).toBeDisabled()
+  })
+
+  it('показывает вес вложений и предупреждает, если набор не влезет в предел', async () => {
+    // Набор на 24 МБ при пределе 10 МБ: раньше человек узнавал об этом из отказа
+    // уже после импорта.
+    mocks.preview.mockResolvedValue({
+      ...preview,
+      quotaBytes: 10 * 1024 * 1024,
+      stats: { ...preview.stats, attachments: 40, attachmentBytes: 24 * 1024 * 1024 },
+    })
+    show()
+
+    fireEvent.change(inputs()[1], { target: { files: [new File(['PK'], 'big.zip')] } })
+
+    expect(await screen.findByText(/вложения: 40 · 24\.0 МБ/)).toBeInTheDocument()
+    const quota = await screen.findByRole('status')
+    expect(quota.textContent).toContain('не поместится')
+    expect(quota.textContent).toContain('10.0 МБ')
+  })
+
+  it('набор, который помещается, веса не скрывает и не пугает', async () => {
+    mocks.preview.mockResolvedValue(preview)
+    show()
+
+    fireEvent.change(inputs()[1], { target: { files: [new File(['PK'], 'story.zip')] } })
+
+    expect(await screen.findByText(/вложения: 1 · 2\.0 МБ/)).toBeInTheDocument()
+    expect(document.querySelector('[data-import-quota]')).toBeNull()
   })
 
   it('ошибку сервера показывает текстом сервера и проект не создаёт', async () => {

@@ -9,6 +9,7 @@ import {
 } from '../api/storyFiles'
 import { ErrorBanner } from './ErrorBanner'
 import { plural } from '../lib/format'
+import { importWeight } from '../lib/importWeight'
 import { DIRECTORY_PICK } from '../lib/directoryPick'
 
 interface Props {
@@ -125,6 +126,9 @@ export function ImportFolderModal({ onClose, onCreated }: Props) {
 
   const stats = preview?.stats
   const nothingToCreate = preview !== null && preview.events.length === 0
+  // Импорт создаёт НОВЫЙ проект, поэтому занятого места нет: сравниваем вес набора
+  // только с пределом (его присылает сервер вместе с предпросмотром).
+  const weight = preview ? importWeight(preview.stats, preview.quotaBytes) : null
 
   return createPortal(
     <div className="sf-import" role="dialog" aria-modal="true" aria-label="Импорт папки с Markdown">
@@ -237,7 +241,16 @@ export function ImportFolderModal({ onClose, onCreated }: Props) {
                     <b>{stats.attachments}</b>{' '}
                     {plural(stats.attachments, 'вложение', 'вложения', 'вложений')}
                   </span>
+                  {/* Вес вложений: импорт подчиняется пределу проекта, и узнать об
+                      этом лучше здесь, а не из отказа при создании. */}
+                  {weight && <span className="sf-import__stat">{weight.text}</span>}
                 </div>
+              )}
+
+              {weight?.warning && (
+                <p className="sf-import__quota" role="status" data-import-quota>
+                  {weight.warning}
+                </p>
               )}
 
               {preview.warnings.length > 0 && (

@@ -14,6 +14,7 @@ import {
 } from '../../api/storyFiles'
 import { DIRECTORY_PICK } from '../../lib/directoryPick'
 import { formatBytes, plural } from '../../lib/format'
+import { importWeight } from '../../lib/importWeight'
 import { serverErrorMessage } from '../../api/client'
 import {
   yAddEvent,
@@ -181,6 +182,10 @@ interface ImportChunk {
   maxDepth: number
   /** Сколько файлов станут вложениями: их видно в подписи куска. */
   files: number
+  /** Вес вложений до пережатия: по нему видно, поместится ли кусок. */
+  bytes: number
+  /** Предел вложений проекта на момент разбора (0 — без предела). */
+  quotaBytes: number
 }
 
 /** Куда указывает текущий жест: строка-цель и место в ней. */
@@ -432,6 +437,21 @@ export function EditorsPanel({
     return (events.toArray() as YMap[]).find((m) => (m.get('id') as string) === selectedId) ?? null
   }, [events, selectedId, version])
 
+  /**
+   * Помещается ли разобранный кусок в проект.
+   *
+   * Предел берём из того же ответа, что и предпросмотр (он неизменен на стенде), а
+   * занятое место — из текущего расхода проекта: если с момента разбора файлы
+   * добавляли, предупреждение должно это учитывать.
+   */
+  const chunkWeight = chunk
+    ? importWeight(
+        { attachments: chunk.files, attachmentBytes: chunk.bytes },
+        chunk.quotaBytes,
+        assetUsage?.used ?? 0,
+      )
+    : null
+
   const visibleRows = useMemo(() => {
     const q = filter.trim().toLowerCase()
     if (!q) return rows
@@ -488,6 +508,8 @@ export function EditorsPanel({
         events: preview.events.length,
         maxDepth: preview.events.reduce((max, event) => Math.max(max, event.depth), 0),
         files: preview.stats.attachments,
+        bytes: preview.stats.attachmentBytes,
+        quotaBytes: preview.quotaBytes,
       })
       setChunkMode('end')
       setNotice(
@@ -1168,6 +1190,13 @@ export function EditorsPanel({
                   </>
                 )}
               </button>
+              {/* Вес вложений куска: импорт подчиняется пределу проекта, и об
+                  отказе лучше знать до перетаскивания, а не после. */}
+              {chunkWeight?.warning && (
+                <p className="ed-import__quota" role="status" data-ed-import-quota>
+                  {chunkWeight.warning}
+                </p>
+              )}
               {/* Место можно выбрать и списком: перетаскивание на тач-устройствах
                   конкурирует с прокруткой, а с клавиатуры его не сделать вовсе. */}
               <label className="ed-import__mode">

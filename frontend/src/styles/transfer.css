@@ -202,3 +202,11 @@
     .sf-import__window { height: 100dvh; max-height: 100dvh; }
   }
 }
+
+/* Предупреждение о весе набора: импорт подчиняется пределу вложений проекта,
+   и об отказе лучше узнать до создания проекта, а не после. */
+.sf-import__quota {
+  margin: 8px 0 0; padding: 8px 10px; font-size: 0.86rem;
+  border-left: 2px solid var(--danger); background: var(--chip-bg, transparent);
+  border-radius: 4px;
+}

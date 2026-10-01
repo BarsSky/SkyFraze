@@ -271,3 +271,9 @@
 .ed-files .ed-assets__item { max-width: 100%; padding-right: 28px; }
 .ed-files .ed-assets__name { max-width: 42ch; }
 .ed-files .ed-assets__detach:disabled { color: var(--fg-muted); opacity: 0.45; cursor: not-allowed; }
+
+/* Вес вложений куска md: импорт подчиняется пределу проекта, и об отказе лучше
+   узнать до перетаскивания, а не после него. */
+.ed-import__quota {
+  flex: 1 1 100%; margin: 0; font-size: 0.82rem; color: var(--danger);
+}

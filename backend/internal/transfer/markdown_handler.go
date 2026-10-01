@@ -116,7 +116,14 @@ func (h *Handler) MarkdownPreview(w http.ResponseWriter, r *http.Request) {
 		h.markdownError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, parsed.Preview())
+	preview := parsed.Preview()
+	// Предел вложений отдаём вместе с предпросмотром: интерфейс предупреждает о
+	// нём ДО импорта (см. previewResponse.QuotaBytes). Сервиса может не быть —
+	// разбор проверяют и без базы (markdown_test.go), а предел живёт в сервисе.
+	if h.svc != nil {
+		preview.QuotaBytes = h.svc.QuotaBytes()
+	}
+	writeJSON(w, http.StatusOK, preview)
 }
 
 // MarkdownImport — POST /api/projects/import/markdown: создаёт НОВЫЙ проект

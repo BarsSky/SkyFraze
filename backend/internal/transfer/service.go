@@ -132,6 +132,9 @@ type Service struct {
 	// и загрузка из интерфейса, иначе дедупликация по содержимому обходилась бы
 	// стороной (см. FileStore).
 	files FileStore
+	// quotaSource — предел вложений проекта: предпросмотр показывает его человеку
+	// (см. UseQuota). Без источника предел считается unlimited (0).
+	quotaSource QuotaSource
 }
 
 func New(s *store.Store, obj storage.ObjectStore, proj *projects.Service) *Service {

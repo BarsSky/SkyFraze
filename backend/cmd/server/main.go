@@ -158,6 +158,9 @@ func main() {
 	// Импорт папки с md пишет файлы тем же путём, что и загрузка из интерфейса:
 	// иначе дедупликация по содержимому (миграция 0007) обходилась бы стороной.
 	transferSvc.UseFileStore(assetsSvc)
+	// Предпросмотр импорта показывает предел вложений: набор, который не помещается,
+	// лучше отклонить до создания проекта, чем на первом же файле.
+	transferSvc.UseQuota(assetsSvc)
 
 	collabHub := collab.NewHub(logger, cfg.JWTSecret, evSvc, cfg.CORSOrigins)
 	go collabHub.Run(ctx)

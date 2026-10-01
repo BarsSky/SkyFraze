@@ -295,6 +295,10 @@ type MarkdownStats struct {
 	ImageLinks int `json:"image_links"`
 	// Attachments — сколько файлов набора станут вложениями проекта.
 	Attachments int `json:"attachments"`
+	// AttachmentBytes — их суммарный вес ДО пережатия. Картинки станут легче, но
+	// предупреждать о квоте надо по худшему случаю: обещать «поместится», а потом
+	// отказать — хуже, чем сказать «может не поместиться».
+	AttachmentBytes int64 `json:"attachment_bytes"`
 	// MissingFiles — ссылки, для которых файла в наборе не нашлось.
 	MissingFiles int `json:"missing_files"`
 	// UnusedFiles — файлы набора, на которые никто не ссылается: в проект они не
@@ -318,6 +322,10 @@ type previewResponse struct {
 	Events       []previewEvent `json:"events"`
 	Warnings     []string       `json:"warnings"`
 	Stats        MarkdownStats  `json:"stats"`
+	// QuotaBytes — предел вложений проекта (0 — без предела). Нужен интерфейсу,
+	// чтобы предупредить ДО импорта: набор, который не помещается, отклоняется на
+	// первом же файле, и лучше сказать об этом в предпросмотре, а не после.
+	QuotaBytes int64 `json:"quota_bytes"`
 }
 
 // importResponse — ответ POST /api/projects/import/markdown.
@@ -988,6 +996,10 @@ func (c *markdownCollector) build() (*ParsedMarkdown, error) {
 			Kind: assets.KindOf(file.mime, file.name),
 			Data: file.data,
 		})
+		// Вес набора до пережатия: картинки станут легче (WebP), но оценивать
+		// «поместится ли в проект» надо по худшему случаю — иначе предупреждение
+		// о квоте было бы оптимистичным.
+		parsed.Stats.AttachmentBytes += int64(len(file.data))
 	}
 	parsed.Stats.Attachments = len(parsed.Attachments)
 	parsed.Stats.UnusedFiles = len(c.attachments) - len(used) - len(rejected)
@@ -1677,6 +1689,23 @@ type FileStore interface {
 
 // UseFileStore подключает запись файлов проекта.
 func (s *Service) UseFileStore(files FileStore) { s.files = files }
+
+// QuotaSource — кто знает предел вложений проекта (реализует assets.Service).
+type QuotaSource interface {
+	Quota() int64
+}
+
+// UseQuota подключает источник предела вложений: предпросмотр показывает его
+// человеку, чтобы тот заранее видел, поместится ли набор в проект.
+func (s *Service) UseQuota(source QuotaSource) { s.quotaSource = source }
+
+// QuotaBytes — предел вложений проекта (0 — без предела).
+func (s *Service) QuotaBytes() int64 {
+	if s.quotaSource == nil {
+		return 0
+	}
+	return s.quotaSource.Quota()
+}
 
 // LiveDoc — документ ЖИВОЙ комнаты проекта (collab.Hub).
 //

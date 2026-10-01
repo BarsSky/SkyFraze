@@ -62,7 +62,9 @@ const rawPreview = {
     attachments: 1,
     missing_files: 3,
     unused_files: 0,
+    attachment_bytes: 3 * 1024 * 1024,
   },
+  quota_bytes: 10 * 1024 * 1024,
 }
 
 describe('buildMarkdownImportForm', () => {
@@ -135,7 +137,10 @@ describe('parseMarkdownPreview', () => {
       attachments: 1,
       missingFiles: 3,
       unusedFiles: 0,
+      attachmentBytes: 3 * 1024 * 1024,
     })
+    // Предел проекта нужен окну предпросмотра: по нему оно предупреждает о весе.
+    expect(preview.quotaBytes).toBe(10 * 1024 * 1024)
   })
 
   it('пустой ответ не ломает окно предпросмотра', () => {
@@ -151,7 +156,9 @@ describe('parseMarkdownPreview', () => {
         attachments: 0,
         missingFiles: 0,
         unusedFiles: 0,
+        attachmentBytes: 0,
       },
+      quotaBytes: 0,
     })
   })
 
@@ -177,7 +184,9 @@ describe('parseMarkdownPreview', () => {
       attachments: 0,
       missingFiles: 0,
       unusedFiles: 0,
+      attachmentBytes: 0,
     })
+    expect(preview.quotaBytes).toBe(0)
   })
 })
 

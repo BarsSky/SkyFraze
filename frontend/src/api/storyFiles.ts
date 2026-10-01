@@ -40,6 +40,11 @@ export interface MarkdownImportStats {
   missingFiles: number
   /** Файлы набора, на которые никто не ссылается: в проект они не попадут. */
   unusedFiles: number
+  /**
+   * Суммарный вес вложений ДО пережатия. Картинки станут легче, но про предел
+   * проекта честнее сказать по худшему случаю.
+   */
+  attachmentBytes: number
 }
 
 export interface MarkdownImportPreview {
@@ -47,6 +52,8 @@ export interface MarkdownImportPreview {
   events: MarkdownImportEvent[]
   warnings: string[]
   stats: MarkdownImportStats
+  /** Предел вложений проекта (0 — без предела): показываем до создания проекта. */
+  quotaBytes: number
 }
 
 export interface MarkdownImportResult {
@@ -205,6 +212,8 @@ export function parseMarkdownPreview(raw: unknown): MarkdownImportPreview {
     events,
     warnings: asStrings(source?.warnings),
     stats: parseStats(source?.stats, events),
+    // Старый сервер поля не пришлёт — тогда предела «нет», и предупреждать не о чем.
+    quotaBytes: asCount(source?.quota_bytes),
   }
 }
 
@@ -306,6 +315,7 @@ function parseStats(raw: unknown, events: MarkdownImportEvent[]): MarkdownImport
     attachments: asCount(item?.attachments),
     missingFiles: asCount(item?.missing_files),
     unusedFiles: asCount(item?.unused_files),
+    attachmentBytes: asCount(item?.attachment_bytes),
   }
 }
 

@@ -77,6 +77,7 @@ function makeEvents() {
 function show(
   events: Y.Array<Y.Map<unknown>>,
   onImportInto = vi.fn().mockResolvedValue({ projectId: 'p1', events: 2, warnings: [] }),
+  assetUsage: { used: number; limit: number; used_text: string; limit_text: string } | null = null,
 ) {
   render(
     <EditorsPanel
@@ -86,6 +87,7 @@ function show(
       onChanged={vi.fn()}
       onUpload={async () => null}
       onImportInto={onImportInto}
+      assetUsage={assetUsage}
     />,
   )
   return onImportInto
@@ -99,7 +101,17 @@ const chunk: MarkdownImportPreview = {
     { number: '02.1', depth: 1, title: 'Шаг', path: '02.1-Шаг.md', chars: 5, warnings: [] },
   ],
   warnings: [],
-  stats: { files: 2, events: 2, chars: 15, imageLinks: 0, attachments: 0, missingFiles: 0, unusedFiles: 0 },
+  stats: {
+    files: 2,
+    events: 2,
+    chars: 15,
+    imageLinks: 0,
+    attachments: 0,
+    missingFiles: 0,
+    unusedFiles: 0,
+    attachmentBytes: 0,
+  },
+  quotaBytes: 10 * 1024 * 1024,
 }
 
 const rowEl = (title: string) =>
@@ -147,6 +159,46 @@ describe('EditorsPanel — импорт куска md «в место»', () => 
     expect(document.querySelector('[data-ed-chunk]')?.textContent).toContain('2 события')
     // Пока место не выбрано, в проект ничего не пишется.
     expect(screen.getByRole('button', { name: 'вставить' })).toBeInTheDocument()
+  })
+
+  it('предупреждает, если кусок не помещается в предел проекта', async () => {
+    // Проект уже занят почти под предел, а кусок несёт 4 МБ вложений: об отказе
+    // сервера лучше знать до перетаскивания.
+    const { events } = makeEvents()
+    show(events, undefined, {
+      used: 8 * 1024 * 1024,
+      limit: 10 * 1024 * 1024,
+      used_text: '8.0 МБ',
+      limit_text: '10.0 МБ',
+    })
+
+    await loadChunk({
+      ...chunk,
+      quotaBytes: 10 * 1024 * 1024,
+      stats: { ...chunk.stats, attachments: 2, attachmentBytes: 4 * 1024 * 1024 },
+    })
+
+    const quota = await screen.findByText(/не поместится/)
+    expect(quota.textContent).toContain('занято 8.0 МБ из 10.0 МБ')
+  })
+
+  it('помещающийся кусок ни о чём не предупреждает', async () => {
+    const { events } = makeEvents()
+    show(events, undefined, {
+      used: 1024 * 1024,
+      limit: 10 * 1024 * 1024,
+      used_text: '1.0 МБ',
+      limit_text: '10.0 МБ',
+    })
+
+    await loadChunk({
+      ...chunk,
+      quotaBytes: 10 * 1024 * 1024,
+      stats: { ...chunk.stats, attachments: 2, attachmentBytes: 1024 * 1024 },
+    })
+
+    expect(screen.queryByText(/не поместится/)).toBeNull()
+    expect(screen.queryByText(/почти закончится/)).toBeNull()
   })
 
   it('перетаскивание в нижнюю половину строки вставляет кусок после неё', async () => {
