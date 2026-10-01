@@ -444,6 +444,7 @@ SkyFraze/
 │   ├── import-export.md          формат md-выгрузки и импорта (включая вложения)
 │   ├── realtime-editor.md        фазы realtime-правок и их проверки
 │   ├── storage-compression.md    что занимает место на сервере и как его сократить
+│   ├── storage-s3.md             план по S3/MinIO: что даёт, что ломает, сколько стоит
 │   └── screenshots/              картинки для этого README
 ├── deps/scroll-world/            git-САБМОДУЛЬ oso95/scroll-world — справочник по композиции
 │                                 стадии и механике прокрутки (в сборку не входит)
@@ -547,6 +548,7 @@ ONLY_FUNCTIONAL=1 npx tsx ../.dsh/skills/ui-visual-audit/scripts/visual-audit.ts
 ## Хранение на сервере
 
 Что занимает место и что с этим делать по шагам — `docs/storage-compression.md`.
+План по S3/MinIO (что даёт, что ломает, почему пока не делаем) — `docs/storage-s3.md`.
 Отчёт о размерах доступен тремя способами:
 
 - **страница `/admin` в интерфейсе** — раздел «Хранилище»: размеры базы, снапшотов
