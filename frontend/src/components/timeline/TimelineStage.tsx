@@ -85,6 +85,13 @@ function resolveAssets(assetIds: string[], lookup: Record<string, AssetLookup>):
  * Стадия занимается только показом и навигацией: редактор — отдельный модуль.
  */
 export function TimelineStage({ events, assetsById, projectTitle, actions, copyFooter }: Props) {
+  // Карта файлов проекта (id → адрес) для текста кадра: в тексте могут быть ссылки
+  // на вложения (`/api/assets/<id>`), и без подмены они не откроются в приложении.
+  const assetUrls = useMemo(() => {
+    const map: Record<string, string> = {}
+    for (const [id, asset] of Object.entries(assetsById)) map[id] = asset.url
+    return map
+  }, [assetsById])
   const [theme] = useTheme()
   const trackRef = useRef<HTMLDivElement>(null)
   const stageActiveRef = useRef(true)
@@ -534,6 +541,7 @@ export function TimelineStage({ events, assetsById, projectTitle, actions, copyF
             prevLabel={prevEntry?.label}
             nextLabel={nextEntry?.label}
             footer={copyFooter}
+            assetUrls={assetUrls}
           />
         )}
       </div>

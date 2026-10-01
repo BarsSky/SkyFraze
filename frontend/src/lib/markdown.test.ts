@@ -116,6 +116,40 @@ describe('renderMarkdown: безопасность', () => {
   })
 })
 
+describe('renderMarkdown: ссылки на вложения проекта', () => {
+  const id = '11111111-2222-3333-4444-555555555555'
+
+  it('заменяет адрес вложения на доступный странице', () => {
+    const { html } = renderMarkdown(`![схема](/api/assets/${id})`, { [id]: 'blob:sf-asset' })
+    const img = parse(html).querySelector('img')
+    // Эндпоинт требует авторизации, а <img> заголовок не передаёт: без подмены
+    // картинка в тексте не открывалась бы (401).
+    expect(img?.getAttribute('src')).toBe('blob:sf-asset')
+  })
+
+  it('не трогает чужие адреса и ссылки вне карты', () => {
+    const other = '99999999-8888-7777-6666-555555555555'
+    const { html } = renderMarkdown(
+      `![своя](/api/assets/${id})\n\n![чужая](/api/assets/${other})\n\n[сайт](https://example.com)\n\n[документ](/api/assets/${other})`,
+      { [id]: 'blob:sf-asset' },
+    )
+    const doc = parse(html)
+    expect(doc.querySelectorAll('img')[0]?.getAttribute('src')).toBe('blob:sf-asset')
+    // Файла этой картинки у страницы нет — вместо запроса к защищённому эндпоинту
+    // (он дал бы 401 в консоли) показываем пустой пиксель: картинка появится, как
+    // только страница получит адрес файла.
+    expect(doc.querySelectorAll('img')[1]?.getAttribute('src')).toMatch(/^data:image\/gif/)
+    // Ссылку на файл не подменяем: переход по ней — действие человека.
+    expect(doc.querySelectorAll('a')[1]?.getAttribute('href')).toBe(`/api/assets/${other}`)
+    expect(doc.querySelector('a')?.getAttribute('href')).toBe('https://example.com')
+  })
+
+  it('без карты файлов разметка не меняется', () => {
+    const { html } = renderMarkdown(`![схема](/api/assets/${id})`)
+    expect(parse(html).querySelector('img')?.getAttribute('src')).toBe(`/api/assets/${id}`)
+  })
+})
+
 describe('looksLikeMarkdown', () => {
   it('видит разметку и не путает её с обычным текстом', () => {
     expect(looksLikeMarkdown('# Заголовок')).toBe(true)

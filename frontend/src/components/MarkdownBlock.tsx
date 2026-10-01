@@ -9,6 +9,12 @@ interface Props {
   source: string
   /** Класс обёртки: у кадра таймлайна свои рамки и ограничения высоты. */
   className?: string
+  /**
+   * Файлы проекта, доступные странице (id → адрес): ссылки `/api/assets/<id>` в
+   * тексте заменяются на них. Без этого картинка в тексте не открывалась бы:
+   * эндпоинт требует авторизации, а `<img>` заголовок не передаёт.
+   */
+  assetUrls?: Record<string, string>
 }
 
 /**
@@ -20,10 +26,13 @@ interface Props {
  * них на каждой странице с обычным текстом незачем. CSS KaTeX подключён статично
  * (это ~25 КБ правил), а шрифты браузер подтянет лишь при первом рендере формулы.
  */
-export function MarkdownBlock({ source, className }: Props) {
+export function MarkdownBlock({ source, className, assetUrls }: Props) {
   const ref = useRef<HTMLDivElement>(null)
   const [theme] = useTheme()
-  const result = useMemo(() => renderMarkdown(source), [source])
+  // Ключ зависимости — сам текст плюс карта файлов: blob-адреса приезжают позже
+  // текста, и без этого картинка в тексте осталась бы неразрешённой.
+  const assetKey = assetUrls ? Object.entries(assetUrls).map(([id, url]) => `${id}=${url}`).join('|') : ''
+  const result = useMemo(() => renderMarkdown(source, assetUrls), [source, assetKey])
 
   useEffect(() => {
     const root = ref.current

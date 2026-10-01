@@ -53,8 +53,16 @@ const rawPreview = {
       warnings: ['пустой файл'],
     },
   ],
-  warnings: ['картинки не переносятся: 3 ссылки на изображения'],
-  stats: { files: 2, events: 2, chars: 1500, image_links: 3 },
+  warnings: ['не нашлось файлов для 3 ссылок: assets/карта.png'],
+  stats: {
+    files: 2,
+    events: 2,
+    chars: 1500,
+    image_links: 3,
+    attachments: 1,
+    missing_files: 3,
+    unused_files: 0,
+  },
 }
 
 describe('buildMarkdownImportForm', () => {
@@ -118,8 +126,16 @@ describe('parseMarkdownPreview', () => {
     expect(preview.events).toHaveLength(2)
     expect(preview.events[1]).toMatchObject({ number: '01.1', depth: 1, chars: 300 })
     expect(preview.events[1].warnings).toEqual(['пустой файл'])
-    expect(preview.warnings).toEqual(['картинки не переносятся: 3 ссылки на изображения'])
-    expect(preview.stats).toEqual({ files: 2, events: 2, chars: 1500, imageLinks: 3 })
+    expect(preview.warnings).toEqual(['не нашлось файлов для 3 ссылок: assets/карта.png'])
+    expect(preview.stats).toEqual({
+      files: 2,
+      events: 2,
+      chars: 1500,
+      imageLinks: 3,
+      attachments: 1,
+      missingFiles: 3,
+      unusedFiles: 0,
+    })
   })
 
   it('пустой ответ не ломает окно предпросмотра', () => {
@@ -127,7 +143,15 @@ describe('parseMarkdownPreview', () => {
       projectTitle: '',
       events: [],
       warnings: [],
-      stats: { files: 0, events: 0, chars: 0, imageLinks: 0 },
+      stats: {
+        files: 0,
+        events: 0,
+        chars: 0,
+        imageLinks: 0,
+        attachments: 0,
+        missingFiles: 0,
+        unusedFiles: 0,
+      },
     })
   })
 
@@ -145,7 +169,15 @@ describe('parseMarkdownPreview', () => {
     ])
     expect(preview.warnings).toEqual([])
     // Статистику сервер не прислал — счётчики берём из разобранного дерева.
-    expect(preview.stats).toEqual({ files: 0, events: 1, chars: 0, imageLinks: 0 })
+    expect(preview.stats).toEqual({
+      files: 0,
+      events: 1,
+      chars: 0,
+      imageLinks: 0,
+      attachments: 0,
+      missingFiles: 0,
+      unusedFiles: 0,
+    })
   })
 })
 

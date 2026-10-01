@@ -79,6 +79,24 @@ export function ProjectTimelinePage() {
     listAssets(projectId).then(setAssets).catch(() => setAssets([]))
   }, [projectId, attempt])
 
+  /**
+   * Перечитать список файлов проекта.
+   *
+   * Нужно после импорта «в место» с вложениями: файлы создаёт сервер, и без
+   * перечитывания вложение не показывается ни в кадре, ни в редакторе — его просто
+   * нет в списке, по которому интерфейс ищет картинку по id (человек видел бы
+   * «вложение прикреплено, но пусто»). Ошибку молча оставляем: содержимое события
+   * уже приехало, а файлы подтянутся при следующем открытии проекта.
+   */
+  const refreshAssets = useCallback(async () => {
+    if (!projectId) return
+    try {
+      setAssets(await listAssets(projectId))
+    } catch {
+      /* ignore: покажем то, что уже есть */
+    }
+  }, [projectId])
+
   // Длина Y.Array: переключение empty-state ↔ стадия и зависимость для мемо.
   useEffect(() => {
     if (!events) {
@@ -184,10 +202,13 @@ export function ProjectTimelinePage() {
   const importIntoProject = useCallback(
     async (source: MarkdownImportSource, place: MarkdownInsertPlace): Promise<MarkdownImportResult> => {
       const result = await importMarkdownInto(projectId, source, place)
+      // Сервер мог создать вложения (картинки из куска) — перечитываем файлы
+      // проекта, иначе они не появятся ни в кадре, ни в редакторе.
+      if (result.events > 0) await refreshAssets()
       if (collab && !collab.connected) await collab.reloadFromServer()
       return result
     },
-    [projectId, collab],
+    [projectId, collab, refreshAssets],
   )
 
   const createFirstChapter = useCallback(async () => {

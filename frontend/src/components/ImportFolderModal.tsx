@@ -155,8 +155,9 @@ export function ImportFolderModal({ onClose, onCreated }: Props) {
             </p>
             <p className="muted sf-import__hint">
               Сервер сначала разбирает файлы и ничего не записывает: проект появится
-              только после «Создать проект». Картинки в этой версии не переносятся —
-              ссылки в текстах остаются как есть.
+              только после «Создать проект». Картинки и другие файлы, на которые
+              ссылаются тексты событий, прикладываются к своим событиям — скачивать
+              их по ссылкам из интернета не нужно.
             </p>
           </div>
 
@@ -229,6 +230,12 @@ export function ImportFolderModal({ onClose, onCreated }: Props) {
                   <span className="sf-import__stat">
                     <b>{stats.imageLinks}</b>{' '}
                     {plural(stats.imageLinks, 'ссылка на картинку', 'ссылки на картинки', 'ссылок на картинки')}
+                  </span>
+                  {/* Вложения — не «сколько нашлось картинок», а сколько файлов
+                      станут вложениями проекта: это то, что человек увидит в кадре. */}
+                  <span className="sf-import__stat">
+                    <b>{stats.attachments}</b>{' '}
+                    {plural(stats.attachments, 'вложение', 'вложения', 'вложений')}
                   </span>
                 </div>
               )}

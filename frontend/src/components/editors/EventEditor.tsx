@@ -153,13 +153,17 @@ export function EventEditor({
             <span className="muted">разметка распознана — предпросмотр под полем</span>
           )}
         </div>
-        {looksLikeMarkdown(body) && <MarkdownBlock source={body} className="ed-md__preview" />}
+        {looksLikeMarkdown(body) && (
+          <MarkdownBlock source={body} className="ed-md__preview" assetUrls={assetUrls} />
+        )}
       </div>
 
       {mdOpen && (
         <MarkdownEditor
           value={body}
           title={title}
+          // Ссылки на вложения в тексте должны открываться и в предпросмотре.
+          assetUrls={assetUrls}
           onSave={(next) => {
             setText(ymap, 'body', next)
             onChange?.()

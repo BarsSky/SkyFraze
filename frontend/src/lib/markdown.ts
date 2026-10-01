@@ -194,17 +194,40 @@ const PURIFY_CONFIG = {
 }
 
 /**
+ * Прозрачный пиксель: им подменяется картинка проекта, файл которой страница ещё
+ * не загрузила. Пустой `src` браузер понимает как адрес самой страницы, а сырой
+ * `/api/assets/<id>` без заголовка даёт 401 в консоли — оба варианта хуже:
+ * картинка появится, как только blob доедет (MarkdownBlock перерисуется).
+ */
+const PENDING_IMAGE =
+  'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
+
+/**
  * Разметка → очищенный HTML с заготовками.
  *
  * Чистая функция без побочных эффектов: её же использует и предпросмотр в
  * редакторе, и кадр таймлайна, и публичная страница истории.
+ *
+ * `assetUrls` — файлы проекта, уже доступные странице (id → адрес). Ссылки
+ * `/api/assets/<id>` в тексте заменяются на него: этот адрес работает в скачанном
+ * .md и на публичной странице, но в приложении требует авторизации, а тег `<img>`
+ * заголовок не несёт — без подмены картинка в тексте не открывалась бы (401).
  */
-export function renderMarkdown(source: string): MarkdownResult {
+export function renderMarkdown(source: string, assetUrls?: Record<string, string>): MarkdownResult {
   const text = source ?? ''
   if (text.trim() === '') return { html: '', hasMath: false, hasDiagram: false }
 
   const raw = renderer.render(text)
-  const html = DOMPurify.sanitize(raw, PURIFY_CONFIG) as unknown as string
+  let html = DOMPurify.sanitize(raw, PURIFY_CONFIG) as unknown as string
+  if (assetUrls) {
+    html = html.replace(/\b(src|href)="\/api\/assets\/([^"]+)"/g, (whole, attr: string, id: string) => {
+      const url = assetUrls[id]
+      if (url) return `${attr}="${url}"`
+      // Ссылку оставляем как есть: переход по ней — осознанное действие человека.
+      // Картинку без файла показываем пустой, чтобы не было ни 401, ни «пустого» src.
+      return attr === 'src' ? `${attr}="${PENDING_IMAGE}"` : whole
+    })
+  }
   return {
     html,
     hasMath: html.includes(MATH_CLASS),

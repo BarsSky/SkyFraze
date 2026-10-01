@@ -74,7 +74,16 @@ async function snapshot(token: string, projectId: string) {
     id: (m.get('id') as string | undefined) ?? '',
     parentId: (m.get('parent_id') as string | undefined) ?? null,
     title: m.get('title_text') instanceof Y.Text ? (m.get('title_text') as Y.Text).toString() : ((m.get('title') as string) ?? ''),
+    // Вложения: привязка живёт только в CRDT, поэтому проверяем её здесь.
+    assets: ((m.get('assets') as string[] | undefined) ?? []).filter(Boolean),
+    background: m.get('bg_kind') === 'asset' ? ((m.get('bg_asset') as string | undefined) ?? '') : '',
   }))
+}
+
+/** Вложения проекта (файлы, приложенные к событиям). */
+async function projectAssets(token: string, projectId: string) {
+  const res = await api(token, 'GET', `/api/projects/${projectId}/assets`)
+  return (res.json ?? []) as Array<{ id: string; filename: string; mime: string; kind: string }>
 }
 
 /**
@@ -178,12 +187,22 @@ async function main() {
   ], { 'X-Skyfraze-Base-Revision': '0' })
   if (tree.status !== 200) throw new Error(`дерево проекта: ${tree.status}`)
 
-  // Куски md во временной папке: папку выбираем в панели как обычно.
+  // Куски md во временной папке: папку выбираем в панели как обычно. В «Кусок»
+  // кладём ещё и картинку, на которую ссылается текст события: она обязана стать
+  // вложением (и фоном кадра) того же события.
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-import-'))
   const chunkFolder = path.join(dir, 'Кусок')
-  fs.mkdirSync(chunkFolder)
-  fs.writeFileSync(path.join(chunkFolder, '01-Вставка.md'), '---\ntitle: Вставка\ndate: 2024-05-17\n---\n\nТекст вставки.\n')
+  fs.mkdirSync(path.join(chunkFolder, 'assets'), { recursive: true })
+  fs.writeFileSync(
+    path.join(chunkFolder, '01-Вставка.md'),
+    '---\ntitle: Вставка\ndate: 2024-05-17\n---\n\nТекст вставки.\n\n![схема](assets/вставка.png)\n',
+  )
   fs.writeFileSync(path.join(chunkFolder, '01.1-Шаг.md'), '# Шаг вставки\nТело шага.\n')
+  // Минимальный PNG: важно, что это картинка по типу, а не по имени.
+  fs.writeFileSync(
+    path.join(chunkFolder, 'assets', 'вставка.png'),
+    Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64'),
+  )
 
   const browser = await chromium.launch()
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' })
@@ -192,6 +211,11 @@ async function main() {
   page.on('pageerror', (e) => consoleErrors.push('pageerror: ' + e.message))
   page.on('console', (m) => {
     if (m.type() === 'error') consoleErrors.push('console: ' + m.text().slice(0, 140))
+  })
+  // Отказы запросов печатаем сразу: «нет ошибок в консоли» без адреса бесполезно.
+  page.on('response', (r) => {
+    const url = r.url()
+    if (r.status() >= 400 || url.includes('/assets')) console.log(`  … http ${r.status()} ${url}`)
   })
 
   await uiLogin(page, projectId)
@@ -232,7 +256,10 @@ async function main() {
   // ── 2. Перетаскиванием: кусок внутрь главы B ───────────────────────────────
   await page.locator('.ed-import input[type="file"]').first().setInputFiles(chunkFolder)
   await page.waitForSelector('[data-ed-chunk]', { timeout: 30000 })
-  ok('панель разобрала папку и показала кусок', (await page.locator('[data-ed-chunk]').textContent())?.includes('2 события') === true)
+  const chipText = (await page.locator('[data-ed-chunk]').textContent()) ?? ''
+  ok('панель разобрала папку и показала кусок', chipText.includes('2 события'), chipText)
+  // В куске есть картинка: подпись обязана честно сказать, что с ней поедет файл.
+  ok('в подписи куска видны вложения', chipText.includes('1 файл'), chipText)
 
   const target = page.locator('.ed-row', { hasText: 'Глава B' }).first()
   // Панель живёт под таймлайном: без прокрутки к ней кусок и строки остаются за
@@ -264,6 +291,59 @@ async function main() {
   const stepInside = afterDrag.filter((row) => row.title === 'Шаг вставки')[1]
   ok('его под-событие вложено в него', !!inside && stepInside?.parentId === inside.id)
   ok('кусок исчез из панели после вставки', (await page.locator('[data-ed-chunk]').count()) === 0)
+
+  // Картинка из куска: файл в проекте и привязка в документе — у того же события.
+  const files = await projectAssets(token, projectId)
+  const picture = files.find((asset) => asset.filename === 'вставка.png')
+  ok('картинка из куска стала вложением проекта', !!picture, JSON.stringify(files.map((a) => a.filename)))
+  ok('тип вложения определён как картинка', picture?.mime === 'image/png' && picture?.kind === 'image', JSON.stringify(picture))
+  const docWithAssets = await snapshot(token, projectId)
+  const insertedEvent = docWithAssets.find((event) => event.id === inside?.id)
+  ok(
+    'вложение привязано к вставленному событию',
+    !!picture && !!insertedEvent && insertedEvent.assets.length === 1 && insertedEvent.assets[0] === picture.id,
+    JSON.stringify(insertedEvent),
+  )
+  ok(
+    'картинка стала фоном кадра',
+    !!picture && insertedEvent?.background === picture.id,
+    JSON.stringify(insertedEvent),
+  )
+  // Та же картинка видна в интерфейсе: выбираем событие и смотрим на превью.
+  //
+  // Клик после перетаскивания панель намеренно игнорирует (он «продолжение»
+  // жеста, см. suppressClickRef в EditorsPanel) — поэтому выбираем строку, пока
+  // она не станет активной, а не одним кликом.
+  const insertedRow = page.locator('.ed-row', { hasText: 'Вставка' }).last()
+  const insertedId = await insertedRow.getAttribute('data-event-id')
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await insertedRow.click()
+    await page.waitForTimeout(300)
+    const active = await page.locator('.ed-row--active').getAttribute('data-event-id')
+    if (active === insertedId) break
+  }
+  const thumb = await waitFor('превью вложения в редакторе', async () => {
+    await page.waitForTimeout(200)
+    return (await page.locator('.ed-assets__preview img').count()) > 0
+  }, 15000)
+  const attachedLabel = await page
+    .locator('.ed-field__label', { hasText: 'Вложения' })
+    .first()
+    .textContent()
+    .catch(() => null)
+  ok('редактор показывает вложение события', thumb, `подпись: ${attachedLabel}`)
+  const inBrowser = await page.evaluate((id) => {
+    const doc = (window as unknown as { __yjsDoc?: any }).__yjsDoc
+    const map = doc?.getArray('events').toArray().find((m: any) => m.get('id') === id)
+    return map ? `assets=${JSON.stringify(map.get('assets'))} bg=${String(map.get('bg_asset'))}` : 'события нет в документе'
+  }, insertedId)
+  console.log(`  … в документе вкладки: ${inBrowser}`)
+  // Файл отдаётся сервером: вложение без файла — это «прикреплено, но пусто».
+  if (picture) {
+    const file = await fetch(`${BASE}/api/assets/${picture.id}`, { headers: { Authorization: `Bearer ${token}` } })
+    const bytes = new Uint8Array(await file.arrayBuffer())
+    ok('файл вложения скачивается', file.ok && bytes.length > 0, `${file.status}, ${bytes.length} байт`)
+  }
 
   // ── 2.1. Слишком глубокий кусок сервер отвергает ДО записи ────────────────
   //

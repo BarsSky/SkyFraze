@@ -24,6 +24,12 @@ interface Props {
    * иначе на узких экранах он перекрывает текст кадра.
    */
   footer?: ReactNode
+  /**
+   * Файлы проекта (id → адрес), доступные странице: ссылки `/api/assets/<id>` в
+   * тексте кадра заменяются на них — иначе картинка в тексте не открывается
+   * (эндпоинт требует авторизации, а `<img>` заголовок не передаёт).
+   */
+  assetUrls?: Record<string, string>
 }
 
 /**
@@ -40,7 +46,7 @@ interface Props {
  * (components/editors), стадия с ним не связана.
  */
 export function CopyPanel({
-  chapter, frame, onJumpFrame, onPrev, onNext, prevLabel, nextLabel, footer,
+  chapter, frame, onJumpFrame, onPrev, onNext, prevLabel, nextLabel, footer, assetUrls,
 }: Props) {
   const images = frame.assets.filter((a) => a.mime.startsWith(IMAGE_MIME_PREFIX))
   const [viewer, setViewer] = useState<number | null>(null)
@@ -91,7 +97,9 @@ export function CopyPanel({
             </div>
             <span className="sf-copy__eyebrow">{frame.eyebrow}</span>
             <h2 className="sf-copy__title">{frame.title || 'Без названия'}</h2>
-            {frame.body && <MarkdownBlock source={frame.body} className="sf-copy__body" />}
+            {frame.body && (
+              <MarkdownBlock source={frame.body} className="sf-copy__body" assetUrls={assetUrls} />
+            )}
 
           <ul className="sf-copy__meta">
             {!frame.isChapter && <li>глава {chapter.number}: {chapter.title}</li>}

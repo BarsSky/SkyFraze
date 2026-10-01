@@ -32,8 +32,14 @@ export interface MarkdownImportStats {
   files: number
   events: number
   chars: number
-  /** Ссылок на картинки в текстах: сами картинки в этой версии не переносятся. */
+  /** Ссылок на картинки в текстах — их мы пытаемся превратить во вложения. */
   imageLinks: number
+  /** Сколько файлов набора станут вложениями проекта (картинки, pdf и прочее). */
+  attachments: number
+  /** Ссылки, для которых файла в наборе не нашлось: останутся текстом как есть. */
+  missingFiles: number
+  /** Файлы набора, на которые никто не ссылается: в проект они не попадут. */
+  unusedFiles: number
 }
 
 export interface MarkdownImportPreview {
@@ -297,6 +303,9 @@ function parseStats(raw: unknown, events: MarkdownImportEvent[]): MarkdownImport
     events: asCount(item?.events) || events.length,
     chars: asCount(item?.chars) || events.reduce((sum, event) => sum + event.chars, 0),
     imageLinks: asCount(item?.image_links),
+    attachments: asCount(item?.attachments),
+    missingFiles: asCount(item?.missing_files),
+    unusedFiles: asCount(item?.unused_files),
   }
 }
 

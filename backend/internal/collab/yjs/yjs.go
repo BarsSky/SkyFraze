@@ -104,6 +104,10 @@ type Event struct {
 	Position int
 	// EventDate — дата события в формате «YYYY-MM-DD» (пусто, если даты нет).
 	EventDate string
+	// Background — id вложения, выбранного фоном кадра (пусто, если фон
+	// унаследован или задан тоном): в реляционной модели этого поля нет, но
+	// импорт «в место» и привязка картинок обязаны его видеть.
+	Background string
 }
 
 // Events читает корневой массив событий.
@@ -127,6 +131,11 @@ func (d *Doc) Events() []Event {
 			Position:  int(index),
 			EventDate: stringField(item, "event_date"),
 		}
+		// Фон кадра: только явно выбранная картинка (`bg_kind: asset`). Тон и
+		// «наследовать» фоном не считаются — это не вложение.
+		if stringField(item, "bg_kind") == "asset" {
+			event.Background = stringField(item, "bg_asset")
+		}
 		if event.ID == "" {
 			// Событие без id проекции не нужно: так же считает и клиент
 			// (yFlatTree пропускает такие узлы).
@@ -139,13 +148,21 @@ func (d *Doc) Events() []Event {
 }
 
 // EventSeed — событие для вставки в документ (импорт куска в существующий проект,
-// засев документа из реляционных строк).
+// засев документа из реляционных строк, сборка документа при импорте).
 type EventSeed struct {
 	ID        string
 	ParentID  string
 	Title     string
 	Body      string
 	EventDate string
+	// Assets — вложения события: идентификаторы файлов проекта в том порядке, в
+	// каком они прикреплены. Единственное место, где живёт эта привязка, — CRDT
+	// (таблица event_assets пуста с миграции 0002), поэтому импорт файлов обязан
+	// писать документ, а не только строки `events`.
+	Assets []string
+	// Background — id вложения, которое становится фоном кадра. Интерфейс ставит
+	// фоном первую загруженную картинку события; импорт делает так же.
+	Background string
 }
 
 // InsertEvents вставляет события в корневой массив, начиная с позиции index.
@@ -181,6 +198,20 @@ func (d *Doc) InsertEvents(index int, seeds []EventSeed) error {
 		}
 		if s.EventDate != "" {
 			item.Set(txn, "event_date", s.EventDate)
+		}
+		// Вложения — тем же способом, что и в браузере: map.set('assets', [...])
+		// (frontend/src/components/editors/EditorsPanel.tsx). Список идёт как []any:
+		// кодировщик lib0-Any понимает именно его, а []string паникует.
+		if len(s.Assets) > 0 {
+			list := make([]any, 0, len(s.Assets))
+			for _, id := range s.Assets {
+				list = append(list, id)
+			}
+			item.Set(txn, "assets", list)
+		}
+		if s.Background != "" {
+			item.Set(txn, "bg_kind", "asset")
+			item.Set(txn, "bg_asset", s.Background)
 		}
 		at++
 	}

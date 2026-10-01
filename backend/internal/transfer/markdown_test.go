@@ -117,11 +117,147 @@ func TestParseMarkdown_Tree(t *testing.T) {
 	if parsed.Stats.ImageLinks != 1 {
 		t.Errorf("ссылок на картинки: %d, ожидалось 1", parsed.Stats.ImageLinks)
 	}
-	if !hasWarning(parsed.Warnings, "картинки не переносятся: 1 ссылок") {
-		t.Errorf("нет предупреждения про картинки: %v", parsed.Warnings)
+	// Файл `assets/карта.png` нашёлся по ссылке `![карта](карта.png)` (совпадение по
+	// имени: такой файл в наборе один) и стал вложением своего события.
+	if parsed.Stats.Attachments != 1 || len(parsed.Attachments) != 1 {
+		t.Fatalf("вложений %d: %+v", parsed.Stats.Attachments, parsed.Attachments)
+	}
+	if parsed.Attachments[0].Name != "карта.png" || parsed.Attachments[0].Kind != "image" {
+		t.Errorf("вложение: %+v", parsed.Attachments[0])
+	}
+	if parsed.Stats.MissingFiles != 0 {
+		t.Errorf("ненайденных ссылок: %d", parsed.Stats.MissingFiles)
+	}
+	// `заметки.txt` — не md и никто на него не ссылается: в проект он не попадает,
+	// но об этом честно сказано.
+	if parsed.Stats.UnusedFiles != 1 {
+		t.Errorf("непригодившихся файлов: %d, ожидался 1", parsed.Stats.UnusedFiles)
+	}
+	if !hasWarning(parsed.Warnings, "в проект не попали файлов: 1") {
+		t.Errorf("нет предупреждения о непригодившихся файлах: %v", parsed.Warnings)
 	}
 	if !hasWarning(parsed.Warnings, "пуст — событие без текста") {
 		t.Errorf("нет предупреждения про пустой файл: %v", parsed.Warnings)
+	}
+	// Ссылка нашла файл — значит, «картинки не переносятся» больше не говорим.
+	if hasWarning(parsed.Warnings, "картинки не переносятся") {
+		t.Errorf("устаревшее предупреждение о картинках: %v", parsed.Warnings)
+	}
+}
+
+// Вложения при импорте: файлы набора становятся вложениями ТОГО события, в чьём
+// файле о них написано. Правило не «искать ссылки» и не «переписать текст», а
+// «приложить найденный файл»: текст события остаётся как есть.
+func TestParseMarkdown_AttachesReferencedFiles(t *testing.T) {
+	parsed, err := parseFolder(t, map[string]string{
+		// Строки картинок, приписанные выгрузкой своему событию.
+		"01-Глава.md":         "---\ntitle: Глава\n---\n\nТекст главы.\n![01·1](assets/01-схема.png)\n![01·2](assets/02-старт.png)\n",
+		"02-Вторая.md":        "# Вторая\nТекст второй главы.\n![02·1](assets/01-схема.png)\n",
+		"03-Своя.md":          "# Своя\nВот схема: ![моя](картинки/моё.png)\n",
+		"04-Пропавшая.md":     "# Пропавшая\n![нет](картинки/нет.png)\n",
+		"05-Архив.md":         "# Архив\n![архив](вложения/данные.zip)\n",
+		"assets/01-схема.png": "PNG-схема",
+		"assets/02-старт.png": "PNG-старт",
+		"картинки/моё.png":    "PNG-моё",
+		"вложения/данные.zip": "PK",
+		"manifest.json":       "{}",
+		"README.txt":          "служебный",
+		".DS_Store":           "мусор",
+		"заметки.txt":         "заметки на полях",
+	})
+	if err != nil {
+		t.Fatalf("разбор: %v", err)
+	}
+
+	// Три файла пригодились (схема, старт, «моё»), архив с zip не поддерживается,
+	// ссылка на «нет.png» не нашлась, служебные файлы и мусор не считаются.
+	if parsed.Stats.Attachments != 3 {
+		t.Fatalf("вложений %d, ожидалось 3: %+v", parsed.Stats.Attachments, parsed.Attachments)
+	}
+	if parsed.Stats.MissingFiles != 1 {
+		t.Errorf("ненайденных ссылок %d, ожидалась 1", parsed.Stats.MissingFiles)
+	}
+	// «заметки.txt» лежат рядом, но ссылок на них нет: в проект они не попадают.
+	// Служебные файлы, скрытые и zip (на него ссылались, но такой тип не
+	// поддерживается) в этот счётчик не входят.
+	if parsed.Stats.UnusedFiles != 1 {
+		t.Errorf("непригодившихся файлов %d, ожидался 1 (заметки.txt)", parsed.Stats.UnusedFiles)
+	}
+	if !hasWarning(parsed.Warnings, "в проект не попали файлов: 1") {
+		t.Errorf("нет предупреждения о непригодившихся файлах: %v", parsed.Warnings)
+	}
+	names := make([]string, 0, len(parsed.Attachments))
+	for _, a := range parsed.Attachments {
+		names = append(names, a.Name)
+	}
+	if strings.Join(names, ",") != "01-схема.png,02-старт.png,моё.png" {
+		t.Errorf("состав вложений: %v", names)
+	}
+
+	byPath := map[string]transfer.ParsedMarkdownEvent{}
+	for _, e := range parsed.Events {
+		byPath[e.Path] = e
+	}
+	// Наша выгрузка: обе строки картинок стали вложениями своего события, и в теле
+	// их не осталось (иначе при выгрузке картинка задвоилась бы).
+	chapter := byPath["01-Глава.md"]
+	if len(chapter.Attachments) != 2 || chapter.Attachments[0] != 0 || chapter.Attachments[1] != 1 {
+		t.Errorf("вложения главы: %+v", chapter.Attachments)
+	}
+	if strings.Contains(chapter.Body, "![") {
+		t.Errorf("в теле остались строки картинок: %q", chapter.Body)
+	}
+	// Один файл, на который ссылаются два события, загружается один раз.
+	if second := byPath["02-Вторая.md"]; len(second.Attachments) != 1 || second.Attachments[0] != 0 {
+		t.Errorf("вложения второй главы: %+v", second.Attachments)
+	}
+	// Ссылка из текста: файл лежит в подкаталоге, и ссылка ведёт на вложение проекта
+	// (после импорта), а не в никуда — в тексте она заменяется адресом `/api/assets/…`.
+	own := byPath["03-Своя.md"]
+	if len(own.Attachments) != 1 || own.Attachments[0] != 2 {
+		t.Errorf("вложения «Своей»: %+v", own.Attachments)
+	}
+	if !strings.Contains(own.Body, "![моя](картинки/моё.png)") {
+		t.Errorf("до импорта ссылка в тексте остаётся как написана: %q", own.Body)
+	}
+	if len(own.Links) != 1 || own.Links[0].Raw != "картинки/моё.png" || own.Links[0].Attachment != 2 {
+		t.Errorf("ссылка для замены на адрес вложения: %+v", own.Links)
+	}
+	if missing := byPath["04-Пропавшая.md"]; len(missing.Attachments) != 0 {
+		t.Errorf("у «Пропавшей» не должно быть вложений: %+v", missing.Attachments)
+	}
+	if archive := byPath["05-Архив.md"]; len(archive.Attachments) != 0 {
+		t.Errorf("zip не должен становиться вложением: %+v", archive.Attachments)
+	}
+	if !hasWarning(parsed.Warnings, "не нашлось файлов для 1 ссылки: картинки/нет.png") {
+		t.Errorf("нет предупреждения о ненайденной ссылке: %v", parsed.Warnings)
+	}
+	if !hasWarning(parsed.Events[4].Warnings, "не поддерживается как вложение") {
+		t.Errorf("нет предупреждения о типе вложения: %+v", parsed.Events[4].Warnings)
+	}
+}
+
+// Архив с одним корневым каталогом: корень снимается и с вложений, иначе ссылка
+// `картинки/схема.png` из `01-Глава.md` не нашла бы `Моя история/картинки/схема.png`.
+func TestParseMarkdownZip_StripsRootForAttachments(t *testing.T) {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	writeFile(t, zw, "Моя история/01-Глава.md", []byte("# Глава\n![схема](картинки/схема.png)\n"))
+	writeFile(t, zw, "Моя история/картинки/схема.png", []byte("PNG"))
+	closeZip(t, zw)
+
+	parsed, err := transfer.ParseMarkdownZip(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
+	if err != nil {
+		t.Fatalf("разбор архива: %v", err)
+	}
+	if parsed.Stats.Attachments != 1 {
+		t.Fatalf("вложений %d: %+v", parsed.Stats.Attachments, parsed.Attachments)
+	}
+	if parsed.Attachments[0].Path != "картинки/схема.png" {
+		t.Errorf("путь вложения после снятия корня: %q", parsed.Attachments[0].Path)
+	}
+	if len(parsed.Events) != 1 || len(parsed.Events[0].Attachments) != 1 {
+		t.Fatalf("событие без вложения: %+v", parsed.Events)
 	}
 }
 

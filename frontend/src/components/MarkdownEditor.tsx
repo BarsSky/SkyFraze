@@ -29,6 +29,11 @@ interface Props {
   onClose: () => void
   /** Заголовок окна — обычно название события. */
   title?: string
+  /**
+   * Файлы проекта (id → адрес): ссылки на вложения в тексте заменяются на них, и
+   * предпросмотр показывает ту же картинку, что увидят читатели.
+   */
+  assetUrls?: Record<string, string>
 }
 
 type Mode = 'split' | 'edit' | 'preview'
@@ -48,7 +53,7 @@ type Mode = 'split' | 'edit' | 'preview'
  * соавтора». Правило «что делать» целиком живёт в `resolveLiveText` и покрыто
  * тестом, здесь только его исполнение.
  */
-export function MarkdownEditor({ value, onSave, onAdopt, onClose, title }: Props) {
+export function MarkdownEditor({ value, onSave, onAdopt, onClose, title, assetUrls }: Props) {
   const [text, setText] = useState(value)
   const [mode, setMode] = useState<Mode>('split')
   const [diagramKind, setDiagramKind] = useState<string>(DIAGRAM_KINDS[0].id)
@@ -301,7 +306,7 @@ export function MarkdownEditor({ value, onSave, onAdopt, onClose, title }: Props
             <div className="md-editor__preview">
               {text.trim() === ''
                 ? <p className="muted">Здесь появится то, как текст увидят читатели.</p>
-                : <MarkdownBlock source={text} />}
+                : <MarkdownBlock source={text} assetUrls={assetUrls} />}
             </div>
           </div>
         </div>

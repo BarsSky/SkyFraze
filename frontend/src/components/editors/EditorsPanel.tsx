@@ -136,6 +136,8 @@ interface ImportChunk {
   events: number
   /** Самая глубокая вложенность в куске: по ней считаем, влезет ли он в место. */
   maxDepth: number
+  /** Сколько файлов станут вложениями: их видно в подписи куска. */
+  files: number
 }
 
 /** Куда указывает текущий жест: строка-цель и место в ней. */
@@ -418,9 +420,16 @@ export function EditorsPanel({
         label,
         events: preview.events.length,
         maxDepth: preview.events.reduce((max, event) => Math.max(max, event.depth), 0),
+        files: preview.stats.attachments,
       })
       setChunkMode('end')
-      setNotice(`Кусок разобран: ${preview.events.length} ${plural(preview.events.length, 'событие', 'события', 'событий')} — перетащите его на дерево`)
+      setNotice(
+        `Кусок разобран: ${preview.events.length} ${plural(preview.events.length, 'событие', 'события', 'событий')}` +
+          (preview.stats.attachments > 0
+            ? ` и ${preview.stats.attachments} ${plural(preview.stats.attachments, 'вложение', 'вложения', 'вложений')}`
+            : '') +
+          ' — перетащите его на дерево',
+      )
     } catch (e) {
       const message = await readImportErrorMessage(e)
       setNotice(message ?? 'Не удалось разобрать файлы — сервер отклонил запрос')
@@ -1076,6 +1085,12 @@ export function EditorsPanel({
               >
                 <span aria-hidden="true">⠿</span> {chunk.label} — {chunk.events}{' '}
                 {plural(chunk.events, 'событие', 'события', 'событий')}
+                {chunk.files > 0 && (
+                  <>
+                    {' '}
+                    + {chunk.files} {plural(chunk.files, 'файл', 'файла', 'файлов')}
+                  </>
+                )}
               </button>
               {/* Место можно выбрать и списком: перетаскивание на тач-устройствах
                   конкурирует с прокруткой, а с клавиатуры его не сделать вовсе. */}

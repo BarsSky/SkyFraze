@@ -23,6 +23,19 @@ var (
 
 const maxAssetSize = 50 * 1024 * 1024 // 50 MB
 
+// MaxAssetSize — предел размера одного вложения. Экспортирован, потому что его
+// обязаны соблюдать все пути, создающие вложения: загрузка из интерфейса и импорт
+// проекта (папка md с картинками), иначе импорт создал бы файл, который сервер
+// потом отказывается принять.
+const MaxAssetSize = maxAssetSize
+
+// ObjectKey — ключ файла в хранилище: каталог проекта плюс случайный идентификатор
+// с расширением файла. Одна схема для загрузки из интерфейса и для импорта: файлы
+// проекта лежат вместе, а расширение нужно, чтобы отдача по ключу не теряла тип.
+func ObjectKey(projectID uuid.UUID, filename string) string {
+	return fmt.Sprintf("%s/%s", projectID.String(), uuid.NewString()+extFromFilename(filename))
+}
+
 type Service struct {
 	store *store.Store
 	obj   storage.ObjectStore
@@ -50,11 +63,11 @@ func (s *Service) Upload(ctx context.Context, actorID, projectID uuid.UUID, opts
 	if opts.Size > maxAssetSize {
 		return nil, ErrTooLarge
 	}
-	mime := normalizeMime(opts.ContentType, opts.Filename)
-	if !allowedMime(mime) {
+	mime := NormalizeMime(opts.ContentType, opts.Filename)
+	if !MimeAllowed(mime) {
 		return nil, ErrBadMime
 	}
-	kind := detectKind(mime, opts.Filename)
+	kind := KindOf(mime, opts.Filename)
 
 	a := &store.Asset{
 		ProjectID: projectID,
@@ -62,7 +75,7 @@ func (s *Service) Upload(ctx context.Context, actorID, projectID uuid.UUID, opts
 		Filename:  opts.Filename,
 		Mime:      mime,
 		Size:      opts.Size,
-		S3Key:     fmt.Sprintf("%s/%s", projectID.String(), uuid.NewString()+extFromFilename(opts.Filename)),
+		S3Key:     ObjectKey(projectID, opts.Filename),
 		Kind:      kind,
 	}
 	if err := s.obj.Put(ctx, a.S3Key, mime, opts.Reader, opts.Size); err != nil {
@@ -122,7 +135,10 @@ func (s *Service) List(ctx context.Context, actorID, projectID uuid.UUID) ([]sto
 
 // helpers
 
-func normalizeMime(ct, filename string) string {
+// NormalizeMime — тип файла по заявленному Content-Type и имени: пустой или общий
+// `application/octet-stream` заменяется догадкой по расширению, параметры
+// (`; charset=…`) срезаются.
+func NormalizeMime(ct, filename string) string {
 	ct = strings.TrimSpace(strings.ToLower(ct))
 	if ct == "" || ct == "application/octet-stream" {
 		if guessed := mime.TypeByExtension(filepath.Ext(filename)); guessed != "" {
@@ -132,7 +148,16 @@ func normalizeMime(ct, filename string) string {
 	return strings.Split(ct, ";")[0]
 }
 
-func allowedMime(m string) bool {
+// MimeOf — тип файла только по имени (для импорта: Content-Type частей multipart
+// доверять нельзя, браузер шлёт его по расширению, а из zip его нет вовсе).
+func MimeOf(filename string) string {
+	return NormalizeMime("", filename)
+}
+
+// MimeAllowed — принимает ли проект файлы такого типа. Единый список для загрузки
+// из интерфейса и для импорта: то, что нельзя приложить руками, не должно
+// появляться и из папки с md.
+func MimeAllowed(m string) bool {
 	switch {
 	case strings.HasPrefix(m, "image/"):
 		return true
@@ -148,7 +173,8 @@ func allowedMime(m string) bool {
 	return false
 }
 
-func detectKind(m, filename string) string {
+// KindOf — вид вложения для списка файлов проекта.
+func KindOf(m, filename string) string {
 	switch {
 	case strings.HasPrefix(m, "image/"):
 		if strings.Contains(filename, "sketch") || strings.HasSuffix(strings.ToLower(filename), ".svg") {

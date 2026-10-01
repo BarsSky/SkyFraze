@@ -54,6 +54,7 @@ package transfer
 
 import (
 	"archive/zip"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -67,6 +68,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/skyfraze/backend/internal/assets"
 	"github.com/skyfraze/backend/internal/collab/yjs"
 	"github.com/skyfraze/backend/internal/events"
 	"github.com/skyfraze/backend/internal/projects"
@@ -100,18 +102,21 @@ var (
 	h1Re = regexp.MustCompile(`(?m)^#\s+(\S.*)$`)
 	// Ссылка на изображение в тексте: ![alt](url).
 	imageLinkRe = regexp.MustCompile(`!\[[^\]]*\]\([^)]*\)`)
+	// Та же ссылка, но с целью: в первой группе — путь (`assets/схема.png`).
+	imageTargetRe = regexp.MustCompile(`!\[[^\]]*\]\(\s*([^)\s]+)`)
 	// Машинный комментарий выгрузки: <!-- skyfraze: number=… id=… kind=event -->.
 	skyfrazeCommentRe = regexp.MustCompile(`(?m)^[ \t]*<!--\s*skyfraze:[^\n]*-->[ \t]*\n?`)
 )
 
 // exportedImageRe — строка картинки, которую выгрузка приписала событию:
 // `![01.1·2](…)`. Срезаем только такие строки и только с номером этого файла:
-// чужую картинку из текста пользователя трогать нельзя.
+// чужую картинку из текста пользователя трогать нельзя. Цель ссылки — в первой
+// группе: по ней файл находит своё событие при обратном импорте.
 func exportedImageRe(rawNum string) *regexp.Regexp {
 	if rawNum == "" {
 		return nil
 	}
-	return regexp.MustCompile(`(?m)^[ \t]*!\[` + regexp.QuoteMeta(rawNum) + `·\d+\]\([^)]*\)[ \t]*\n?`)
+	return regexp.MustCompile(`(?m)^[ \t]*!\[` + regexp.QuoteMeta(rawNum) + `·\d+\]\(\s*([^)]*?)\s*\)[ \t]*\n?`)
 }
 
 // stripExportedImages убирает приписанные выгрузкой строки картинок.
@@ -123,6 +128,36 @@ func stripExportedImages(body, rawNum string) string {
 	return re.ReplaceAllString(body, "")
 }
 
+// exportedImageTargets — цели строк картинок, приписанных выгрузкой: это вложения
+// самого события, и при обратном чтении они снова становятся вложениями (в тексте
+// им не место).
+func exportedImageTargets(body, rawNum string) []string {
+	re := exportedImageRe(rawNum)
+	if re == nil {
+		return nil
+	}
+	matches := re.FindAllStringSubmatch(body, -1)
+	out := make([]string, 0, len(matches))
+	for _, m := range matches {
+		if len(m) > 1 && strings.TrimSpace(m[1]) != "" {
+			out = append(out, strings.TrimSpace(m[1]))
+		}
+	}
+	return out
+}
+
+// imageTargets — цели ссылок на изображения в тексте события, в порядке появления.
+func imageTargets(body string) []string {
+	matches := imageTargetRe.FindAllStringSubmatch(body, -1)
+	out := make([]string, 0, len(matches))
+	for _, m := range matches {
+		if len(m) > 1 && strings.TrimSpace(m[1]) != "" {
+			out = append(out, strings.TrimSpace(m[1]))
+		}
+	}
+	return out
+}
+
 // markdownItem — один разобранный md-файл (ещё без места в дереве).
 type markdownItem struct {
 	// path — относительный путь исходного файла, как его прислал браузер или
@@ -131,6 +166,11 @@ type markdownItem struct {
 	// dir — каталоги файла, name — имя без расширения.
 	dir  []string
 	name string
+	// originDir — каталоги файла ДО снятия корня архива и служебной папки story/.
+	// По ним разрешаются ссылки на вложения: `../assets/схема.png` из
+	// `story/01-глава.md` указывает на `assets/схема.png`, и после снятия story/
+	// этот путь уже не восстановить от текущего каталога файла.
+	originDir []string
 	// num — числовой префикс имени: nil, [1], [1,1] …
 	num []int
 	// rawNum — тот же префикс текстом («01.1»): по нему срезается номер из
@@ -146,6 +186,28 @@ type markdownItem struct {
 	date     *time.Time
 	images   int
 	warnings []string
+
+	// refs — ссылки на файлы, найденные в этом событии: сначала строки картинок,
+	// приписанные выгрузкой (они и есть вложения этого события), затем ссылки из
+	// текста — в порядке появления.
+	refs []markdownRef
+	// assets — индексы вложений набора (ParsedMarkdown.Attachments), привязанных к
+	// этому событию. Заполняется после сборки дерева, когда пути уже нормализованы.
+	assets []int
+	// missing — ссылки, для которых файла в наборе не нашлось.
+	missing []string
+	// links — ссылки ИЗ ТЕКСТА, для которых файл нашёлся: в тексте они заменяются
+	// адресом вложения (см. MarkdownLink), иначе картинка в приложении не откроется.
+	links []MarkdownLink
+}
+
+// markdownRef — одна ссылка на файл в тексте события.
+type markdownRef struct {
+	// raw — цель ссылки ровно как она написана (по ней правится текст).
+	raw string
+	// text — ссылка из текста события, а не строка картинки нашей выгрузки:
+	// строки выгрузки из текста удаляются, поэтому править в них нечего.
+	text bool
 }
 
 // ParsedMarkdown — результат разбора: дерево в порядке таймлайна плюс отчёт.
@@ -161,6 +223,28 @@ type ParsedMarkdown struct {
 	Events   []ParsedMarkdownEvent
 	Warnings []string
 	Stats    MarkdownStats
+
+	// Attachments — файлы набора, которые станут вложениями проекта: картинки,
+	// pdf и прочее, что проект умеет принять. Событие ссылается на них индексами
+	// (ParsedMarkdownEvent.Attachments), а не путями: файл может быть приложен к
+	// нескольким событиям, и загружать его дважды незачем.
+	Attachments []ParsedAttachment
+
+	// missingRefs — до maxReportedMisses ссылок, для которых файла не нашлось:
+	// они идут в текст предупреждения (остальные видны в статистике).
+	missingRefs []string
+}
+
+// ParsedAttachment — файл набора, готовый стать вложением проекта.
+type ParsedAttachment struct {
+	// Path — путь файла в наборе (после снятия корня). Служит только для отчёта и
+	// предупреждений: в проекте вложение живёт под своим идентификатором.
+	Path string
+	// Name — имя файла, под которым он будет в проекте.
+	Name string
+	Mime string
+	Kind string
+	Data []byte
 }
 
 // ParsedMarkdownEvent — событие в том порядке, в каком оно попадёт в проект.
@@ -179,9 +263,29 @@ type ParsedMarkdownEvent struct {
 	// Body — текст события; для импорта он же уходит в базу.
 	Body string
 
+	// Attachments — индексы вложений (ParsedMarkdown.Attachments), привязанных к
+	// этому событию: файлы, о которых написано в его тексте (или строки картинок
+	// нашей выгрузки). Привязка живёт только в CRDT, поэтому импорт собирает по ней
+	// документ.
+	Attachments []int
+
+	// Links — ссылки из текста, для которых файл нашёлся: при импорте такая ссылка
+	// заменяется адресом вложения (`/api/assets/<id>`). Иначе картинка открывалась
+	// бы в приложении только как вложение, а ссылка в тексте вела бы в никуда
+	// (относительный путь `картинки/схема.png` браузер искал бы от страницы проекта).
+	Links []MarkdownLink
+
 	// для импорта
 	position int
 	parent   int // индекс родителя в Events, -1 — корень
+}
+
+// MarkdownLink — ссылка из текста события и вложение, которым она стала.
+type MarkdownLink struct {
+	// Raw — цель ссылки ровно как написана в тексте: по ней текст и правится.
+	Raw string
+	// Attachment — индекс в ParsedMarkdown.Attachments.
+	Attachment int
 }
 
 // MarkdownStats — счётчики отчёта (ровно те, что описаны в docs/import-export.md).
@@ -190,6 +294,13 @@ type MarkdownStats struct {
 	Events     int `json:"events"`
 	Chars      int `json:"chars"`
 	ImageLinks int `json:"image_links"`
+	// Attachments — сколько файлов набора станут вложениями проекта.
+	Attachments int `json:"attachments"`
+	// MissingFiles — ссылки, для которых файла в наборе не нашлось.
+	MissingFiles int `json:"missing_files"`
+	// UnusedFiles — файлы набора, на которые никто не ссылается: в проект они не
+	// попадают, но человеку полезно знать, что именно осталось за бортом.
+	UnusedFiles int `json:"unused_files"`
 }
 
 // previewEvent — событие в JSON-ответе предпросмотра.
@@ -255,13 +366,18 @@ type markdownCollector struct {
 	// Только для zip: при загрузке папки корень срезает фронтенд, потому что
 	// отличить выбранную папку от главы-папки на сервере невозможно.
 	stripRoot string
+	// attachments — не-md файлы набора: они становятся вложениями проекта, а
+	// ссылки из текстов находят их по пути (см. markdown_attachments.go).
+	attachments []*markdownAttachment
 }
 
 // Add принимает один файл. Ошибка означает превышение лимита — вызывающий обязан
 // прервать разбор: молча потерять часть файлов хуже, чем отказать целиком.
 func (c *markdownCollector) Add(path string, r io.Reader) error {
 	if !isMarkdownPath(path) {
-		return nil // не md — игнорируем: ссылки на картинки считаются в текстах
+		// Не md — это не событие, но и не мусор: файл может стать вложением
+		// проекта, если на него ссылается текст события.
+		return c.addAttachment(path, r)
 	}
 	c.files++
 	if c.files > markdownMaxFiles {
@@ -270,14 +386,14 @@ func (c *markdownCollector) Add(path string, r io.Reader) error {
 
 	// Читаем не больше лимита плюс один байт: так «слишком большой файл» виден и
 	// тогда, когда размер заранее неизвестен (multipart).
-	data, err := io.ReadAll(io.LimitReader(r, markdownMaxFileSize+1))
+	data, tooLarge, err := readLimited(r, markdownMaxFileSize)
 	if err != nil {
 		// Нечитаемый файл не должен ронять весь набор: предупреждаем и идём дальше.
 		c.warnings = append(c.warnings, fmt.Sprintf("файл %s не прочитан: %v", path, err))
 		c.files--
 		return nil
 	}
-	if len(data) > markdownMaxFileSize {
+	if tooLarge {
 		return fmt.Errorf("%w: файл %s больше %d МБ", ErrMarkdownTooLarge, path, markdownMaxFileSize>>20)
 	}
 	c.total += int64(len(data))
@@ -315,8 +431,9 @@ func ParseMarkdownReaders(paths []string, readers []io.Reader) (*ParsedMarkdown,
 }
 
 // ParseMarkdownZip разбирает zip с той же структурой. Архив не распаковывается в
-// память целиком: читаем по одной записи и сразу отпускаем прочитанное, а
-// не-md записи (вложения, манифест) вообще не открываем.
+// память целиком: читаем по одной записи и сразу отпускаем прочитанное. Не-md
+// записи тоже читаются, но не как события: это вложения проекта (картинки и прочее,
+// на что ссылаются тексты), поэтому у них свой предел размера.
 func ParseMarkdownZip(r io.ReaderAt, size int64) (*ParsedMarkdown, error) {
 	if size <= 0 || size > markdownMaxTotal {
 		return nil, fmt.Errorf("%w: архив больше %d МБ", ErrMarkdownTooLarge, markdownMaxTotal>>20)
@@ -348,15 +465,22 @@ func ParseMarkdownZip(r io.ReaderAt, size int64) (*ParsedMarkdown, error) {
 		if err != nil {
 			return nil, fmt.Errorf("%w: %s", ErrMarkdownUnsafePath, f.Name)
 		}
-		if !isMarkdownPath(name) {
-			continue
+		limit := int64(markdownMaxAttachmentSize)
+		if isMarkdownPath(name) {
+			limit = markdownMaxFileSize
 		}
-		if f.UncompressedSize64 > markdownMaxFileSize {
-			return nil, fmt.Errorf("%w: файл %s больше %d МБ", ErrMarkdownTooLarge, name, markdownMaxFileSize>>20)
+		if f.UncompressedSize64 > uint64(limit) {
+			return nil, fmt.Errorf("%w: файл %s больше %d МБ", ErrMarkdownTooLarge, name, limit>>20)
 		}
 		entries = append(entries, entry{name: name, file: f})
 	}
-	if len(entries) > markdownMaxFiles {
+	mdFiles := 0
+	for _, e := range entries {
+		if isMarkdownPath(e.name) {
+			mdFiles++
+		}
+	}
+	if mdFiles > markdownMaxFiles {
 		return nil, fmt.Errorf("%w: больше %d md-файлов", ErrMarkdownTooLarge, markdownMaxFiles)
 	}
 
@@ -365,7 +489,9 @@ func ParseMarkdownZip(r io.ReaderAt, size int64) (*ParsedMarkdown, error) {
 		rc, err := e.file.Open()
 		if err != nil {
 			c.warnings = append(c.warnings, fmt.Sprintf("файл %s не открылся: %v", e.name, err))
-			c.files++
+			if isMarkdownPath(e.name) {
+				c.files++
+			}
 			continue
 		}
 		err = c.Add(e.name, rc)
@@ -499,13 +625,14 @@ func parseMarkdownFile(path string, data []byte) *markdownItem {
 	}
 
 	item := &markdownItem{
-		path:    path,
-		dir:     segments[:len(segments)-1],
-		name:    name,
-		num:     parseNumberPrefix(name),
-		rawNum:  numberPrefixText(name),
-		isIndex: strings.EqualFold(name, "index"),
-		lane:    strings.EqualFold(name, "story"),
+		path:      path,
+		dir:       segments[:len(segments)-1],
+		originDir: segments[:len(segments)-1],
+		name:      name,
+		num:       parseNumberPrefix(name),
+		rawNum:    numberPrefixText(name),
+		isIndex:   strings.EqualFold(name, "index"),
+		lane:      strings.EqualFold(name, "story"),
 	}
 
 	fm, body := splitFrontMatter(text)
@@ -559,9 +686,18 @@ func parseMarkdownFile(path string, data []byte) *markdownItem {
 
 	// Картинки, приписанные выгрузкой своему событию (`![01.1·2](../assets/…)`),
 	// при обратном чтении снова становятся вложениями — в тексте им не место.
+	// Их цели собираем ДО срезания строк: это и есть вложения этого события.
+	for _, target := range exportedImageTargets(body, item.rawNum) {
+		item.refs = append(item.refs, markdownRef{raw: target})
+	}
 	body = stripExportedImages(body, item.rawNum)
 	item.body = strings.TrimSpace(body)
 	item.images = len(imageLinkRe.FindAllString(item.body, -1))
+	// Ссылки из текста — тоже кандидаты во вложения: файл должен лежать в наборе,
+	// тогда он приложится к этому событию, а сама ссылка станет адресом вложения.
+	for _, target := range imageTargets(item.body) {
+		item.refs = append(item.refs, markdownRef{raw: target, text: true})
+	}
 	if item.body == "" {
 		item.warnings = append(item.warnings, fmt.Sprintf("файл %s пуст — событие без текста", path))
 	}
@@ -735,6 +871,9 @@ func (c *markdownCollector) build() (*ParsedMarkdown, error) {
 				it.path = strings.TrimPrefix(it.path, prefix)
 			}
 		}
+		// Вложения живут в той же системе координат, что и md-файлы: если корень
+		// снят с файлов, он снят и с них, иначе ссылки не сойдутся.
+		c.stripAttachmentRoot()
 	}
 
 	// Сводная лента story.md рядом с папкой story/ — это наша же выгрузка
@@ -799,6 +938,60 @@ func (c *markdownCollector) build() (*ParsedMarkdown, error) {
 		Stats:      MarkdownStats{Files: c.files},
 		RootFolder: rootFolder,
 	}
+	// Вложения — после всех снятий корня и story/ (пути md-файлов и файлов набора
+	// теперь в одной системе координат): ссылка из текста находит свой файл, и он
+	// становится вложением ТОГО события, в чьём файле о нём написано.
+	//
+	// Прикладываются только те файлы, на которые есть ссылки: папка с историей
+	// часто лежит рядом с чужими файлами (заметки, конфиги, черновики), и тащить их
+	// все в проект — не то, о чём просил человек. О непригодившихся файлах скажем
+	// отдельно, чтобы «картинка не доехала» не выяснялось постфактум.
+	index := newAttachmentIndex(c.attachments)
+	// attached — файл → его номер в parsed.Attachments; порядок — по первому
+	// использованию, чтобы список вложений в проекте читался так же, как текст.
+	attached := make(map[*markdownAttachment]int, len(c.attachments))
+	// rejected — файлы, на которые сослались, но тип не поддерживается: они не
+	// вложения и не «непригодившиеся» — про них уже сказано отдельно.
+	rejected := make(map[*markdownAttachment]bool)
+	var used []*markdownAttachment
+	for _, it := range items {
+		for _, ref := range it.refs {
+			file := index.find(ref.raw, it)
+			if file == nil {
+				it.missing = append(it.missing, ref.raw)
+				continue
+			}
+			if !assets.MimeAllowed(file.mime) {
+				rejected[file] = true
+				it.warnings = append(it.warnings, fmt.Sprintf(
+					"файл %s не переносится: тип «%s» не поддерживается как вложение", file.path, file.mime))
+				continue
+			}
+			at, ok := attached[file]
+			if !ok {
+				at = len(used)
+				attached[file] = at
+				used = append(used, file)
+			}
+			it.assets = appendUniqueInt(it.assets, at)
+			// Ссылка из текста: запоминаем, чем её заменить (адрес вложения
+			// появится, когда вложения получат идентификаторы при импорте).
+			if ref.text {
+				it.links = append(it.links, MarkdownLink{Raw: ref.raw, Attachment: at})
+			}
+		}
+	}
+	for _, file := range used {
+		parsed.Attachments = append(parsed.Attachments, ParsedAttachment{
+			Path: file.path,
+			Name: file.name,
+			Mime: file.mime,
+			Kind: assets.KindOf(file.mime, file.name),
+			Data: file.data,
+		})
+	}
+	parsed.Stats.Attachments = len(parsed.Attachments)
+	parsed.Stats.UnusedFiles = len(c.attachments) - len(used) - len(rejected)
 	if rootIndex != nil {
 		parsed.ProjectTitle = rootIndex.title
 		parsed.Description = rootIndex.body
@@ -808,6 +1001,15 @@ func (c *markdownCollector) build() (*ParsedMarkdown, error) {
 	}
 	for _, it := range items {
 		parsed.Stats.ImageLinks += it.images
+		// Ссылка без файла в наборе: либо картинка осталась в чужой папке, либо
+		// это ссылка в интернет. Скачать её мы не можем и не пытаемся — говорим
+		// человеку, что именно не переехало.
+		parsed.Stats.MissingFiles += len(it.missing)
+		for _, ref := range it.missing {
+			if len(parsed.missingRefs) < maxReportedMisses {
+				parsed.missingRefs = append(parsed.missingRefs, ref)
+			}
+		}
 	}
 
 	// Нумерация и глубина: pre-order, номера от позиции в дереве — ровно так их
@@ -832,16 +1034,18 @@ func (c *markdownCollector) build() (*ParsedMarkdown, error) {
 			}
 			index := len(parsed.Events)
 			e := ParsedMarkdownEvent{
-				Number:   num,
-				Depth:    depth,
-				Title:    n.item.title,
-				Path:     n.item.path,
-				Chars:    utf8.RuneCountInString(n.item.body),
-				Warnings: n.item.warnings,
-				position: i,
-				parent:   parent,
-				Body:     n.item.body,
-				Date:     n.item.date,
+				Number:      num,
+				Depth:       depth,
+				Title:       n.item.title,
+				Path:        n.item.path,
+				Chars:       utf8.RuneCountInString(n.item.body),
+				Warnings:    n.item.warnings,
+				position:    i,
+				parent:      parent,
+				Body:        n.item.body,
+				Date:        n.item.date,
+				Attachments: n.item.assets,
+				Links:       n.item.links,
 			}
 			parsed.Stats.Chars += e.Chars
 			parsed.Events = append(parsed.Events, e)
@@ -861,11 +1065,37 @@ func (c *markdownCollector) build() (*ParsedMarkdown, error) {
 	// Дата события попадает и в базу, и в CRDT-засев (редактор читает её из
 	// таблицы events вместе с id/parent_id/title/body), поэтому предупреждать
 	// здесь не о чем — только про то, что действительно не переносится.
-	if parsed.Stats.ImageLinks > 0 {
+	if parsed.Stats.MissingFiles > 0 {
 		parsed.Warnings = append(parsed.Warnings, fmt.Sprintf(
-			"картинки не переносятся: %d ссылок", parsed.Stats.ImageLinks))
+			"не нашлось файлов для %d %s: %s — ссылки остались в тексте как есть",
+			parsed.Stats.MissingFiles,
+			russianPlural(parsed.Stats.MissingFiles, "ссылки", "ссылок", "ссылок"),
+			strings.Join(parsed.missingRefs, ", ")))
+	}
+	if parsed.Stats.UnusedFiles > 0 {
+		// Без глагола: «1 файл не пригодились» — так не говорят, а согласовывать
+		// число с глаголом ради одной строки отчёта не стоит.
+		parsed.Warnings = append(parsed.Warnings, fmt.Sprintf(
+			"в проект не попали файлов: %d — на них нет ссылок в текстах событий",
+			parsed.Stats.UnusedFiles))
 	}
 	return parsed, nil
+}
+
+// maxReportedMisses — сколько ненайденных ссылок показать в отчёте: остальные
+// считаются в статистике, иначе список предупреждений превращался бы в полотно.
+const maxReportedMisses = 3
+
+// russianPlural подбирает форму слова по числу (1 ссылка, 2 ссылки, 5 ссылок).
+func russianPlural(n int, one, few, many string) string {
+	switch {
+	case n%10 == 1 && n%100 != 11:
+		return one
+	case n%10 >= 2 && n%10 <= 4 && (n%100 < 10 || n%100 >= 20):
+		return few
+	default:
+		return many
+	}
 }
 
 // hasStoryDir сообщает, есть ли в наборе каталог story с файлами.
@@ -1190,10 +1420,14 @@ func flatten(n *markdownNode) []*markdownNode {
 // разбора (корневой index.md или сводная story.md), затем из имени корневой
 // папки, и лишь в самом конце — «Импорт Markdown».
 //
-// Почему всегда новый проект: импорт в СУЩЕСТВУЮЩИЙ проект с непустым
-// CRDT-снапшотом в этой версии не поддерживается — первый же редактор засеял бы
-// документ из таблицы events и затёр вставленное. Новый проект без снапшота
-// безопасен: засев как раз и берёт наше дерево.
+// Два пути записи, и выбор между ними не про удобство:
+//
+//   - **без вложений** пишем только таблицу событий. Первый редактор засеет из неё
+//     пустой документ — так проект и живёт дальше; так же работал импорт до сих пор;
+//   - **с вложениями** собираем документ сразу (события + привязки файлов) и пишем
+//     его снапшотом. Привязка «событие → вложения» существует ТОЛЬКО в CRDT
+//     (таблица event_assets пуста с миграции 0002), поэтому засев из таблицы её бы
+//     не принёс: картинки пришлось бы прикреплять руками заново.
 func (s *Service) ImportMarkdown(
 	ctx context.Context, userID uuid.UUID, parsed *ParsedMarkdown, titleOverride string,
 ) (*store.Project, error) {
@@ -1211,9 +1445,42 @@ func (s *Service) ImportMarkdown(
 		title = "Импорт Markdown"
 	}
 
-	// Заполняем ровно те поля, которые попадут в CRDT-засев
-	// (id/parent_id/title/body/event_date); фон кадров и вложения засев не несёт
-	// (см. комментарий к пакету).
+	p, err := s.proj.Create(ctx, userID, title, parsed.Description)
+	if err != nil {
+		return nil, err
+	}
+	// Проект создаётся до записи содержимого, поэтому любую ошибку обязаны убрать
+	// за собой: иначе у пользователя останется пустой проект и непонятная ошибка.
+	if err := s.fillProject(ctx, p.ID, userID, parsed); err != nil {
+		_ = s.store.DeleteProject(ctx, p.ID)
+		return nil, err
+	}
+	return p, nil
+}
+
+// fillProject записывает содержимое импортированного проекта: строки событий или
+// собранный документ (когда есть вложения) плюс сами файлы вложений.
+func (s *Service) fillProject(ctx context.Context, projectID, owner uuid.UUID, parsed *ParsedMarkdown) error {
+	// Вложения проекта: файлы набора — в хранилище, строки — в assets. Идентификаторы
+	// нужны до сборки документа: на них ссылаются события.
+	assetIDs, err := s.storeAttachments(ctx, projectID, owner, parsed.Attachments)
+	if err != nil {
+		return err
+	}
+
+	if len(parsed.Attachments) > 0 {
+		doc := yjs.NewDoc()
+		if err := doc.InsertEvents(0, buildSeeds(parsed, assetIDs, nil)); err != nil {
+			return err
+		}
+		if _, err := s.store.SaveProjectEventStateServer(ctx, projectID, owner, doc.EncodeState()); err != nil {
+			return err
+		}
+		// Таблица событий — проекция документа (как и после любых правок): один
+		// источник правды, а не две похожие записи.
+		return s.projectDocument(ctx, projectID, owner, doc)
+	}
+
 	rows := make([]store.Event, 0, len(parsed.Events))
 	for _, e := range parsed.Events {
 		var parentID *uuid.UUID
@@ -1229,22 +1496,126 @@ func (s *Service) ImportMarkdown(
 			Title:     e.Title,
 			Body:      e.Body,
 			EventDate: e.Date,
-			CreatedBy: &userID,
-			UpdatedBy: &userID,
+			CreatedBy: &owner,
+			UpdatedBy: &owner,
 		})
 	}
+	return s.store.InsertEventTree(ctx, projectID, owner, rows)
+}
 
-	p, err := s.proj.Create(ctx, userID, title, parsed.Description)
-	if err != nil {
-		return nil, err
+// storeAttachments кладёт файлы набора в хранилище и в таблицу вложений проекта.
+// Возвращает идентификаторы в том же порядке, что и files: на них ссылаются
+// события документа.
+func (s *Service) storeAttachments(
+	ctx context.Context, projectID, owner uuid.UUID, files []ParsedAttachment,
+) ([]uuid.UUID, error) {
+	if len(files) == 0 {
+		return nil, nil
 	}
-	// Проект создаётся до вставки дерева, поэтому ошибку вставки обязаны убрать
-	// за собой: иначе у пользователя останется пустой проект и непонятная ошибка.
-	if err := s.store.InsertEventTree(ctx, p.ID, userID, rows); err != nil {
-		_ = s.store.DeleteProject(ctx, p.ID)
-		return nil, err
+	ids := make([]uuid.UUID, 0, len(files))
+	written := make([]string, 0, len(files))
+	for _, file := range files {
+		key := assets.ObjectKey(projectID, file.Name)
+		if err := s.obj.Put(ctx, key, file.Mime, bytes.NewReader(file.Data), int64(len(file.Data))); err != nil {
+			s.dropObjects(ctx, written)
+			return nil, err
+		}
+		written = append(written, key)
+		asset := &store.Asset{
+			ProjectID: projectID,
+			OwnerID:   owner,
+			Filename:  file.Name,
+			Mime:      file.Mime,
+			Size:      int64(len(file.Data)),
+			S3Key:     key,
+			Kind:      file.Kind,
+		}
+		if err := s.store.CreateAsset(ctx, asset); err != nil {
+			s.dropObjects(ctx, written)
+			return nil, err
+		}
+		ids = append(ids, asset.ID)
 	}
-	return p, nil
+	return ids, nil
+}
+
+// dropObjects убирает из хранилища файлы, которые уже некуда записать: вложения
+// создаются пачкой, и половина без строк в базе — это мусор, который никто не
+// найдёт и не удалит.
+func (s *Service) dropObjects(ctx context.Context, keys []string) {
+	for _, key := range keys {
+		_ = s.obj.Delete(ctx, key)
+	}
+}
+
+// rewriteAssetLinks заменяет в тексте ссылки, для которых файл стал вложением
+// проекта, на адрес вложения (`/api/assets/<id>`).
+//
+// Зачем. Текст события показывается в приложении как Markdown, а относительный путь
+// из чужой папки (`картинки/схема.png`) браузер разрешает от страницы проекта — и
+// картинка не открывается вовсе (404). Вложение при этом лежит в проекте, поэтому
+// ссылка должна вести на него. Правило «не переписывать текст» остаётся для всего
+// остального: правится ровно та ссылка, файл для которой нашёлся.
+func rewriteAssetLinks(body string, links []MarkdownLink, assetIDs []uuid.UUID) string {
+	if len(links) == 0 || len(assetIDs) == 0 {
+		return body
+	}
+	// Идём по событию в обратном порядке: замены не пересекаются, но так их
+	// результат не влияет на поиск следующей ссылки.
+	for i := len(links) - 1; i >= 0; i-- {
+		link := links[i]
+		if link.Attachment < 0 || link.Attachment >= len(assetIDs) || link.Raw == "" {
+			continue
+		}
+		body = strings.ReplaceAll(body, "]("+link.Raw+")", "](/api/assets/"+assetIDs[link.Attachment].String()+")")
+	}
+	return body
+}
+
+// buildSeeds собирает события куска для документа: id/parent_id/title/body/дата
+// плюс вложения (идентификаторы файлов) и фон кадра. parentID — под какое событие
+// подвесить корни куска (nil — верхний уровень).
+//
+// Вложения берутся из разбора индексами: один и тот же файл, на который ссылаются
+// два события, загружается один раз и прикрепляется к обоим.
+func buildSeeds(parsed *ParsedMarkdown, assetIDs []uuid.UUID, parentID *uuid.UUID) []yjs.EventSeed {
+	seeds := make([]yjs.EventSeed, 0, len(parsed.Events))
+	for _, e := range parsed.Events {
+		seed := yjs.EventSeed{
+			ID:    uuid.New().String(),
+			Title: e.Title,
+			Body:  rewriteAssetLinks(e.Body, e.Links, assetIDs),
+		}
+		switch {
+		case e.parent >= 0 && e.parent < len(seeds):
+			seed.ParentID = seeds[e.parent].ID
+		case parentID != nil:
+			seed.ParentID = parentID.String()
+		}
+		if e.Date != nil {
+			seed.EventDate = e.Date.Format("2006-01-02")
+		}
+		for _, at := range e.Attachments {
+			if at < 0 || at >= len(assetIDs) {
+				continue
+			}
+			seed.Assets = append(seed.Assets, assetIDs[at].String())
+		}
+		// Фон кадра — первая картинка события: интерфейс ставит фоном первую
+		// загруженную картинку, и импорт ведёт себя так же, иначе кадр остался бы
+		// с унаследованным фоном, а картинка — просто в списке вложений.
+		for _, at := range e.Attachments {
+			if at < 0 || at >= len(parsed.Attachments) {
+				continue
+			}
+			if strings.HasPrefix(parsed.Attachments[at].Mime, "image/") {
+				seed.Background = assetIDs[at].String()
+				break
+			}
+		}
+		seeds = append(seeds, seed)
+	}
+	return seeds
 }
 
 // InsertPlace — место вставки куска в существующий проект: под какое событие
@@ -1326,23 +1697,20 @@ func (s *Service) ImportMarkdownInto(
 		return ImportIntoResult{}, err
 	}
 
+	// Вложения куска: файлы — в хранилище и в список вложений ПРОЕКТА (не куска),
+	// идентификаторы — в события документа. Привязка «событие → вложения» живёт
+	// только в CRDT, поэтому у проекта без снапшота и без живой комнаты картинки
+	// доедут вместе с засевом документа из таблицы событий, а сам файл будет лежать
+	// в проекте: его видно в списке вложений и можно прикрепить руками.
+	assetIDs, err := s.storeAttachments(ctx, projectID, userID, parsed.Attachments)
+	if err != nil {
+		return ImportIntoResult{}, err
+	}
+
 	// Идентификаторы и связи куска: корень куска подвешивается к выбранному
 	// событию, дети — друг к другу (порядок разбора гарантирует, что родитель уже
 	// создан).
-	seeds := make([]yjs.EventSeed, 0, len(parsed.Events))
-	for _, e := range parsed.Events {
-		seed := yjs.EventSeed{ID: uuid.New().String(), Title: e.Title, Body: e.Body}
-		switch {
-		case e.parent >= 0 && e.parent < len(seeds):
-			seed.ParentID = seeds[e.parent].ID
-		case place.ParentID != nil:
-			seed.ParentID = place.ParentID.String()
-		}
-		if e.Date != nil {
-			seed.EventDate = e.Date.Format("2006-01-02")
-		}
-		seeds = append(seeds, seed)
-	}
+	seeds := buildSeeds(parsed, assetIDs, place.ParentID)
 	chunkDepth := yjs.SeedDepth(seeds)
 
 	// Живая комната — главный путь: в ней документ, который редакторы видят сейчас.

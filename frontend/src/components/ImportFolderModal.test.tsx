@@ -36,8 +36,8 @@ const preview: MarkdownImportPreview = {
       warnings: ['пустой файл'],
     },
   ],
-  warnings: ['картинки не переносятся: 2 ссылки'],
-  stats: { files: 2, events: 2, chars: 1200, imageLinks: 2 },
+  warnings: ['в проект не попали файлов: 2 — на них нет ссылок в текстах событий'],
+  stats: { files: 2, events: 2, chars: 1200, imageLinks: 2, attachments: 1, missingFiles: 1, unusedFiles: 2 },
 }
 
 /** Портал рендерит окно в body — оборачиваем в роутер: внутри бывает баннер ошибки. */
@@ -86,7 +86,10 @@ describe('ImportFolderModal', () => {
     expect(await screen.findByText('Пролог')).toBeInTheDocument()
     expect(screen.getByText('01.1')).toBeInTheDocument()
     expect(screen.getByText(/1200 зн\./)).toBeInTheDocument()
-    expect(screen.getByText(/картинки не переносятся/)).toBeInTheDocument()
+    expect(screen.getByText(/не попали файлов/)).toBeInTheDocument()
+    // Вложения показаны отдельным счётчиком: человек видит, что картинки поехали.
+    // Проверяем по тексту блока статистики: число и слово лежат в разных узлах.
+    expect(document.querySelector('[data-import-stats]')?.textContent ?? '').toContain('1 вложение')
     expect(screen.getByText(/пустой файл/)).toBeInTheDocument()
     // Заголовок проекта подставлен из ответа сервера, а не выдуман окном.
     expect(screen.getByLabelText('Название проекта')).toHaveValue('Планета')
@@ -94,7 +97,11 @@ describe('ImportFolderModal', () => {
   })
 
   it('на пустом дереве создавать нечего', async () => {
-    mocks.preview.mockResolvedValue({ ...preview, events: [], stats: { files: 1, events: 0, chars: 0, imageLinks: 0 } })
+    mocks.preview.mockResolvedValue({
+      ...preview,
+      events: [],
+      stats: { files: 1, events: 0, chars: 0, imageLinks: 0, attachments: 0, missingFiles: 0, unusedFiles: 0 },
+    })
     show()
 
     fireEvent.change(inputs()[1], { target: { files: [new File(['PK'], 'empty.zip')] } })

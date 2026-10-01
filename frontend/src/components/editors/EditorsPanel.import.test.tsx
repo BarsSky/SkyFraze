@@ -99,7 +99,7 @@ const chunk: MarkdownImportPreview = {
     { number: '02.1', depth: 1, title: 'Шаг', path: '02.1-Шаг.md', chars: 5, warnings: [] },
   ],
   warnings: [],
-  stats: { files: 2, events: 2, chars: 15, imageLinks: 0 },
+  stats: { files: 2, events: 2, chars: 15, imageLinks: 0, attachments: 0, missingFiles: 0, unusedFiles: 0 },
 }
 
 const rowEl = (title: string) =>

@@ -24,6 +24,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/skyfraze/backend/internal/auth"
+	"github.com/skyfraze/backend/internal/collab"
+	"github.com/skyfraze/backend/internal/collab/yjs"
 	"github.com/skyfraze/backend/internal/platform/testyjs"
 	"github.com/skyfraze/backend/internal/store"
 	"github.com/skyfraze/backend/internal/transfer"
@@ -334,6 +336,64 @@ func TestMarkdownRoundTrip(t *testing.T) {
 	}
 	if evs[2].ParentID == nil || *evs[2].ParentID != evs[1].ID {
 		t.Error("вложенность под-шага не сохранилась")
+	}
+
+	// Картинки переезжают вместе с текстом: файлы из архива становятся вложениями
+	// проекта и привязываются к ТЕМ ЖЕ событиям, что и до выгрузки. Привязка живёт
+	// только в CRDT, поэтому импорт с вложениями собирает документ сразу — иначе
+	// картинки пришлось бы прикреплять руками заново.
+	if parsed.Stats.Attachments != 3 {
+		t.Fatalf("вложений в разборе %d, ожидалось 3: %+v", parsed.Stats.Attachments, parsed.Attachments)
+	}
+	assets, err := e.st.ListAssets(ctx, p.ID)
+	if err != nil || len(assets) != 3 {
+		t.Fatalf("вложений в новом проекте %d (err=%v)", len(assets), err)
+	}
+	nameOf := map[uuid.UUID]string{}
+	for _, asset := range assets {
+		nameOf[asset.ID] = asset.Filename
+	}
+	state, err := e.st.GetProjectEventState(ctx, p.ID)
+	if err != nil || state == nil {
+		t.Fatalf("документ импортированного проекта с вложениями: %+v (err=%v)", state, err)
+	}
+	doc, err := yjs.FromState(state.YjsState)
+	if err != nil {
+		t.Fatalf("снапшот не читается: %v", err)
+	}
+	bindings, err := collab.AssetBindings(state.YjsState)
+	if err != nil {
+		t.Fatalf("привязки не читаются: %v", err)
+	}
+	got := make([][]string, 0, len(doc.Events()))
+	for _, event := range doc.Events() {
+		names := make([]string, 0, 2)
+		for _, id := range bindings[uuid.MustParse(event.ID)] {
+			names = append(names, nameOf[id])
+		}
+		got = append(got, names)
+	}
+	wantAssets := [][]string{
+		{"01-схема.png", "02-старт.png"},
+		{"02-старт.png"},
+		{"03-финал.png"},
+	}
+	if len(got) != len(wantAssets) {
+		t.Fatalf("событий с привязками %d: %+v", len(got), got)
+	}
+	for i := range wantAssets {
+		if strings.Join(got[i], ",") != strings.Join(wantAssets[i], ",") {
+			t.Errorf("вложения события #%d: %v, ожидалось %v", i, got[i], wantAssets[i])
+		}
+	}
+	// Фон кадра — первая картинка события, как и в исходном проекте.
+	for i, event := range doc.Events() {
+		if len(wantAssets[i]) == 0 {
+			continue
+		}
+		if event.Background == "" || nameOf[uuid.MustParse(event.Background)] != wantAssets[i][0] {
+			t.Errorf("фон события #%d: %q", i, event.Background)
+		}
 	}
 }
 
