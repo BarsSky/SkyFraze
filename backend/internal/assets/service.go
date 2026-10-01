@@ -126,11 +126,49 @@ func (s *Service) OpenPublic(ctx context.Context, assetID uuid.UUID) (io.ReadClo
 	return rc, a, nil
 }
 
+// List — вложения проекта (для списка файлов и для уборки).
 func (s *Service) List(ctx context.Context, actorID, projectID uuid.UUID) ([]store.Asset, error) {
 	if _, err := s.proj.Get(ctx, actorID, projectID); err != nil {
 		return nil, err
 	}
 	return s.store.ListAssets(ctx, projectID)
+}
+
+// ProjectFileKeys — ключи файлов проекта: то, что нужно убрать, когда проект
+// удаляют.
+//
+// Собирать их обязательно ДО удаления строки проекта: строки вложений уходят
+// каскадом (`assets.project_id … ON DELETE CASCADE`), и после удаления о файлах
+// уже нечего спросить — они остались бы в хранилище навсегда.
+func (s *Service) ProjectFileKeys(ctx context.Context, projectID uuid.UUID) ([]string, error) {
+	assets, err := s.store.ListAssets(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	keys := make([]string, 0, len(assets))
+	for _, asset := range assets {
+		keys = append(keys, asset.S3Key)
+	}
+	return keys, nil
+}
+
+// DeleteFiles убирает файлы по ключам и возвращает число удалённых.
+//
+// Ошибку на отдельном файле не прерывает уборку: остальные всё равно надо убрать,
+// а потерянный объект найдёт уборщик хранилища (maintenance.Sweeper).
+func (s *Service) DeleteFiles(ctx context.Context, keys []string) (int, error) {
+	removed := 0
+	var firstErr error
+	for _, key := range keys {
+		if err := s.obj.Delete(ctx, key); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		removed++
+	}
+	return removed, firstErr
 }
 
 // helpers

@@ -11,7 +11,9 @@ package transfer_test
 
 import (
 	"context"
+	"errors"
 	"io"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -19,6 +21,7 @@ import (
 
 	"github.com/skyfraze/backend/internal/collab"
 	"github.com/skyfraze/backend/internal/collab/yjs"
+	"github.com/skyfraze/backend/internal/store"
 	"github.com/skyfraze/backend/internal/transfer"
 )
 
@@ -199,5 +202,65 @@ func TestImportMarkdown_ImagesWithoutEvents(t *testing.T) {
 	}
 	if projects, err := e.proj.List(ctx, owner); err != nil || len(projects) != 0 {
 		t.Fatalf("проектов после отказа: %d (err=%v)", len(projects), err)
+	}
+}
+
+// Отказ «в место» не оставляет за собой ни файлов, ни строк вложений: человек
+// ничего не прикреплял, а повтор импорта добавил бы вторые такие же файлы.
+func TestImportMarkdownInto_RefusalKeepsNoFiles(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	owner := e.user(t, "owner@example.com")
+
+	project, err := e.proj.Create(ctx, owner, "Глубокий проект", "")
+	if err != nil {
+		t.Fatalf("проект: %v", err)
+	}
+	// Цепочка из четырёх уровней: кусок под её низ не влезет.
+	ids := []uuid.UUID{uuid.New(), uuid.New(), uuid.New(), uuid.New()}
+	rows := []store.Event{{ID: ids[0], ProjectID: project.ID, Position: 0, Depth: 0, Title: "Уровень 0", Body: "текст"}}
+	for i := 1; i < len(ids); i++ {
+		rows = append(rows, store.Event{
+			ID: ids[i], ProjectID: project.ID, ParentID: &ids[i-1], Position: i,
+			Depth: int16(i), Title: "Уровень " + strconv.Itoa(i), Body: "текст",
+		})
+	}
+	if err := e.st.InsertEventTree(ctx, project.ID, owner, rows); err != nil {
+		t.Fatalf("дерево: %v", err)
+	}
+
+	parsed, err := parseFolder(t, map[string]string{
+		"01-Кусок.md":        "---\ntitle: Кусок\n---\n\n![схема](картинки/схема.png)\n",
+		"01.1-Внутри.md":     "# Внутри\nтело\n",
+		"01.1.1-Глубже.md":   "# Глубже\nтело\n",
+		"картинки/схема.png": string(pngBytes),
+	})
+	if err != nil {
+		t.Fatalf("разбор: %v", err)
+	}
+	if parsed.Stats.Attachments != 1 {
+		t.Fatalf("вложений в разборе %d: %+v", parsed.Stats.Attachments, parsed.Attachments)
+	}
+
+	_, err = e.transfer.ImportMarkdownInto(ctx, owner, project.ID, parsed,
+		transfer.InsertPlace{ParentID: &ids[3]})
+	if !errors.Is(err, transfer.ErrMarkdownTooDeep) {
+		t.Fatalf("ожидался отказ по глубине, получено: %v", err)
+	}
+
+	// Файла нет ни в хранилище, ни в списке вложений проекта.
+	files, err := e.obj.List(ctx, project.ID.String()+"/")
+	if err != nil {
+		t.Fatalf("список файлов: %v", err)
+	}
+	if len(files) != 0 {
+		t.Errorf("после отказа в хранилище остались файлы: %+v", files)
+	}
+	if list, err := e.st.ListAssets(ctx, project.ID); err != nil || len(list) != 0 {
+		t.Errorf("после отказа остались строки вложений: %+v (err=%v)", list, err)
+	}
+	// Дерево проекта не изменилось.
+	if after, err := e.st.ListEvents(ctx, project.ID); err != nil || len(after) != len(rows) {
+		t.Fatalf("после отказа событий %d, ожидалось %d (err=%v)", len(after), len(rows), err)
 	}
 }

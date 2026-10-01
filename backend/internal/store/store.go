@@ -778,6 +778,96 @@ func (s *Store) SaveProjectEventStateServer(
 	return revision, nil
 }
 
+// ========================== Хранилище: размеры и сверка ==========================
+
+// TableSize — размер таблицы (heap + TOAST + индексы).
+type TableSize struct {
+	Name  string `db:"name" json:"name"`
+	Bytes int64  `db:"bytes" json:"bytes"`
+}
+
+// StorageStats — где именно лежит место. Первый шаг плана по хранению
+// (docs/storage-compression.md): без этих чисел оптимизировать нечего.
+type StorageStats struct {
+	DatabaseBytes int64       `json:"database_bytes"`
+	Tables        []TableSize `json:"tables"`
+	Projects      int64       `json:"projects"`
+	// Снапшот CRDT: у проекта он один, но растёт с историей правок.
+	SnapshotCount int64 `json:"snapshot_count"`
+	SnapshotBytes int64 `json:"snapshot_bytes"`
+	// Текст в реляционной проекции: это КОПИЯ того, что уже лежит в снапшоте.
+	EventRows      int64 `json:"event_rows"`
+	EventTextBytes int64 `json:"event_text_bytes"`
+	// Вложения: строки и их суммарный размер (файлы на диске считает уборщик).
+	AssetRows  int64 `json:"asset_rows"`
+	AssetBytes int64 `json:"asset_bytes"`
+}
+
+// StorageStats собирает размеры базы и основных таблиц.
+func (s *Store) StorageStats(ctx context.Context) (*StorageStats, error) {
+	out := &StorageStats{}
+	if err := s.Pool.QueryRow(ctx,
+		`SELECT pg_database_size(current_database())`).Scan(&out.DatabaseBytes); err != nil {
+		return nil, err
+	}
+	if err := s.Pool.QueryRow(ctx, `SELECT count(*) FROM projects`).Scan(&out.Projects); err != nil {
+		return nil, err
+	}
+	if err := s.Pool.QueryRow(ctx,
+		`SELECT count(*), coalesce(sum(octet_length(yjs_state)), 0) FROM project_event_state`).
+		Scan(&out.SnapshotCount, &out.SnapshotBytes); err != nil {
+		return nil, err
+	}
+	if err := s.Pool.QueryRow(ctx,
+		`SELECT count(*), coalesce(sum(length(title) + length(body)), 0) FROM events`).
+		Scan(&out.EventRows, &out.EventTextBytes); err != nil {
+		return nil, err
+	}
+	if err := s.Pool.QueryRow(ctx,
+		`SELECT count(*), coalesce(sum(size), 0) FROM assets`).
+		Scan(&out.AssetRows, &out.AssetBytes); err != nil {
+		return nil, err
+	}
+
+	rows, err := s.Pool.Query(ctx,
+		`SELECT relname AS name, pg_total_relation_size(c.oid) AS bytes
+		   FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+		  WHERE n.nspname = 'public' AND c.relkind = 'r'
+		  ORDER BY pg_total_relation_size(c.oid) DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var table TableSize
+		if err := rows.Scan(&table.Name, &table.Bytes); err != nil {
+			return nil, err
+		}
+		out.Tables = append(out.Tables, table)
+	}
+	return out, rows.Err()
+}
+
+// AssetKeys — ключи всех вложений (ключ → проект). Нужен уборке хранилища: с этим
+// списком сверяется каталог, чтобы найти файлы, на которые никто не ссылается.
+func (s *Store) AssetKeys(ctx context.Context) (map[string]uuid.UUID, error) {
+	rows, err := s.Pool.Query(ctx, `SELECT s3_key, project_id FROM assets`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]uuid.UUID{}
+	for rows.Next() {
+		var key string
+		var projectID uuid.UUID
+		if err := rows.Scan(&key, &projectID); err != nil {
+			return nil, err
+		}
+		out[key] = projectID
+	}
+	return out, rows.Err()
+}
+
 // ========================== Assets ==========================
 
 type Asset struct {
@@ -866,6 +956,14 @@ func (s *Store) ListAssets(ctx context.Context, projectID uuid.UUID) ([]Asset, e
 	return qAll[Asset](ctx, s.Pool,
 		`SELECT id, project_id, owner_id, filename, mime, size, s3_key, kind, width, height, created_at
 		   FROM assets WHERE project_id=$1 ORDER BY created_at DESC`, projectID)
+}
+
+// DeleteAsset убирает строку вложения. Файл удаляет вызывающий: хранилище и база
+// живут раздельно, и «удалить ещё и файл» — отдельное решение (см. assets.Service
+// и maintenance.Sweeper).
+func (s *Store) DeleteAsset(ctx context.Context, id uuid.UUID) error {
+	_, err := s.Pool.Exec(ctx, `DELETE FROM assets WHERE id=$1`, id)
+	return err
 }
 
 // ========================== Sessions (refresh tokens) ==========================

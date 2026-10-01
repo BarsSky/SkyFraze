@@ -102,5 +102,61 @@ func (l *LocalStore) Stat(ctx context.Context, key string) (*ObjectInfo, error) 
 		}
 		return nil, err
 	}
-	return &ObjectInfo{Key: key, Size: fi.Size()}, nil
+	return &ObjectInfo{Key: key, Size: fi.Size(), ModTime: fi.ModTime()}, nil
+}
+
+// List обходит каталог хранилища и возвращает файлы с указанным префиксом ключа.
+// Ключи — те же, что у Put: путь от корня хранилища через слэш (`<project>/<file>`).
+//
+// Пустой префикс означает «всё хранилище»: уборке нужен полный список, чтобы
+// найти файлы, на которые нет строк в `assets` (например, оставшиеся от удалённых
+// проектов). Несуществующий каталог — это пустой список, а не ошибка: значит,
+// файлов с таким префиксом просто нет.
+func (l *LocalStore) List(ctx context.Context, prefix string) ([]ObjectInfo, error) {
+	root := l.BaseDir
+	if prefix != "" {
+		if err := safeKey(strings.TrimSuffix(prefix, "/")); err != nil {
+			return nil, err
+		}
+		root = filepath.Join(l.BaseDir, filepath.FromSlash(strings.TrimSuffix(prefix, "/")))
+	}
+	info, err := os.Stat(root)
+	if err != nil || !info.IsDir() {
+		return nil, nil
+	}
+
+	var out []ObjectInfo
+	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			// Файл могли удалить между обходом и чтением — это не повод валить уборку.
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		fileInfo, err := entry.Info()
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+		rel, err := filepath.Rel(l.BaseDir, path)
+		if err != nil {
+			return err
+		}
+		out = append(out, ObjectInfo{
+			Key:     filepath.ToSlash(rel),
+			Size:    fileInfo.Size(),
+			ModTime: fileInfo.ModTime(),
+		})
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }

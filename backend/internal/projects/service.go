@@ -16,8 +16,29 @@ var (
 	ErrForbidden = errors.New("forbidden")
 )
 
+// Files — тот, кто умеет убрать файлы проекта за его удалением (реализует
+// assets.Service).
+//
+// Интерфейс объявлен здесь, а реализация живёт в пакете вложений: проекты не
+// должны знать про хранилище, им достаточно «скажи, что лежит» и «убери это».
+// Два шага, а не один, потому что строки вложений уходят каскадом вместе с
+// проектом: ключи нужно собрать ДО удаления строки.
+type Files interface {
+	ProjectFileKeys(ctx context.Context, projectID uuid.UUID) ([]string, error)
+	DeleteFiles(ctx context.Context, keys []string) (int, error)
+}
+
+// UseFiles подключает удаление файлов при удалении проекта.
+//
+// Без него удаляется только строка проекта, а файлы остаются в хранилище навсегда
+// (уборщик осиротевших их потом найдёт, но лучше не оставлять). Ошибку уборки
+// глотаем: проект уже удалён, а файлы подберёт уборщик — валить запрос из-за них
+// значило бы показать «не удалилось» там, где удалилось.
+func (s *Service) UseFiles(files Files) { s.files = files }
+
 type Service struct {
 	store *store.Store
+	files Files
 }
 
 func New(s *store.Store) *Service {
@@ -127,7 +148,21 @@ func (s *Service) Delete(ctx context.Context, userID, projectID uuid.UUID) error
 	if m.Role != store.RoleOwner {
 		return ErrForbidden
 	}
-	return s.store.DeleteProject(ctx, projectID)
+	// Ключи файлов собираем ДО удаления: строки вложений уходят каскадом вместе с
+	// проектом, и после удаления о файлах уже нечего спросить.
+	var files []string
+	if s.files != nil {
+		files, _ = s.files.ProjectFileKeys(ctx, projectID)
+	}
+	if err := s.store.DeleteProject(ctx, projectID); err != nil {
+		return err
+	}
+	// Файлы — после строки: если уборка не удалась, проект всё равно удалён, а
+	// потерянные объекты найдёт уборщик хранилища (maintenance.Sweeper).
+	if len(files) > 0 {
+		_, _ = s.files.DeleteFiles(ctx, files)
+	}
+	return nil
 }
 
 // requireMember — обёртка: получает membership, проверяет минимальную роль.

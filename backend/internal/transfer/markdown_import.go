@@ -1460,13 +1460,22 @@ func (s *Service) ImportMarkdown(
 
 // fillProject записывает содержимое импортированного проекта: строки событий или
 // собранный документ (когда есть вложения) плюс сами файлы вложений.
-func (s *Service) fillProject(ctx context.Context, projectID, owner uuid.UUID, parsed *ParsedMarkdown) error {
+//
+// Если запись сорвалась, файлы убираем здесь же: вызывающий удалит строку проекта,
+// а вместе с ней каскадом уйдут и строки вложений — после этого файлы уже никто не
+// найдёт, и они остались бы в хранилище навсегда.
+func (s *Service) fillProject(ctx context.Context, projectID, owner uuid.UUID, parsed *ParsedMarkdown) (err error) {
 	// Вложения проекта: файлы набора — в хранилище, строки — в assets. Идентификаторы
 	// нужны до сборки документа: на них ссылаются события.
-	assetIDs, err := s.storeAttachments(ctx, projectID, owner, parsed.Attachments)
+	assetIDs, keys, err := s.storeAttachments(ctx, projectID, owner, parsed.Attachments)
 	if err != nil {
 		return err
 	}
+	defer func() {
+		if err != nil {
+			s.dropObjects(ctx, keys)
+		}
+	}()
 
 	if len(parsed.Attachments) > 0 {
 		doc := yjs.NewDoc()
@@ -1504,13 +1513,14 @@ func (s *Service) fillProject(ctx context.Context, projectID, owner uuid.UUID, p
 }
 
 // storeAttachments кладёт файлы набора в хранилище и в таблицу вложений проекта.
-// Возвращает идентификаторы в том же порядке, что и files: на них ссылаются
-// события документа.
+// Возвращает идентификаторы в том же порядке, что и files (на них ссылаются
+// события документа) и ключи записанных файлов (чтобы вызывающий мог убрать их,
+// если запись проекта сорвётся).
 func (s *Service) storeAttachments(
 	ctx context.Context, projectID, owner uuid.UUID, files []ParsedAttachment,
-) ([]uuid.UUID, error) {
+) ([]uuid.UUID, []string, error) {
 	if len(files) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	ids := make([]uuid.UUID, 0, len(files))
 	written := make([]string, 0, len(files))
@@ -1518,7 +1528,7 @@ func (s *Service) storeAttachments(
 		key := assets.ObjectKey(projectID, file.Name)
 		if err := s.obj.Put(ctx, key, file.Mime, bytes.NewReader(file.Data), int64(len(file.Data))); err != nil {
 			s.dropObjects(ctx, written)
-			return nil, err
+			return nil, nil, err
 		}
 		written = append(written, key)
 		asset := &store.Asset{
@@ -1532,11 +1542,11 @@ func (s *Service) storeAttachments(
 		}
 		if err := s.store.CreateAsset(ctx, asset); err != nil {
 			s.dropObjects(ctx, written)
-			return nil, err
+			return nil, nil, err
 		}
 		ids = append(ids, asset.ID)
 	}
-	return ids, nil
+	return ids, written, nil
 }
 
 // dropObjects убирает из хранилища файлы, которые уже некуда записать: вложения
@@ -1702,10 +1712,24 @@ func (s *Service) ImportMarkdownInto(
 	// только в CRDT, поэтому у проекта без снапшота и без живой комнаты картинки
 	// доедут вместе с засевом документа из таблицы событий, а сам файл будет лежать
 	// в проекте: его видно в списке вложений и можно прикрепить руками.
-	assetIDs, err := s.storeAttachments(ctx, projectID, userID, parsed.Attachments)
+	assetIDs, assetKeys, err := s.storeAttachments(ctx, projectID, userID, parsed.Attachments)
 	if err != nil {
 		return ImportIntoResult{}, err
 	}
+	// Вложения нужны только вместе с событиями: если вставка не состоялась (отказ
+	// по глубине, занятая комната, ошибка записи), файлы убираем вместе со строками
+	// — иначе после отказа в проекте остались бы файлы, которых человек не
+	// прикреплял, а повтор импорта добавил бы вторые такие же.
+	inserted := false
+	defer func() {
+		if inserted || len(assetIDs) == 0 {
+			return
+		}
+		for _, id := range assetIDs {
+			_ = s.store.DeleteAsset(ctx, id)
+		}
+		s.dropObjects(ctx, assetKeys)
+	}()
 
 	// Идентификаторы и связи куска: корень куска подвешивается к выбранному
 	// событию, дети — друг к другу (порядок разбора гарантирует, что родитель уже
@@ -1726,6 +1750,7 @@ func (s *Service) ImportMarkdownInto(
 		case outcome.RoomLoading:
 			return ImportIntoResult{}, ErrMarkdownBusy
 		case outcome.Handled:
+			inserted = true
 			return ImportIntoResult{Events: len(seeds), Warning: outcome.Warning}, nil
 		}
 	}
@@ -1792,6 +1817,9 @@ func (s *Service) ImportMarkdownInto(
 		result.Warning = fmt.Sprintf(
 			"кусок вставлен в проект, но таблица событий не перестроена (%v) — она обновится при следующем сохранении", err)
 	}
+	// Вставка сделана: вложения остаются в проекте (даже если проекция отстала —
+	// события уже в документе, а значит и привязки к файлам).
+	inserted = true
 	return result, nil
 }
 

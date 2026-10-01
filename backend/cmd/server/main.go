@@ -22,6 +22,7 @@ import (
 	"github.com/skyfraze/backend/internal/collab"
 	"github.com/skyfraze/backend/internal/events"
 	"github.com/skyfraze/backend/internal/feed"
+	"github.com/skyfraze/backend/internal/maintenance"
 	"github.com/skyfraze/backend/internal/people"
 	"github.com/skyfraze/backend/internal/platform"
 	"github.com/skyfraze/backend/internal/projects"
@@ -119,6 +120,15 @@ func main() {
 	assetsSvc := assets.New(st, objStore, projSvc)
 	assetsH := assets.NewHandler(assetsSvc, logger)
 
+	// Удаление проекта уносит и его файлы: иначе они оставались бы в хранилище
+	// навсегда (уборщик ниже их найдёт, но лучше не оставлять).
+	projSvc.UseFiles(assetsSvc)
+
+	// Уборка хранилища: отчёт о размерах после старта и удаление файлов, на
+	// которые никто не ссылается (docs/storage-compression.md, шаг 1).
+	sweeper := maintenance.New(st, objStore, logger, maintenance.Options{})
+	go sweeper.Run(ctx)
+
 	evSvc := events.New(st, projSvc)
 	evH := events.NewHandler(evSvc, logger)
 
@@ -209,7 +219,7 @@ func main() {
 	r.Mount("/api/users", peopleH.Routes(authSvc, coauthorsH.Search))
 
 	// администрирование развёртывания: режим регистрации и заявки
-	r.Mount("/api/admin", adminH.Routes(authSvc, updateH))
+	r.Mount("/api/admin", adminH.Routes(authSvc, updateH, sweeper))
 
 	// Перенос проекта между инсталляциями. Импорт регистрируется СТАТИЧЕСКИМ путём
 	// (/api/projects/import) до param-ветки: chi выбирает статический сегмент вперёд

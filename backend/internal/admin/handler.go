@@ -58,8 +58,16 @@ type UpdateRoutes interface {
 	RequestUpdate(w http.ResponseWriter, r *http.Request)
 }
 
+// StorageRoutes — ручки хранилища (отчёт о размерах и уборка), которые
+// монтируются в /api/admin. Реализация живёт в пакете maintenance: админка не
+// должна зависеть от уборщика, ей достаточно контракта.
+type StorageRoutes interface {
+	Storage(w http.ResponseWriter, r *http.Request)
+	SweepStorage(w http.ResponseWriter, r *http.Request)
+}
+
 // Routes — /api/admin/*. Все ручки требуют токен; права проверяются в each().
-func (h *Handler) Routes(authSvc *auth.Service, upd UpdateRoutes) http.Handler {
+func (h *Handler) Routes(authSvc *auth.Service, upd UpdateRoutes, storageRoutes StorageRoutes) http.Handler {
 	r := chi.NewRouter()
 	r.Use(authSvc.WithUser)
 
@@ -74,7 +82,23 @@ func (h *Handler) Routes(authSvc *auth.Service, upd UpdateRoutes) http.Handler {
 		r.Get("/update", upd.Status)
 		r.Post("/update", upd.RequestUpdate)
 	}
+	if storageRoutes != nil {
+		// Права проверяем здесь, а не в maintenance: у админки уже есть и
+		// middleware, и requireAdmin, второй раз это делать негде.
+		r.Get("/storage", h.requireAdminFor(storageRoutes.Storage))
+		r.Post("/storage/sweep", h.requireAdminFor(storageRoutes.SweepStorage))
+	}
 	return r
+}
+
+// requireAdminFor — обёртка «только администратор» вокруг чужой ручки.
+func (h *Handler) requireAdminFor(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := h.requireAdmin(w, r); !ok {
+			return
+		}
+		next(w, r)
+	}
 }
 
 func (h *Handler) Settings(w http.ResponseWriter, r *http.Request) {
