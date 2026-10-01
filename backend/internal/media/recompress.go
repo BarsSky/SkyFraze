@@ -15,7 +15,8 @@
 //   - **JPEG → lossy WebP (VP8, q82).** Файл уже потерял часть деталей при съёмке
 //     или первой съёмке, поэтому «без потерь» тут смысла не имеет. Плюс длинная
 //     сторона обрезается до 2560 точек — для фотографий с телефона это часто
-//     основной выигрыш.
+//     основной выигрыш. И снимок разворачивается по EXIF: телефон пишет «лежит
+//     боком, показывать повернув», а Go-декодер этого не делает (orientation.go).
 //
 // Если после пережатия файл не стал меньше, возвращаем исходные байты как есть:
 // смысла хранить «оптимизированную» версию, которая весит столько же, нет.
@@ -105,7 +106,16 @@ func Recompress(filename, mime string, data []byte) (Result, error) {
 	if err != nil {
 		return original, fmt.Errorf("декодирование картинки: %w", err)
 	}
-	img, width, height := fit(img, cfg.Width, cfg.Height)
+	width, height := cfg.Width, cfg.Height
+	// JPEG разворачиваем по EXIF до всего остального: Go-декодер ориентацию не
+	// применяет, а мы выбрасываем тег при кодировании (см. orientation.go).
+	if mime == "image/jpeg" {
+		if orientation := exifOrientation(data); orientation > 1 {
+			img = applyOrientation(img, orientation)
+			width, height = height, width
+		}
+	}
+	img, width, height = fit(img, width, height)
 
 	var out bytes.Buffer
 	options := &gowebp.Options{}

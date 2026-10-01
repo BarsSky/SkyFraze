@@ -40,12 +40,12 @@ func TestParseSort(t *testing.T) {
 
 func TestSlugify(t *testing.T) {
 	cases := map[string]string{
-		"Galactic Story":       "galactic-story",
-		"Млечный путь":         "", // кириллица → пустая основа, ссылку даст суффикс
-		"Млечный путь 2207":    "2207",
-		"Alpha-7: Launch!":     "alpha-7-launch",
-		"":                     "",
-		"---":                  "",
+		"Galactic Story":    "galactic-story",
+		"Млечный путь":      "", // кириллица → пустая основа, ссылку даст суффикс
+		"Млечный путь 2207": "2207",
+		"Alpha-7: Launch!":  "alpha-7-launch",
+		"":                  "",
+		"---":               "",
 	}
 	for in, want := range cases {
 		if got := feed.SlugifyForTest(in); got != want {

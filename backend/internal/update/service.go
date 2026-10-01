@@ -76,24 +76,24 @@ type Status struct {
 
 // CheckResult — ответ страницы обновления.
 type CheckResult struct {
-	Current     string   `json:"current"`
-	Commit      string   `json:"commit"`
-	Repo        string   `json:"repo"`
-	Configured  bool     `json:"configured"`
-	Latest      *Release `json:"latest,omitempty"`
-	UpdateAvail bool     `json:"update_available"`
+	Current     string    `json:"current"`
+	Commit      string    `json:"commit"`
+	Repo        string    `json:"repo"`
+	Configured  bool      `json:"configured"`
+	Latest      *Release  `json:"latest,omitempty"`
+	UpdateAvail bool      `json:"update_available"`
 	CheckedAt   time.Time `json:"checked_at"`
-	Error       string   `json:"error,omitempty"`
+	Error       string    `json:"error,omitempty"`
 }
 
 type Service struct {
-	repo      string // owner/name
-	token     string
-	channel   string // stable | any
-	version   string
-	commit    string
-	stateDir  string
-	client    *http.Client
+	repo     string // owner/name
+	token    string
+	channel  string // stable | any
+	version  string
+	commit   string
+	stateDir string
+	client   *http.Client
 
 	mu       sync.Mutex
 	cached   *CheckResult
@@ -129,11 +129,11 @@ func (s *Service) Check(ctx context.Context, force bool) *CheckResult {
 	s.mu.Unlock()
 
 	res := &CheckResult{
-		Current:   s.version,
-		Commit:    s.commit,
-		Repo:      s.repo,
+		Current:    s.version,
+		Commit:     s.commit,
+		Repo:       s.repo,
 		Configured: s.Configured(),
-		CheckedAt: time.Now().UTC(),
+		CheckedAt:  time.Now().UTC(),
 	}
 	if !s.Configured() {
 		res.Error = "репозиторий не настроен: укажите UPDATE_REPO=owner/name"

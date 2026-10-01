@@ -10,11 +10,11 @@ import (
 // Origin — с портом. Именно на этом ломался realtime при работе по домену.
 func TestSameHost_IgnoresSchemeAndPort(t *testing.T) {
 	cases := []struct {
-		name    string
-		origin  string
-		host    string
-		xHost   string
-		want    bool
+		name   string
+		origin string
+		host   string
+		xHost  string
+		want   bool
 	}{
 		{"совпадает как есть", "http://192.168.13.66", "192.168.13.66", "", true},
 		{"HTTPS 443 без порта в Host", "https://fraza.skynas.ru", "fraza.skynas.ru", "", true},

@@ -239,7 +239,8 @@ func TestBootstrapAndConfiguredAdminRegistration(t *testing.T) {
 	}
 }
 
-func TestFirstUserBecomesAdminAndEnvGrantsRights(t *testing.T) {	e := setup(t)
+func TestFirstUserBecomesAdminAndEnvGrantsRights(t *testing.T) {
+	e := setup(t)
 	ctx := context.Background()
 
 	// Пустая инсталляция: первый зарегистрированный — администратор, иначе
