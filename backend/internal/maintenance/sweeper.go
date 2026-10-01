@@ -37,6 +37,9 @@ const (
 	defaultInterval   = 24 * time.Hour
 	defaultStartDelay = 2 * time.Minute
 	defaultExamples   = 20
+	// Сколько тяжёлых проектов показывать: список отвечает на вопрос «куда
+	// смотреть», а не заменяет отчёт по всем проектам.
+	defaultHeavyExamples = 5
 )
 
 // Options — настройки уборщика; нулевые значения заменяются значениями по умолчанию.
@@ -50,6 +53,8 @@ type Options struct {
 	StartDelay time.Duration
 	// Examples — сколько примеров показывать в отчёте.
 	Examples int
+	// HeavyExamples — сколько «тяжёлых» проектов показывать в отчёте.
+	HeavyExamples int
 }
 
 // Recompressor — тот, кто умеет пережимать уже загруженные картинки (реализует
@@ -84,6 +89,9 @@ func New(st *store.Store, obj storage.ObjectStore, logger *slog.Logger, opts Opt
 	if opts.Examples <= 0 {
 		opts.Examples = defaultExamples
 	}
+	if opts.HeavyExamples <= 0 {
+		opts.HeavyExamples = defaultHeavyExamples
+	}
 	return &Sweeper{store: st, obj: obj, logger: logger, opts: opts}
 }
 
@@ -107,10 +115,12 @@ type Report struct {
 
 	SnapshotCount int64 `json:"snapshot_count"`
 	SnapshotBytes int64 `json:"snapshot_bytes"`
-	EventRows     int64 `json:"event_rows"`
-	EventTextSize int64 `json:"event_text_bytes"`
-	AssetRows     int64 `json:"asset_rows"`
-	AssetBytes    int64 `json:"asset_bytes"`
+	// HeavySnapshots — самые тяжёлые снапшоты поимённо (по сырым байтам).
+	HeavySnapshots []store.ProjectSize `json:"heavy_snapshots,omitempty"`
+	EventRows      int64               `json:"event_rows"`
+	EventTextSize  int64               `json:"event_text_bytes"`
+	AssetRows      int64               `json:"asset_rows"`
+	AssetBytes     int64               `json:"asset_bytes"`
 
 	// Файлы в хранилище и сверка с базой.
 	FileCount int   `json:"file_count"`
@@ -160,6 +170,14 @@ func (s *Sweeper) scan(ctx context.Context, remove bool) (*Report, error) {
 	report.EventTextSize = stats.EventTextBytes
 	report.AssetRows = stats.AssetRows
 	report.AssetBytes = stats.AssetBytes
+
+	// Самые тяжёлые снапшоты поимённо: «база выросла» — это не ответ на вопрос
+	// «что с этим делать», а имя проекта в отчёте — ответ.
+	heavy, err := s.store.HeavySnapshotProjects(ctx, s.opts.HeavyExamples)
+	if err != nil {
+		return nil, err
+	}
+	report.HeavySnapshots = heavy
 
 	// Ключи вложений: с чем сверяем каталог.
 	keys, err := s.store.AssetKeys(ctx)
@@ -283,6 +301,12 @@ func (s *Sweeper) logReport(report *Report, swept bool) {
 		"pending", report.PendingFiles,
 		"missing", report.MissingFiles,
 		"scan_ms", report.ScanMillis,
+	}
+	// Самый тяжёлый проект — в лог: по нему сразу видно, куда идти.
+	if len(report.HeavySnapshots) > 0 {
+		attrs = append(attrs,
+			"heaviest_project", report.HeavySnapshots[0].Title,
+			"heaviest_snapshot_bytes", report.HeavySnapshots[0].Bytes)
 	}
 	if swept {
 		attrs = append(attrs, "removed_files", report.RemovedFiles, "removed_bytes", report.RemovedBytes)

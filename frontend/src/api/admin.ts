@@ -105,3 +105,87 @@ export async function listAdminUsers(): Promise<AdminUser[]> {
   const res = await http.get('admin/users').json<{ users: AdminUser[] }>()
   return res.users
 }
+
+// ── хранилище (см. docs/storage-compression.md) ─────────────────────────────
+
+export interface TableSize {
+  name: string
+  bytes: number
+}
+
+/** Проект и его вес: отчёт называет тяжёлые проекты поимённо. */
+export interface ProjectSize {
+  id: string
+  title: string
+  bytes: number
+}
+
+/** Файл или строка, попавшие в отчёт как проблемные. */
+export interface StorageFileEntry {
+  key: string
+  size?: number
+  modified?: string
+  project?: string
+}
+
+export interface StorageReport {
+  scanned_at: string
+  scan_ms: number
+  database_bytes: number
+  tables: TableSize[]
+  projects: number
+  snapshot_count: number
+  snapshot_bytes: number
+  heavy_snapshots?: ProjectSize[]
+  event_rows: number
+  event_text_bytes: number
+  asset_rows: number
+  asset_bytes: number
+  file_count: number
+  file_bytes: number
+  orphan_files: number
+  orphan_bytes: number
+  pending_files: number
+  missing_files: number
+  orphan_examples?: StorageFileEntry[]
+  missing_examples?: StorageFileEntry[]
+  removed_files: number
+  removed_bytes: number
+  failed_files: number
+}
+
+/** Отчёт о размерах: ничего не меняет (обход каталога и запросы к базе). */
+export async function getStorageReport(): Promise<StorageReport> {
+  return await http.get('admin/storage').json<StorageReport>()
+}
+
+/** Уборка: удаляет файлы без строк в `assets` старше суток. */
+export async function sweepStorage(): Promise<StorageReport> {
+  return await http.post('admin/storage/sweep').json<StorageReport>()
+}
+
+export interface RecompressReport {
+  files: number
+  images: number
+  changed: number
+  skipped: number
+  damaged: number
+  failed: number
+  damaged_examples?: string[]
+  bytes_from: number
+  bytes_to: number
+  applied: boolean
+}
+
+/**
+ * Пережатие уже загруженных картинок в WebP.
+ *
+ * Без `apply` это сухой прогон: считает выигрыш и ничего не пишет — по нему и
+ * решают, запускать ли. Применение необратимо (оригиналы не хранятся), поэтому в
+ * интерфейсе это две отдельные кнопки.
+ */
+export async function recompressStorage(apply = false): Promise<RecompressReport> {
+  return await http
+    .post('admin/storage/recompress', { searchParams: apply ? { apply: '1' } : {} })
+    .json<RecompressReport>()
+}

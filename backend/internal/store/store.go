@@ -848,8 +848,32 @@ func (s *Store) StorageStats(ctx context.Context) (*StorageStats, error) {
 	return out, rows.Err()
 }
 
-// AssetKeys — ключи всех вложений (ключ → проект). Нужен уборке хранилища: с этим
-// списком сверяется каталог, чтобы найти файлы, на которые никто не ссылается.
+// ProjectSize — проект и его вес: «какой проект занимает больше всех». Отчёт о
+// хранилище показывает такие списки, чтобы место искали в конкретном проекте, а не
+// в среднем по базе (в `deploy/storage-report.sql` это «проекты-тяжеловесы»).
+type ProjectSize struct {
+	ID    uuid.UUID `json:"id"`
+	Title string    `json:"title"`
+	Bytes int64     `json:"bytes"`
+}
+
+// HeavySnapshotProjects — проекты с самыми большими снапшотами (по сырым байтам).
+//
+// Порога здесь нет намеренно: «тяжёлый» зависит от стенда, а список из нескольких
+// имён отвечает на вопрос «куда смотреть» без выдуманного числа. Сжатие TOAST в
+// расчёт не берётся — это оценка сверху, и она стабильна между проходами.
+func (s *Store) HeavySnapshotProjects(ctx context.Context, limit int) ([]ProjectSize, error) {
+	if limit <= 0 {
+		limit = 5
+	}
+	return qAll[ProjectSize](ctx, s.Pool,
+		`SELECT p.id, p.title, octet_length(s.yjs_state) AS bytes
+		   FROM project_event_state s JOIN projects p ON p.id = s.project_id
+		  ORDER BY bytes DESC, p.title
+		  LIMIT $1`, limit)
+}
+
+// AssetKeys — ключи всех вложений (ключ → проект). Нужен уборке хранилища: с этим// списком сверяется каталог, чтобы найти файлы, на которые никто не ссылается.
 func (s *Store) AssetKeys(ctx context.Context) (map[string]uuid.UUID, error) {
 	rows, err := s.Pool.Query(ctx, `SELECT s3_key, project_id FROM assets`)
 	if err != nil {

@@ -261,6 +261,44 @@ func TestDeleteProjectRemovesFiles(t *testing.T) {
 	}
 }
 
+// Отчёт называет тяжёлые проекты поимённо: «база выросла» — не ответ на вопрос
+// «что с этим делать», а имя проекта в отчёте — ответ.
+func TestStorageReportNamesHeavySnapshots(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	owner := e.user(t, "owner@example.com")
+
+	light, err := e.proj.Create(ctx, owner, "Лёгкий проект", "")
+	if err != nil {
+		t.Fatalf("проект: %v", err)
+	}
+	heavy, err := e.proj.Create(ctx, owner, "Тяжёлый проект", "")
+	if err != nil {
+		t.Fatalf("второй проект: %v", err)
+	}
+	if _, err := e.st.SaveProjectEventStateServer(ctx, light.ID, owner, []byte("маленький снапшот")); err != nil {
+		t.Fatalf("снапшот: %v", err)
+	}
+	if _, err := e.st.SaveProjectEventStateServer(ctx, heavy.ID, owner, bytes.Repeat([]byte("x"), 4096)); err != nil {
+		t.Fatalf("снапшот: %v", err)
+	}
+
+	sweeper := maintenance.New(e.st, e.obj, testLogger(t), maintenance.Options{})
+	report, err := sweeper.Report(ctx)
+	if err != nil {
+		t.Fatalf("отчёт: %v", err)
+	}
+	if len(report.HeavySnapshots) != 2 {
+		t.Fatalf("тяжёлых проектов в отчёте %d, ожидалось 2: %+v", len(report.HeavySnapshots), report.HeavySnapshots)
+	}
+	if report.HeavySnapshots[0].ID != heavy.ID || report.HeavySnapshots[0].Title != "Тяжёлый проект" {
+		t.Errorf("первым должен быть самый тяжёлый: %+v", report.HeavySnapshots[0])
+	}
+	if report.HeavySnapshots[0].Bytes < report.HeavySnapshots[1].Bytes {
+		t.Errorf("порядок по весу нарушен: %+v", report.HeavySnapshots)
+	}
+}
+
 // Отчёт о размерах показывает то, что нужно для решений: размер базы, снапшоты,
 // текст проекции и вложения.
 func TestStorageReportCounts(t *testing.T) {

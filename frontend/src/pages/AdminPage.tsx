@@ -17,6 +17,7 @@ import {
 } from '../api/admin'
 import { useAuthStore } from '../store/auth'
 import { ErrorBanner } from '../components/ErrorBanner'
+import { StoragePanel } from '../components/admin/StoragePanel'
 import { formatDate } from '../lib/format'
 
 type Tab = 'pending' | 'approved' | 'rejected'
@@ -352,6 +353,8 @@ export function AdminPage() {
           </>
         )}
       </section>
+
+      <StoragePanel />
 
       <section className="card">
         <h3 style={{ marginTop: 0 }}>Пользователи ({users.length})</h3>
