@@ -478,8 +478,14 @@ cd backend && go test ./...
 # Frontend unit
 cd frontend && npm test
 
-# E2E walkthrough (нужны docker + оба сервиса)
+# E2E в браузере (Playwright): регистрация на пустой инсталляции, вход,
+# защищённые страницы. Vite Playwright поднимает сам, а backend должен быть
+# запущен на :8181 (docker compose up или go run ./cmd/server) — на него смотрит
+# прокси в frontend/vite.config.ts
 cd frontend && npm run e2e
+
+# Дальше — живые сценарии-инструменты: у них вписаны адрес и учётные записи
+# конкретного стенда, поэтому в CI они не гоняются (там только `npm run e2e`).
 
 # E2E публичной ленты: права, просмотры, оценки
 cd frontend && npx tsx tests/public-feed.ts

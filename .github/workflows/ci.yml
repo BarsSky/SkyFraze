@@ -45,6 +45,77 @@ jobs:
       - run: cd frontend && npx tsc --noEmit
       - run: cd frontend && npx vitest run
 
+  # Дымовые сценарии в браузере: чистый postgres + backend + vite (его поднимает
+  # сам Playwright) и `npm run e2e`. Проверяем ровно то, чего не видно в unit-тестах:
+  # первая регистрация на пустой инсталляции доводит до /projects, неверный пароль
+  # показывает понятный текст, а защищённые страницы закрыты без входа.
+  #
+  # Отдельно от frontend-test: здесь нужны браузер, база и живой сервер, поэтому
+  # job дольше и падает по другим причинам. Живые сценарии, которым нужен
+  # конкретный стенд (`tests/*.ts` с вписанными адресами и учётками), в CI не
+  # гоняются — они остаются инструментами разработчика.
+  e2e:
+    needs: [backend-test, frontend-test]
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: skyfraze
+          POSTGRES_PASSWORD: skyfraze_dev
+          POSTGRES_DB: skyfraze_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U skyfraze -d skyfraze_e2e"
+          --health-interval 5s --health-timeout 3s --health-retries 5
+    env:
+      DATABASE_URL: postgres://skyfraze:skyfraze_dev@localhost:5432/skyfraze_e2e?sslmode=disable
+      JWT_SECRET: e2e-secret
+      STORAGE_DIR: /tmp/skyfraze-e2e-storage
+      # Порт совпадает с target прокси в frontend/vite.config.ts.
+      LISTEN: ":8181"
+      CORS_ORIGINS: http://localhost:5173
+      REGISTRATION_MODE: request
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.26', cache-dependency-path: backend/go.sum }
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: 'npm', cache-dependency-path: frontend/package-lock.json }
+      - run: cd frontend && npm ci --no-audit --no-fund
+      # Браузер ставим с системными зависимостями: на голом ubuntu-latest Playwright
+      # падает из-за отсутствующих библиотек.
+      - run: cd frontend && npx playwright install --with-deps chromium
+      - name: backend в фоне
+        run: |
+          mkdir -p "$STORAGE_DIR"
+          cd backend
+          go build -o /tmp/skyfraze-server ./cmd/server
+          # nohup: процесс должен пережить конец этого шага и работать, пока идут
+          # сценарии. Лог читаем, если что-то пошло не так.
+          nohup /tmp/skyfraze-server > /tmp/skyfraze-backend.log 2>&1 &
+          echo $! > /tmp/skyfraze-server.pid
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8181/health > /dev/null; then
+              echo "backend готов"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "backend не поднялся:"; cat /tmp/skyfraze-backend.log; exit 1
+      - run: cd frontend && npx playwright test
+      - name: лог backend при падении
+        if: failure()
+        run: cat /tmp/skyfraze-backend.log
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-artifacts
+          path: |
+            frontend/test-results
+          if-no-files-found: ignore
+
   build:
     needs: [backend-test, frontend-test]
     runs-on: ubuntu-latest
