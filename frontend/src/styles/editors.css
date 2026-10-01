@@ -251,3 +251,23 @@
   .ed-chip,
   .ed-bg .ed-chip { min-height: 34px; display: inline-flex; align-items: center; }
 }
+
+/* Файлы проекта: что проект хранит, сколько это занимает и что можно убрать.
+   Отдельный список от «вложений кадра»: там привязка к событию, здесь — содержимое
+   проекта и расход квоты. Файл, прикреплённый к кадрам, удалять нельзя, поэтому
+   кнопка выключена, а причина написана в подсказке. */
+.ed-files {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.ed-files__head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; margin-bottom: 10px;
+}
+.ed-files__usage { font-size: 12px; color: var(--fg-muted); white-space: nowrap; }
+.ed-files__usage--tight { color: var(--danger); }
+.ed-files__size { font-size: 12px; white-space: nowrap; }
+.ed-files .ed-assets__item { max-width: 100%; padding-right: 28px; }
+.ed-files .ed-assets__name { max-width: 42ch; }
+.ed-files .ed-assets__detach:disabled { color: var(--fg-muted); opacity: 0.45; cursor: not-allowed; }

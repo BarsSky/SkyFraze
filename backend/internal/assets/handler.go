@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/skyfraze/backend/internal/auth"
+	"github.com/skyfraze/backend/internal/store"
 )
 
 type Handler struct {
@@ -63,6 +64,10 @@ func (h *Handler) Upload(_ *auth.Service) http.HandlerFunc {
 				writeErr(w, http.StatusRequestEntityTooLarge, "file too large")
 			case errors.Is(err, ErrBadMime):
 				writeErr(w, http.StatusUnsupportedMediaType, "unsupported mime")
+			case QuotaExceeded(err):
+				// Текст ошибки показывают человеку в панели редактора: в нём
+				// занятое место, предел и вес файла.
+				writeErr(w, http.StatusRequestEntityTooLarge, err.Error())
 			default:
 				h.logger.Error("upload", "err", err)
 				writeErr(w, http.StatusInternalServerError, "upload failed")
@@ -70,6 +75,67 @@ func (h *Handler) Upload(_ *auth.Service) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, http.StatusCreated, a)
+	}
+}
+
+// Usage — GET /api/projects/{id}/assets/usage: занятое место и предел квоты.
+//
+// Отдельная ручка, а не поле в списке файлов: список — массив, и добавлять в него
+// служебный объект значило бы ломать всех, кто его читает. Интерфейс показывает
+// «занято 8.4 МБ из 10 МБ», чтобы отказ по квоте не был неожиданностью.
+func (h *Handler) Usage(_ *auth.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		uid, err := auth.UserIDFromCtx(r.Context())
+		if err != nil {
+			writeErr(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		pid, err := uuid.Parse(chi.URLParam(r, "id"))
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid project id")
+			return
+		}
+		used, limit, err := h.svc.Usage(r.Context(), uid, pid)
+		if err != nil {
+			writeErr(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"used": used, "limit": limit, "used_text": HumanBytes(used), "limit_text": HumanBytes(limit),
+		})
+	}
+}
+
+// Delete — убирает вложение проекта: строку и (если ссылок не осталось) файл.
+//
+// Отдельная ручка появилась вместе с квотой: без неё проект, упёршийся в предел,
+// не мог бы освободить место — открепить файл в редакторе можно, а удалить было
+// нечем.
+func (h *Handler) Delete(_ *auth.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		uid, err := auth.UserIDFromCtx(r.Context())
+		if err != nil {
+			writeErr(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		aid, err := uuid.Parse(chi.URLParam(r, "assetID"))
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid asset id")
+			return
+		}
+		err = h.svc.Delete(r.Context(), uid, aid)
+		var inUse *InUseError
+		switch {
+		case err == nil:
+			w.WriteHeader(http.StatusNoContent)
+		case errors.As(err, &inUse):
+			// 409, а не 403: права есть, мешает ссылка из документа.
+			writeErr(w, http.StatusConflict, inUse.Error())
+		case errors.Is(err, store.ErrNotFound):
+			writeErr(w, http.StatusNotFound, "not found")
+		default:
+			writeErr(w, http.StatusForbidden, "forbidden")
+		}
 	}
 }
 

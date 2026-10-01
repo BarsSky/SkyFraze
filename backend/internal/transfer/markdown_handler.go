@@ -32,6 +32,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/skyfraze/backend/internal/assets"
 	"github.com/skyfraze/backend/internal/auth"
 )
 
@@ -378,6 +379,11 @@ func (h *Handler) markdownError(w http.ResponseWriter, err error) {
 		w.Header().Set("Retry-After", "1")
 		writeErr(w, http.StatusServiceUnavailable, err.Error())
 	case errors.Is(err, ErrMarkdownTooLarge):
+		writeErr(w, http.StatusRequestEntityTooLarge, err.Error())
+	case assets.QuotaExceeded(err):
+		// Квота проекта: отказ приходит из общей записи файлов, но объяснение
+		// адресовано человеку, который переносит папку, поэтому добавляем, что
+		// именно случилось с проектом (в новый проект он не создан вовсе).
 		writeErr(w, http.StatusRequestEntityTooLarge, err.Error())
 	case errors.Is(err, ErrMarkdownEmpty),
 		errors.Is(err, ErrMarkdownBadZip),

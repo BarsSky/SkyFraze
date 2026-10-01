@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatDate, formatRating, formatViews, plural } from './format'
+import { formatBytes, formatDate, formatRating, formatViews, plural } from './format'
 
 describe('plural', () => {
   it('склоняет по русским правилам', () => {
@@ -39,5 +39,21 @@ describe('formatDate', () => {
     expect(formatDate('2026-09-27T15:00:00Z')).toMatch(/^2[67]\.09\.2026$/)
     expect(formatDate(null)).toBe('')
     expect(formatDate('мусор')).toBe('')
+  })
+})
+
+describe('formatBytes', () => {
+  it('вес по-человечески: Б, КБ, МБ, ГБ', () => {
+    expect(formatBytes(0)).toBe('0 Б')
+    expect(formatBytes(700)).toBe('700 Б')
+    expect(formatBytes(2048)).toBe('2 КБ')
+    expect(formatBytes(161396)).toBe('158 КБ')
+    expect(formatBytes(2 * 1024 * 1024)).toBe('2.0 МБ')
+    expect(formatBytes(3.5 * 1024 * 1024 * 1024)).toBe('3.5 ГБ')
+  })
+
+  it('мусор в данных не даёт «NaN Б»', () => {
+    expect(formatBytes(-5)).toBe('0 Б')
+    expect(formatBytes(Number.NaN)).toBe('0 Б')
   })
 })

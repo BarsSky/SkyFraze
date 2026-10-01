@@ -119,6 +119,8 @@ func main() {
 	}
 	assetsSvc := assets.New(st, objStore, projSvc)
 	assetsSvc.UseLogger(logger)
+	// Квота проекта: вес считается по строкам `assets`, то есть после пережатия.
+	assetsSvc.UseQuota(cfg.AssetQuotaBytes)
 	assetsH := assets.NewHandler(assetsSvc, logger)
 
 	// Удаление проекта уносит и его файлы: иначе они оставались бы в хранилище
@@ -159,6 +161,10 @@ func main() {
 
 	collabHub := collab.NewHub(logger, cfg.JWTSecret, evSvc, cfg.CORSOrigins)
 	go collabHub.Run(ctx)
+	// Удаление файла обязано знать, прикреплён ли он к кадрам: ссылки живут в
+	// CRDT-документе, и спрашивать о них может только хаб (живая комната) или
+	// снапшот базы — см. assets.UsageChecker.
+	assetsSvc.UseUsage(collabHub)
 
 	// Импорт «в место» обязан попасть в документ живой комнаты: пока проект кто-то
 	// редактирует, источник правды — он, и запись только в снапшот базы затёрлась
@@ -305,6 +311,13 @@ func main() {
 
 		r.Post("/assets", assetsH.Upload(authSvc))
 		r.Get("/assets", assetsH.List(authSvc))
+		// Занятое место и предел квоты: интерфейс показывает их рядом со списком
+		// файлов, чтобы отказ «не помещается» не был неожиданностью.
+		r.Get("/assets/usage", assetsH.Usage(authSvc))
+		// Удаление файла нужно вместе с квотой: иначе проект, упёршийся в предел,
+		// не может освободить место. Файл, прикреплённый к кадрам, не удаляется —
+		// 409 и просьба сначала открепить.
+		r.Delete("/assets/{assetID}", assetsH.Delete(authSvc))
 
 		// Экспорт проекта целиком: архив с деревом, CRDT-снапшотом и вложениями.
 		// Чтение — viewer+ (читатель и так видит всё содержимое проекта).

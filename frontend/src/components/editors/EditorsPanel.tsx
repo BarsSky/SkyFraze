@@ -13,7 +13,8 @@ import {
   type MarkdownInsertPlace,
 } from '../../api/storyFiles'
 import { DIRECTORY_PICK } from '../../lib/directoryPick'
-import { plural } from '../../lib/format'
+import { formatBytes, plural } from '../../lib/format'
+import { serverErrorMessage } from '../../api/client'
 import {
   yAddEvent,
   yDeleteEvent,
@@ -22,7 +23,8 @@ import {
   type YArray,
   type YMap,
 } from '../../collab/yprovider'
-import type { Asset } from '../../api/assets'
+import type { Asset, AssetUsage } from '../../api/assets'
+import { ProjectFiles } from './ProjectFiles'
 import { EventEditor } from './EventEditor'
 import type { BackgroundValue } from './BackgroundPicker'
 
@@ -36,6 +38,21 @@ interface Props {
   onChanged: () => void
   /** Загрузка файла: страница сохраняет ассет и возвращает его. */
   onUpload: (file: File) => Promise<Asset | null>
+  /**
+   * Занятое место и предел квоты проекта (`GET …/assets/usage`). Необязательно:
+   * без него список файлов покажет только суммарный вес.
+   */
+  assetUsage?: AssetUsage | null
+  /**
+   * Удаление файла проекта. Необязательно: без него список файлов только
+   * показывает, что хранится, а кнопки удаления нет (роль без прав, старые
+   * страницы).
+   */
+  onDeleteAsset?: (asset: Asset) => void
+  /** Что ответил сервер на попытку удаления: отказ объясняется словами сервера. */
+  assetNote?: string | null
+  /** Файл, который удаляется прямо сейчас. */
+  assetBusyId?: string | null
   /**
    * Импорт «в место»: вставить разобранный кусок md в этот проект. Возвращает
    * результат сервера (сколько событий и его предупреждения); саму вставку делает
@@ -82,12 +99,6 @@ const TYPING_IDLE_MS = 1500
 /** Совпадает с лимитом nginx (client_max_body_size) и бэкенда (assets.maxAssetSize). */
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
-/** Вес файла для подсказки: «2.0 МБ», «161 КБ». */
-function formatBytes(bytes: number): string {
-  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} МБ`
-  if (bytes >= 1024) return `${Math.round(bytes / 1024)} КБ`
-  return `${bytes} Б`
-}
 
 /**
  * Что написать после загрузки файла.
@@ -101,6 +112,17 @@ export function uploadNoteFor(file: File, asset: Asset): string {
   const renamed = asset.mime === 'image/webp' && !/\.webp$/i.test(file.name)
   if (!renamed) return `Загружено: ${asset.filename}`
   return `Загружено: ${asset.filename} — пережато из ${formatBytes(file.size)} в ${formatBytes(asset.size)}`
+}
+
+/**
+ * Что написать, если загрузка не удалась.
+ *
+ * Сервер объясняет отказы своими словами — «в проекте занято 9.4 МБ из 10 МБ —
+ * файл на 1.2 МБ не помещается». Показать вместо этого «сервер отклонил запрос»
+ * значит заставить человека гадать, что именно не так.
+ */
+export async function uploadErrorNote(e: unknown): Promise<string> {
+  return (await serverErrorMessage(e)) ?? 'Не удалось загрузить файл: сервер отклонил запрос.'
 }
 
 /** Сдвиг, после которого нажатие становится перетаскиванием, а не выбором. */
@@ -261,6 +283,7 @@ function dropClassFor(hint: DropHint): string {
  */
 export function EditorsPanel({
   events, assets, assetUrls, syncNote, onChanged, onUpload, onImportInto, presence, onEditing,
+  assetUsage, onDeleteAsset, assetNote, assetBusyId,
 }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [filter, setFilter] = useState('')
@@ -418,6 +441,29 @@ export function EditorsPanel({
   const selectedRow = rows.find((r) => r.id === selectedId)
   const attachedIds = ((selectedMap?.get('assets') as string[] | undefined) ?? []).filter(Boolean)
   const images = assets.filter((a) => attachedIds.includes(a.id) && a.mime.startsWith('image/'))
+
+  /**
+   * Файлы, прикреплённые хоть к одному кадру проекта.
+   *
+   * Нужны списку файлов: такой файл удалять нельзя (в CRDT-документе осталась бы
+   * ссылка), и кнопка должна быть выключена заранее, с объяснением, а не отвечать
+   * отказом сервера. Фон считается ссылкой только когда выбран картинкой.
+   */
+  const usedAssetIds = useMemo(() => {
+    void version
+    const used = new Set<string>()
+    const list = (events?.toArray() as YMap[] | undefined) ?? []
+    for (const map of list) {
+      for (const id of ((map.get('assets') as string[] | undefined) ?? []).filter(Boolean)) {
+        used.add(id)
+      }
+      if (map.get('bg_kind') === 'asset') {
+        const background = map.get('bg_asset')
+        if (typeof background === 'string' && background) used.add(background)
+      }
+    }
+    return used
+  }, [events, version])
 
   // ─── импорт куска md «в место» ────────────────────────────────────────────
   //
@@ -604,7 +650,16 @@ export function EditorsPanel({
     }
     const targetId = selectedId
     void (async () => {
-      const asset = await onUpload(file)
+      let asset: Asset | null = null
+      try {
+        asset = await onUpload(file)
+      } catch (e) {
+        // Сервер объясняет отказ своими словами — «в проекте занято 9.4 МБ из
+        // 10 МБ — файл на 1.2 МБ не помещается». Показать вместо этого «сервер
+        // отклонил запрос» значит заставить человека гадать, что не так.
+        setUploadNote(await uploadErrorNote(e))
+        return
+      }
       if (!asset) {
         setUploadNote('Не удалось загрузить файл (сервер отклонил запрос).')
         return
@@ -1267,6 +1322,15 @@ export function EditorsPanel({
           )}
         </div>
       </div>
+
+      <ProjectFiles
+        assets={assets}
+        usage={assetUsage ?? null}
+        attached={usedAssetIds}
+        busyId={assetBusyId ?? null}
+        note={assetNote ?? null}
+        onDelete={(asset) => onDeleteAsset?.(asset)}
+      />
 
       {/* Подпись переноса — в body: список прокручивается (`overflow`), и внутри
           навигатора подсказку обрезало бы. */}

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { Asset } from '../../api/assets'
 
-import { uploadNoteFor } from './EditorsPanel'
+import { uploadErrorNote, uploadNoteFor } from './EditorsPanel'
 
 /**
  * Подсказка после загрузки. Сервер пережимает картинки в WebP и меняет имя файла,
@@ -51,5 +51,23 @@ describe('uploadNoteFor', () => {
       asset({ filename: 'схема.webp', mime: 'image/webp', size: 4096 }),
     )
     expect(note).toBe('Загружено: схема.webp')
+  })
+})
+
+describe('uploadErrorNote', () => {
+  it('показывает текст сервера: «не помещается» вместо «сервер отклонил запрос»', async () => {
+    const error = {
+      response: new Response(JSON.stringify({ error: 'в проекте занято 9.4 МБ из 10.0 МБ — файл на 1.2 МБ не помещается' }), {
+        status: 413,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    }
+    expect(await uploadErrorNote(error)).toContain('не помещается')
+  })
+
+  it('без ответа сервера — своё сообщение, но понятное', async () => {
+    expect(await uploadErrorNote(new TypeError('Failed to fetch'))).toBe(
+      'Не удалось загрузить файл: сервер отклонил запрос.',
+    )
   })
 })

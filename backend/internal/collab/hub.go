@@ -331,6 +331,46 @@ func (h *Hub) InsertLive(
 	return outcome, nil
 }
 
+// AssetUsage — сколько кадров проекта ссылаются на файл (см. yjs.Doc.AssetUsage).
+//
+// Нужно удалению вложения: пока на файл смотрят кадры, удалять его нельзя — в
+// документе осталась бы ссылка на несуществующий объект. Живая комната впереди
+// снапшота базы, поэтому сначала спрашиваем её; если комнаты нет (никто не
+// открывал проект) или её документ ещё читается — берём снапшот. В момент
+// загрузки комнаты снапшот и есть то состояние, которое в неё приезжает, так что
+// ответ от этого не становится неверным.
+func (h *Hub) AssetUsage(ctx context.Context, projectID, assetID uuid.UUID) (int, error) {
+	h.mu.RLock()
+	room := h.rooms[projectID]
+	h.mu.RUnlock()
+
+	if room != nil {
+		room.docMu.Lock()
+		doc := room.doc
+		usage := 0
+		if doc != nil {
+			usage = doc.AssetUsage(assetID.String())
+		}
+		room.docMu.Unlock()
+		if doc != nil {
+			return usage, nil
+		}
+	}
+
+	state, err := h.ev.YjsStateServer(ctx, projectID)
+	if err != nil {
+		return 0, err
+	}
+	if len(state) == 0 {
+		return 0, nil
+	}
+	doc, err := yjs.FromState(state)
+	if err != nil {
+		return 0, err
+	}
+	return doc.AssetUsage(assetID.String()), nil
+}
+
 // HandleWS — http.Handler для /api/projects/{id}/collab.
 func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 	tok := r.URL.Query().Get("token")

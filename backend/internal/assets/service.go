@@ -26,6 +26,52 @@ var (
 	ErrBadMime  = errors.New("unsupported mime type")
 )
 
+// QuotaError — в проекте не осталось места под файл. Ошибка нарочно «говорящая»:
+// её текст показывают человеку в панели редактора, поэтому в нём и занятое место,
+// и предел, и вес файла — чтобы было понятно, что удалять.
+type QuotaError struct {
+	Used     int64
+	Limit    int64
+	Incoming int64
+}
+
+func (e *QuotaError) Error() string {
+	return fmt.Sprintf("в проекте занято %s из %s — файл на %s не помещается",
+		HumanBytes(e.Used), HumanBytes(e.Limit), HumanBytes(e.Incoming))
+}
+
+// InUseError — файл прикреплён к кадрам, удалять его нельзя.
+type InUseError struct {
+	Events int
+}
+
+func (e *InUseError) Error() string {
+	if e.Events == 1 {
+		return "файл прикреплён к кадру — сначала открепите его"
+	}
+	return fmt.Sprintf("файл прикреплён к %d кадрам — сначала открепите его", e.Events)
+}
+
+// QuotaExceeded — можно ли считать ошибку превышением квоты (для HTTP-кода).
+func QuotaExceeded(err error) bool {
+	var quota *QuotaError
+	return errors.As(err, &quota)
+}
+
+// HumanBytes — размер по-человечески: «9.4 МБ», «512 КБ». Нужен в сообщениях о
+// квоте: «занято 9437184 из 10485760» человеку ничего не говорит.
+func HumanBytes(bytes int64) string {
+	switch {
+	case bytes >= 1<<30:
+		return fmt.Sprintf("%.1f ГБ", float64(bytes)/(1<<30))
+	case bytes >= 1<<20:
+		return fmt.Sprintf("%.1f МБ", float64(bytes)/(1<<20))
+	case bytes >= 1<<10:
+		return fmt.Sprintf("%.0f КБ", float64(bytes)/(1<<10))
+	}
+	return fmt.Sprintf("%d Б", bytes)
+}
+
 const maxAssetSize = 50 * 1024 * 1024 // 50 MB
 
 // MaxAssetSize — предел размера одного вложения. Экспортирован, потому что его
@@ -46,11 +92,40 @@ type Service struct {
 	obj    storage.ObjectStore
 	proj   *projects.Service
 	logger *slog.Logger
+	// quota — предел суммы вложений проекта (0 — без предела). Считается по
+	// строкам `assets`, то есть по весу ПОСЛЕ пережатия: картинка на 8 МБ,
+	// приехавшая как 300 КБ webp, занимает 300 КБ.
+	quota int64
+	// usage — кто умеет сказать, прикреплён ли файл к кадрам (реализует
+	// collab.Hub). Без него удаление файла запрещено: проверять ссылки нечем, а
+	// удалять прикреплённое нельзя.
+	usage UsageChecker
+}
+
+// UsageChecker — расход файла по документу проекта.
+//
+// Интерфейс объявлен здесь, а реализует его хаб: вложения не должны зависеть от
+// collab (иначе сервис файлов и realtime сцепятся намертво).
+type UsageChecker interface {
+	AssetUsage(ctx context.Context, projectID, assetID uuid.UUID) (int, error)
 }
 
 func New(s *store.Store, obj storage.ObjectStore, proj *projects.Service) *Service {
 	return &Service{store: s, obj: obj, proj: proj, logger: slog.Default()}
 }
+
+// UseQuota задаёт предел суммы вложений проекта; 0 или меньше — без предела.
+func (s *Service) UseQuota(limit int64) {
+	if limit > 0 {
+		s.quota = limit
+	}
+}
+
+// UseUsage подключает проверку ссылок в документе (нужна удалению файла).
+func (s *Service) UseUsage(checker UsageChecker) { s.usage = checker }
+
+// Quota — текущий предел (0 — без предела): отчёт админки показывает его людям.
+func (s *Service) Quota() int64 { return s.quota }
 
 // UseLogger подключает логгер сервиса. Нужен только для одного: сообщить, что
 // картинку не удалось пережать и файл сохранён как есть (см. storeImage). Без него
@@ -150,6 +225,10 @@ type putFile struct {
 func (s *Service) storeBytes(
 	ctx context.Context, projectID, owner uuid.UUID, file putFile, data []byte,
 ) (*store.Asset, error) {
+	if err := s.checkQuota(ctx, projectID, file.Size); err != nil {
+		return nil, err
+	}
+
 	digest := sha256.Sum256(data)
 	hash := hex.EncodeToString(digest[:])
 
@@ -184,6 +263,11 @@ func (s *Service) storeBytes(
 func (s *Service) storeStream(
 	ctx context.Context, projectID, owner uuid.UUID, file putFile, r io.Reader,
 ) (*store.Asset, error) {
+	// Квоту проверяем до записи: размер не-картиночного файла не меняется, поэтому
+	// заявленный вес — это и есть то, что окажется в строке и на диске.
+	if err := s.checkQuota(ctx, projectID, file.Size); err != nil {
+		return nil, err
+	}
 	hasher := sha256.New()
 	key := ObjectKey(projectID, file.Name)
 	if err := s.obj.Put(ctx, key, file.Mime, io.TeeReader(r, hasher), file.Size); err != nil {
@@ -207,6 +291,79 @@ func (s *Service) storeStream(
 		return nil, err
 	}
 	return asset, err
+}
+
+// checkQuota решает, помещается ли файл в проект.
+//
+// Место считаем по строкам `assets` проекта, то есть по весу уже пережатых файлов:
+// загруженное фото на 8 МБ приезжает как 300 КБ и столько и занимает. Дедупликация
+// квоту не уменьшает: файл, который уже есть в хранилище, всё равно становится
+// вложением проекта — проект получает его в своё содержимое.
+//
+// Проверка не транзакционная: две одновременные загрузки могут обе увидеть место и
+// вместе перебрать предел на один файл. Это осознанно — квота защищает диск от
+// «проект на гигабайт», а не считает байты до последнего; отдельная блокировка на
+// каждый upload стоила бы дороже.
+func (s *Service) checkQuota(ctx context.Context, projectID uuid.UUID, incoming int64) error {
+	if s.quota <= 0 {
+		return nil
+	}
+	used, err := s.store.SumProjectAssetBytes(ctx, projectID)
+	if err != nil {
+		return err
+	}
+	if used+incoming > s.quota {
+		return &QuotaError{Used: used, Limit: s.quota, Incoming: incoming}
+	}
+	return nil
+}
+
+// Usage — сколько занято и каков предел: нужно интерфейсу, чтобы показать
+// «8.4 МБ из 10 МБ» до того, как человек упрётся в отказ, и чтобы было видно, что
+// удаление файла освобождает место.
+func (s *Service) Usage(ctx context.Context, actorID, projectID uuid.UUID) (used, limit int64, err error) {
+	if _, err := s.proj.Get(ctx, actorID, projectID); err != nil {
+		return 0, 0, err
+	}
+	used, err = s.store.SumProjectAssetBytes(ctx, projectID)
+	return used, s.quota, err
+}
+
+// Delete убирает вложение проекта: строку и, если на файл больше никто не
+// ссылается, сам файл (дедупликация: один и тот же объект бывает у нескольких
+// проектов и строк).
+//
+// Файл, прикреплённый к кадрам, удалить нельзя: в CRDT-документе осталась бы
+// ссылка на несуществующий объект, и кадр показывал бы пустое место. Сначала
+// человек открепляет файл от кадров (кнопка «открепить» в редакторе), потом
+// удаляет. Так порядок действий виден, а не «файл исчез вместе с картинкой».
+func (s *Service) Delete(ctx context.Context, actorID, assetID uuid.UUID) error {
+	asset, err := s.store.GetAsset(ctx, assetID)
+	if err != nil {
+		return err
+	}
+	if err := s.proj.RequireEditor(ctx, actorID, asset.ProjectID); err != nil {
+		return err
+	}
+	if s.usage != nil {
+		usage, err := s.usage.AssetUsage(ctx, asset.ProjectID, assetID)
+		if err != nil {
+			return err
+		}
+		if usage > 0 {
+			return &InUseError{Events: usage}
+		}
+	}
+	if err := s.store.DeleteAsset(ctx, assetID); err != nil {
+		return err
+	}
+	// Файл убираем после строки: «сколько осталось ссылок» — это и есть ответ на
+	// вопрос, нужен ли он ещё кому-нибудь. Ошибка уборки запрос не валит —
+	// потерянный файл найдёт уборщик хранилища.
+	if _, err := s.DeleteUnreferencedFiles(ctx, []string{asset.S3Key}); err != nil {
+		s.logger.Warn("asset delete: file not removed", "key", asset.S3Key, "err", err)
+	}
+	return nil
 }
 
 // insertAsset создаёт строку вложения для уже записанного файла.

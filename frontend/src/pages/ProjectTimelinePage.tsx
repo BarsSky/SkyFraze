@@ -7,7 +7,8 @@ import { ErrorBanner } from '../components/ErrorBanner'
 import { useCollab, yAddEvent, type YMap } from '../collab/yprovider'
 import { titleString } from '../collab/text'
 import { connectionNotice } from '../collab/connection'
-import { listAssets, uploadAsset, type Asset } from '../api/assets'
+import { assetUsage, deleteAsset, listAssets, uploadAsset, type Asset, type AssetUsage } from '../api/assets'
+import { serverErrorMessage } from '../api/client'
 import {
   importMarkdownInto,
   type MarkdownImportResult,
@@ -29,6 +30,9 @@ export function ProjectTimelinePage() {
   const projectId = params.id ?? ''
   const [project, setProject] = useState<Project | null>(null)
   const [assets, setAssets] = useState<Asset[]>([])
+  const [assetUsageInfo, setAssetUsage] = useState<AssetUsage | null>(null)
+  const [assetNote, setAssetNote] = useState<string | null>(null)
+  const [assetBusyId, setAssetBusyId] = useState<string | null>(null)
   const [eventsCount, setEventsCount] = useState<number>(-1) // -1 = loading
   /** Названия событий для бара присутствия: подпись «Аня правит …». */
   const [eventTitles, setEventTitles] = useState<Array<{ id: string; title: string }>>([])
@@ -96,6 +100,42 @@ export function ProjectTimelinePage() {
       /* ignore: покажем то, что уже есть */
     }
   }, [projectId])
+
+  /**
+   * Расход места в проекте: «занято 8.4 МБ из 10 МБ».
+   *
+   * Отдельным запросом, потому что список файлов — массив, и служебное поле в нём
+   * ломало бы всех, кто его читает. Ошибку молча оставляем: без расхода список
+   * файлов просто покажет суммарный вес, а работать в проекте это не мешает.
+   */
+  useEffect(() => {
+    if (!projectId) return
+    assetUsage(projectId).then(setAssetUsage).catch(() => setAssetUsage(null))
+  }, [projectId, attempt])
+
+  /**
+   * Удаление файла проекта.
+   *
+   * Сервер откажет, если файл ещё прикреплён к кадрам (409), и объяснит это
+   * словами — показываем их как есть. После успеха перечитываем и список, и
+   * расход: квота освободилась, и это должно быть видно.
+   */
+  const deleteFile = useCallback(
+    async (asset: Asset) => {
+      setAssetBusyId(asset.id)
+      setAssetNote(null)
+      try {
+        await deleteAsset(projectId, asset.id)
+        await refreshAssets()
+        assetUsage(projectId).then(setAssetUsage).catch(() => undefined)
+      } catch (e) {
+        setAssetNote((await serverErrorMessage(e)) ?? 'Не удалось удалить файл.')
+      } finally {
+        setAssetBusyId(null)
+      }
+    },
+    [projectId, refreshAssets],
+  )
 
   // Длина Y.Array: переключение empty-state ↔ стадия и зависимость для мемо.
   useEffect(() => {
@@ -313,6 +353,10 @@ export function ProjectTimelinePage() {
             onImportInto={canEdit ? importIntoProject : undefined}
             presence={collab?.presence}
             onEditing={collab?.setEditing}
+            assetUsage={assetUsageInfo}
+            onDeleteAsset={canEdit ? deleteFile : undefined}
+            assetNote={assetNote}
+            assetBusyId={assetBusyId}
           />
         </>
       )}

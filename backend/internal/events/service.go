@@ -61,6 +61,20 @@ func (s *Service) GetYjsState(ctx context.Context, userID, projectID uuid.UUID) 
 	return st.YjsState, st.Revision, nil
 }
 
+// YjsStateServer — снапшот проекта без проверки прав: он нужен серверу для
+// собственных решений, а не человеку. Так удаление вложения узнаёт, прикреплён ли
+// файл к кадрам, когда комнаты нет (см. collab.Hub.AssetUsage).
+func (s *Service) YjsStateServer(ctx context.Context, projectID uuid.UUID) ([]byte, error) {
+	st, err := s.store.GetProjectEventState(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	if st == nil {
+		return nil, nil
+	}
+	return st.YjsState, nil
+}
+
 // SaveYjsState записывает снапшот. Нужны роль editor+ и актуальная базовая
 // ревизия: при расхождении возвращается store.ErrRevisionConflict, клиент
 // перечитывает состояние и повторяет (CRDT-merge не теряет правки).

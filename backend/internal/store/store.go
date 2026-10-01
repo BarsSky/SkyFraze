@@ -988,10 +988,25 @@ func (s *Store) FindAssetByHash(ctx context.Context, hash string) (*Asset, error
 // CountAssetsByKey — сколько строк вложений ссылается на файл с таким ключом.
 // Ноль означает «файл больше никому не нужен», и только тогда его можно удалять:
 // после дедупликации одним файлом пользуются несколько проектов.
+// CountAssetsByKey — сколько строк вложений ссылаются на один файл.
 func (s *Store) CountAssetsByKey(ctx context.Context, key string) (int, error) {
 	var count int
 	err := s.Pool.QueryRow(ctx, `SELECT count(*) FROM assets WHERE s3_key=$1`, key).Scan(&count)
 	return count, err
+}
+
+// SumProjectAssetBytes — сколько места занимают вложения проекта по строкам
+// `assets`. Это ровно то, что записано в хранилище после пережатия: размер
+// строки — размер файла, на который она ссылается (дедупликация ключ не меняет).
+//
+// Считаем по строкам, а не по уникальным ключам: квота проекта — про то, что
+// проект содержит, а не про то, сколько места он добавил на диск. Один и тот же
+// файл в двух проектах занимает место в квоте каждого.
+func (s *Store) SumProjectAssetBytes(ctx context.Context, projectID uuid.UUID) (int64, error) {
+	var total int64
+	err := s.Pool.QueryRow(ctx,
+		`SELECT COALESCE(sum(size), 0) FROM assets WHERE project_id=$1`, projectID).Scan(&total)
+	return total, err
 }
 
 // ListAssetsByKey — все строки вложений, ссылающиеся на один файл: после

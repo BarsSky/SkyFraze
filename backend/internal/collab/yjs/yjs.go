@@ -147,8 +147,58 @@ func (d *Doc) Events() []Event {
 	return out
 }
 
-// EventSeed — событие для вставки в документ (импорт куска в существующий проект,
-// засев документа из реляционных строк, сборка документа при импорте).
+// AssetUsage — сколько кадров ссылаются на вложение: держат его в списке
+// вложений (`assets`) или выбрали фоном кадра (`bg_asset` при `bg_kind: asset`).
+//
+// Зачем это серверу. Удалить файл, пока на него смотрят кадры, нельзя: в
+// документе остался бы идентификатор несуществующего объекта, и кадр показывал бы
+// пустое место. Прочитать это через Events() не получится — в читаемой модели
+// вложений нет (они нужны только здесь), поэтому смотрим сами карты событий.
+func (d *Doc) AssetUsage(assetID string) int {
+	if assetID == "" {
+		return 0
+	}
+	usage := 0
+	events := ygo.NewArray(d.inner, EventsRoot)
+	events.Range(func(_ uint64, value any) bool {
+		item, ok := value.(*ygo.Map)
+		if !ok {
+			return true
+		}
+		if stringField(item, "bg_kind") == "asset" && stringField(item, "bg_asset") == assetID {
+			usage++
+			return true
+		}
+		if assetListContains(item.Get("assets"), assetID) {
+			usage++
+		}
+		return true
+	})
+	return usage
+}
+
+// assetListContains — есть ли id в списке вложений кадра. Список приходит как
+// обычный массив (клиент пишет map.set('assets', [...])), но после разбора
+// снапшота элементы могут быть любого типа — сверяем только строки.
+func assetListContains(raw any, assetID string) bool {
+	switch list := raw.(type) {
+	case []any:
+		for _, entry := range list {
+			if s, ok := entry.(string); ok && s == assetID {
+				return true
+			}
+		}
+	case []string:
+		for _, entry := range list {
+			if entry == assetID {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// EventSeed — событие для вставки в документ (импорт куска в существующий проект,// засев документа из реляционных строк, сборка документа при импорте).
 type EventSeed struct {
 	ID        string
 	ParentID  string
