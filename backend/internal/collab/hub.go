@@ -571,6 +571,9 @@ func (r *Room) broadcastState() {
 		select {
 		case c.send <- state:
 		default:
+			// Тот же принцип, что и в broadcast: медленный клиент переподключится
+			// и получит состояние заново, вместо того чтобы остаться с устаревшим.
+			_ = c.conn.Close()
 		}
 	}
 }
@@ -625,12 +628,18 @@ func (r *Room) persistFromAnyClient(ctx context.Context, ev *events.Service, log
 		logger.Warn("collab: tree projection failed", "project", r.projectID, "err", err)
 		return
 	}
+	logger.Debug("collab: tree projected", "project", r.projectID, "events", len(nodes))
 	r.docMu.Lock()
 	r.projectionSignature = signature
 	r.docMu.Unlock()
 }
 
 // broadcast — рассылает обновление всем клиентам в комнате кроме отправителя.
+//
+// Если у клиента переполнен буфер отправки (медленная сеть, замерший скрипт), его
+// соединение рвётся, а не «проглатывает» апдейт: молча потерянная дельта оставила
+// бы вкладку с устаревшим документом до перезагрузки, а после разрыва клиент
+// переподключается и получает состояние комнаты целиком.
 func (r *Room) broadcast(from *client, msg []byte) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -641,6 +650,7 @@ func (r *Room) broadcast(from *client, msg []byte) {
 		select {
 		case c.send <- msg:
 		default:
+			_ = c.conn.Close()
 		}
 	}
 }
