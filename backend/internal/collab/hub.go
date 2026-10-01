@@ -48,6 +48,12 @@ const (
 	// Присутствие едет тем же сокетом, что и CRDT, но документом не является:
 	// такие кадры только релеятся, применять их к серверному документу нельзя.
 	presencePrefix = "sfp1:"
+	// roomLoadWait и roomLoadPoll — сколько ждать загрузку документа комнаты перед
+	// правкой сервера (импорт «в место»). Комната появляется на подключении
+	// клиента, а документ читается из базы уже после; писать в снапшот в этот
+	// момент нельзя — комната затрёт вставку своим состоянием.
+	roomLoadWait = 3 * time.Second
+	roomLoadPoll = 20 * time.Millisecond
 )
 
 // Hub — реестр комнат.
@@ -230,10 +236,10 @@ func (h *Hub) removeIfEmpty(projectID uuid.UUID) {
 
 // InsertLive вставляет события в документ ЖИВОЙ комнаты и рассылает апдейт.
 //
-// Возвращает false, если комнаты нет (или её документ ещё не загрузился): тогда
-// вызывающий пишет снапшот в базу сам, а комната получит вставку при следующей
-// загрузке документа. Это второй по важности случай — так работает импорт у
-// вкладки без realtime, из CLI и при выключенном WebSocket.
+// Handled=false означает «комнаты нет»: тогда вызывающий пишет снапшот в базу
+// сам, а комната получит вставку при следующей загрузке документа. Это второй по
+// важности случай — так работает импорт у вкладки без realtime, из CLI и при
+// выключенном WebSocket. Остальные исходы — в yjs.InsertOutcome.
 //
 // Почему вставка обязана идти через комнату. Пока в проекте кто-то редактирует,
 // сервер держит документ в памяти и сохраняет ИМЕННО ЕГО. Запись только в снапшот
@@ -246,29 +252,55 @@ func (h *Hub) removeIfEmpty(projectID uuid.UUID) {
 // событие, а не на строку, которой в документе нет.
 func (h *Hub) InsertLive(
 	ctx context.Context, projectID, by uuid.UUID, seeds []yjs.EventSeed, place yjs.InsertPlace,
-) (bool, error) {
+) (yjs.InsertOutcome, error) {
 	if len(seeds) == 0 {
-		return true, nil
+		return yjs.InsertOutcome{Handled: true}, nil
 	}
 	h.mu.RLock()
 	room := h.rooms[projectID]
 	h.mu.RUnlock()
 	if room == nil {
-		return false, nil
+		return yjs.InsertOutcome{}, nil
 	}
 
 	room.docMu.Lock()
-	if room.doc == nil {
+	// Комната могла появиться ровно сейчас, и её документ ещё читается из базы
+	// (ensureDoc отпускает docMu на время запроса). Писать в снапшот в этот момент
+	// нельзя: комната загрузит ДОимпортное состояние и затрёт вставку своим
+	// ближайшим сохранением — импорт потерялся бы молча. Поэтому ждём загрузку
+	// (обычно это миллисекунды), а если она затянулась — просим повторить запрос.
+	deadline := time.Now().Add(roomLoadWait)
+	for room.doc == nil && room.loading && time.Now().Before(deadline) {
 		room.docMu.Unlock()
-		return false, nil
+		time.Sleep(roomLoadPoll)
+		room.docMu.Lock()
 	}
+	if room.doc == nil {
+		loading := room.loading
+		room.docMu.Unlock()
+		if loading {
+			return yjs.InsertOutcome{RoomLoading: true}, nil
+		}
+		// Документа нет и загрузка не идёт (не удалась или не начиналась):
+		// снапшот пишет вызывающий, комната подхватит его при следующей загрузке.
+		return yjs.InsertOutcome{}, nil
+	}
+
+	// Глубину проверяем ДО вставки: `NormalizeTree` отвергнет слишком глубокое
+	// дерево уже после неё, и проекция таблицы событий осталась бы устаревшей,
+	// а документ — с событиями, которых в ней нет.
+	if !events.FitsDepth(room.doc.InsertMaxDepth(seeds)) {
+		room.docMu.Unlock()
+		return yjs.InsertOutcome{Handled: true, TooDeep: true}, nil
+	}
+
 	// Вектор состояния ДО вставки: разница по нему — ровно тот апдейт, который
 	// получат клиенты. Полное состояние для этого не нужно: импорт может быть
 	// большим, а рассылка — редкой.
 	before := room.doc.StateVector()
 	if err := room.doc.InsertAt(place, seeds); err != nil {
 		room.docMu.Unlock()
-		return true, err
+		return yjs.InsertOutcome{Handled: true}, err
 	}
 	update, err := room.doc.Diff(before)
 	room.dirty = true
@@ -279,7 +311,7 @@ func (h *Hub) InsertLive(
 	room.migratedEvents = room.doc.EventCount()
 	room.docMu.Unlock()
 	if err != nil {
-		return true, err
+		return yjs.InsertOutcome{Handled: true}, err
 	}
 
 	// Апдейт уходит всем, включая инициатора: его вкладка — такая же клиентка
@@ -287,9 +319,16 @@ func (h *Hub) InsertLive(
 	room.broadcast(nil, update)
 	h.logger.Info("collab: events inserted into live doc", "project", projectID, "user", by, "events", len(seeds))
 	// Снапшот и проекция — сразу, не дожидаясь тика: импорт редкая и осознанная
-	// операция, и после неё дерево в базе должно совпадать с документом.
-	room.persistFromAnyClient(ctx, h.ev, h.logger)
-	return true, nil
+	// операция, и после неё дерево в базе должно совпадать с документом. Сбой
+	// записи не отменяет вставку (события уже у всех в документе, и повторять
+	// импорт нельзя — он бы задвоил кусок), поэтому он возвращается
+	// предупреждением для человека, а не ошибкой запроса.
+	outcome := yjs.InsertOutcome{Handled: true}
+	if err := room.persistFromAnyClient(ctx, h.ev, h.logger); err != nil {
+		outcome.Warning = "кусок вставлен в проект, но серверная копия не обновилась: " +
+			err.Error() + " — сервер повторит сохранение сам"
+	}
+	return outcome, nil
 }
 
 // HandleWS — http.Handler для /api/projects/{id}/collab.
@@ -569,18 +608,23 @@ func (r *Room) broadcastState() {
 // Флаг «грязно» снимается ДО записи: апдейт, пришедший во время сохранения, снова
 // его поставит, и следующий тик запишет и его. Обратный порядок потерял бы правку,
 // пришедшую в окне между кодированием и записью.
-func (r *Room) persistFromAnyClient(ctx context.Context, ev *events.Service, logger *slog.Logger) {
+//
+// Ошибка возвращается тому, кто сохраняет по своей инициативе (импорт «в место»):
+// там сбой записи нужно показать человеку. Тик и уход клиента ошибку игнорируют —
+// они всё равно повторят попытку, а показать её некому.
+func (r *Room) persistFromAnyClient(ctx context.Context, ev *events.Service, logger *slog.Logger) error {
 	r.docMu.Lock()
 	doc, dirty, by := r.doc, r.dirty, r.lastBy
 	if doc == nil {
 		r.docMu.Unlock()
-		return
+		return nil
 	}
 	// Проекцию читаем из того же состояния, что уходит в снапшот: иначе они
 	// разъехались бы (в снапшоте одна структура, в таблице событий другая).
 	nodes, signature := projectionPayload(doc)
 	r.docMu.Unlock()
 
+	var saveErr error
 	if dirty {
 		r.docMu.Lock()
 		state := doc.EncodeState()
@@ -592,6 +636,7 @@ func (r *Room) persistFromAnyClient(ctx context.Context, ev *events.Service, log
 			r.dirty = true
 			r.docMu.Unlock()
 			logger.Warn("collab: snapshot save failed", "project", r.projectID, "err", err)
+			saveErr = fmt.Errorf("снапшот не сохранился (%v)", err)
 		}
 	}
 
@@ -603,7 +648,7 @@ func (r *Room) persistFromAnyClient(ctx context.Context, ev *events.Service, log
 	unchanged := signature == r.projectionSignature
 	r.docMu.Unlock()
 	if unchanged {
-		return
+		return saveErr
 	}
 
 	if err := ev.ProjectTreeServer(ctx, r.projectID, by, nodes); err != nil {
@@ -611,12 +656,16 @@ func (r *Room) persistFromAnyClient(ctx context.Context, ev *events.Service, log
 		// недоступна: оставляем прошлую проекцию и попробуем на следующем тике.
 		// Подпись НЕ обновляем — иначе повторной попытки не будет.
 		logger.Warn("collab: tree projection failed", "project", r.projectID, "err", err)
-		return
+		if saveErr != nil {
+			return saveErr
+		}
+		return fmt.Errorf("таблица событий не перестроена (%v)", err)
 	}
 	logger.Debug("collab: tree projected", "project", r.projectID, "events", len(nodes))
 	r.docMu.Lock()
 	r.projectionSignature = signature
 	r.docMu.Unlock()
+	return saveErr
 }
 
 // broadcast — рассылает обновление всем клиентам в комнате кроме отправителя.

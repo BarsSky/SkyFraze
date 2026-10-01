@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -60,8 +62,8 @@ func TestImportMarkdownInto_InsertsIntoExistingProject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("вставка: %v", err)
 	}
-	if created != 2 {
-		t.Fatalf("вставлено событий %d, ожидалось 2", created)
+	if created.Events != 2 {
+		t.Fatalf("вставлено событий %d, ожидалось 2", created.Events)
 	}
 
 	// Таблица событий: прежняя глава на месте, вставленное — после неё и вложено верно.
@@ -240,9 +242,11 @@ func TestImportMarkdownInto_BeforeEvent(t *testing.T) {
 }
 
 // stubLive — подставная живая комната: проверяем, что импорт «в место» идёт к ней,
-// а не в снапшот базы, и что «комнаты нет» возвращает работу вызывающему.
+// а не в снапшот базы, что «комнаты нет» возвращает работу вызывающему и что
+// исходы комнаты (не влез по глубине, документ ещё грузится, серверная копия
+// отстала) превращаются в понятные ответы, а не в 500.
 type stubLive struct {
-	handled bool
+	outcome yjs.InsertOutcome
 	calls   int
 	seeds   []yjs.EventSeed
 	place   yjs.InsertPlace
@@ -250,11 +254,11 @@ type stubLive struct {
 
 func (s *stubLive) InsertLive(
 	_ context.Context, _ uuid.UUID, _ uuid.UUID, seeds []yjs.EventSeed, place yjs.InsertPlace,
-) (bool, error) {
+) (yjs.InsertOutcome, error) {
 	s.calls++
 	s.seeds = seeds
 	s.place = place
-	return s.handled, nil
+	return s.outcome, nil
 }
 
 func TestImportMarkdownInto_UsesLiveRoom(t *testing.T) {
@@ -273,15 +277,15 @@ func TestImportMarkdownInto_UsesLiveRoom(t *testing.T) {
 
 	// Комната обработала вставку: в базу transfer не пишет ничего — это делает хаб
 	// (снапшот и проекция), иначе документ комнаты и снапшот разъехались бы.
-	live := &stubLive{handled: true}
+	live := &stubLive{outcome: yjs.InsertOutcome{Handled: true}}
 	e.transfer.UseLiveDoc(live)
 	created, err := e.transfer.ImportMarkdownInto(ctx, owner, project.ID, parsed,
 		transfer.InsertPlace{ParentID: &target, AfterID: nil})
 	if err != nil {
 		t.Fatalf("вставка: %v", err)
 	}
-	if created != 1 || live.calls != 1 {
-		t.Fatalf("вставлено %d, вызовов комнаты %d", created, live.calls)
+	if created.Events != 1 || live.calls != 1 {
+		t.Fatalf("вставлено %d, вызовов комнаты %d", created.Events, live.calls)
 	}
 	if live.place.ParentID != target.String() {
 		t.Errorf("место вставки не доехало до комнаты: %+v", live.place)
@@ -298,7 +302,7 @@ func TestImportMarkdownInto_UsesLiveRoom(t *testing.T) {
 	}
 
 	// Комнаты нет — работа возвращается transfer, и он пишет снапшот сам.
-	live.handled = false
+	live.outcome = yjs.InsertOutcome{}
 	if _, err := e.transfer.ImportMarkdownInto(ctx, owner, project.ID, parsed, transfer.InsertPlace{}); err != nil {
 		t.Fatalf("вставка без комнаты: %v", err)
 	}
@@ -309,6 +313,120 @@ func TestImportMarkdownInto_UsesLiveRoom(t *testing.T) {
 	rows, err = e.st.ListEvents(ctx, project.ID)
 	if err != nil || len(rows) != 1 || rows[0].Title != "Кусок" {
 		t.Fatalf("без комнаты таблица событий обязана заполниться: %+v (err=%v)", rows, err)
+	}
+}
+
+// Отказы, которые видит человек: кусок не влезает по глубине (400, до записи) и
+// документ комнаты ещё грузится (503 с Retry-After, запрос повторяемый). Оба —
+// исходы комнаты, а не ошибки сервера.
+func TestImportMarkdownInto_OutcomesFromRoom(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	owner := e.user(t, "owner@example.com")
+	project, err := e.proj.Create(ctx, owner, "Исходы комнаты", "")
+	if err != nil {
+		t.Fatalf("проект: %v", err)
+	}
+	parsed, err := parseFolder(t, map[string]string{
+		"01-Кусок.md":    "# Кусок\nТело куска.\n",
+		"01.1-Внутри.md": "# Внутри\nТело внутри.\n",
+	})
+	if err != nil {
+		t.Fatalf("разбор: %v", err)
+	}
+	live := &stubLive{outcome: yjs.InsertOutcome{Handled: true, TooDeep: true}}
+	e.transfer.UseLiveDoc(live)
+
+	if _, err := e.transfer.ImportMarkdownInto(ctx, owner, project.ID, parsed, transfer.InsertPlace{}); !errors.Is(err, transfer.ErrMarkdownTooDeep) {
+		t.Fatalf("слишком глубокий кусок: %v", err)
+	}
+	if _, err := e.st.GetProjectEventState(ctx, project.ID); err != nil {
+		t.Fatalf("снапшот: %v", err)
+	}
+	if rows, err := e.st.ListEvents(ctx, project.ID); err != nil || len(rows) != 0 {
+		t.Fatalf("отказ по глубине ничего не пишет: %+v (err=%v)", rows, err)
+	}
+
+	// Документ комнаты ещё грузится: снапшот писать нельзя (комната его затрёт),
+	// ответ — «повторите», а не «готово».
+	live.outcome = yjs.InsertOutcome{RoomLoading: true}
+	if _, err := e.transfer.ImportMarkdownInto(ctx, owner, project.ID, parsed, transfer.InsertPlace{}); !errors.Is(err, transfer.ErrMarkdownBusy) {
+		t.Fatalf("загрузка комнаты: %v", err)
+	}
+	if state, err := e.st.GetProjectEventState(ctx, project.ID); err != nil || state != nil {
+		t.Fatalf("при загрузке комнаты снапшот не пишем: %+v (err=%v)", state, err)
+	}
+
+	// Вставка прошла, но серверная копия отстала: это предупреждение в ответе, а
+	// не ошибка — события уже в документе, и повторять импорт нельзя.
+	live.outcome = yjs.InsertOutcome{Handled: true, Warning: "снапшот не сохранился"}
+	res, err := e.transfer.ImportMarkdownInto(ctx, owner, project.ID, parsed, transfer.InsertPlace{})
+	if err != nil {
+		t.Fatalf("вставка с предупреждением: %v", err)
+	}
+	if res.Events != 2 || res.Warning != "снапшот не сохранился" {
+		t.Fatalf("предупреждение комнаты не доехало: %+v", res)
+	}
+}
+
+// Глубину проверяет и запасной путь (без живой комнаты): уровень места плюс
+// вложенность куска не должны превышать предел дерева, и отказ приходит ДО записи.
+func TestImportMarkdownInto_TooDeepRefused(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	owner := e.user(t, "owner@example.com")
+
+	project, err := e.proj.Create(ctx, owner, "Глубокий проект", "")
+	if err != nil {
+		t.Fatalf("проект: %v", err)
+	}
+	// Цепочка из четырёх уровней: 0 → 1 → 2 → 3.
+	ids := []uuid.UUID{uuid.New(), uuid.New(), uuid.New(), uuid.New()}
+	rows := []store.Event{{ID: ids[0], ProjectID: project.ID, Position: 0, Depth: 0, Title: "Уровень 0", Body: "текст"}}
+	for i := 1; i < len(ids); i++ {
+		rows = append(rows, store.Event{
+			ID: ids[i], ProjectID: project.ID, ParentID: &ids[i-1], Position: i,
+			Depth: int16(i), Title: "Уровень " + strconv.Itoa(i), Body: "текст",
+		})
+	}
+	if err := e.st.InsertEventTree(ctx, project.ID, owner, rows); err != nil {
+		t.Fatalf("дерево: %v", err)
+	}
+
+	// Кусок из трёх уровней (глубина 2).
+	deep, err := parseFolder(t, map[string]string{
+		"01-A.md":     "# A\nтекст\n",
+		"01.1-B.md":   "# B\nтекст\n",
+		"01.1.1-C.md": "# C\nтекст\n",
+	})
+	if err != nil {
+		t.Fatalf("разбор: %v", err)
+	}
+
+	// Под событие глубины 3 это дало бы 5 уровней — отказ до записи.
+	_, err = e.transfer.ImportMarkdownInto(ctx, owner, project.ID, deep,
+		transfer.InsertPlace{ParentID: &ids[3]})
+	if !errors.Is(err, transfer.ErrMarkdownTooDeep) {
+		t.Fatalf("ожидался отказ по глубине, получено: %v", err)
+	}
+	if !strings.Contains(err.Error(), "глубже 4") {
+		t.Errorf("в отказе нет объяснения: %v", err)
+	}
+	if after, err := e.st.ListEvents(ctx, project.ID); err != nil || len(after) != len(rows) {
+		t.Fatalf("после отказа событий %d, ожидалось %d (err=%v)", len(after), len(rows), err)
+	}
+	if state, err := e.st.GetProjectEventState(ctx, project.ID); err != nil || state != nil {
+		t.Fatalf("после отказа снапшота быть не должно: %+v (err=%v)", state, err)
+	}
+
+	// Тот же кусок на верхнем уровне влезает (глубина 2) — проверка не мешает
+	// нормальной работе.
+	res, err := e.transfer.ImportMarkdownInto(ctx, owner, project.ID, deep, transfer.InsertPlace{})
+	if err != nil {
+		t.Fatalf("на верхнем уровне кусок должен влезть: %v", err)
+	}
+	if res.Events != 3 {
+		t.Fatalf("вставлено %d, ожидалось 3", res.Events)
 	}
 }
 
@@ -404,5 +522,78 @@ func TestImportMarkdownIntoHTTP_Contract(t *testing.T) {
 	}))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("after_id+before_id: код %d, тело %s", rec.Code, rec.Body.String())
+	}
+}
+
+// Отказы, которые видит человек через интерфейс: слишком глубокий кусок — 400 с
+// объяснением, а занятая комната — 503 с Retry-After (запрос повторяемый).
+// Никаких «ошибок сервера» там, где просто нельзя или нужно подождать.
+func TestImportMarkdownIntoHTTP_Refusals(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	owner := e.user(t, "owner@example.com")
+	projectID := e.seedStoryProject(t, owner)
+	h := markdownRouter(e.transfer)
+
+	// Под-шаг фикстуры лежит на глубине 2; кусок из трёх уровней под ним дал бы 6.
+	deep := multipartBody(t, map[string]string{
+		"files:01-A.md":     "# A\nтекст\n",
+		"files:01.1-B.md":   "# B\nтекст\n",
+		"files:01.1.1-C.md": "# C\nтекст\n",
+	}, nil, map[string]string{"parent_id": testyjs.Event3.String()})
+	rec := doJSON(t, h, http.MethodPost, "/api/projects/"+projectID.String()+"/import/markdown",
+		owner, bytes.NewReader(deep.body), deep.contentType)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("слишком глубокий кусок: код %d, тело %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "глубже 4") {
+		t.Errorf("в отказе нет объяснения: %s", rec.Body.String())
+	}
+	// Отказ пришёл до записи: в проекте по-прежнему три события фикстуры.
+	if rows, err := e.st.ListEvents(ctx, projectID); err != nil || len(rows) != 3 {
+		t.Fatalf("после отказа событий %d, ожидалось 3 (err=%v)", len(rows), err)
+	}
+
+	// Комната занята загрузкой документа: 503 и Retry-After вместо 500.
+	live := &stubLive{outcome: yjs.InsertOutcome{RoomLoading: true}}
+	e.transfer.UseLiveDoc(live)
+	body := multipartBody(t, map[string]string{"files:01-Кусок.md": "# Кусок\nтекст\n"}, nil)
+	rec = doJSON(t, h, http.MethodPost, "/api/projects/"+projectID.String()+"/import/markdown",
+		owner, bytes.NewReader(body.body), body.contentType)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("загрузка комнаты: код %d, тело %s", rec.Code, rec.Body.String())
+	}
+	if retry := rec.Header().Get("Retry-After"); retry == "" {
+		t.Error("нет Retry-After: клиенту нечего ждать")
+	}
+	if !strings.Contains(rec.Body.String(), "повторите") {
+		t.Errorf("ответ не объясняет, что делать: %s", rec.Body.String())
+	}
+	// Повтор после загрузки проходит — и предупреждение серверной стороны доезжает
+	// до ответа рядом с замечаниями разбора.
+	live.outcome = yjs.InsertOutcome{Handled: true, Warning: "снапшот не сохранился"}
+	rec = doJSON(t, h, http.MethodPost, "/api/projects/"+projectID.String()+"/import/markdown",
+		owner, bytes.NewReader(body.body), body.contentType)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("повтор: код %d, тело %s", rec.Code, rec.Body.String())
+	}
+	var res struct {
+		Events   int      `json:"events"`
+		Warnings []string `json:"warnings"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+		t.Fatalf("json: %v (%s)", err, rec.Body.String())
+	}
+	if res.Events != 1 {
+		t.Errorf("событий в ответе: %d", res.Events)
+	}
+	found := false
+	for _, warning := range res.Warnings {
+		if strings.Contains(warning, "снапшот не сохранился") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("предупреждение серверной стороны не доехало: %+v", res.Warnings)
 	}
 }

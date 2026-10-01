@@ -195,18 +195,25 @@ func (h *Handler) MarkdownImportInto(w http.ResponseWriter, r *http.Request) {
 	}
 
 	place := InsertPlace{ParentID: parentID, AfterID: afterID, BeforeID: beforeID}
-	created, err := h.svc.ImportMarkdownInto(r.Context(), uid, pid, parsed, place)
+	result, err := h.svc.ImportMarkdownInto(r.Context(), uid, pid, parsed, place)
 	if err != nil {
 		h.markdownError(w, err)
 		return
 	}
 	h.logger.Info("markdown inserted into project",
-		"user", uid, "project", pid, "events", created, "parent", parentID, "after", afterID,
-		"before", beforeID, "warnings", len(parsed.Warnings))
+		"user", uid, "project", pid, "events", result.Events, "parent", parentID, "after", afterID,
+		"before", beforeID, "warning", result.Warning, "warnings", len(parsed.Warnings))
+	// Предупреждение серверной стороны (снапшот или проекция не записались) идёт
+	// рядом с замечаниями разбора: вставка сделана, и повторять её нельзя — но
+	// человек должен знать, что серверная копия отстала.
+	warnings := parsed.Warnings
+	if result.Warning != "" {
+		warnings = append(append([]string{}, warnings...), result.Warning)
+	}
 	writeJSON(w, http.StatusCreated, importResponse{
 		ProjectID: pid,
-		Events:    created,
-		Warnings:  nonNil(parsed.Warnings),
+		Events:    result.Events,
+		Warnings:  nonNil(warnings),
 	})
 }
 
@@ -362,6 +369,14 @@ func (h *Handler) markdownError(w http.ResponseWriter, err error) {
 		writeErr(w, http.StatusForbidden, "forbidden")
 	case errors.Is(err, ErrNotFound):
 		writeErr(w, http.StatusNotFound, "not found")
+	case errors.Is(err, ErrMarkdownTooDeep):
+		// Отказ до записи: место не тронуто, кусок можно вставить в другое место.
+		writeErr(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, ErrMarkdownBusy):
+		// Документ комнаты ещё грузится. Просим повторить и говорим, когда:
+		// повтор безопасен, потому что ничего не изменилось.
+		w.Header().Set("Retry-After", "1")
+		writeErr(w, http.StatusServiceUnavailable, err.Error())
 	case errors.Is(err, ErrMarkdownTooLarge):
 		writeErr(w, http.StatusRequestEntityTooLarge, err.Error())
 	case errors.Is(err, ErrMarkdownEmpty),

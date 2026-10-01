@@ -54,6 +54,14 @@ var (
 	ErrAlreadyImported   = errors.New("bundle already imported")
 	ErrForbidden         = errors.New("forbidden")
 	ErrNotFound          = errors.New("not found")
+	// ErrMarkdownTooDeep — импортируемый кусок не помещается в выбранное место:
+	// уровень места плюс глубина куска больше предела дерева. Это отказ ДО записи:
+	// события не вставлены ни в документ, ни в таблицу.
+	ErrMarkdownTooDeep = errors.New("кусок не помещается в выбранное место")
+	// ErrMarkdownBusy — документ комнаты проекта сейчас загружается, и трогать его
+	// нельзя: запись в снапшот в этот момент затрётся состоянием комнаты. Запрос
+	// повторяемый: место не изменено, кусок не вставлен.
+	ErrMarkdownBusy = errors.New("документ проекта загружается, повторите запрос через секунду")
 )
 
 // Manifest — содержимое manifest.json.

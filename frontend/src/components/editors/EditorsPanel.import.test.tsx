@@ -74,7 +74,10 @@ function makeEvents() {
   return { events, chapter1, sub, chapter2 }
 }
 
-function show(events: Y.Array<Y.Map<unknown>>, onImportInto = vi.fn().mockResolvedValue(2)) {
+function show(
+  events: Y.Array<Y.Map<unknown>>,
+  onImportInto = vi.fn().mockResolvedValue({ projectId: 'p1', events: 2, warnings: [] }),
+) {
   render(
     <EditorsPanel
       events={events}
@@ -245,6 +248,38 @@ describe('EditorsPanel — импорт куска md «в место»', () => 
     fireEvent.click(screen.getByRole('button', { name: 'вставить' }))
 
     expect(await screen.findByText('слишком много файлов: больше 2000')).toBeInTheDocument()
+    expect(document.querySelector('[data-ed-chunk]')).not.toBeNull()
+  })
+
+  it('предупреждение сервера показывается рядом с числом вставленных событий', async () => {
+    const { events } = makeEvents()
+    const onImportInto = vi.fn().mockResolvedValue({
+      projectId: 'p1',
+      events: 2,
+      warnings: ['кусок вставлен, но таблица событий не перестроена'],
+    })
+    show(events, onImportInto)
+    await loadChunk()
+
+    fireEvent.click(screen.getByRole('button', { name: 'вставить' }))
+
+    // Вставка сделана — кусок из панели уходит, но человек видит, что копия отстала.
+    expect(await screen.findByText(/Вставлено событий: 2/)).toBeInTheDocument()
+    expect(screen.getByText(/таблица событий не перестроена/)).toBeInTheDocument()
+    expect(document.querySelector('[data-ed-chunk]')).toBeNull()
+  })
+
+  it('отказ 503 (документ проекта грузится) оставляет кусок для повтора', async () => {
+    const { events } = makeEvents()
+    const onImportInto = vi.fn().mockRejectedValue(new Error('busy'))
+    show(events, onImportInto)
+    mocks.errorText.mockResolvedValue('документ проекта загружается, повторите запрос через секунду')
+    await loadChunk()
+
+    fireEvent.click(screen.getByRole('button', { name: 'вставить' }))
+
+    expect(await screen.findByText(/повторите запрос через секунду/)).toBeInTheDocument()
+    // Ничего не вставлено, кусок на месте: повтор — один клик.
     expect(document.querySelector('[data-ed-chunk]')).not.toBeNull()
   })
 })

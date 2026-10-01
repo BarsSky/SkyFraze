@@ -316,3 +316,79 @@ func TestInsertIndex(t *testing.T) {
 		}
 	}
 }
+
+// Глубина, на которую встанет кусок: у его корня родителем бывает и выбранное
+// место, и уже существующее событие документа, а у сироты — ничего. Ошибка тут на
+// единицу означает отказ уже ПОСЛЕ вставки: `NormalizeTree` отвергнет слишком
+// глубокое дерево, и проекция таблицы событий застрянет.
+func TestInsertMaxDepth(t *testing.T) {
+	doc := yjs.NewDoc()
+	// Цепочка a → a1 → a2 (уровни 0, 1, 2) и отдельная глава b.
+	if err := doc.SeedEvents([]yjs.EventSeed{
+		{ID: "a", Title: "A"},
+		{ID: "a1", ParentID: "a", Title: "A1"},
+		{ID: "a2", ParentID: "a1", Title: "A2"},
+		{ID: "b", Title: "B"},
+	}); err != nil {
+		t.Fatalf("засев: %v", err)
+	}
+
+	chain := func(root string, length int) []yjs.EventSeed {
+		seeds := []yjs.EventSeed{{ID: root, Title: "Кусок"}}
+		for i := 1; i < length; i++ {
+			seeds = append(seeds, yjs.EventSeed{ID: root + "-" + string(rune('0'+i)), ParentID: seeds[i-1].ID, Title: "Шаг"})
+		}
+		return seeds
+	}
+
+	cases := []struct {
+		name  string
+		seeds []yjs.EventSeed
+		want  int
+	}{
+		{"одиночное событие на верхнем уровне", chain("x", 1), 0},
+		{"кусок из трёх уровней на верхнем уровне", chain("x", 3), 2},
+		{"кусок под главу a", []yjs.EventSeed{{ID: "x", ParentID: "a", Title: "X"}}, 1},
+		{"кусок из двух уровней под a2", []yjs.EventSeed{
+			{ID: "x", ParentID: "a2", Title: "X"},
+			{ID: "x1", ParentID: "x", Title: "X1"},
+		}, 4},
+		{"кусок из трёх уровней под a2 — на предел", []yjs.EventSeed{
+			{ID: "x", ParentID: "a2", Title: "X"},
+			{ID: "x1", ParentID: "x", Title: "X1"},
+			{ID: "x2", ParentID: "x1", Title: "X2"},
+		}, 5},
+		{"кусок из четырёх уровней под a2 — глубже предела", []yjs.EventSeed{
+			{ID: "x", ParentID: "a2", Title: "X"},
+			{ID: "x1", ParentID: "x", Title: "X1"},
+			{ID: "x2", ParentID: "x1", Title: "X2"},
+			{ID: "x3", ParentID: "x2", Title: "X3"},
+		}, 6},
+		{"родителя нет в документе — сироту поднимут в корень", []yjs.EventSeed{
+			{ID: "x", ParentID: "нет-такого", Title: "X"},
+			{ID: "x1", ParentID: "x", Title: "X1"},
+		}, 1},
+		// Цикл в куске появиться не может (transfer строит его по разобранному
+		// дереву), но проверка не имеет права на нём зависнуть: она обрывает
+		// обход и отвечает консервативно — как для обычной цепочки.
+		{"цикл в куске не зацикливает проверку", []yjs.EventSeed{
+			{ID: "x", ParentID: "x1", Title: "X"},
+			{ID: "x1", ParentID: "x", Title: "X1"},
+		}, 2},
+	}
+	for _, c := range cases {
+		if got := doc.InsertMaxDepth(c.seeds); got != c.want {
+			t.Errorf("%s: глубина %d, ожидалось %d", c.name, got, c.want)
+		}
+	}
+	if got := doc.InsertMaxDepth(nil); got != 0 {
+		t.Errorf("пустой кусок: глубина %d", got)
+	}
+
+	// Глубина в документе считается по цепочке родителей.
+	for id, want := range map[string]int{"a": 0, "a1": 1, "a2": 2, "b": 0, "нет-такого": 0, "": 0} {
+		if got := doc.DepthOf(id); got != want {
+			t.Errorf("глубина %q в документе: %d, ожидалось %d", id, got, want)
+		}
+	}
+}

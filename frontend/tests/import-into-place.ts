@@ -19,6 +19,7 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import * as Y from 'yjs'
+import { ensureTestUser } from './helpers/testUser'
 
 const BASE = process.env.BASE_URL ?? 'http://localhost'
 const OWNER = { email: process.env.AUDIT_EMAIL ?? 'galactic.test@e.com', password: process.env.AUDIT_PASS ?? 'hunter22!' }
@@ -264,18 +265,51 @@ async function main() {
   ok('его под-событие вложено в него', !!inside && stepInside?.parentId === inside.id)
   ok('кусок исчез из панели после вставки', (await page.locator('[data-ed-chunk]').count()) === 0)
 
-  // ── 3. Права: читателю и постороннему — отказ ──────────────────────────────
-  const stranger = await api(null, 'POST', '/api/auth/register', {
-    email: `place.stranger.${Date.now()}@e.com`,
-    password: 'hunter22!',
-    display_name: 'Посторонний',
-  })
-  const strangerToken = stranger.json?.tokens?.access as string | undefined
-  if (strangerToken) {
-    const denied = await importInto(strangerToken, projectId, [{ name: '01-Чужое.md', body: '# Чужое\nтекст' }], {})
+  // ── 2.1. Слишком глубокий кусок сервер отвергает ДО записи ────────────────
+  //
+  // В проекте открыта живая комната, поэтому отказ приходит из неё: проверить
+  // глубину после вставки уже поздно — `NormalizeTree` не примет дерево, и
+  // таблица событий навсегда отстала бы от документа.
+  const deepDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-deep-'))
+  const deepFolder = path.join(deepDir, 'Глубокий')
+  fs.mkdirSync(deepFolder)
+  fs.writeFileSync(path.join(deepFolder, '01-A.md'), '# A\nуровень 1\n')
+  fs.writeFileSync(path.join(deepFolder, '01.1-B.md'), '# B\nуровень 2\n')
+  fs.writeFileSync(path.join(deepFolder, '01.1.1-C.md'), '# C\nуровень 3\n')
+  fs.writeFileSync(path.join(deepFolder, '01.1.1.1-D.md'), '# D\nуровень 4\n')
+
+  const beforeDeep = await rows(token, projectId)
+  const refused = await importInto(token, projectId, [
+    { name: '01-A.md', body: '# A\nуровень 1\n' },
+    { name: '01.1-B.md', body: '# B\nуровень 2\n' },
+    { name: '01.1.1-C.md', body: '# C\nуровень 3\n' },
+    { name: '01.1.1.1-D.md', body: '# D\nуровень 4\n' },
+  ], { parentId: inside?.id })
+  ok('слишком глубокий кусок отвергнут (400)', refused.status === 400, `${refused.status} ${refused.body.slice(0, 140)}`)
+  ok('в отказе объяснена причина', refused.body.includes('глубже 4'), refused.body.slice(0, 140))
+
+  const afterDeep = await rows(token, projectId)
+  ok('отказ ничего не записал в таблицу', afterDeep.length === beforeDeep.length, `${beforeDeep.length} → ${afterDeep.length}`)
+  const docAfter = await snapshot(token, projectId)
+  ok('отказ ничего не записал в документ', docAfter.length === beforeDeep.length, `${beforeDeep.length} → ${docAfter.length}`)
+  fs.rmSync(deepDir, { recursive: true, force: true })
+
+  // ── 3. Права: постороннему — отказ ────────────────────────────────────────
+  //
+  // Пользователя заводим через заявку с одобрением (`ensureTestUser`): на стенде
+  // с REGISTRATION_MODE=request прямая регистрация закрыта, и проверка прав молча
+  // пропускалась бы — то есть не проверялась бы вовсе.
+  const stranger = await ensureTestUser(
+    BASE,
+    `place.stranger.${Date.now()}@e.com`,
+    'Посторонний Импортёр',
+    OWNER,
+  )
+  if (stranger.ok && stranger.access) {
+    const denied = await importInto(stranger.access, projectId, [{ name: '01-Чужое.md', body: '# Чужое\nтекст' }], {})
     ok('посторонний получает 403, а не 500', denied.status === 403, `${denied.status} ${denied.body.slice(0, 120)}`)
   } else {
-    console.log('  … регистрация постороннего недоступна (режим заявок) — проверка прав пропущена')
+    ok('посторонний не смог завестись — проверка прав не выполнена', false, stranger.note)
   }
 
   ok('в консоли страницы нет ошибок', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '))

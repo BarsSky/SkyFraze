@@ -1282,14 +1282,27 @@ func (p InsertPlace) yPlace() yjs.InsertPlace {
 // снапшот сам (вкладка без realtime, CLI, выключенный WebSocket).
 //
 // Интерфейс объявлен здесь, а реализует его хаб: так transfer не зависит от
-// collab (иначе транспорт и импорт сцепились бы намертво).
+// collab (иначе транспорт и импорт сцепились бы намертво). Исход вставки — словарь
+// `yjs.InsertOutcome`, а не набор sentinel-ошибок: часть исходов ошибками не
+// является (кусок не влез по глубине; документ комнаты ещё грузится).
 type LiveDoc interface {
-	InsertLive(ctx context.Context, projectID, by uuid.UUID, seeds []yjs.EventSeed, place yjs.InsertPlace) (bool, error)
+	InsertLive(ctx context.Context, projectID, by uuid.UUID, seeds []yjs.EventSeed, place yjs.InsertPlace) (yjs.InsertOutcome, error)
 }
 
 // UseLiveDoc подключает живые комнаты. Без него импорт «в место» работает только
 // через снапшот базы — это корректно для проекта, который никто не открыл.
 func (s *Service) UseLiveDoc(live LiveDoc) { s.live = live }
+
+// ImportIntoResult — что вышло из вставки куска в существующий проект.
+type ImportIntoResult struct {
+	// Events — сколько событий вставлено.
+	Events int
+	// Warning — вставка сделана, но что-то на серверной стороне не доехало
+	// (например, не сохранился снапшот или не перестроилась таблица событий).
+	// Это не ошибка запроса: события уже в документе проекта, и повторный импорт
+	// только задвоил бы кусок. Поэтому человеку это показывают предупреждением.
+	Warning string
+}
 
 // ImportMarkdownInto вставляет разобранный кусок в СУЩЕСТВУЮЩИЙ проект.
 //
@@ -1300,17 +1313,17 @@ func (s *Service) UseLiveDoc(live LiveDoc) { s.live = live }
 // видно только в базе и исчезло бы у редакторов.
 func (s *Service) ImportMarkdownInto(
 	ctx context.Context, userID, projectID uuid.UUID, parsed *ParsedMarkdown, place InsertPlace,
-) (int, error) {
+) (ImportIntoResult, error) {
 	if parsed == nil || len(parsed.Events) == 0 {
-		return 0, ErrMarkdownEmpty
+		return ImportIntoResult{}, ErrMarkdownEmpty
 	}
 	if err := s.proj.RequireEditor(ctx, userID, projectID); err != nil {
 		// Ошибки проектов переводим в свои: обработчик отвечает по ним 403/404,
 		// а не 500 (та же схема, что у выгрузки — loadStory).
 		if errors.Is(err, projects.ErrForbidden) {
-			return 0, ErrForbidden
+			return ImportIntoResult{}, ErrForbidden
 		}
-		return 0, err
+		return ImportIntoResult{}, err
 	}
 
 	// Идентификаторы и связи куска: корень куска подвешивается к выбранному
@@ -1330,21 +1343,28 @@ func (s *Service) ImportMarkdownInto(
 		}
 		seeds = append(seeds, seed)
 	}
+	chunkDepth := yjs.SeedDepth(seeds)
 
 	// Живая комната — главный путь: в ней документ, который редакторы видят сейчас.
+	// Глубину она проверяет сама, по своему документу (он может быть свежее базы).
 	if s.live != nil {
-		handled, err := s.live.InsertLive(ctx, projectID, userID, seeds, place.yPlace())
+		outcome, err := s.live.InsertLive(ctx, projectID, userID, seeds, place.yPlace())
 		if err != nil {
-			return 0, err
+			return ImportIntoResult{}, err
 		}
-		if handled {
-			return len(seeds), nil
+		switch {
+		case outcome.TooDeep:
+			return ImportIntoResult{}, errTooDeep(chunkDepth)
+		case outcome.RoomLoading:
+			return ImportIntoResult{}, ErrMarkdownBusy
+		case outcome.Handled:
+			return ImportIntoResult{Events: len(seeds), Warning: outcome.Warning}, nil
 		}
 	}
 
 	state, err := s.store.GetProjectEventState(ctx, projectID)
 	if err != nil {
-		return 0, err
+		return ImportIntoResult{}, err
 	}
 	var raw []byte
 	if state != nil {
@@ -1352,7 +1372,7 @@ func (s *Service) ImportMarkdownInto(
 	}
 	doc, err := yjs.FromState(raw)
 	if err != nil {
-		return 0, err
+		return ImportIntoResult{}, err
 	}
 
 	// У проекта может не быть снапшота (его создали через API или импортировали
@@ -1361,7 +1381,7 @@ func (s *Service) ImportMarkdownInto(
 	if doc.EventCount() == 0 {
 		rows, err := s.store.ListEvents(ctx, projectID)
 		if err != nil {
-			return 0, err
+			return ImportIntoResult{}, err
 		}
 		legacy := make([]yjs.EventSeed, 0, len(rows))
 		for _, row := range rows {
@@ -1375,23 +1395,43 @@ func (s *Service) ImportMarkdownInto(
 			legacy = append(legacy, seed)
 		}
 		if err := doc.SeedEvents(legacy); err != nil {
-			return 0, err
+			return ImportIntoResult{}, err
 		}
 	}
 
+	// Глубину проверяем ПОСЛЕ засева (иначе у проекта без снапшота родителя в
+	// документе ещё нет и проверка была бы пустой) и ДО вставки: `NormalizeTree`
+	// отвергает слишком глубокое дерево уже после неё, и проекция таблицы событий
+	// осталась бы устаревшей.
+	if !events.FitsDepth(doc.InsertMaxDepth(seeds)) {
+		return ImportIntoResult{}, errTooDeep(chunkDepth)
+	}
+
 	if err := doc.InsertAt(place.yPlace(), seeds); err != nil {
-		return 0, err
+		return ImportIntoResult{}, err
 	}
 
 	if _, err := s.store.SaveProjectEventStateServer(ctx, projectID, userID, doc.EncodeState()); err != nil {
-		return 0, err
+		// Снапшот не записался — вставки нет нигде: повтор запроса безопасен.
+		return ImportIntoResult{}, err
 	}
 	// Таблица событий перестраивается из документа целиком — ровно так же, как это
 	// делает хаб после правок редакторов: один источник правды, одна проекция.
+	// Её сбой вставку не отменяет (снапшот уже записан), поэтому это
+	// предупреждение, а не ошибка: иначе человек повторил бы импорт и задвоил кусок.
+	result := ImportIntoResult{Events: len(seeds)}
 	if err := s.projectDocument(ctx, projectID, userID, doc); err != nil {
-		return 0, err
+		result.Warning = fmt.Sprintf(
+			"кусок вставлен в проект, но таблица событий не перестроена (%v) — она обновится при следующем сохранении", err)
 	}
-	return len(seeds), nil
+	return result, nil
+}
+
+// errTooDeep — кусок не помещается в выбранное место: уровень места плюс глубина
+// куска больше предела дерева.
+func errTooDeep(chunkDepth int) error {
+	return fmt.Errorf("%w: в куске %d уровень(ей), а глубже %d дерево не поддерживает",
+		ErrMarkdownTooDeep, chunkDepth+1, events.MaxDepth)
 }
 
 // projectDocument переносит структуру документа в таблицу событий.

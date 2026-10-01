@@ -8,7 +8,12 @@ import { useCollab, yAddEvent, type YMap } from '../collab/yprovider'
 import { titleString } from '../collab/text'
 import { connectionNotice } from '../collab/connection'
 import { listAssets, uploadAsset, type Asset } from '../api/assets'
-import { importMarkdownInto, type MarkdownImportSource, type MarkdownInsertPlace } from '../api/storyFiles'
+import {
+  importMarkdownInto,
+  type MarkdownImportResult,
+  type MarkdownImportSource,
+  type MarkdownInsertPlace,
+} from '../api/storyFiles'
 import { useAssetObjectUrls } from '../api/assetObject'
 import type { Project } from '../api/projects'
 import { getProject } from '../api/projects'
@@ -177,10 +182,10 @@ export function ProjectTimelinePage() {
    *     ни чужие правки, ни наши).
    */
   const importIntoProject = useCallback(
-    async (source: MarkdownImportSource, place: MarkdownInsertPlace): Promise<number> => {
+    async (source: MarkdownImportSource, place: MarkdownInsertPlace): Promise<MarkdownImportResult> => {
       const result = await importMarkdownInto(projectId, source, place)
       if (collab && !collab.connected) await collab.reloadFromServer()
-      return result.events
+      return result
     },
     [projectId, collab],
   )

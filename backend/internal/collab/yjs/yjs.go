@@ -282,6 +282,190 @@ func (d *Doc) SeedEvents(seeds []EventSeed) error {
 	return d.InsertEvents(int(ygo.NewArray(d.inner, EventsRoot).Len()), seeds)
 }
 
+// SeedDepth — самая глубокая вложенность внутри набора вставляемых событий
+// относительно его корней (0 — одни главы верхнего уровня).
+//
+// Нужна для текста отказа человеку («в куске N уровней»), а не для проверки
+// глубины: сколько получится в документе, знает только InsertMaxDepth.
+func SeedDepth(seeds []EventSeed) int {
+	if len(seeds) == 0 {
+		return 0
+	}
+	known := make(map[string]bool, len(seeds))
+	parent := make(map[string]string, len(seeds))
+	for _, s := range seeds {
+		known[s.ID] = true
+	}
+	for _, s := range seeds {
+		if s.ParentID != "" && known[s.ParentID] {
+			parent[s.ID] = s.ParentID
+		}
+	}
+
+	max := 0
+	for _, s := range seeds {
+		// Поднимаемся к корню набора, считая шаги. Цикл (данных, которых быть не
+		// должно) обрываем: глубину проверяют ДО вставки, и зацикливаться здесь
+		// нельзя — иначе импорт повесил бы обработчик.
+		steps := 0
+		seen := map[string]bool{s.ID: true}
+		for cur := parent[s.ID]; cur != ""; cur = parent[cur] {
+			if seen[cur] || steps > len(seeds) {
+				break
+			}
+			seen[cur] = true
+			steps++
+		}
+		if steps > max {
+			max = steps
+		}
+	}
+	return max
+}
+
+// DepthOf — глубина события в дереве (0 — верхний уровень).
+//
+// Пустой id и неизвестное событие тоже дают 0: кусок без родителя встаёт на
+// верхний уровень, а сироту проекция поднимает в корень.
+func (d *Doc) DepthOf(id string) int {
+	if id == "" {
+		return 0
+	}
+	parentOf := make(map[string]string)
+	for _, e := range d.Events() {
+		parentOf[e.ID] = e.ParentID
+	}
+	if _, ok := parentOf[id]; !ok {
+		return 0
+	}
+	depth := 0
+	seen := map[string]bool{id: true}
+	for cur := parentOf[id]; cur != ""; cur = parentOf[cur] {
+		if seen[cur] {
+			break // цикл: дальше не считаем
+		}
+		seen[cur] = true
+		depth++
+	}
+	return depth
+}
+
+// InsertMaxDepth — на какой глубине окажется САМОЕ ГЛУБОКОЕ событие куска, если
+// его вставить в документ как есть.
+//
+// Считать «уровень места плюс глубина куска» нельзя: у корня куска родителем
+// бывает не только выбранное место, но и уже существующее событие документа —
+// тогда уровень берётся из документа. Здесь одно правило на все случаи:
+//
+//   - родителя нет → верхний уровень (0);
+//   - родитель внутри куска → на уровень ниже него;
+//   - родитель — существующее событие документа → его глубина плюс один;
+//   - родителя нет в документе → 0: проекция поднимает такого сироту в корень
+//     (см. `events.NodesFromSeeds`), и кусок встаёт на верхний уровень.
+//
+// Место вставки сюда не передаётся намеренно: оно уже записано в `parent_id`
+// корней куска (transfer подставляет его ровно там), а лишний параметр — это
+// лишняя возможность ошибиться на единицу. А цена ошибки велика: `NormalizeTree`
+// отвергает слишком глубокое дерево уже ПОСЛЕ вставки, и проекция таблицы событий
+// осталась бы устаревшей, а документ — с событиями, которых в таблице нет.
+func (d *Doc) InsertMaxDepth(seeds []EventSeed) int {
+	if len(seeds) == 0 {
+		return 0
+	}
+	known := make(map[string]bool, len(seeds))
+	parent := make(map[string]string, len(seeds))
+	for _, s := range seeds {
+		known[s.ID] = true
+		parent[s.ID] = s.ParentID
+	}
+
+	// Глубины существующих событий считаем один раз на весь кусок: событий в
+	// проекте бывают тысячи, а кусок — до двух тысяч.
+	doc := d.Events()
+	docParent := make(map[string]string, len(doc))
+	for _, e := range doc {
+		docParent[e.ID] = e.ParentID
+	}
+	docDepth := make(map[string]int, len(doc))
+	depthInDoc := func(id string) (int, bool) {
+		if _, ok := docParent[id]; !ok {
+			return 0, false
+		}
+		if value, ok := docDepth[id]; ok {
+			return value, true
+		}
+		value := 0
+		seen := map[string]bool{id: true}
+		for cur := docParent[id]; cur != ""; cur = docParent[cur] {
+			if seen[cur] {
+				break // цикл в документе: дальше не считаем
+			}
+			seen[cur] = true
+			value++
+		}
+		docDepth[id] = value
+		return value, true
+	}
+
+	depth := make(map[string]int, len(seeds))
+	visiting := make(map[string]bool, len(seeds))
+	var of func(id string) int
+	of = func(id string) int {
+		if value, ok := depth[id]; ok {
+			return value
+		}
+		if visiting[id] {
+			// Цикл в куске (данных, которых быть не должно): считаем ветку корнем,
+			// а не зацикливаемся — проверка идёт до вставки.
+			return 0
+		}
+		visiting[id] = true
+		up := parent[id]
+		var value int
+		switch {
+		case up == "":
+			value = 0
+		case known[up]:
+			value = of(up) + 1
+		default:
+			if docValue, ok := depthInDoc(up); ok {
+				value = docValue + 1
+			}
+		}
+		delete(visiting, id)
+		depth[id] = value
+		return value
+	}
+
+	max := 0
+	for _, s := range seeds {
+		if value := of(s.ID); value > max {
+			max = value
+		}
+	}
+	return max
+}
+
+// InsertOutcome — что вышло из попытки вставить кусок в ЖИВОЙ документ комнаты.
+//
+// Отдельный тип, а не набор ошибок: часть исходов — не ошибки вовсе. Вставку
+// сделали (Handled); документ комнаты ещё грузится, и трогать его нельзя, а
+// снапшот писать нельзя тем более — комната его затрёт (RoomLoading); кусок не
+// помещается в выбранное место, и об этом нужно сказать ДО вставки (TooDeep);
+// наконец, вставка прошла, но серверная копия не обновилась (Warning).
+// Так контракт между хабом и импортом остаётся словарём, а не угадыванием
+// sentinel-ошибок в чужом пакете.
+type InsertOutcome struct {
+	// Handled — вставку сделала комната: снапшот вызывающему писать не нужно.
+	Handled bool
+	// RoomLoading — документ комнаты ещё загружается: запрос нужно повторить.
+	RoomLoading bool
+	// TooDeep — уровень места плюс глубина куска больше предела дерева.
+	TooDeep bool
+	// Warning — вставка сделана, но серверная копия не обновилась: текст человеку.
+	Warning string
+}
+
 // EventCount — сколько событий в корневом массиве (без чтения их полей).
 //
 // Нужен, чтобы не прогонять миграцию текста на каждой букве: она перепроверяется

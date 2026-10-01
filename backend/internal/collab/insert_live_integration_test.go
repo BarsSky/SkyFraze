@@ -99,14 +99,17 @@ func TestHubInsertLive(t *testing.T) {
 
 	// Вставка «внутрь главы»: место задаётся родителем в самом событии.
 	inserted := uuid.New().String()
-	handled, err := hub.InsertLive(ctx, project.ID, user.ID, []yjs.EventSeed{{
+	outcome, err := hub.InsertLive(ctx, project.ID, user.ID, []yjs.EventSeed{{
 		ID: inserted, ParentID: chapter.String(), Title: "Вставленная глава", Body: "Текст вставки.",
 	}}, yjs.InsertPlace{})
 	if err != nil {
 		t.Fatalf("вставка: %v", err)
 	}
-	if !handled {
+	if !outcome.Handled {
 		t.Fatal("в комнате с документом вставка обязана обрабатываться хабом")
+	}
+	if outcome.Warning != "" {
+		t.Errorf("сохранение прошло без предупреждений, получено: %q", outcome.Warning)
 	}
 
 	// 1. Клиент видит вставку: апдейт доехал тем же сокетом.
@@ -171,13 +174,59 @@ func TestHubInsertLive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("проект без комнаты: %v", err)
 	}
-	handled, err = hub.InsertLive(ctx, lonely.ID, user.ID, []yjs.EventSeed{{
+	outcome, err = hub.InsertLive(ctx, lonely.ID, user.ID, []yjs.EventSeed{{
 		ID: uuid.New().String(), Title: "Кусок", Body: "Текст.",
 	}}, yjs.InsertPlace{})
 	if err != nil {
 		t.Fatalf("вставка без комнаты: %v", err)
 	}
-	if handled {
+	if outcome.Handled {
 		t.Error("без комнаты вставку обрабатывает вызывающий, а не хаб")
 	}
+
+	// 5. Слишком глубокий кусок не вставляется: в документе комнаты уже есть
+	// вставленная глава (уровень 1), и кусок из четырёх уровней под ней дал бы
+	// шесть — `NormalizeTree` такое дерево отвергнет уже ПОСЛЕ вставки, и проекция
+	// таблицы событий застряла бы навсегда. Значит, отказ обязан быть до записи.
+	rowsBefore := len(mustListEvents(t, st, ctx, project.ID))
+	deep := []yjs.EventSeed{
+		{ID: uuid.New().String(), ParentID: inserted, Title: "A"},
+		{ID: uuid.New().String(), Title: "B"},
+		{ID: uuid.New().String(), Title: "C"},
+		{ID: uuid.New().String(), Title: "D"},
+	}
+	deep[1].ParentID = deep[0].ID
+	deep[2].ParentID = deep[1].ID
+	deep[3].ParentID = deep[2].ID
+	outcome, err = hub.InsertLive(ctx, project.ID, user.ID, deep, yjs.InsertPlace{})
+	if err != nil {
+		t.Fatalf("слишком глубокий кусок: %v", err)
+	}
+	if !outcome.TooDeep {
+		t.Fatalf("ожидался отказ по глубине, получено %+v", outcome)
+	}
+	if rows := len(mustListEvents(t, st, ctx, project.ID)); rows != rowsBefore {
+		t.Errorf("после отказа событий %d, было %d — отказ должен быть до записи", rows, rowsBefore)
+	}
+	saved, err = st.GetProjectEventState(ctx, project.ID)
+	if err != nil || saved == nil {
+		t.Fatalf("снапшот после отказа: %v", err)
+	}
+	after, err := yjs.FromState(saved.YjsState)
+	if err != nil {
+		t.Fatalf("снапшот не читается: %v", err)
+	}
+	if after.EventCount() != rowsBefore {
+		t.Errorf("в документе комнаты %d событий, было %d", after.EventCount(), rowsBefore)
+	}
+}
+
+// mustListEvents — строки проекции (нужны как «сколько событий в проекте»).
+func mustListEvents(t *testing.T, st *store.Store, ctx context.Context, projectID uuid.UUID) []store.Event {
+	t.Helper()
+	rows, err := st.ListEvents(ctx, projectID)
+	if err != nil {
+		t.Fatalf("события: %v", err)
+	}
+	return rows
 }

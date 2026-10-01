@@ -8,6 +8,7 @@ import {
   previewMarkdownImport,
   readImportErrorMessage,
   type MarkdownImportPreview,
+  type MarkdownImportResult,
   type MarkdownImportSource,
   type MarkdownInsertPlace,
 } from '../../api/storyFiles'
@@ -37,11 +38,11 @@ interface Props {
   onUpload: (file: File) => Promise<Asset | null>
   /**
    * Импорт «в место»: вставить разобранный кусок md в этот проект. Возвращает
-   * число вставленных событий; саму вставку делает страница (у неё есть id
-   * проекта и перечитывание состояния без realtime). Без этого колбэка
-   * возможность импорта в панели не показывается.
+   * результат сервера (сколько событий и его предупреждения); саму вставку делает
+   * страница — у неё есть id проекта и перечитывание состояния без realtime.
+   * Без этого колбэка возможность импорта в панели не показывается.
    */
-  onImportInto?: (source: MarkdownImportSource, place: MarkdownInsertPlace) => Promise<number>
+  onImportInto?: (source: MarkdownImportSource, place: MarkdownInsertPlace) => Promise<MarkdownImportResult>
   /**
    * Кто из соседей что правит (`collab.presence`, без меня). Отсюда — отметки у
    * строк списка: без них «кто где» видно только в баре над панелью, а он
@@ -476,14 +477,25 @@ export function EditorsPanel({
     return { parentId: row.id, afterId: lastDescendant(rowsRef.current, row.id) ?? row.id }
   }
 
-  /** Вставка куска. Ошибку показываем словами сервера: 400 у него содержательный. */
+  /**
+   * Вставка куска. Ошибку показываем словами сервера: 400 у него содержательный
+   * («не помещается в выбранное место»), а 503 значит «повторите» — кусок при
+   * этом остаётся в панели, и повтор не требует выбирать файлы заново.
+   */
   async function insertChunk(place: MarkdownInsertPlace) {
     if (!chunk || !onImportInto || importBusy) return
     setImportBusy(true)
     try {
-      const created = await onImportInto(chunk.source, place)
+      const result = await onImportInto(chunk.source, place)
       setChunk(null)
-      setNotice(`Вставлено событий: ${created}`)
+      // Предупреждение сервера (вставка сделана, но снапшот или таблица событий
+      // отстали) — не ошибка: повторять импорт нельзя, он бы задвоил кусок.
+      const warning = result.warnings[0]
+      setNotice(
+        warning
+          ? `Вставлено событий: ${result.events}. ${warning}`
+          : `Вставлено событий: ${result.events}`,
+      )
     } catch (e) {
       const message = await readImportErrorMessage(e)
       setNotice(message ?? 'Вставить не удалось — сервер отклонил запрос')
