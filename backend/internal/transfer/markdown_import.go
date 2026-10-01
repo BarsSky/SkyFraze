@@ -54,7 +54,6 @@ package transfer
 
 import (
 	"archive/zip"
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -1473,7 +1472,7 @@ func (s *Service) fillProject(ctx context.Context, projectID, owner uuid.UUID, p
 	}
 	defer func() {
 		if err != nil {
-			s.dropObjects(ctx, keys)
+			s.dropUnreferenced(ctx, keys)
 		}
 	}()
 
@@ -1512,46 +1511,58 @@ func (s *Service) fillProject(ctx context.Context, projectID, owner uuid.UUID, p
 	return s.store.InsertEventTree(ctx, projectID, owner, rows)
 }
 
-// storeAttachments кладёт файлы набора в хранилище и в таблицу вложений проекта.
-// Возвращает идентификаторы в том же порядке, что и files (на них ссылаются
-// события документа) и ключи записанных файлов (чтобы вызывающий мог убрать их,
-// если запись проекта сорвётся).
+// storeAttachments кладёт файлы набора в проект (в хранилище и в таблицу вложений).
+// Возвращает идентификаторы в том же порядке, что и files (на них ссылаются события
+// документа) и ключи записанных файлов (чтобы вызывающий мог убрать их, если запись
+// проекта сорвётся).
 func (s *Service) storeAttachments(
 	ctx context.Context, projectID, owner uuid.UUID, files []ParsedAttachment,
 ) ([]uuid.UUID, []string, error) {
 	if len(files) == 0 {
 		return nil, nil, nil
 	}
+	if s.files == nil {
+		// Так быть не должно: без этого пути файлы проекта писались бы мимо
+		// дедупликации и без учёта общих файлов. Лучше явная ошибка, чем тихая
+		// запись в обход.
+		return nil, nil, errors.New("запись файлов проекта не подключена (transfer.UseFileStore)")
+	}
 	ids := make([]uuid.UUID, 0, len(files))
 	written := make([]string, 0, len(files))
 	for _, file := range files {
-		key := assets.ObjectKey(projectID, file.Name)
-		if err := s.obj.Put(ctx, key, file.Mime, bytes.NewReader(file.Data), int64(len(file.Data))); err != nil {
-			s.dropObjects(ctx, written)
-			return nil, nil, err
-		}
-		written = append(written, key)
-		asset := &store.Asset{
+		asset, err := s.files.StoreFile(ctx, assets.StoreFileOptions{
 			ProjectID: projectID,
 			OwnerID:   owner,
 			Filename:  file.Name,
 			Mime:      file.Mime,
-			Size:      int64(len(file.Data)),
-			S3Key:     key,
 			Kind:      file.Kind,
-		}
-		if err := s.store.CreateAsset(ctx, asset); err != nil {
-			s.dropObjects(ctx, written)
+			Data:      file.Data,
+		})
+		if err != nil {
+			s.dropUnreferenced(ctx, written)
 			return nil, nil, err
 		}
 		ids = append(ids, asset.ID)
+		written = append(written, asset.S3Key)
 	}
 	return ids, written, nil
 }
 
-// dropObjects убирает из хранилища файлы, которые уже некуда записать: вложения
-// создаются пачкой, и половина без строк в базе — это мусор, который никто не
-// найдёт и не удалит.
+// dropUnreferenced убирает файлы, на которые больше не ссылается ни одна строка
+// вложений. Вызывается после удаления строк (в том числе каскадом вместе с
+// проектом): только тогда «сколько осталось ссылок» отвечает на вопрос «нужен ли
+// файл ещё кому-нибудь» — после дедупликации одним файлом могут пользоваться
+// несколько проектов.
+func (s *Service) dropUnreferenced(ctx context.Context, keys []string) {
+	if s.files == nil || len(keys) == 0 {
+		return
+	}
+	_, _ = s.files.DeleteUnreferencedFiles(ctx, keys)
+}
+
+// dropObjects убирает файлы, вставленные ДО появления строк вложений: если запись
+// сорвалась на первом же файле, строк нет, и «есть ли ещё ссылки» спрашивать не у
+// кого — файлы точно наши.
 func (s *Service) dropObjects(ctx context.Context, keys []string) {
 	for _, key := range keys {
 		_ = s.obj.Delete(ctx, key)
@@ -1653,6 +1664,20 @@ func (p InsertPlace) yPlace() yjs.InsertPlace {
 	return out
 }
 
+// FileStore — запись файлов проекта (реализует assets.Service).
+//
+// Импорт обязан идти тем же путём, что и загрузка из интерфейса: иначе он обходил бы
+// дедупликацию по содержимому стороной, и один и тот же файл лежал бы в хранилище
+// дважды (миграция 0007). Проверку «нужен ли файл ещё кому-нибудь» тоже делает этот
+// путь: после дедупликации одним файлом могут пользоваться несколько проектов.
+type FileStore interface {
+	StoreFile(ctx context.Context, opts assets.StoreFileOptions) (*store.Asset, error)
+	DeleteUnreferencedFiles(ctx context.Context, keys []string) (int, error)
+}
+
+// UseFileStore подключает запись файлов проекта.
+func (s *Service) UseFileStore(files FileStore) { s.files = files }
+
 // LiveDoc — документ ЖИВОЙ комнаты проекта (collab.Hub).
 //
 // Зачем это отдельный путь. Источник правды проекта — CRDT-документ, а пока в
@@ -1728,7 +1753,7 @@ func (s *Service) ImportMarkdownInto(
 		for _, id := range assetIDs {
 			_ = s.store.DeleteAsset(ctx, id)
 		}
-		s.dropObjects(ctx, assetKeys)
+		s.dropUnreferenced(ctx, assetKeys)
 	}()
 
 	// Идентификаторы и связи куска: корень куска подвешивается к выбранному

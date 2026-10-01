@@ -149,6 +149,10 @@ func main() {
 	transferSvc := transfer.New(st, objStore, projSvc)
 	transferH := transfer.NewHandler(transferSvc, logger)
 
+	// Импорт папки с md пишет файлы тем же путём, что и загрузка из интерфейса:
+	// иначе дедупликация по содержимому (миграция 0007) обходилась бы стороной.
+	transferSvc.UseFileStore(assetsSvc)
+
 	collabHub := collab.NewHub(logger, cfg.JWTSecret, evSvc, cfg.CORSOrigins)
 	go collabHub.Run(ctx)
 

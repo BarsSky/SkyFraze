@@ -25,7 +25,7 @@ var (
 // проектом: ключи нужно собрать ДО удаления строки.
 type Files interface {
 	ProjectFileKeys(ctx context.Context, projectID uuid.UUID) ([]string, error)
-	DeleteFiles(ctx context.Context, keys []string) (int, error)
+	DeleteUnreferencedFiles(ctx context.Context, keys []string) (int, error)
 }
 
 // UseFiles подключает удаление файлов при удалении проекта.
@@ -158,9 +158,11 @@ func (s *Service) Delete(ctx context.Context, userID, projectID uuid.UUID) error
 		return err
 	}
 	// Файлы — после строки: если уборка не удалась, проект всё равно удалён, а
-	// потерянные объекты найдёт уборщик хранилища (maintenance.Sweeper).
+	// потерянные объекты найдёт уборщик хранилища (maintenance.Sweeper). Файл,
+	// которым пользуется ещё один проект (дедупликация), не удаляется — это решает
+	// сам уборщик вложений по числу оставшихся ссылок.
 	if len(files) > 0 {
-		_, _ = s.files.DeleteFiles(ctx, files)
+		_, _ = s.files.DeleteUnreferencedFiles(ctx, files)
 	}
 	return nil
 }

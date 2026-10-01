@@ -881,14 +881,22 @@ type Asset struct {
 	Kind      string    `db:"kind" json:"kind"`
 	Width     *int      `db:"width" json:"width,omitempty"`
 	Height    *int      `db:"height" json:"height,omitempty"`
-	CreatedAt time.Time `db:"created_at" json:"created_at"`
+	// ContentHash — SHA-256 содержимого файла: по нему один и тот же файл не
+	// хранится дважды (миграция 0007). Пусто у вложений, загруженных до миграции,
+	// и у файлов из архива переноса: их содержимое задним числом не пересчитывается.
+	ContentHash *string   `db:"content_hash" json:"content_hash,omitempty"`
+	CreatedAt   time.Time `db:"created_at" json:"created_at"`
 }
+
+// assetColumns — колонки вложений в одном месте: их читают несколько выборок.
+const assetColumns = `id, project_id, owner_id, filename, mime, size, s3_key, kind,
+	width, height, content_hash, created_at`
 
 func (s *Store) CreateAsset(ctx context.Context, a *Asset) error {
 	return s.Pool.QueryRow(ctx,
-		`INSERT INTO assets (project_id, owner_id, filename, mime, size, s3_key, kind, width, height)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id, created_at`,
-		a.ProjectID, a.OwnerID, a.Filename, a.Mime, a.Size, a.S3Key, a.Kind, a.Width, a.Height,
+		`INSERT INTO assets (project_id, owner_id, filename, mime, size, s3_key, kind, width, height, content_hash)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id, created_at`,
+		a.ProjectID, a.OwnerID, a.Filename, a.Mime, a.Size, a.S3Key, a.Kind, a.Width, a.Height, a.ContentHash,
 	).Scan(&a.ID, &a.CreatedAt)
 }
 
@@ -896,9 +904,9 @@ func (s *Store) CreateAsset(ctx context.Context, a *Asset) error {
 // ссылается на конкретные id вложений, и подменить их на новые без разбора Yjs нельзя.
 func (s *Store) InsertAsset(ctx context.Context, a *Asset) error {
 	return s.Pool.QueryRow(ctx,
-		`INSERT INTO assets (id, project_id, owner_id, filename, mime, size, s3_key, kind, width, height)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING created_at`,
-		a.ID, a.ProjectID, a.OwnerID, a.Filename, a.Mime, a.Size, a.S3Key, a.Kind, a.Width, a.Height,
+		`INSERT INTO assets (id, project_id, owner_id, filename, mime, size, s3_key, kind, width, height, content_hash)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING created_at`,
+		a.ID, a.ProjectID, a.OwnerID, a.Filename, a.Mime, a.Size, a.S3Key, a.Kind, a.Width, a.Height, a.ContentHash,
 	).Scan(&a.CreatedAt)
 }
 
@@ -948,14 +956,42 @@ func (s *Store) ExistingAssetIDs(ctx context.Context, ids []uuid.UUID) ([]uuid.U
 
 func (s *Store) GetAsset(ctx context.Context, id uuid.UUID) (*Asset, error) {
 	return qOne[Asset](ctx, s.Pool,
-		`SELECT id, project_id, owner_id, filename, mime, size, s3_key, kind, width, height, created_at
-		   FROM assets WHERE id=$1`, id)
+		`SELECT `+assetColumns+` FROM assets WHERE id=$1`, id)
 }
 
 func (s *Store) ListAssets(ctx context.Context, projectID uuid.UUID) ([]Asset, error) {
 	return qAll[Asset](ctx, s.Pool,
-		`SELECT id, project_id, owner_id, filename, mime, size, s3_key, kind, width, height, created_at
-		   FROM assets WHERE project_id=$1 ORDER BY created_at DESC`, projectID)
+		`SELECT `+assetColumns+` FROM assets WHERE project_id=$1 ORDER BY created_at DESC`, projectID)
+}
+
+// FindAssetByHash ищет любое вложение с таким же содержимым: если файл уже есть в
+// хранилище, второй раз его писать не нужно — новая строка начнёт ссылаться на
+// существующий ключ (дедупликация, миграция 0007).
+//
+// Ищем самое раннее: ключ первого такого вложения уже лежит в хранилище и пережил
+// уборки, а у более поздних копий ключ может быть удалён как дубль.
+func (s *Store) FindAssetByHash(ctx context.Context, hash string) (*Asset, error) {
+	if hash == "" {
+		return nil, nil
+	}
+	asset, err := qOne[Asset](ctx, s.Pool,
+		`SELECT `+assetColumns+` FROM assets WHERE content_hash=$1 ORDER BY created_at LIMIT 1`, hash)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return asset, nil
+}
+
+// CountAssetsByKey — сколько строк вложений ссылается на файл с таким ключом.
+// Ноль означает «файл больше никому не нужен», и только тогда его можно удалять:
+// после дедупликации одним файлом пользуются несколько проектов.
+func (s *Store) CountAssetsByKey(ctx context.Context, key string) (int, error) {
+	var count int
+	err := s.Pool.QueryRow(ctx, `SELECT count(*) FROM assets WHERE s3_key=$1`, key).Scan(&count)
+	return count, err
 }
 
 // DeleteAsset убирает строку вложения. Файл удаляет вызывающий: хранилище и база

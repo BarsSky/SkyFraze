@@ -1,7 +1,10 @@
 package assets
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -55,6 +58,11 @@ type UploadOpts struct {
 }
 
 // Upload — загружает файл, сохраняет метаданные.
+//
+// Файл с тем же содержимым второй раз не пишется: хеш считается по содержимому во
+// время записи, и если такой файл уже есть (в любом проекте), новая строка вложений
+// ссылается на существующий объект хранилища. Метаданные при этом свои: имя файла,
+// владелец и проект у каждой строки собственные (миграция 0007).
 func (s *Service) Upload(ctx context.Context, actorID, projectID uuid.UUID, opts UploadOpts) (*store.Asset, error) {
 	// проверим доступ к проекту
 	if _, err := s.proj.Get(ctx, actorID, projectID); err != nil {
@@ -69,23 +77,100 @@ func (s *Service) Upload(ctx context.Context, actorID, projectID uuid.UUID, opts
 	}
 	kind := KindOf(mime, opts.Filename)
 
-	a := &store.Asset{
-		ProjectID: projectID,
-		OwnerID:   actorID,
-		Filename:  opts.Filename,
-		Mime:      mime,
-		Size:      opts.Size,
-		S3Key:     ObjectKey(projectID, opts.Filename),
-		Kind:      kind,
-	}
-	if err := s.obj.Put(ctx, a.S3Key, mime, opts.Reader, opts.Size); err != nil {
+	// Хеш считаем на лету, пока файл пишется: второй раз читать его незачем.
+	hasher := sha256.New()
+	key := ObjectKey(projectID, opts.Filename)
+	if err := s.obj.Put(ctx, key, mime, io.TeeReader(opts.Reader, hasher), opts.Size); err != nil {
 		return nil, fmt.Errorf("store put: %w", err)
 	}
+	hash := hex.EncodeToString(hasher.Sum(nil))
+
+	// Такой файл уже есть — свой только что записанный убираем, а строку связываем с
+	// существующим объектом. Дешевле потерять одну запись на диск, чем читать файл в
+	// память целиком ради хеша до записи (файлы бывают до 50 МБ).
+	existing, err := s.store.FindAssetByHash(ctx, hash)
+	if err != nil {
+		_ = s.obj.Delete(ctx, key)
+		return nil, err
+	}
+	writeOwn := existing == nil
+	if existing != nil {
+		_ = s.obj.Delete(ctx, key)
+		key = existing.S3Key
+	}
+
+	a := &store.Asset{
+		ProjectID:   projectID,
+		OwnerID:     actorID,
+		Filename:    opts.Filename,
+		Mime:        mime,
+		Size:        opts.Size,
+		S3Key:       key,
+		Kind:        kind,
+		ContentHash: &hash,
+	}
 	if err := s.store.CreateAsset(ctx, a); err != nil {
-		_ = s.obj.Delete(ctx, a.S3Key)
+		if writeOwn {
+			_ = s.obj.Delete(ctx, key)
+		}
 		return nil, err
 	}
 	return a, nil
+}
+
+// StoreFileOptions — готовый файл для записи в проект (импорт папки с md).
+type StoreFileOptions struct {
+	ProjectID uuid.UUID
+	OwnerID   uuid.UUID
+	Filename  string
+	Mime      string
+	Kind      string
+	Data      []byte
+}
+
+// StoreFile кладёт в проект готовый файл — тем же путём, что и загрузка из
+// интерфейса, включая дедупликацию по содержимому: иначе импорт обходил бы её
+// стороной, и один и тот же файл лежал бы в хранилище дважды.
+func (s *Service) StoreFile(ctx context.Context, opts StoreFileOptions) (*store.Asset, error) {
+	if opts.Mime == "" {
+		opts.Mime = MimeOf(opts.Filename)
+	}
+	if opts.Kind == "" {
+		opts.Kind = KindOf(opts.Mime, opts.Filename)
+	}
+	digest := sha256.Sum256(opts.Data)
+	hash := hex.EncodeToString(digest[:])
+
+	key := ObjectKey(opts.ProjectID, opts.Filename)
+	existing, err := s.store.FindAssetByHash(ctx, hash)
+	if err != nil {
+		return nil, err
+	}
+	writeOwn := existing == nil
+	if existing != nil {
+		// Файл уже есть — второй не пишем, ссылаемся на существующий.
+		key = existing.S3Key
+	} else if err := s.obj.Put(ctx, key, opts.Mime, bytes.NewReader(opts.Data), int64(len(opts.Data))); err != nil {
+		return nil, fmt.Errorf("store put: %w", err)
+	}
+
+	asset := &store.Asset{
+		ProjectID:   opts.ProjectID,
+		OwnerID:     opts.OwnerID,
+		Filename:    opts.Filename,
+		Mime:        opts.Mime,
+		Size:        int64(len(opts.Data)),
+		S3Key:       key,
+		Kind:        opts.Kind,
+		ContentHash: &hash,
+	}
+	if err := s.store.CreateAsset(ctx, asset); err != nil {
+		if writeOwn {
+			_ = s.obj.Delete(ctx, key)
+		}
+		return nil, err
+	}
+	return asset, nil
 }
 
 // Open — открывает поток для скачивания (после авторизации).
@@ -152,14 +237,34 @@ func (s *Service) ProjectFileKeys(ctx context.Context, projectID uuid.UUID) ([]s
 	return keys, nil
 }
 
-// DeleteFiles убирает файлы по ключам и возвращает число удалённых.
+// DeleteUnreferencedFiles убирает файлы, на которые больше не ссылается ни одна
+// строка вложений, и возвращает число удалённых.
 //
-// Ошибку на отдельном файле не прерывает уборку: остальные всё равно надо убрать,
+// Проверка ссылок обязательна после дедупликации: одним файлом могут пользоваться
+// несколько проектов, и удаление одного из них не должно уносить картинку у
+// остальных. Вызывается ПОСЛЕ удаления строк (проект уносит свои вложения
+// каскадом) — тогда «сколько осталось ссылок» и есть ответ на вопрос «нужен ли
+// файл ещё кому-нибудь».
+//
+// Ошибка на отдельном файле не прерывает уборку: остальные всё равно надо убрать,
 // а потерянный объект найдёт уборщик хранилища (maintenance.Sweeper).
-func (s *Service) DeleteFiles(ctx context.Context, keys []string) (int, error) {
+func (s *Service) DeleteUnreferencedFiles(ctx context.Context, keys []string) (int, error) {
 	removed := 0
 	var firstErr error
 	for _, key := range keys {
+		if key == "" {
+			continue
+		}
+		refs, err := s.store.CountAssetsByKey(ctx, key)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		if refs > 0 {
+			continue
+		}
 		if err := s.obj.Delete(ctx, key); err != nil {
 			if firstErr == nil {
 				firstErr = err

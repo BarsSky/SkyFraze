@@ -128,6 +128,10 @@ type Service struct {
 	// live — документ живой комнаты проекта (см. LiveDoc): нужен импорту «в
 	// место», чтобы вставка попала в документ, который видят редакторы.
 	live LiveDoc
+	// files — запись файлов проекта (assets.Service): импорт идёт тем же путём, что
+	// и загрузка из интерфейса, иначе дедупликация по содержимому обходилась бы
+	// стороной (см. FileStore).
+	files FileStore
 }
 
 func New(s *store.Store, obj storage.ObjectStore, proj *projects.Service) *Service {

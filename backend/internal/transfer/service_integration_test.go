@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/skyfraze/backend/internal/assets"
 	"github.com/skyfraze/backend/internal/events"
 	"github.com/skyfraze/backend/internal/platform/testdb"
 	"github.com/skyfraze/backend/internal/projects"
@@ -69,7 +70,13 @@ func setup(t *testing.T) *env {
 	}
 	st := store.New(pool)
 	proj := projects.New(st)
-	return &env{st: st, proj: proj, transfer: transfer.New(st, obj, proj), obj: obj}
+	// Файлы проекта пишет assets.Service — тот же путь, что и загрузка из
+	// интерфейса: в нём живёт дедупликация по содержимому.
+	assetsSvc := assets.New(st, obj, proj)
+	transferSvc := transfer.New(st, obj, proj)
+	transferSvc.UseFileStore(assetsSvc)
+	proj.UseFiles(assetsSvc)
+	return &env{st: st, proj: proj, transfer: transferSvc, obj: obj}
 }
 
 func (e *env) user(t *testing.T, email string) uuid.UUID {

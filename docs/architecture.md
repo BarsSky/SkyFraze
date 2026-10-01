@@ -39,7 +39,8 @@ events               (id, project_id, parent_id, depth, position,
 project_event_state  (project_id PK, yjs_state BYTEA, revision, updated_by, updated_at)
 project_views        (id, project_id, visitor_key, viewed_on)  -- дедуп: 1/сутки
 project_ratings      (project_id, user_id, stars 1..5, ...)    -- PK(project_id,user_id)
-assets               (id, project_id, owner_id, filename, mime, size, s3_key, kind, ...)
+assets               (id, project_id, owner_id, filename, mime, size, s3_key,
+                      kind, content_hash, ...)
 event_assets         (event_id, asset_id)                 -- M2M
 sessions             (id, user_id, refresh_token_hash, expires_at)
 schema_migrations    (version PK, applied_at)
@@ -50,6 +51,13 @@ CASCADE`), `depth` (0..8, проверяется CHECK), `position` (0..n-1 вн
 соседей). CRDT-снапшот проекта живёт отдельно в `project_event_state` и
 версионируется (`revision`) — раньше он лежал в `events.yjs_state`, из-за чего
 `events` содержала одну строку-заглушку на проект («фантомное событие»).
+
+`assets.content_hash` (SHA-256 содержимого, миграция 0007) — то, что делает файл
+одним на несколько строк: одинаковое содержимое не пишется в хранилище дважды, а
+`assets.s3_key` у таких строк общий (поэтому уникальность ключа снята). Имя файла,
+владелец и проект остаются у каждой строки свои. Файл удаляется только тогда, когда
+исчезла последняя ссылка на его ключ (`assets.Service.DeleteUnreferencedFiles`), и
+это же правило — единственный сборщик мусора в хранилище (`maintenance.Sweeper`).
 
 ## Публичная лента: контур доступа
 
