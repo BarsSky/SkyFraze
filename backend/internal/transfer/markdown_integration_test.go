@@ -593,6 +593,7 @@ func markdownRouter(svc *transfer.Service) http.Handler {
 	r.Route("/api/projects/{id}", func(r chi.Router) {
 		r.Use(authSvc.WithUser)
 		r.Get("/export.md", h.ExportMarkdown)
+		r.Post("/import/markdown", h.MarkdownImportInto)
 	})
 	return r
 }
@@ -788,11 +789,18 @@ type multipartFixture struct {
 
 // multipartBody собирает multipart-запрос: ключ — «поле:имя файла» (имя части
 // хранит относительный путь, каталоги в нём сохраняются), values — общие поля
-// формы вроде title.
-func multipartBody(t *testing.T, files map[string]string, archives map[string][]byte) multipartFixture {
+// формы вроде title (передаются необязательным третьим аргументом).
+func multipartBody(t *testing.T, files map[string]string, archives map[string][]byte, values ...map[string]string) multipartFixture {
 	t.Helper()
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
+	for _, set := range values {
+		for field, value := range set {
+			if err := mw.WriteField(field, value); err != nil {
+				t.Fatalf("multipart field %s: %v", field, err)
+			}
+		}
+	}
 	for key, content := range files {
 		field, name, _ := strings.Cut(key, ":")
 		part, err := mw.CreateFormFile(field, name)

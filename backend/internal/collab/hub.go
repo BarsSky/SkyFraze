@@ -228,6 +228,70 @@ func (h *Hub) removeIfEmpty(projectID uuid.UUID) {
 	}
 }
 
+// InsertLive вставляет события в документ ЖИВОЙ комнаты и рассылает апдейт.
+//
+// Возвращает false, если комнаты нет (или её документ ещё не загрузился): тогда
+// вызывающий пишет снапшот в базу сам, а комната получит вставку при следующей
+// загрузке документа. Это второй по важности случай — так работает импорт у
+// вкладки без realtime, из CLI и при выключенном WebSocket.
+//
+// Почему вставка обязана идти через комнату. Пока в проекте кто-то редактирует,
+// сервер держит документ в памяти и сохраняет ИМЕННО ЕГО. Запись только в снапшот
+// базы была бы затёрта ближайшим сохранением комнаты, а редакторы не увидели бы
+// кусок вообще: их документ — комната, а не строка в базе.
+//
+// Место вставки выбрано по видимому дереву, то есть по этому же документу: к
+// моменту импорта существующие события в нём уже есть (пришли из снапшота или
+// засеяны подключившимся клиентом), поэтому `parent_id` куска указывает на живое
+// событие, а не на строку, которой в документе нет.
+func (h *Hub) InsertLive(
+	ctx context.Context, projectID, by uuid.UUID, seeds []yjs.EventSeed, place yjs.InsertPlace,
+) (bool, error) {
+	if len(seeds) == 0 {
+		return true, nil
+	}
+	h.mu.RLock()
+	room := h.rooms[projectID]
+	h.mu.RUnlock()
+	if room == nil {
+		return false, nil
+	}
+
+	room.docMu.Lock()
+	if room.doc == nil {
+		room.docMu.Unlock()
+		return false, nil
+	}
+	// Вектор состояния ДО вставки: разница по нему — ровно тот апдейт, который
+	// получат клиенты. Полное состояние для этого не нужно: импорт может быть
+	// большим, а рассылка — редкой.
+	before := room.doc.StateVector()
+	if err := room.doc.InsertAt(place, seeds); err != nil {
+		room.docMu.Unlock()
+		return true, err
+	}
+	update, err := room.doc.Diff(before)
+	room.dirty = true
+	room.lastBy = by
+	// Состав событий изменился: миграции текста на следующем обходе нужно это
+	// увидеть (кусок вставляется сразу с title_text/body_text, поэтому создавать
+	// там нечего — счётчик просто догоняет документ).
+	room.migratedEvents = room.doc.EventCount()
+	room.docMu.Unlock()
+	if err != nil {
+		return true, err
+	}
+
+	// Апдейт уходит всем, включая инициатора: его вкладка — такая же клиентка
+	// комнаты, и вставку она должна увидеть без перезагрузки страницы.
+	room.broadcast(nil, update)
+	h.logger.Info("collab: events inserted into live doc", "project", projectID, "user", by, "events", len(seeds))
+	// Снапшот и проекция — сразу, не дожидаясь тика: импорт редкая и осознанная
+	// операция, и после неё дерево в базе должно совпадать с документом.
+	room.persistFromAnyClient(ctx, h.ev, h.logger)
+	return true, nil
+}
+
 // HandleWS — http.Handler для /api/projects/{id}/collab.
 func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 	tok := r.URL.Query().Get("token")
@@ -446,40 +510,20 @@ func (r *Room) applyUpdate(by uuid.UUID, data []byte) (bool, error) {
 // дерево остановило бы синхронизацию таблицы событий целиком.
 func projectionPayload(doc *yjs.Doc) ([]events.NodeInput, string) {
 	rows := doc.Events()
-	ids := make(map[uuid.UUID]bool, len(rows))
+	seeds := make([]events.EventSeed, 0, len(rows))
 	for _, e := range rows {
-		if id, err := uuid.Parse(e.ID); err == nil {
-			ids[id] = true
-		}
-	}
-
-	h := fnv.New64a()
-	nodes := make([]events.NodeInput, 0, len(rows))
-
-	for _, e := range rows {
-		id, err := uuid.Parse(e.ID)
-		if err != nil {
-			continue
-		}
-		var parent *uuid.UUID
-		if pid, err := uuid.Parse(e.ParentID); err == nil && pid != id && ids[pid] {
-			parent = &pid
-		}
-		nodes = append(nodes, events.NodeInput{
-			ID:       id,
-			ParentID: parent,
-			Position: e.Position,
-			Title:    e.Title,
-			Body:     e.Body,
-			EventDate: events.EventDatePatch{
-				Set:   true,
-				Value: parseEventDate(e.EventDate),
-			},
+		seeds = append(seeds, events.EventSeed{
+			ID:        e.ID,
+			ParentID:  e.ParentID,
+			Title:     e.Title,
+			Body:      e.Body,
+			EventDate: e.EventDate,
+			Position:  e.Position,
 		})
 	}
+	nodes := events.NodesFromSeeds(seeds)
 
-	// Циклы: узел, чей предок указывает на него, поднимаем в корень.
-	nodes = repairProjectionNodes(nodes)
+	h := fnv.New64a()
 	for _, n := range nodes {
 		parent := ""
 		if n.ParentID != nil {
@@ -489,70 +533,11 @@ func projectionPayload(doc *yjs.Doc) ([]events.NodeInput, string) {
 		if n.EventDate.Value != nil {
 			date = n.EventDate.Value.Format("2006-01-02")
 		}
-		// Подпись по всему, что попадает в таблицу событий: и структура, и текст,
-		// и дата. Если ничего не изменилось — проекцию не пишем.
+		// Подпись по всему, что попадает в таблицу событий: структура, текст и
+		// дата. Если ничего не изменилось — проекцию не пишем.
 		fmt.Fprintf(h, "%s|%s|%d|%s|%s|%s\n", n.ID, parent, n.Position, n.Title, n.Body, date)
 	}
 	return nodes, strconv.FormatUint(h.Sum64(), 16)
-}
-
-// repairProjectionNodes поднимает в корень узлы, которых нормализация не примет:
-// родителя нет в наборе (сирота) или цепочка родителей замыкается на сам узел.
-func repairProjectionNodes(nodes []events.NodeInput) []events.NodeInput {
-	ids := make(map[uuid.UUID]bool, len(nodes))
-	parentOf := make(map[uuid.UUID]uuid.UUID, len(nodes))
-	for _, n := range nodes {
-		ids[n.ID] = true
-	}
-	for _, n := range nodes {
-		if n.ParentID != nil && ids[*n.ParentID] && *n.ParentID != n.ID {
-			parentOf[n.ID] = *n.ParentID
-		} else {
-			parentOf[n.ID] = uuid.Nil
-		}
-	}
-
-	for i := range nodes {
-		seen := map[uuid.UUID]bool{nodes[i].ID: true}
-		cur := parentOf[nodes[i].ID]
-		for cur != uuid.Nil {
-			if seen[cur] {
-				parentOf[nodes[i].ID] = uuid.Nil
-				break
-			}
-			seen[cur] = true
-			next, ok := parentOf[cur]
-			if !ok {
-				// Родитель вне набора — сирота, поднимаем в корень.
-				parentOf[nodes[i].ID] = uuid.Nil
-				break
-			}
-			cur = next
-		}
-	}
-
-	for i := range nodes {
-		if parentOf[nodes[i].ID] == uuid.Nil {
-			nodes[i].ParentID = nil
-			continue
-		}
-		parent := parentOf[nodes[i].ID]
-		nodes[i].ParentID = &parent
-	}
-	return nodes
-}
-
-// parseEventDate читает дату из CRDT («YYYY-MM-DD»). Пустая или непонятная строка
-// означает «даты нет» — сервер дату не выдумывает.
-func parseEventDate(value string) *time.Time {
-	if value == "" {
-		return nil
-	}
-	parsed, err := time.Parse("2006-01-02", value)
-	if err != nil {
-		return nil
-	}
-	return &parsed
 }
 
 // broadcastState рассылает всем в комнате полное состояние документа.

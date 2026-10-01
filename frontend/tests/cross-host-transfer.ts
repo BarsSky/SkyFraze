@@ -10,6 +10,7 @@
 
 import { chromium, request, type APIRequestContext } from 'playwright'
 import * as fs from 'fs'
+import { treeBaseRevision } from './helpers/treeProjection'
 
 const LOCAL = process.env.LOCAL_URL ?? 'http://localhost'
 const REMOTE = process.env.REMOTE_URL ?? 'http://192.168.13.66'
@@ -62,8 +63,12 @@ async function main() {
 
   const chapter = crypto.randomUUID()
   const child = crypto.randomUUID()
+  // Базовая ревизия снапшота обязательна: без неё проекция дерева получает 428.
   await api.put(`${LOCAL}/api/projects/${localProjectId}/events/tree`, {
-    headers: localAuth,
+    headers: {
+      ...localAuth,
+      'X-Skyfraze-Base-Revision': await treeBaseRevision(api, LOCAL, localProjectId, localAuth),
+    },
     data: [
       { id: chapter, parent_id: null, position: 0, title: 'Глава переезда', body: 'текст главы' },
       { id: child, parent_id: chapter, position: 1, title: 'Под-событие переезда', body: 'текст под-события' },

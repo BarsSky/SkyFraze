@@ -8,6 +8,9 @@ package transfer
 //	GET  /api/projects/{id}/export.md?assets=1   → zip (story.md, story/, assets/, манифест)
 //	POST /api/projects/import/markdown/preview   → разобранное дерево, без записи
 //	POST /api/projects/import/markdown           → новый проект
+//	POST /api/projects/{id}/import/markdown      → кусок в существующий проект
+//	                                               (parent_id / after_id / before_id
+//	                                               задают место)
 //
 // Тело выгрузки собирается в память целиком: имя файла зависит от заголовка
 // проекта, а после WriteHeader заголовки уже не поменять — иначе обрыв посреди
@@ -43,6 +46,12 @@ const (
 	importFieldFiles   = "files"
 	importFieldArchive = "archive"
 	importFieldTitle   = "title"
+	// Место вставки для импорта в существующий проект: под какое событие положить
+	// кусок (`parent_id`), после какого встать (`after_id`) и перед каким
+	// (`before_id`). Пустые значения — верхний уровень и конец списка.
+	importFieldParent = "parent_id"
+	importFieldAfter  = "after_id"
+	importFieldBefore = "before_id"
 )
 
 // ExportMarkdown — GET /api/projects/{id}/export.md[?assets=1].
@@ -136,6 +145,82 @@ func (h *Handler) MarkdownImport(w http.ResponseWriter, r *http.Request) {
 		Events:    len(parsed.Events),
 		Warnings:  nonNil(parsed.Warnings),
 	})
+}
+
+// MarkdownImportInto — POST /api/projects/{id}/import/markdown: вставляет
+// разобранный кусок в СУЩЕСТВУЮЩИЙ проект.
+//
+// Место задаётся полями формы: `parent_id` (под какое событие), `after_id` (после
+// какого) и `before_id` (перед каким). Все необязательны: без них кусок встаёт в
+// конец верхнего уровня. «Перед» и «после» одновременно — противоречие: позиция
+// была бы неоднозначной, поэтому это 400, а не молчаливый выбор одного из двух.
+// Пишем в CRDT-документ проекта (живой комнаты, если она есть), а таблицу событий
+// перестраиваем из него — иначе вставленное увидели бы только читатели базы, а
+// редакторы нет.
+func (h *Handler) MarkdownImportInto(w http.ResponseWriter, r *http.Request) {
+	uid, err := auth.UserIDFromCtx(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	pid, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid project id")
+		return
+	}
+	parsed, err := parseMarkdownRequest(r)
+	if err != nil {
+		h.markdownError(w, err)
+		return
+	}
+	parentID, err := optionalUUID(r.FormValue(importFieldParent))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid "+importFieldParent)
+		return
+	}
+	afterID, err := optionalUUID(r.FormValue(importFieldAfter))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid "+importFieldAfter)
+		return
+	}
+	beforeID, err := optionalUUID(r.FormValue(importFieldBefore))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid "+importFieldBefore)
+		return
+	}
+	if afterID != nil && beforeID != nil {
+		writeErr(w, http.StatusBadRequest,
+			importFieldAfter+" и "+importFieldBefore+" вместе не задают одного места")
+		return
+	}
+
+	place := InsertPlace{ParentID: parentID, AfterID: afterID, BeforeID: beforeID}
+	created, err := h.svc.ImportMarkdownInto(r.Context(), uid, pid, parsed, place)
+	if err != nil {
+		h.markdownError(w, err)
+		return
+	}
+	h.logger.Info("markdown inserted into project",
+		"user", uid, "project", pid, "events", created, "parent", parentID, "after", afterID,
+		"before", beforeID, "warnings", len(parsed.Warnings))
+	writeJSON(w, http.StatusCreated, importResponse{
+		ProjectID: pid,
+		Events:    created,
+		Warnings:  nonNil(parsed.Warnings),
+	})
+}
+
+// optionalUUID читает необязательный идентификатор из формы.
+func optionalUUID(raw string) (*uuid.UUID, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return nil, nil
+	}
+	id, err := uuid.Parse(value)
+	if err != nil {
+		return nil, err
+	}
+	return &id, nil
 }
 
 // parseMarkdownRequest разбирает multipart импорта: либо один zip в поле
@@ -270,6 +355,13 @@ func decodeExtValue(v string) string {
 // показывается пользователю, поэтому оно должно объяснять причину.
 func (h *Handler) markdownError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, ErrForbidden):
+		// Импорт «в место» — это правка чужого проекта: читателю и постороннему
+		// отказываем так же, как отказывает выгрузка (403, без подсказок о том,
+		// существует проект или нет).
+		writeErr(w, http.StatusForbidden, "forbidden")
+	case errors.Is(err, ErrNotFound):
+		writeErr(w, http.StatusNotFound, "not found")
 	case errors.Is(err, ErrMarkdownTooLarge):
 		writeErr(w, http.StatusRequestEntityTooLarge, err.Error())
 	case errors.Is(err, ErrMarkdownEmpty),

@@ -138,6 +138,150 @@ func (d *Doc) Events() []Event {
 	return out
 }
 
+// EventSeed — событие для вставки в документ (импорт куска в существующий проект,
+// засев документа из реляционных строк).
+type EventSeed struct {
+	ID        string
+	ParentID  string
+	Title     string
+	Body      string
+	EventDate string
+}
+
+// InsertEvents вставляет события в корневой массив, начиная с позиции index.
+//
+// Полем `parent_id` задаётся место в дереве, а позицией в массиве — порядок среди
+// соседей: так же устроен документ клиента, поэтому вставленный кусок сразу
+// выглядит для редакторов обычным деревом.
+func (d *Doc) InsertEvents(index int, seeds []EventSeed) error {
+	if len(seeds) == 0 {
+		return nil
+	}
+	events := ygo.NewArray(d.inner, EventsRoot)
+	at := index
+	if at < 0 {
+		at = 0
+	}
+	if length := int(events.Len()); at > length {
+		at = length
+	}
+
+	txn := d.inner.WriteTxn()
+	for _, s := range seeds {
+		item := events.InsertMap(txn, uint64(at))
+		item.Set(txn, "id", s.ID)
+		if s.ParentID != "" {
+			item.Set(txn, "parent_id", s.ParentID)
+		}
+		if s.Title != "" {
+			item.SetText(txn, "title_text").Insert(txn, 0, s.Title)
+		}
+		if s.Body != "" {
+			item.SetText(txn, "body_text").Insert(txn, 0, s.Body)
+		}
+		if s.EventDate != "" {
+			item.Set(txn, "event_date", s.EventDate)
+		}
+		at++
+	}
+	txn.Commit()
+	return nil
+}
+
+// InsertPlace — где в документе встанет вставляемый кусок (импорт «в место»).
+//
+// Пустые поля — обычные значения по умолчанию: корень куска на верхнем уровне, в
+// конец массива. BeforeID сильнее AfterID: «вставить перед» задаёт позицию точнее,
+// чем «после», и вместе они не имеют смысла (обработчик такое сочетание отвергает).
+type InsertPlace struct {
+	// ParentID — под какое событие положить корень куска.
+	ParentID string
+	// AfterID — сразу после какого события (вместе со всем его поддеревом).
+	AfterID string
+	// BeforeID — перед каким событием.
+	BeforeID string
+}
+
+// InsertAt вставляет события в место, описанное place.
+func (d *Doc) InsertAt(place InsertPlace, seeds []EventSeed) error {
+	return d.InsertEvents(d.InsertIndex(place), seeds)
+}
+
+// InsertIndex — позиция в корневом массиве для place.
+//
+// «После события» означает после всего его поддерева, а не сразу за родителем:
+// для человека «вставить после главы» — это после главы вместе с её пунктами.
+// Порядок отображения строится обходом дерева, поэтому позиция в массиве и
+// видимое место совпадают только при таком правиле.
+func (d *Doc) InsertIndex(place InsertPlace) int {
+	events := d.Events()
+	if place.BeforeID != "" {
+		for _, e := range events {
+			if e.ID == place.BeforeID {
+				return e.Position
+			}
+		}
+		return len(events)
+	}
+	if place.AfterID == "" {
+		return len(events)
+	}
+
+	byID := make(map[string]Event, len(events))
+	children := make(map[string][]string, len(events))
+	for _, e := range events {
+		byID[e.ID] = e
+		if e.ParentID != "" {
+			children[e.ParentID] = append(children[e.ParentID], e.ID)
+		}
+	}
+	if _, ok := byID[place.AfterID]; !ok {
+		return len(events)
+	}
+
+	// Обход поддерева в ширину: позиция берётся максимальная, поэтому неважно, в
+	// каком порядке дети оказались в массиве (у документа, пережившего переносы,
+	// он не обязан быть строго «глубина-вперёд»).
+	seen := map[string]bool{place.AfterID: true}
+	queue := []string{place.AfterID}
+	last := byID[place.AfterID].Position
+	for len(queue) > 0 {
+		id := queue[0]
+		queue = queue[1:]
+		if pos := byID[id].Position; pos > last {
+			last = pos
+		}
+		for _, child := range children[id] {
+			if seen[child] {
+				continue
+			}
+			seen[child] = true
+			queue = append(queue, child)
+		}
+	}
+	return last + 1
+}
+
+// EventIDs — идентификаторы событий в порядке массива: нужны, чтобы найти место
+// вставки (например, «сразу после поддерева события X»).
+func (d *Doc) EventIDs() []string {
+	events := ygo.NewArray(d.inner, EventsRoot)
+	out := make([]string, 0, events.Len())
+	events.Range(func(_ uint64, value any) bool {
+		if item, ok := value.(*ygo.Map); ok {
+			out = append(out, stringField(item, "id"))
+		}
+		return true
+	})
+	return out
+}
+
+// SeedEvents дописывает события в конец документа: так собирается документ
+// проекта, у которого снапшота ещё нет (только реляционные строки).
+func (d *Doc) SeedEvents(seeds []EventSeed) error {
+	return d.InsertEvents(int(ygo.NewArray(d.inner, EventsRoot).Len()), seeds)
+}
+
 // EventCount — сколько событий в корневом массиве (без чтения их полей).
 //
 // Нужен, чтобы не прогонять миграцию текста на каждой букве: она перепроверяется

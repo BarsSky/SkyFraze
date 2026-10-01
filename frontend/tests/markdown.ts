@@ -4,6 +4,7 @@
 // Запуск: npx tsx tests/markdown.ts      (стенд: http://localhost)
 import { chromium, request, type Page } from 'playwright'
 import * as fs from 'fs'
+import { treeBaseRevision } from './helpers/treeProjection'
 
 const BASE = process.env.BASE_URL ?? 'http://localhost'
 const EMAIL = process.env.MD_EMAIL ?? 'galactic.test@e.com'
@@ -65,8 +66,10 @@ const created = await api.post(`${BASE}/api/projects`, {
 })
 const projectId = ((await created.json()) as { id: string }).id
 const chapter = crypto.randomUUID()
+// Проекция дерева требует базовую ревизию снапшота: без неё сервер отвечает 428,
+// проект остаётся пустым и страница показывает пустой таймлайн вместо главы.
 await api.put(`${BASE}/api/projects/${projectId}/events/tree`, {
-  headers: auth,
+  headers: { ...auth, 'X-Skyfraze-Base-Revision': await treeBaseRevision(api, BASE, projectId, auth) },
   data: [{ id: chapter, parent_id: null, position: 0, title: 'Глава с разметкой', body: 'Черновой текст.' }],
 })
 
@@ -141,12 +144,31 @@ ok('предпросмотр: диаграмма нарисована', diagram.
 await page.keyboard.press('Control+Enter')
 await page.waitForSelector('.md-editor', { state: 'detached', timeout: 15000 })
 ok('окно закрылось по Ctrl+Enter', true)
-await page.waitForTimeout(2500)
 
-const stored = (await (await api.get(`${BASE}/api/projects/${projectId}/events`, { headers: auth })).json()) as Array<{
-  body?: string
-}>
-ok('текст сохранён на сервере', (stored[0]?.body ?? '').includes('## Прибытие'), (stored[0]?.body ?? '').slice(0, 60))
+/**
+ * Тело главы в таблице событий.
+ *
+ * Ждём: у открытого проекта строки `events` пишет СЕРВЕР из своего документа
+ * (Фаза 4) — раз в 5 секунд при изменениях, а не на каждое нажатие. Клиент в этот
+ * момент снапшот и дерево не пишет вовсе, поэтому «прочитал сразу после Ctrl+Enter»
+ * означало бы «прочитал до того, как сервер успел сохранить».
+ */
+async function bodyOnServer(): Promise<string> {
+  const deadline = Date.now() + 25000
+  let body = ''
+  while (Date.now() < deadline) {
+    const stored = (await (
+      await api.get(`${BASE}/api/projects/${projectId}/events`, { headers: auth })
+    ).json()) as Array<{ body?: string }>
+    body = stored[0]?.body ?? ''
+    if (body.includes('## Прибытие')) return body
+    await new Promise((r) => setTimeout(r, 500))
+  }
+  return body
+}
+
+const storedBody = await bodyOnServer()
+ok('текст сохранён на сервере', storedBody.includes('## Прибытие'), storedBody.slice(0, 60))
 
 await page.evaluate(`(() => { const m = document.querySelector('.layout main'); if (m) m.scrollTop = 0 })()`)
 await page.waitForTimeout(900)

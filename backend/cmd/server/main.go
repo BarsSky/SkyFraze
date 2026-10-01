@@ -142,6 +142,11 @@ func main() {
 	collabHub := collab.NewHub(logger, cfg.JWTSecret, evSvc, cfg.CORSOrigins)
 	go collabHub.Run(ctx)
 
+	// Импорт «в место» обязан попасть в документ живой комнаты: пока проект кто-то
+	// редактирует, источник правды — он, и запись только в снапшот базы затёрлась
+	// бы ближайшим сохранением комнаты.
+	transferSvc.UseLiveDoc(collabHub)
+
 	// --- router ---
 	r := chi.NewRouter()
 	r.Use(chimw.RequestID)
@@ -292,6 +297,11 @@ func main() {
 		// chi различает их по полному сегменту пути, а не по префиксу, поэтому
 		// /export не перехватывает /export.md (проверено тестом дерева маршрутов).
 		r.Get("/export.md", transferH.ExportMarkdown)
+
+		// Импорт куска в существующий проект: разобранный набор md вставляется в
+		// выбранное место дерева (`parent_id` / `after_id` в форме). Отдельно от
+		// /api/projects/import/markdown, который создаёт НОВЫЙ проект.
+		r.Post("/import/markdown", transferH.MarkdownImportInto)
 	})
 
 	// global invitation acceptance

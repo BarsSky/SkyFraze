@@ -263,3 +263,56 @@ func TestEnsureTextFieldsMigratesLegacy(t *testing.T) {
 		t.Fatalf("мигрированный снапшот снова мигрировали: %d полей", again)
 	}
 }
+
+// Место вставки куска (импорт «в место»): «после события» — после всего его
+// поддерева, «перед событием» — строго перед ним. Это не то же самое, что
+// «после предыдущего»: у главы бывают пункты, и кусок не должен встать между
+// главой и её пунктами (в порядке отображения он тогда окажется перед ними).
+func TestInsertIndex(t *testing.T) {
+	doc := yjs.NewDoc()
+	// Дерево: A (глава) с детьми A1, A2, затем B.
+	if err := doc.SeedEvents([]yjs.EventSeed{
+		{ID: "a", Title: "A"},
+		{ID: "a1", ParentID: "a", Title: "A1"},
+		{ID: "a2", ParentID: "a", Title: "A2"},
+		{ID: "b", Title: "B"},
+	}); err != nil {
+		t.Fatalf("засев: %v", err)
+	}
+
+	cases := []struct {
+		name  string
+		place yjs.InsertPlace
+		want  int
+	}{
+		{"по умолчанию — в конец", yjs.InsertPlace{}, 4},
+		{"после главы — после её поддерева", yjs.InsertPlace{AfterID: "a"}, 3},
+		{"после последнего пункта главы", yjs.InsertPlace{AfterID: "a2"}, 3},
+		{"перед главой B", yjs.InsertPlace{BeforeID: "b"}, 3},
+		{"перед первым пунктом", yjs.InsertPlace{BeforeID: "a1"}, 1},
+		{"перед неизвестным — в конец", yjs.InsertPlace{BeforeID: "нет"}, 4},
+		{"после неизвестного — в конец", yjs.InsertPlace{AfterID: "нет"}, 4},
+		{"родитель сам по себе позицию не задаёт", yjs.InsertPlace{ParentID: "a"}, 4},
+	}
+	for _, c := range cases {
+		if got := doc.InsertIndex(c.place); got != c.want {
+			t.Errorf("%s: позиция %d, ожидалось %d", c.name, got, c.want)
+		}
+	}
+
+	// Вставка в вычисленную позицию не ломает существующее дерево: элементы
+	// остаются на месте, а новый оказывается между главой с пунктами и B.
+	if err := doc.InsertAt(yjs.InsertPlace{AfterID: "a"}, []yjs.EventSeed{{ID: "x", Title: "X"}}); err != nil {
+		t.Fatalf("вставка: %v", err)
+	}
+	ids := doc.EventIDs()
+	want := []string{"a", "a1", "a2", "x", "b"}
+	if len(ids) != len(want) {
+		t.Fatalf("в документе %v, ожидалось %v", ids, want)
+	}
+	for i := range want {
+		if ids[i] != want[i] {
+			t.Fatalf("после вставки %v, ожидалось %v", ids, want)
+		}
+	}
+}

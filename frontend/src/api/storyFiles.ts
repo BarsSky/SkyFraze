@@ -112,6 +112,42 @@ export async function importMarkdownFolder(
 }
 
 /**
+ * Место вставки куска в существующий проект.
+ *
+ * `parentId` — под какое событие положить корень куска (нет — верхний уровень);
+ * `beforeId`/`afterId` — перед каким или после какого события он встанет.
+ * «Перед» и «после» одновременно сервер отвергает: это два разных места.
+ */
+export interface MarkdownInsertPlace {
+  parentId?: string | null
+  beforeId?: string | null
+  afterId?: string | null
+}
+
+/**
+ * Вставляет разобранный кусок в СУЩЕСТВУЮЩИЙ проект (импорт «в место»).
+ *
+ * Проект не создаётся: кусок встаёт в его CRDT-документ, а таблица событий
+ * перестраивается из документа. Если в проекте открыта живая комната, вставку
+ * получают все подключённые редакторы сразу; вкладка без realtime перечитывает
+ * состояние (`reloadFromServer`) — см. ProjectTimelinePage.
+ */
+export async function importMarkdownInto(
+  projectId: string,
+  source: MarkdownImportSource | null | undefined,
+  place: MarkdownInsertPlace,
+): Promise<MarkdownImportResult> {
+  const form = requireMarkdownForm(source)
+  if (place.parentId) form.append('parent_id', place.parentId)
+  if (place.beforeId) form.append('before_id', place.beforeId)
+  else if (place.afterId) form.append('after_id', place.afterId)
+  const raw = await http
+    .post(`projects/${encodeURIComponent(projectId)}/import/markdown`, { body: form, timeout: 300000 })
+    .json<unknown>()
+  return parseMarkdownImportResult(raw)
+}
+
+/**
  * Собирает multipart для импорта.
  *
  * Имя части для файла папки — `webkitRelativePath` БЕЗ первого сегмента

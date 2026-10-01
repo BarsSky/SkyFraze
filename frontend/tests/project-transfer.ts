@@ -7,6 +7,7 @@
 import { chromium, request, type APIRequestContext, type Page } from 'playwright'
 import * as fs from 'fs'
 import * as path from 'path'
+import { treeBaseRevision } from './helpers/treeProjection'
 
 const BASE = process.env.BASE_URL ?? 'http://localhost'
 const OUT = 'C:/Projects/SkyFraze/_transfer_shots'
@@ -70,10 +71,11 @@ async function main() {
   const projectId = project.id
 
   // Дерево через проекцию CRDT-дерева (тот же путь, что использует редактор).
+  // Базовая ревизия обязательна: без неё сервер отвечает 428.
   const chapter = crypto.randomUUID()
   const child = crypto.randomUUID()
   const tree = await api.put(`${BASE}/api/projects/${projectId}/events/tree`, {
-    headers: auth,
+    headers: { ...auth, 'X-Skyfraze-Base-Revision': await treeBaseRevision(api, BASE, projectId, auth) },
     data: [
       { id: chapter, parent_id: null, position: 0, title: 'Глава переноса', body: 'текст главы для проверки' },
       { id: child, parent_id: chapter, position: 1, title: 'Под-событие переноса', body: 'текст под-события' },

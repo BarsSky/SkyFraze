@@ -1,9 +1,18 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { buildEventTree, DEFAULT_MAX_DEPTH, type EventLike, type EventTreeNode } from '../../collab/eventTree'
 import { checkMove, type DropPlace, type MoveReject } from '../../collab/reorder'
 import { editingPeers, typingLabel, type PeerState } from '../../collab/awareness'
 import { titleString } from '../../collab/text'
+import {
+  previewMarkdownImport,
+  readImportErrorMessage,
+  type MarkdownImportPreview,
+  type MarkdownImportSource,
+  type MarkdownInsertPlace,
+} from '../../api/storyFiles'
+import { DIRECTORY_PICK } from '../../lib/directoryPick'
+import { plural } from '../../lib/format'
 import {
   yAddEvent,
   yDeleteEvent,
@@ -26,6 +35,13 @@ interface Props {
   onChanged: () => void
   /** Загрузка файла: страница сохраняет ассет и возвращает его. */
   onUpload: (file: File) => Promise<Asset | null>
+  /**
+   * Импорт «в место»: вставить разобранный кусок md в этот проект. Возвращает
+   * число вставленных событий; саму вставку делает страница (у неё есть id
+   * проекта и перечитывание состояния без realtime). Без этого колбэка
+   * возможность импорта в панели не показывается.
+   */
+  onImportInto?: (source: MarkdownImportSource, place: MarkdownInsertPlace) => Promise<number>
   /**
    * Кто из соседей что правит (`collab.presence`, без меня). Отсюда — отметки у
    * строк списка: без них «кто где» видно только в баре над панелью, а он
@@ -98,6 +114,29 @@ const DROP_TEXT: Record<DropPlace, string> = {
   inside: 'вложить внутрь',
 }
 
+/** Куда положить кусок, если место выбирают не перетаскиванием, а списком. */
+type ChunkMode = 'end' | 'before' | 'after' | 'inside'
+
+const CHUNK_MODE_TEXT: Record<ChunkMode, string> = {
+  end: 'в конец проекта',
+  before: 'перед выбранным событием',
+  after: 'после выбранного события',
+  inside: 'внутрь выбранного события',
+}
+
+/**
+ * Разобранный кусок md, ожидающий места: файлы на сервере уже разобраны
+ * (`preview` ничего не пишет), и человек видит, что именно вставится.
+ */
+interface ImportChunk {
+  source: MarkdownImportSource
+  /** Что выбрал человек: «папка «Глава 02», 6 файлов» или «архив «часть.zip»». */
+  label: string
+  events: number
+  /** Самая глубокая вложенность в куске: по ней считаем, влезет ли он в место. */
+  maxDepth: number
+}
+
 /** Куда указывает текущий жест: строка-цель и место в ней. */
 interface DropHint {
   targetId: string | null
@@ -109,6 +148,8 @@ interface DropHint {
 
 /** Что рисуем, пока тащим: подпись под указателем и подсветка цели. */
 interface DragView {
+  /** Что тащим: строка дерева или разобранный кусок md (тексты подсказок разные). */
+  kind: 'row' | 'chunk'
   id: string
   x: number
   y: number
@@ -130,6 +171,8 @@ interface GestureHandlers {
  * человеку: подпись под указателем и подсветка цели сброса.
  */
 interface DragGesture {
+  /** Что тащим: строку дерева (перенос) или разобранный кусок md (импорт). */
+  kind: 'row' | 'chunk'
   id: string
   label: string
   pointerId: number
@@ -151,6 +194,29 @@ function siblingsOf(rows: NavRow[], row: NavRow): NavRow[] {
   return rows.filter((item) => item.parentId === row.parentId)
 }
 
+/**
+ * Последний потомок строки в порядке отображения (или null, если детей нет).
+ *
+ * Нужен для «вложить внутрь»: кусок должен встать последним ребёнком, то есть
+ * после всего поддерева цели. Порядок отображения — обход дерева, поэтому
+ * достаточно найти последнюю строку, у которой цель есть среди предков.
+ */
+function lastDescendant(rows: NavRow[], id: string): string | null {
+  const byId = new Map(rows.map((row) => [row.id, row]))
+  let last: string | null = null
+  for (const row of rows) {
+    let cursor = row.parentId
+    while (cursor) {
+      if (cursor === id) {
+        last = row.id
+        break
+      }
+      cursor = byId.get(cursor)?.parentId ?? null
+    }
+  }
+  return last
+}
+
 /** Классы подсветки цели: линия «между» строками или рамка «внутрь». */
 function dropClassFor(hint: DropHint): string {
   const base = `ed-row--drop-${hint.place}`
@@ -169,7 +235,9 @@ function dropClassFor(hint: DropHint): string {
  * без сдвига продолжает выбирать событие, а перенос одной транзакцией делает
  * `yMoveSubtree` (порядок в Y.Array + `parent_id`).
  */
-export function EditorsPanel({ events, assets, assetUrls, syncNote, onChanged, onUpload, presence, onEditing }: Props) {
+export function EditorsPanel({
+  events, assets, assetUrls, syncNote, onChanged, onUpload, onImportInto, presence, onEditing,
+}: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [filter, setFilter] = useState('')
   const [version, setVersion] = useState(0) // перерисовка после правок CRDT
@@ -177,6 +245,10 @@ export function EditorsPanel({ events, assets, assetUrls, syncNote, onChanged, o
   const [drag, setDrag] = useState<DragView | null>(null)
   /** Подсказка для клавиатурных переносов: что не получилось и почему. */
   const [notice, setNotice] = useState<string | null>(null)
+  /** Разобранный кусок md: пока он есть, его можно перетащить на дерево. */
+  const [chunk, setChunk] = useState<ImportChunk | null>(null)
+  const [chunkMode, setChunkMode] = useState<ChunkMode>('end')
+  const [importBusy, setImportBusy] = useState(false)
   const syncTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const navRef = useRef<HTMLElement | null>(null)
   const gestureRef = useRef<DragGesture | null>(null)
@@ -323,6 +395,123 @@ export function EditorsPanel({ events, assets, assetUrls, syncNote, onChanged, o
   const attachedIds = ((selectedMap?.get('assets') as string[] | undefined) ?? []).filter(Boolean)
   const images = assets.filter((a) => attachedIds.includes(a.id) && a.mime.startsWith('image/'))
 
+  // ─── импорт куска md «в место» ────────────────────────────────────────────
+  //
+  // Разбор делает сервер и НИЧЕГО не пишет: пока человек не отпустит кусок над
+  // деревом (или не выберет место списком), в проекте ничего не меняется. Так
+  // видно, что именно вставится, — и правила разбора можно проверить до записи.
+
+  /** Разбирает выбранные файлы: то же окно предпросмотра, что у импорта проекта. */
+  async function loadChunk(source: MarkdownImportSource, label: string) {
+    setImportBusy(true)
+    setNotice(null)
+    setChunk(null)
+    try {
+      const preview: MarkdownImportPreview = await previewMarkdownImport(source)
+      if (preview.events.length === 0) {
+        setNotice('В выбранных файлах не нашлось событий — вставлять нечего')
+        return
+      }
+      setChunk({
+        source,
+        label,
+        events: preview.events.length,
+        maxDepth: preview.events.reduce((max, event) => Math.max(max, event.depth), 0),
+      })
+      setChunkMode('end')
+      setNotice(`Кусок разобран: ${preview.events.length} ${plural(preview.events.length, 'событие', 'события', 'событий')} — перетащите его на дерево`)
+    } catch (e) {
+      const message = await readImportErrorMessage(e)
+      setNotice(message ?? 'Не удалось разобрать файлы — сервер отклонил запрос')
+    } finally {
+      setImportBusy(false)
+    }
+  }
+
+  function onPickChunkFolder(e: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? [])
+    // Значение поля сбрасываем: иначе повторный выбор той же папки не вызовет change.
+    e.target.value = ''
+    if (files.length === 0) return
+    const root = files[0].webkitRelativePath.split('/')[0]
+    const count = `${files.length} ${plural(files.length, 'файл', 'файла', 'файлов')}`
+    void loadChunk(files, root && root !== files[0].name ? `папка «${root}», ${count}` : count)
+  }
+
+  function onPickChunkZip(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    void loadChunk({ archive: file }, `архив «${file.name}»`)
+  }
+
+  /**
+   * Проверка «влезет ли кусок сюда» и текст причины.
+   *
+   * Единственное ограничение — глубина: перенос строки не может сделать дерево
+   * глубже `DEFAULT_MAX_DEPTH`, и импорт куска тоже (сервер отверг бы проекцию).
+   * Циклов и «сам в себя» здесь быть не может: кусок — новые события.
+   */
+  function chunkHint(row: NavRow, place: DropPlace): DropHint {
+    const deepest = (place === 'inside' ? row.depth + 1 : row.depth) + (chunk?.maxDepth ?? 0)
+    if (deepest > DEFAULT_MAX_DEPTH) {
+      return {
+        targetId: row.id,
+        place,
+        allowed: false,
+        reason: `в куске ${(chunk?.maxDepth ?? 0) + 1} уровень(ей), а глубже ${DEFAULT_MAX_DEPTH} дерево не поддерживает`,
+      }
+    }
+    return { targetId: row.id, place, allowed: true, reason: null }
+  }
+
+  /** Место вставки для сброса: «после строки» — после неё вместе с её поддеревом. */
+  function chunkPlace(hint: DropHint): MarkdownInsertPlace {
+    if (hint.targetId === null) return {} // пусто под списком — в конец верхнего уровня
+    const row = rowsRef.current.find((item) => item.id === hint.targetId)
+    if (!row) return {}
+    if (hint.place === 'before') return { parentId: row.parentId, beforeId: row.id }
+    if (hint.place === 'after') return { parentId: row.parentId, afterId: row.id }
+    // «Внутрь» — последним ребёнком: после последнего потомка, иначе после самой строки.
+    return { parentId: row.id, afterId: lastDescendant(rowsRef.current, row.id) ?? row.id }
+  }
+
+  /** Вставка куска. Ошибку показываем словами сервера: 400 у него содержательный. */
+  async function insertChunk(place: MarkdownInsertPlace) {
+    if (!chunk || !onImportInto || importBusy) return
+    setImportBusy(true)
+    try {
+      const created = await onImportInto(chunk.source, place)
+      setChunk(null)
+      setNotice(`Вставлено событий: ${created}`)
+    } catch (e) {
+      const message = await readImportErrorMessage(e)
+      setNotice(message ?? 'Вставить не удалось — сервер отклонил запрос')
+    } finally {
+      setImportBusy(false)
+    }
+  }
+
+  /** Вставка без перетаскивания: место выбирают списком (клавиатура, тач). */
+  function insertChunkByMode() {
+    if (!chunk) return
+    if (chunkMode === 'end') {
+      void insertChunk({})
+      return
+    }
+    const row = rows.find((item) => item.id === selectedId)
+    if (!row) {
+      setNotice('Сначала выберите событие в списке')
+      return
+    }
+    const hint = chunkHint(row, chunkMode)
+    if (!hint.allowed) {
+      setNotice(`Сюда нельзя: ${hint.reason}`)
+      return
+    }
+    void insertChunk(chunkPlace(hint))
+  }
+
   const background = useMemo<BackgroundValue>(() => {
     const kind = selectedMap?.get('bg_kind')
     const tone = selectedMap?.get('bg_tone')
@@ -444,6 +633,11 @@ export function EditorsPanel({ events, assets, assetUrls, syncNote, onChanged, o
     const half = rect.height > 0 ? (gesture.y - rect.top) / rect.height : 0.5
     const place: DropPlace = ratio >= INSIDE_ZONE_RATIO ? 'inside' : half < 0.5 ? 'before' : 'after'
     const targetId = el.dataset.eventId ?? ''
+    // Кусок md — не строка дерева: проверяем только глубину, а не цикл с самим собой.
+    if (gesture.kind === 'chunk') {
+      const row = rowsRef.current.find((item) => item.id === targetId)
+      return row ? chunkHint(row, place) : { targetId: null, place: 'inside', allowed: true, reason: null }
+    }
     if (targetId === gesture.id) return hintOnSelf(gesture, place)
     return dropHint(gesture.id, targetId || null, place)
   }
@@ -488,6 +682,9 @@ export function EditorsPanel({ events, assets, assetUrls, syncNote, onChanged, o
     } catch {
       /* jsdom и старые браузеры: просто покажем «в конец верхнего уровня» */
     }
+    // Пусто под последней строкой: у строки это «в конец верхнего уровня», у куска —
+    // «в конец проекта» (то же место, но без проверок переноса).
+    if (gesture.kind === 'chunk') return { targetId: null, place: 'inside', allowed: true, reason: null }
     return dropHint(gesture.id, null, 'inside')
   }
 
@@ -531,7 +728,14 @@ export function EditorsPanel({ events, assets, assetUrls, syncNote, onChanged, o
   }
 
   function publish(gesture: DragGesture) {
-    setDrag({ id: gesture.id, x: gesture.x, y: gesture.y, label: gesture.label, hint: gesture.hint })
+    setDrag({
+      kind: gesture.kind,
+      id: gesture.id,
+      x: gesture.x,
+      y: gesture.y,
+      label: gesture.label,
+      hint: gesture.hint,
+    })
   }
 
   function detachGesture(gesture: DragGesture) {
@@ -559,7 +763,22 @@ export function EditorsPanel({ events, assets, assetUrls, syncNote, onChanged, o
     // уже не должен перебивать выбор.
     if (moved) suppressClickRef.current = true
     const hint = gesture.hint
-    if (!commit || !moved || !hint || !hint.allowed) return
+    if (!commit || !moved) return
+
+    if (gesture.kind === 'chunk') {
+      // Кусок md вставляется на сервере: он один держит документ проекта.
+      if (!hint) return
+      if (!hint.allowed) {
+        // Отказ не должен исчезать вместе с подсветкой: иначе кусок «просто не
+        // вставился» без объяснения.
+        setNotice(`Сюда нельзя: ${hint.reason ?? 'непонятная цель сброса'}`)
+        return
+      }
+      void insertChunk(chunkPlace(hint))
+      return
+    }
+
+    if (!hint || !hint.allowed) return
 
     if (yMoveSubtree(events, gesture.id, hint.targetId, hint.place)) {
       setSelectedId(gesture.id) // после переноса событие остаётся выбранным
@@ -630,6 +849,7 @@ export function EditorsPanel({ events, assets, assetUrls, syncNote, onChanged, o
       blur: () => finishGesture(false),
     }
     gesture = {
+      kind: 'row',
       id: row.id,
       label: `${row.number} · ${row.title}`,
       pointerId: event.pointerId,
@@ -639,6 +859,63 @@ export function EditorsPanel({ events, assets, assetUrls, syncNote, onChanged, o
       y: event.clientY,
       touch: event.pointerType === 'touch' || event.pointerType === 'pen',
       fromGrip,
+      mode: 'wait',
+      hint: null,
+      handlers,
+    }
+    gestureRef.current = gesture
+    window.addEventListener('pointermove', handlers.move)
+    window.addEventListener('pointerup', handlers.up)
+    window.addEventListener('pointercancel', handlers.cancel)
+    window.addEventListener('keydown', handlers.key, true)
+    window.addEventListener('blur', handlers.blur)
+  }
+
+  /**
+   * Начало перетаскивания КУСКА md: та же механика, что у строк, но источник —
+   * не событие дерева, а разобранные файлы. Отдельный вход, потому что у куска
+   * нет ни id события, ни места в дереве, пока его не отпустили.
+   */
+  function onChunkPointerDown(event: React.PointerEvent<HTMLButtonElement>) {
+    if (!chunk || importBusy) return
+    if (event.pointerType === 'mouse' && event.button !== 0) return
+    const active = gestureRef.current
+    if (active) {
+      if (active.pointerId === event.pointerId) return
+      finishGesture(false)
+    }
+    suppressClickRef.current = false
+    setNotice(null)
+
+    let gesture: DragGesture
+    const handlers: GestureHandlers = {
+      move: (e) => onPointerMove(e, gesture),
+      up: (e) => {
+        if (e.pointerId === gesture.pointerId) finishGesture(true)
+      },
+      cancel: (e) => {
+        if (e.pointerId === gesture.pointerId) finishGesture(false)
+      },
+      key: (e) => {
+        if (e.key !== 'Escape') return
+        e.preventDefault()
+        finishGesture(false)
+      },
+      blur: () => finishGesture(false),
+    }
+    gesture = {
+      kind: 'chunk',
+      id: '',
+      label: `кусок: ${chunk.events} ${plural(chunk.events, 'событие', 'события', 'событий')}`,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      x: event.clientX,
+      y: event.clientY,
+      touch: event.pointerType === 'touch' || event.pointerType === 'pen',
+      // Захвата за ручку у куска нет: на тач-устройствах вертикальный жест —
+      // это прокрутка списка, а не перенос (как у строк без ручки).
+      fromGrip: false,
       mode: 'wait',
       hint: null,
       handlers,
@@ -713,10 +990,14 @@ export function EditorsPanel({ events, assets, assetUrls, syncNote, onChanged, o
   const hint = drag?.hint ?? null
   const hintText = drag
     ? !hint
-      ? 'Отпустите над строкой списка, чтобы перенести'
+      ? drag.kind === 'chunk'
+        ? 'Отпустите над строкой дерева, чтобы вставить кусок'
+        : 'Отпустите над строкой списка, чтобы перенести'
       : hint.allowed
         ? hint.targetId === null
-          ? 'Отпустите: в конец верхнего уровня'
+          ? drag.kind === 'chunk'
+            ? 'Отпустите: в конец проекта'
+            : 'Отпустите: в конец верхнего уровня'
           : `Отпустите: ${DROP_TEXT[hint.place]}`
         : `Сюда нельзя: ${hint.reason}`
     : notice
@@ -743,6 +1024,76 @@ export function EditorsPanel({ events, assets, assetUrls, syncNote, onChanged, o
           </span>
         </div>
       </div>
+
+      {onImportInto && (
+        <div className="ed-import" data-ed-import>
+          {chunk === null ? (
+            <>
+              {/* Импорт «в место»: файлы разбирает сервер и ничего не пишет —
+                  кусок встанет в проект только после того, как ему выберут место. */}
+              <span className="muted ed-import__label">Импорт куска md:</span>
+              <label className={`ed-import__pick${importBusy ? ' is-busy' : ''}`}>
+                <input
+                  type="file"
+                  multiple
+                  disabled={importBusy}
+                  onChange={onPickChunkFolder}
+                  {...DIRECTORY_PICK}
+                />
+                папка
+              </label>
+              <label className={`ed-import__pick${importBusy ? ' is-busy' : ''}`}>
+                <input
+                  type="file"
+                  accept=".zip,application/zip"
+                  disabled={importBusy}
+                  onChange={onPickChunkZip}
+                />
+                zip
+              </label>
+              {importBusy && <span className="muted" role="status">Разбираю файлы…</span>}
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="ed-import__chunk"
+                data-ed-chunk
+                onPointerDown={onChunkPointerDown}
+                title="Перетащите на строку дерева: левая часть строки — между событиями, правая — внутрь"
+              >
+                <span aria-hidden="true">⠿</span> {chunk.label} — {chunk.events}{' '}
+                {plural(chunk.events, 'событие', 'события', 'событий')}
+              </button>
+              {/* Место можно выбрать и списком: перетаскивание на тач-устройствах
+                  конкурирует с прокруткой, а с клавиатуры его не сделать вовсе. */}
+              <label className="ed-import__mode">
+                <span className="muted">место:</span>
+                <select
+                  value={chunkMode}
+                  onChange={(e) => setChunkMode(e.target.value as ChunkMode)}
+                  aria-label="Место вставки куска"
+                >
+                  {(Object.keys(CHUNK_MODE_TEXT) as ChunkMode[]).map((mode) => (
+                    <option key={mode} value={mode}>{CHUNK_MODE_TEXT[mode]}</option>
+                  ))}
+                </select>
+              </label>
+              <button type="button" onClick={insertChunkByMode} disabled={importBusy}>
+                вставить
+              </button>
+              <button
+                type="button"
+                className="secondary"
+                onClick={() => setChunk(null)}
+                disabled={importBusy}
+              >
+                отмена
+              </button>
+            </>
+          )}
+        </div>
+      )}
 
       {syncNote && <p className="muted ed-panel__note">{syncNote}</p>}
       {uploadNote && <p className="ed-panel__note ed-panel__note--upload">{uploadNote}</p>}

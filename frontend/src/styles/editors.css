@@ -27,6 +27,33 @@
   display: inline-block;
 }
 
+/* Импорт куска md «в место»: строка над деревом. Папку и zip выбирают ярлыками
+   (нативный input спрятан), разобранный кусок становится «чипом», который можно
+   перетащить на дерево — или вставить по выбранному месту списком. */
+.ed-import {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin-bottom: 12px; font-size: 12px;
+}
+.ed-import__label { white-space: nowrap; }
+.ed-import__pick {
+  display: inline-flex; align-items: center; min-height: 32px; padding: 0 10px;
+  border: 1px dashed var(--border); border-radius: 6px; cursor: pointer;
+}
+.ed-import__pick:hover { border-color: var(--accent); color: var(--accent); }
+.ed-import__pick.is-busy { opacity: 0.5; cursor: default; }
+/* Сам input не показываем: он некрасив и не переносится по ширине окна, а
+   подпись-ярлык остаётся кнопкой нужного размера (в т.ч. на телефоне). */
+.ed-import__pick input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.ed-import__chunk {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
+  min-height: 32px; padding: 0 10px; cursor: grab;
+  touch-action: none; /* палец тащит кусок, а не прокручивает страницу */
+  background: var(--chip-bg); border: 1px solid var(--accent); color: var(--fg);
+}
+.ed-import__chunk:active { cursor: grabbing; }
+.ed-import__mode { display: inline-flex; align-items: center; gap: 6px; }
+.ed-import__mode select { max-width: 220px; min-height: 32px; }
+
 .ed-panel__grid {
   display: grid; grid-template-columns: minmax(240px, 340px) 1fr;
   gap: 16px; align-items: start;

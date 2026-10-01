@@ -117,6 +117,9 @@ type Service struct {
 	store *store.Store
 	obj   storage.ObjectStore
 	proj  *projects.Service
+	// live — документ живой комнаты проекта (см. LiveDoc): нужен импорту «в
+	// место», чтобы вставка попала в документ, который видят редакторы.
+	live LiveDoc
 }
 
 func New(s *store.Store, obj storage.ObjectStore, proj *projects.Service) *Service {

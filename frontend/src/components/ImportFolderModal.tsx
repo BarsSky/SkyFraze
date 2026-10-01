@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ChangeEvent, type InputHTMLAttributes } from 'react'
+import { useEffect, useRef, useState, type ChangeEvent } from 'react'
 import { createPortal } from 'react-dom'
 import {
   importMarkdownFolder,
@@ -9,21 +9,13 @@ import {
 } from '../api/storyFiles'
 import { ErrorBanner } from './ErrorBanner'
 import { plural } from '../lib/format'
+import { DIRECTORY_PICK } from '../lib/directoryPick'
 
 interface Props {
   onClose: () => void
   /** Проект создан — страница открывает его (импорт всегда создаёт новый). */
   onCreated: (projectId: string) => void
 }
-
-/**
- * React 18 не знает атрибута `webkitdirectory`, а без него браузер отдаёт файлы
- * по одному, без папок. Передаём атрибут в DOM как есть: он нестандартный, но
- * именно он открывает выбор каталога.
- */
-const DIRECTORY_PICK = {
-  webkitdirectory: '',
-} as unknown as InputHTMLAttributes<HTMLInputElement>
 
 type Busy = 'preview' | 'create' | null
 

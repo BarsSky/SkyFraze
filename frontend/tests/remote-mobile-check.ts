@@ -3,6 +3,7 @@
 // незащищённом контексте (http://IP → crypto.randomUUID недоступен).
 import { chromium, request } from 'playwright'
 import * as fs from 'fs'
+import { treeBaseRevision } from './helpers/treeProjection'
 
 const BASE = process.env.REMOTE_URL ?? 'http://192.168.13.66'
 const EMAIL = process.env.TEMP_EMAIL!
@@ -46,8 +47,10 @@ const created = await api.post(`${BASE}/api/projects`, {
 })
 const projectId = ((await created.json()) as { id: string }).id
 const chapter = crypto.randomUUID()
+// Базовая ревизия снапшота обязательна: без неё проекция дерева получает 428,
+// и на телефоне проверялся бы пустой проект вместо главы.
 await api.put(`${BASE}/api/projects/${projectId}/events/tree`, {
-  headers: auth,
+  headers: { ...auth, 'X-Skyfraze-Base-Revision': await treeBaseRevision(api, BASE, projectId, auth) },
   data: [
     { id: chapter, parent_id: null, position: 0, title: 'Глава для телефона', body: 'Текст главы, чтобы копирайт был непустым.' },
   ],

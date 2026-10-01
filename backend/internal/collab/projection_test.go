@@ -96,10 +96,11 @@ func TestProjectionRepairsOrphansAndCycles(t *testing.T) {
 	chapter, step := nodes[0].ID, nodes[1].ID
 
 	t.Run("родителя нет в наборе — узел в корень", func(t *testing.T) {
-		broken := append([]events.NodeInput{}, nodes...)
-		missing := uuid.MustParse("99999999-9999-4999-8999-999999999999")
-		broken[1].ParentID = &missing
-		repaired := repairProjectionNodes(broken)
+		missing := "99999999-9999-4999-8999-999999999999"
+		repaired := events.NodesFromSeeds([]events.EventSeed{
+			{ID: chapter.String(), Title: "Глава", Body: "текст"},
+			{ID: step.String(), ParentID: missing, Title: "Шаг", Body: "текст", Position: 1},
+		})
 		if repaired[1].ParentID != nil {
 			t.Fatalf("сирота осталась с родителем: %+v", repaired[1].ParentID)
 		}
@@ -109,10 +110,10 @@ func TestProjectionRepairsOrphansAndCycles(t *testing.T) {
 	})
 
 	t.Run("цикл разрывается", func(t *testing.T) {
-		broken := append([]events.NodeInput{}, nodes...)
-		broken[0].ParentID = &step
-		broken[1].ParentID = &chapter
-		repaired := repairProjectionNodes(broken)
+		repaired := events.NodesFromSeeds([]events.EventSeed{
+			{ID: chapter.String(), ParentID: step.String(), Title: "Глава", Body: "текст"},
+			{ID: step.String(), ParentID: chapter.String(), Title: "Шаг", Body: "текст", Position: 1},
+		})
 		// Главное — обход родителей завершается: цикла больше нет.
 		byID := map[uuid.UUID]*uuid.UUID{}
 		for i := range repaired {
@@ -132,7 +133,10 @@ func TestProjectionRepairsOrphansAndCycles(t *testing.T) {
 	})
 
 	t.Run("здоровая структура не меняется", func(t *testing.T) {
-		repaired := repairProjectionNodes(nodes)
+		repaired := events.NodesFromSeeds([]events.EventSeed{
+			{ID: chapter.String(), Title: "Глава", Body: "текст"},
+			{ID: step.String(), ParentID: chapter.String(), Title: "Шаг", Body: "текст", Position: 1},
+		})
 		if repaired[1].ParentID == nil || *repaired[1].ParentID != chapter {
 			t.Fatalf("валидный родитель потерян: %+v", repaired[1].ParentID)
 		}

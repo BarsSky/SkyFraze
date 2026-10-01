@@ -67,7 +67,9 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/skyfraze/backend/internal/collab/yjs"
 	"github.com/skyfraze/backend/internal/events"
+	"github.com/skyfraze/backend/internal/projects"
 	"github.com/skyfraze/backend/internal/store"
 )
 
@@ -1243,4 +1245,188 @@ func (s *Service) ImportMarkdown(
 		return nil, err
 	}
 	return p, nil
+}
+
+// InsertPlace — место вставки куска в существующий проект: под какое событие
+// положить его корень и между какими он встанет. Пустые поля — «верхний уровень»
+// и «в конец»: так выглядит импорт, о месте которого не спрашивали.
+type InsertPlace struct {
+	ParentID *uuid.UUID
+	AfterID  *uuid.UUID
+	BeforeID *uuid.UUID
+}
+
+// yPlace переводит место в форму документа: идентификаторы события — строки,
+// пустая строка означает «не задано».
+func (p InsertPlace) yPlace() yjs.InsertPlace {
+	out := yjs.InsertPlace{}
+	if p.ParentID != nil {
+		out.ParentID = p.ParentID.String()
+	}
+	if p.AfterID != nil {
+		out.AfterID = p.AfterID.String()
+	}
+	if p.BeforeID != nil {
+		out.BeforeID = p.BeforeID.String()
+	}
+	return out
+}
+
+// LiveDoc — документ ЖИВОЙ комнаты проекта (collab.Hub).
+//
+// Зачем это отдельный путь. Источник правды проекта — CRDT-документ, а пока в
+// проекте кто-то редактирует, сервер держит его копию в памяти комнаты. Запись
+// вставки только в снапшот базы была бы затёрта ближайшим сохранением комнаты
+// (она кодирует СВОЙ документ), а редакторы не увидели бы кусок вообще. Поэтому
+// импорт «в место» сначала спрашивает комнату — и только если её нет, пишет
+// снапшот сам (вкладка без realtime, CLI, выключенный WebSocket).
+//
+// Интерфейс объявлен здесь, а реализует его хаб: так transfer не зависит от
+// collab (иначе транспорт и импорт сцепились бы намертво).
+type LiveDoc interface {
+	InsertLive(ctx context.Context, projectID, by uuid.UUID, seeds []yjs.EventSeed, place yjs.InsertPlace) (bool, error)
+}
+
+// UseLiveDoc подключает живые комнаты. Без него импорт «в место» работает только
+// через снапшот базы — это корректно для проекта, который никто не открыл.
+func (s *Service) UseLiveDoc(live LiveDoc) { s.live = live }
+
+// ImportMarkdownInto вставляет разобранный кусок в СУЩЕСТВУЮЩИЙ проект.
+//
+// Чем это отличается от ImportMarkdown: тот создаёт новый проект и пишет только
+// реляционную таблицу (первый редактор засеет из неё документ). Здесь проект уже
+// живёт, и источник правды — его CRDT-документ, поэтому кусок вставляется именно
+// в документ, а таблица событий перестраивается из него. Иначе вставленное было бы
+// видно только в базе и исчезло бы у редакторов.
+func (s *Service) ImportMarkdownInto(
+	ctx context.Context, userID, projectID uuid.UUID, parsed *ParsedMarkdown, place InsertPlace,
+) (int, error) {
+	if parsed == nil || len(parsed.Events) == 0 {
+		return 0, ErrMarkdownEmpty
+	}
+	if err := s.proj.RequireEditor(ctx, userID, projectID); err != nil {
+		// Ошибки проектов переводим в свои: обработчик отвечает по ним 403/404,
+		// а не 500 (та же схема, что у выгрузки — loadStory).
+		if errors.Is(err, projects.ErrForbidden) {
+			return 0, ErrForbidden
+		}
+		return 0, err
+	}
+
+	// Идентификаторы и связи куска: корень куска подвешивается к выбранному
+	// событию, дети — друг к другу (порядок разбора гарантирует, что родитель уже
+	// создан).
+	seeds := make([]yjs.EventSeed, 0, len(parsed.Events))
+	for _, e := range parsed.Events {
+		seed := yjs.EventSeed{ID: uuid.New().String(), Title: e.Title, Body: e.Body}
+		switch {
+		case e.parent >= 0 && e.parent < len(seeds):
+			seed.ParentID = seeds[e.parent].ID
+		case place.ParentID != nil:
+			seed.ParentID = place.ParentID.String()
+		}
+		if e.Date != nil {
+			seed.EventDate = e.Date.Format("2006-01-02")
+		}
+		seeds = append(seeds, seed)
+	}
+
+	// Живая комната — главный путь: в ней документ, который редакторы видят сейчас.
+	if s.live != nil {
+		handled, err := s.live.InsertLive(ctx, projectID, userID, seeds, place.yPlace())
+		if err != nil {
+			return 0, err
+		}
+		if handled {
+			return len(seeds), nil
+		}
+	}
+
+	state, err := s.store.GetProjectEventState(ctx, projectID)
+	if err != nil {
+		return 0, err
+	}
+	var raw []byte
+	if state != nil {
+		raw = state.YjsState
+	}
+	doc, err := yjs.FromState(raw)
+	if err != nil {
+		return 0, err
+	}
+
+	// У проекта может не быть снапшота (его создали через API или импортировали
+	// архивом без CRDT): тогда документ собираем из реляционных строк, иначе
+	// вставка потеряла бы уже существующее дерево.
+	if doc.EventCount() == 0 {
+		rows, err := s.store.ListEvents(ctx, projectID)
+		if err != nil {
+			return 0, err
+		}
+		legacy := make([]yjs.EventSeed, 0, len(rows))
+		for _, row := range rows {
+			seed := yjs.EventSeed{ID: row.ID.String(), Title: row.Title, Body: row.Body}
+			if row.ParentID != nil {
+				seed.ParentID = row.ParentID.String()
+			}
+			if row.EventDate != nil {
+				seed.EventDate = row.EventDate.Format("2006-01-02")
+			}
+			legacy = append(legacy, seed)
+		}
+		if err := doc.SeedEvents(legacy); err != nil {
+			return 0, err
+		}
+	}
+
+	if err := doc.InsertAt(place.yPlace(), seeds); err != nil {
+		return 0, err
+	}
+
+	if _, err := s.store.SaveProjectEventStateServer(ctx, projectID, userID, doc.EncodeState()); err != nil {
+		return 0, err
+	}
+	// Таблица событий перестраивается из документа целиком — ровно так же, как это
+	// делает хаб после правок редакторов: один источник правды, одна проекция.
+	if err := s.projectDocument(ctx, projectID, userID, doc); err != nil {
+		return 0, err
+	}
+	return len(seeds), nil
+}
+
+// projectDocument переносит структуру документа в таблицу событий.
+func (s *Service) projectDocument(ctx context.Context, projectID, userID uuid.UUID, doc *yjs.Doc) error {
+	seeds := make([]events.EventSeed, 0, doc.EventCount())
+	for _, e := range doc.Events() {
+		seeds = append(seeds, events.EventSeed{
+			ID:        e.ID,
+			ParentID:  e.ParentID,
+			Title:     e.Title,
+			Body:      e.Body,
+			EventDate: e.EventDate,
+			Position:  e.Position,
+		})
+	}
+	normalized, err := events.NormalizeTree(events.NodesFromSeeds(seeds))
+	if err != nil {
+		return err
+	}
+	rows := make([]store.Event, 0, len(normalized))
+	for _, n := range normalized {
+		rows = append(rows, store.Event{
+			ID:        n.ID,
+			ProjectID: projectID,
+			ParentID:  n.ParentID,
+			Position:  n.Position,
+			Depth:     n.Depth,
+			Title:     n.Title,
+			Body:      n.Body,
+			EventDate: n.EventDate.Value,
+			// Дата пришла из документа: поле авторитетно, пустое — очищает дату.
+			EventDateSet: true,
+			CreatedBy:    &userID,
+			UpdatedBy:    &userID,
+		})
+	}
+	return s.store.ReplaceEventTree(ctx, projectID, userID, rows)
 }

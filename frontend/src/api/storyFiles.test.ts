@@ -17,6 +17,7 @@ import {
   buildMarkdownImportForm,
   exportStoryMarkdown,
   importMarkdownFolder,
+  importMarkdownInto,
   markdownExportFilename,
   parseMarkdownPreview,
   previewMarkdownImport,
@@ -197,6 +198,46 @@ describe('importMarkdownFolder', () => {
     mocks.post.mockReturnValue(reply({ project_id: 'p2', events: 1, warnings: [] }))
     await importMarkdownFolder([mdFile('01.md')], '   ')
     expect((mocks.post.mock.calls[0][1].body as FormData).get('title')).toBeNull()
+  })
+})
+
+describe('importMarkdownInto', () => {
+  beforeEach(() => mocks.post.mockReset())
+
+  it('несёт место вставки полями формы и не создаёт проект', async () => {
+    mocks.post.mockReturnValue(reply({ project_id: 'p1', events: 3, warnings: [] }))
+    const result = await importMarkdownInto('p1', { archive: new File(['PK'], 'часть.zip') }, {
+      parentId: 'глава',
+      afterId: 'сосед',
+    })
+
+    expect(result).toEqual({ projectId: 'p1', events: 3, warnings: [] })
+    const [url, options] = mocks.post.mock.calls[0]
+    expect(url).toBe('projects/p1/import/markdown')
+    const form = options.body as FormData
+    expect(form.get('parent_id')).toBe('глава')
+    expect(form.get('after_id')).toBe('сосед')
+    // Название проекта здесь ни при чём: проект не создаётся.
+    expect(form.get('title')).toBeNull()
+  })
+
+  it('«перед» сильнее «после»: сервер отверг бы оба места сразу', async () => {
+    mocks.post.mockReturnValue(reply({ project_id: 'p1', events: 1, warnings: [] }))
+    await importMarkdownInto('p1', [mdFile('01.md')], { beforeId: 'б', afterId: 'а' })
+
+    const form = mocks.post.mock.calls[0][1].body as FormData
+    expect(form.get('before_id')).toBe('б')
+    expect(form.get('after_id')).toBeNull()
+  })
+
+  it('без места форма уходит без полей места — кусок встанет в конец', async () => {
+    mocks.post.mockReturnValue(reply({ project_id: 'p1', events: 1, warnings: [] }))
+    await importMarkdownInto('p1', [mdFile('01.md')], {})
+
+    const form = mocks.post.mock.calls[0][1].body as FormData
+    expect(form.get('parent_id')).toBeNull()
+    expect(form.get('before_id')).toBeNull()
+    expect(form.get('after_id')).toBeNull()
   })
 })
 

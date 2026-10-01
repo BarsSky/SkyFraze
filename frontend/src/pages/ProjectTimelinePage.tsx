@@ -8,6 +8,7 @@ import { useCollab, yAddEvent, type YMap } from '../collab/yprovider'
 import { titleString } from '../collab/text'
 import { connectionNotice } from '../collab/connection'
 import { listAssets, uploadAsset, type Asset } from '../api/assets'
+import { importMarkdownInto, type MarkdownImportSource, type MarkdownInsertPlace } from '../api/storyFiles'
 import { useAssetObjectUrls } from '../api/assetObject'
 import type { Project } from '../api/projects'
 import { getProject } from '../api/projects'
@@ -161,6 +162,29 @@ export function ProjectTimelinePage() {
     [projectId],
   )
 
+  /**
+   * Импорт куска md «в место» (файлы уже разобраны в панели редакторов).
+   *
+   * Вставку делает СЕРВЕР, а не клиент: чтобы разобрать md по правилам проекта,
+   * нужен парсер на Go, а он есть только там. Поэтому после ответа документ мог
+   * уйти вперёд нас, и дальше всё зависит от транспорта:
+   *
+   *   - сокет открыт — сервер уже разослал апдейт вставки всем в комнате,
+   *     включая эту вкладку: дерево обновится само, перечитывать нечего;
+   *   - сокета нет (прокси без Upgrade, мобильная сеть) — апдейт до нас не
+   *     доедет, и без перечитывания кусок появился бы только после перезагрузки.
+   *     `reloadFromServer` сливает серверное состояние в документ (CRDT не теряет
+   *     ни чужие правки, ни наши).
+   */
+  const importIntoProject = useCallback(
+    async (source: MarkdownImportSource, place: MarkdownInsertPlace): Promise<number> => {
+      const result = await importMarkdownInto(projectId, source, place)
+      if (collab && !collab.connected) await collab.reloadFromServer()
+      return result.events
+    },
+    [projectId, collab],
+  )
+
   const createFirstChapter = useCallback(async () => {
     if (!events) return
     yAddEvent(events, 'Новая глава', '')
@@ -260,6 +284,7 @@ export function ProjectTimelinePage() {
               void pushTree()
             }}
             onUpload={uploadFile}
+            onImportInto={canEdit ? importIntoProject : undefined}
             presence={collab?.presence}
             onEditing={collab?.setEditing}
           />

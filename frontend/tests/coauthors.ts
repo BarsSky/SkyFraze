@@ -4,6 +4,7 @@
 // Запуск: npx tsx tests/coauthors.ts        (стенд: http://localhost)
 import { chromium, request, type APIRequestContext } from 'playwright'
 import * as fs from 'fs'
+import { treeBaseRevision } from './helpers/treeProjection'
 
 const BASE = process.env.BASE_URL ?? 'http://localhost'
 const OUT = 'C:/Projects/SkyFraze/_coauthor_shots'
@@ -91,8 +92,9 @@ const created = await api.post(`${BASE}/api/projects`, {
 })
 const projectId = ((await created.json()) as { id: string }).id
 const chapter = crypto.randomUUID()
+// Базовая ревизия снапшота: проекция дерева — полная замена, без заголовка 428.
 await api.put(`${BASE}/api/projects/${projectId}/events/tree`, {
-  headers: alice,
+  headers: { ...alice, 'X-Skyfraze-Base-Revision': await treeBaseRevision(api, BASE, projectId, alice) },
   data: [{ id: chapter, parent_id: null, position: 0, title: 'Глава первая', body: 'Текст главы.' }],
 })
 
@@ -157,7 +159,9 @@ ok('роль — только чтение', openedBody.role === 'viewer' && ope
 const readEvents = await api.get(`${BASE}/api/projects/${projectId}/events`, { headers: bob })
 ok('события читаются', readEvents.ok(), `статус ${readEvents.status()}`)
 const write = await api.put(`${BASE}/api/projects/${projectId}/events/tree`, {
-  headers: bob,
+  // Ревизия нужна и здесь: без неё сервер отвечает 428 раньше, чем проверяет
+  // права, и проверка «соавтор не может править» ловила бы не тот отказ.
+  headers: { ...bob, 'X-Skyfraze-Base-Revision': await treeBaseRevision(api, BASE, projectId, alice) },
   data: [{ id: crypto.randomUUID(), parent_id: null, position: 0, title: 'Правка соавтора', body: '' }],
 })
 ok('соавтор не может править дерево', write.status() === 403, `статус ${write.status()}`)
@@ -194,7 +198,7 @@ const addMember = await api.post(`${BASE}/api/projects/${projectId}/members`, {
 })
 ok('соавтор добавлен в проект редактором', addMember.status() === 201, `статус ${addMember.status()}`)
 const afterAdd = await api.put(`${BASE}/api/projects/${projectId}/events/tree`, {
-  headers: bob,
+  headers: { ...bob, 'X-Skyfraze-Base-Revision': await treeBaseRevision(api, BASE, projectId, bob) },
   data: [{ id: chapter, parent_id: null, position: 0, title: 'Глава первая', body: 'Правка редактора.' }],
 })
 ok('после добавления правки разрешены', afterAdd.ok(), `статус ${afterAdd.status()}`)
