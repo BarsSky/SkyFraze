@@ -271,28 +271,38 @@ async function main() {
       JSON.stringify([migrated.body, migrated.legacy]),
     )
 
-    // Правим в поле: правка обязана уехать и в CRDT, и в базу.
+    // Правим в поле: правка обязана уехать и в CRDT, и в базу. Проекцию с Фазы 4
+    // строит сервер и сохраняет раз в несколько секунд, поэтому ждём результат.
     await pageA.click(bodyField)
     await pageA.keyboard.press('End')
     await pageA.type(bodyField, ' Правка после миграции.', { delay: 40 })
-    await pageA.waitForTimeout(2000)
-    const afterEdit = await dbRows(ownerToken, legacyId)
-    ok(
-      'правка после миграции доехала до базы',
-      (afterEdit.find((r) => r.id === legacyEventId)?.body ?? '').includes('Правка после миграции.'),
-      JSON.stringify(afterEdit.find((r) => r.id === legacyEventId)?.body ?? null),
-    )
+    let migratedBody = ''
+    for (let i = 0; i < 24; i += 1) {
+      migratedBody = (await dbRows(ownerToken, legacyId)).find((r) => r.id === legacyEventId)?.body ?? ''
+      if (migratedBody.includes('Правка после миграции.')) break
+      await pageA.waitForTimeout(500)
+    }
+    ok('правка после миграции доехала до базы', migratedBody.includes('Правка после миграции.'), JSON.stringify(migratedBody))
     await api(ownerToken, 'DELETE', `/api/projects/${legacyId}`)
 
     // ── и всё это доехало до серверной модели (проекция дерева).
-    // Проекция обрезает тело по краям (`trim`), поэтому текст в базе сравниваем
-    // по символам, а не по подстроке: одновременный набор в одну позицию
-    // перемежает буквы (это честный результат CRDT), но не теряет их.
-    await pageA.waitForTimeout(1500)
-    const rows = await dbRows(ownerToken, projectId)
-    const row = rows.find((r) => r.id === eventId)
-    const clashRow = rows.find((r) => r.title === clashTitle)
-    const dbLost = [...`${aText}${bText}`].filter((ch) => !(clashRow?.body ?? '').includes(ch))
+    // Проекцию с Фазы 4 строит сервер из своего документа и сохраняет раз в
+    // несколько секунд (и сразу при уходе последнего клиента), поэтому ждём
+    // результат, а не читаем базу сразу. Тело проекция обрезает по краям (`trim`),
+    // а одновременный набор в одну позицию перемежает буквы (честный результат
+    // CRDT) — сравниваем по символам, а не по подстроке.
+    let row: (typeof dbRows extends never ? never : Awaited<ReturnType<typeof dbRows>>)[number] | undefined
+    let clashRow: typeof row
+    let dbLost: string[] = []
+    for (let i = 0; i < 24; i += 1) {
+      const rows = await dbRows(ownerToken, projectId)
+      row = rows.find((r) => r.id === eventId)
+      clashRow = rows.find((r) => r.title === clashTitle)
+      dbLost = [...`${aText}${bText}`].filter((ch) => !(clashRow?.body ?? '').includes(ch))
+      const okRow = row?.body.includes('Аня: ') && row?.body.includes(' (правка Бориса)')
+      if (okRow && clashRow && dbLost.length === 0) break
+      await pageA.waitForTimeout(500)
+    }
     ok(
       'правки доехали до базы через проекцию дерева',
       Boolean(row) &&

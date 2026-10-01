@@ -54,7 +54,7 @@ async function api(
 }
 
 /** Плоский список событий: API отдаёт вложенное дерево. */
-async function rows(token: string, projectId: string) {
+async function rowList(token: string, projectId: string) {
   interface Row {
     id: string
     title: string
@@ -75,6 +75,30 @@ async function rows(token: string, projectId: string) {
 
 const dayOf = (value?: string | null) => (value ? value.slice(0, 10) : null)
 
+/**
+ * Ждём, пока сервер спроецирует дату в таблицу событий.
+ *
+ * С Фазы 4 строки `events` собирает сервер из своего документа, а сохраняет он раз
+ * в несколько секунд (и сразу при уходе последнего клиента) — база догоняет правку
+ * не мгновенно. Проверяем результат, а не расписание.
+ */
+async function waitForDate(
+  token: string,
+  projectId: string,
+  eventId: string,
+  want: string | null,
+  attempts = 24,
+): Promise<string | null> {
+  let last: string | null = null
+  for (let i = 0; i < attempts; i += 1) {
+    const rows = await rowList(token, projectId)
+    last = dayOf(rows.find((row: { id: string; event_date?: string | null }) => row.id === eventId)?.event_date)
+    if (last === want) return last
+    await new Promise((resolve) => setTimeout(resolve, 500))
+  }
+  return last
+}
+
 async function main() {
   const login = await api(null, 'POST', '/api/auth/login', USER)
   const token = login.json?.tokens?.access as string
@@ -94,6 +118,7 @@ async function main() {
     body: 'Текст главы.',
     event_date: '2024-05-17T00:00:00Z',
   })
+  const eventId = event.json?.id as string
   ok('подготовка: событие с датой создано по API', event.status === 201, `статус ${event.status}`)
 
   const browser = await chromium.launch()
@@ -118,11 +143,10 @@ async function main() {
     let chip = (await page.locator('.sf-copy__meta').allInnerTexts().catch(() => [] as string[])).join(' ').replace(/\s+/g, ' ').trim()
     ok('дата показана мета-чипом в кадре', chip.includes('17.05.2024'), chip)
 
-    // Дата пришла значением — уезжает в базу.
+    // Дата пришла значением — уезжает в базу (её пишет сервер из своего документа).
     await page.fill('.ed-form input[type=date]', '2789-04-12')
-    await page.waitForTimeout(2500)
-    let dbRows = await rows(token, projectId)
-    ok('дата из редактора доехала до базы', dayOf(dbRows[0]?.event_date) === '2789-04-12', `в базе ${dbRows[0]?.event_date}`)
+    const saved = await waitForDate(token, projectId, eventId, '2789-04-12')
+    ok('дата из редактора доехала до базы', saved === '2789-04-12', `в базе ${saved}`)
 
     let chipUpdated = true
     try {
@@ -139,9 +163,8 @@ async function main() {
 
     // Дата пришла пустой — очищается в базе.
     await page.fill('.ed-form input[type=date]', '')
-    await page.waitForTimeout(2500)
-    dbRows = await rows(token, projectId)
-    ok('очищенная дата убрана из базы', dayOf(dbRows[0]?.event_date) === null, `в базе ${dbRows[0]?.event_date ?? 'пусто'}`)
+    const cleared = await waitForDate(token, projectId, eventId, null)
+    ok('очищенная дата убрана из базы', cleared === null, `в базе ${cleared ?? 'пусто'}`)
   } finally {
     await ctx.close()
     await browser.close()
@@ -163,3 +186,4 @@ main().catch((e) => {
   console.error('FATAL', e)
   process.exit(2)
 })
+

@@ -179,10 +179,17 @@ async function main() {
     await tabA.waitForTimeout(700)
     const sub = `Подсобытие 409 ${Date.now()}`
     await tabA.fill('.ed-form input[placeholder="Заголовок события"]', sub)
-    await tabA.waitForTimeout(2500)
 
-    tree = await dbTree(token, projectId)
-    const subRow = tree.find((r) => r.title === sub)
+    // Проекцию в таблицу событий пишет либо клиент без realtime (эта вкладка —
+    // как раз такая: сокет у неё закрыт), либо сервер из своего документа, и
+    // делает это не мгновенно. Ждём появления строки, а не читаем базу сразу.
+    let subRow: { id: string; title: string; parent_id?: string | null } | undefined
+    for (let i = 0; i < 24; i += 1) {
+      tree = await dbTree(token, projectId)
+      subRow = tree.find((r) => r.title === sub)
+      if (subRow) break
+      await tabA.waitForTimeout(500)
+    }
     ok(
       '0.4/0.5: устаревшая база → 409 → merge → повтор, правка в БД',
       Boolean(subRow) && subRow?.parent_id === tree.find((r) => r.title === viaChannel)?.id,

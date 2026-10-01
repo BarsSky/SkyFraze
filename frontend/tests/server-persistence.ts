@@ -116,25 +116,38 @@ async function main() {
   const ctxA: BrowserContext = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' })
   const ctxB: BrowserContext = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' })
   const clientPuts: string[] = []
+  /** Проекции дерева из браузера. Считаем их отдельно и включаем счёт ПОСЛЕ того,
+   *  как сокеты открылись: при самом первом рендере (засев, раздача id) клиент
+   *  ещё не знает, поднялся ли realtime, и одну проекцию отправить может — это
+   *  штатный запасной путь, а не нарушение. */
+  const clientTreePuts: string[] = []
+  let countTreePuts = false
   const pageErrors: string[] = []
 
   try {
     const pageA = await ctxA.newPage()
     pageA.on('pageerror', (e) => pageErrors.push(`владелец: ${e.message}`))
     pageA.on('request', (req) => {
-      if (req.method() === 'PUT' && req.url().includes('/events/state')) clientPuts.push(`A ${req.url()}`)
+      if (req.method() !== 'PUT') return
+      if (req.url().includes('/events/state')) clientPuts.push(`A ${req.url()}`)
+      if (countTreePuts && req.url().includes('/events/tree')) clientTreePuts.push(`A ${req.url()}`)
     })
     const pageB = await ctxB.newPage()
     pageB.on('pageerror', (e) => pageErrors.push(`редактор: ${e.message}`))
     pageB.on('request', (req) => {
-      if (req.method() === 'PUT' && req.url().includes('/events/state')) clientPuts.push(`B ${req.url()}`)
+      if (req.method() !== 'PUT') return
+      if (req.url().includes('/events/state')) clientPuts.push(`B ${req.url()}`)
+      if (countTreePuts && req.url().includes('/events/tree')) clientTreePuts.push(`B ${req.url()}`)
     })
 
     await uiLogin(pageA, projectId, OWNER.email, OWNER.password)
     await uiLogin(pageB, projectId, peerEmail, 'hunter22!')
     await Promise.all([selectEvent(pageA, chapterTitle), selectEvent(pageB, chapterTitle)])
-    // Ждём, пока серверный документ комнаты получит засев от клиентов.
-    await pageA.waitForTimeout(2000)
+    // Ждём, пока серверный документ комнаты получит засев от клиентов, и только
+    // теперь начинаем считать проекции дерева: до этого клиент вправе сработать
+    // запасным путём (он ещё не знает, что realtime поднялся).
+    await pageA.waitForTimeout(2500)
+    countTreePuts = true
 
     // Оба печатают в одном поле: правки уходят по сокету, REST-записи быть не должно.
     const bodyField = '.ed-form textarea'
@@ -186,6 +199,38 @@ async function main() {
       `ревизия ${beforeLeave.revision} → ${afterLeave.revision}`,
     )
     ok('после ухода второго клиента браузеры по-прежнему ничего не писали', clientPuts.length === 0, clientPuts.join(', ') || 'ни одного PUT')
+
+    // ── Фаза 4: структуру в таблицу событий тоже переносит сервер.
+    // Главу заводим в интерфейсе: это правка структуры в CRDT, и в реляционной
+    // модели она обязана появиться без единого PUT /events/tree из браузера.
+    await pageA.click('.ed-toolbar button:has-text("+ глава")')
+    const newTitle = 'Новая глава'
+    // Сервер сохраняет проекцию раз в flushPeriod (5 с), поэтому ждём появления
+    // строки, а не проверяем сразу: иначе тест мерил бы расписание, а не результат.
+    let flat: any[] = []
+    for (let i = 0; i < 24; i += 1) {
+      await pageA.waitForTimeout(500)
+      const tree = await api(ownerToken, 'GET', `/api/projects/${projectId}/events`)
+      flat = []
+      const walk = (list: any[]) => {
+        for (const row of list ?? []) {
+          flat.push(row)
+          if (row.children?.length) walk(row.children)
+        }
+      }
+      walk(tree.json ?? [])
+      if (flat.some((row) => row.title === newTitle)) break
+    }
+    ok(
+      'сервер спроецировал новую главу в таблицу событий',
+      flat.some((row) => row.title === newTitle),
+      flat.map((r) => r.title).join(' | '),
+    )
+    ok(
+      'браузеры не присылали проекцию дерева, пока сокет открыт',
+      clientTreePuts.length === 0,
+      clientTreePuts.join(', ') || 'ни одного PUT /events/tree',
+    )
   } finally {
     await ctxA.close()
     await ctxB.close()

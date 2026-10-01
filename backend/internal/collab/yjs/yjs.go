@@ -99,6 +99,11 @@ type Event struct {
 	ParentID string
 	Title    string
 	Body     string
+	// Position — индекс в корневом массиве: порядок задаёт клиент, сервер лишь
+	// переносит его в реляционную модель.
+	Position int
+	// EventDate — дата события в формате «YYYY-MM-DD» (пусто, если даты нет).
+	EventDate string
 }
 
 // Events читает корневой массив событий.
@@ -109,16 +114,18 @@ type Event struct {
 func (d *Doc) Events() []Event {
 	events := ygo.NewArray(d.inner, EventsRoot)
 	out := make([]Event, 0, events.Len())
-	events.Range(func(_ uint64, value any) bool {
+	events.Range(func(index uint64, value any) bool {
 		item, ok := value.(*ygo.Map)
 		if !ok {
 			return true
 		}
 		event := Event{
-			ID:       stringField(item, "id"),
-			ParentID: stringField(item, "parent_id"),
-			Title:    textField(item, "title"),
-			Body:     textField(item, "body"),
+			ID:        stringField(item, "id"),
+			ParentID:  stringField(item, "parent_id"),
+			Title:     textField(item, "title"),
+			Body:      textField(item, "body"),
+			Position:  int(index),
+			EventDate: stringField(item, "event_date"),
 		}
 		if event.ID == "" {
 			// Событие без id проекции не нужно: так же считает и клиент

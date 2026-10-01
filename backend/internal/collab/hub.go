@@ -15,8 +15,11 @@ package collab
 import (
 	"bytes"
 	"context"
+	"fmt"
+	"hash/fnv"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -180,7 +183,7 @@ func (h *Hub) snapshotActiveRooms(ctx context.Context) {
 	}
 	h.mu.RUnlock()
 	for _, r := range rooms {
-		r.persistFromAnyClient(ctx, h.ev)
+		r.persistFromAnyClient(ctx, h.ev, h.logger)
 	}
 }
 
@@ -192,7 +195,7 @@ func (h *Hub) flushAll(ctx context.Context) {
 	}
 	h.mu.RUnlock()
 	for _, r := range rooms {
-		r.persistFromAnyClient(ctx, h.ev)
+		r.persistFromAnyClient(ctx, h.ev, h.logger)
 	}
 }
 
@@ -314,7 +317,7 @@ func (h *Hub) leave(c *client) {
 	if removed && empty {
 		// Последний ушёл — сохраняем сразу, не дожидаясь тика: комната вот-вот
 		// исчезнет из реестра, и её «грязное» состояние иначе потерялось бы.
-		c.room.persistFromAnyClient(context.Background(), h.ev)
+		c.room.persistFromAnyClient(context.Background(), h.ev, h.logger)
 	}
 	h.removeIfEmpty(c.projectID)
 }
@@ -338,6 +341,9 @@ type Room struct {
 	loading bool
 	// migratedEvents — сколько событий было при последней проверке миграции текста.
 	migratedEvents int
+	// projectionSignature — подпись последней удачной проекции дерева: по ней
+	// понимаем, что структура и текст не менялись и писать в таблицу нечего.
+	projectionSignature string
 }
 
 func (r *Room) HasClients() bool {
@@ -431,6 +437,124 @@ func (r *Room) applyUpdate(by uuid.UUID, data []byte) (bool, error) {
 	return migrated, nil
 }
 
+// projectionPayload собирает узлы проекции из серверного документа и их подпись.
+//
+// Повторяет то, что клиент делал в `yFlatTree`: порядок — как в массиве, родитель —
+// из `parent_id`. Дополнительно чиним структуру, которую `NormalizeTree` иначе
+// отвергнет: родитель вне набора и циклы поднимаются в корень. Клиент делал это у
+// себя (`yRepairHierarchy`), но проекция теперь идёт с сервера, и «застрявшее»
+// дерево остановило бы синхронизацию таблицы событий целиком.
+func projectionPayload(doc *yjs.Doc) ([]events.NodeInput, string) {
+	rows := doc.Events()
+	ids := make(map[uuid.UUID]bool, len(rows))
+	for _, e := range rows {
+		if id, err := uuid.Parse(e.ID); err == nil {
+			ids[id] = true
+		}
+	}
+
+	h := fnv.New64a()
+	nodes := make([]events.NodeInput, 0, len(rows))
+
+	for _, e := range rows {
+		id, err := uuid.Parse(e.ID)
+		if err != nil {
+			continue
+		}
+		var parent *uuid.UUID
+		if pid, err := uuid.Parse(e.ParentID); err == nil && pid != id && ids[pid] {
+			parent = &pid
+		}
+		nodes = append(nodes, events.NodeInput{
+			ID:       id,
+			ParentID: parent,
+			Position: e.Position,
+			Title:    e.Title,
+			Body:     e.Body,
+			EventDate: events.EventDatePatch{
+				Set:   true,
+				Value: parseEventDate(e.EventDate),
+			},
+		})
+	}
+
+	// Циклы: узел, чей предок указывает на него, поднимаем в корень.
+	nodes = repairProjectionNodes(nodes)
+	for _, n := range nodes {
+		parent := ""
+		if n.ParentID != nil {
+			parent = n.ParentID.String()
+		}
+		date := ""
+		if n.EventDate.Value != nil {
+			date = n.EventDate.Value.Format("2006-01-02")
+		}
+		// Подпись по всему, что попадает в таблицу событий: и структура, и текст,
+		// и дата. Если ничего не изменилось — проекцию не пишем.
+		fmt.Fprintf(h, "%s|%s|%d|%s|%s|%s\n", n.ID, parent, n.Position, n.Title, n.Body, date)
+	}
+	return nodes, strconv.FormatUint(h.Sum64(), 16)
+}
+
+// repairProjectionNodes поднимает в корень узлы, которых нормализация не примет:
+// родителя нет в наборе (сирота) или цепочка родителей замыкается на сам узел.
+func repairProjectionNodes(nodes []events.NodeInput) []events.NodeInput {
+	ids := make(map[uuid.UUID]bool, len(nodes))
+	parentOf := make(map[uuid.UUID]uuid.UUID, len(nodes))
+	for _, n := range nodes {
+		ids[n.ID] = true
+	}
+	for _, n := range nodes {
+		if n.ParentID != nil && ids[*n.ParentID] && *n.ParentID != n.ID {
+			parentOf[n.ID] = *n.ParentID
+		} else {
+			parentOf[n.ID] = uuid.Nil
+		}
+	}
+
+	for i := range nodes {
+		seen := map[uuid.UUID]bool{nodes[i].ID: true}
+		cur := parentOf[nodes[i].ID]
+		for cur != uuid.Nil {
+			if seen[cur] {
+				parentOf[nodes[i].ID] = uuid.Nil
+				break
+			}
+			seen[cur] = true
+			next, ok := parentOf[cur]
+			if !ok {
+				// Родитель вне набора — сирота, поднимаем в корень.
+				parentOf[nodes[i].ID] = uuid.Nil
+				break
+			}
+			cur = next
+		}
+	}
+
+	for i := range nodes {
+		if parentOf[nodes[i].ID] == uuid.Nil {
+			nodes[i].ParentID = nil
+			continue
+		}
+		parent := parentOf[nodes[i].ID]
+		nodes[i].ParentID = &parent
+	}
+	return nodes
+}
+
+// parseEventDate читает дату из CRDT («YYYY-MM-DD»). Пустая или непонятная строка
+// означает «даты нет» — сервер дату не выдумывает.
+func parseEventDate(value string) *time.Time {
+	if value == "" {
+		return nil
+	}
+	parsed, err := time.Parse("2006-01-02", value)
+	if err != nil {
+		return nil
+	}
+	return &parsed
+}
+
 // broadcastState рассылает всем в комнате полное состояние документа.
 //
 // Нужно после серверной миграции текста и при подключении: разницы по вектору
@@ -451,31 +575,59 @@ func (r *Room) broadcastState() {
 	}
 }
 
-// persistFromAnyClient сохраняет слитое состояние комнаты в базу (один писатель).
+// persistFromAnyClient сохраняет слитое состояние комнаты в базу (один писатель)
+// и переносит структуру в реляционную проекцию.
 //
 // Флаг «грязно» снимается ДО записи: апдейт, пришедший во время сохранения, снова
 // его поставит, и следующий тик запишет и его. Обратный порядок потерял бы правку,
 // пришедшую в окне между кодированием и записью.
-func (r *Room) persistFromAnyClient(ctx context.Context, ev *events.Service) {
+func (r *Room) persistFromAnyClient(ctx context.Context, ev *events.Service, logger *slog.Logger) {
 	r.docMu.Lock()
 	doc, dirty, by := r.doc, r.dirty, r.lastBy
-	if doc == nil || !dirty {
+	if doc == nil {
 		r.docMu.Unlock()
 		return
 	}
-	state := doc.EncodeState()
-	r.dirty = false
+	// Проекцию читаем из того же состояния, что уходит в снапшот: иначе они
+	// разъехались бы (в снапшоте одна структура, в таблице событий другая).
+	nodes, signature := projectionPayload(doc)
 	r.docMu.Unlock()
 
-	if by == uuid.Nil {
-		by = uuid.Nil // снапшот без известного автора (например, только загрузка)
-	}
-	if _, err := ev.SaveYjsStateServer(ctx, r.projectID, by, state); err != nil {
-		// Не сохранилось — вернуть флаг: следующий тик попробует снова.
+	if dirty {
 		r.docMu.Lock()
-		r.dirty = true
+		state := doc.EncodeState()
+		r.dirty = false
 		r.docMu.Unlock()
+		if _, err := ev.SaveYjsStateServer(ctx, r.projectID, by, state); err != nil {
+			// Не сохранилось — вернуть флаг: следующий тик попробует снова.
+			r.docMu.Lock()
+			r.dirty = true
+			r.docMu.Unlock()
+			logger.Warn("collab: snapshot save failed", "project", r.projectID, "err", err)
+		}
 	}
+
+	// Проекция дерева (Фаза 4): строки `events` собираются из серверного документа,
+	// поэтому клиент больше не обязан присылать структуру. Подпись сравниваем с
+	// прошлой — на каждом тике переписывать все строки проекта незачем; текст
+	// заголовков и тел входит в подпись, так что правки текста тоже доезжают.
+	r.docMu.Lock()
+	unchanged := signature == r.projectionSignature
+	r.docMu.Unlock()
+	if unchanged {
+		return
+	}
+
+	if err := ev.ProjectTreeServer(ctx, r.projectID, by, nodes); err != nil {
+		// Дерево не прошло проверку (цикл, глубина, чужой родитель) или база
+		// недоступна: оставляем прошлую проекцию и попробуем на следующем тике.
+		// Подпись НЕ обновляем — иначе повторной попытки не будет.
+		logger.Warn("collab: tree projection failed", "project", r.projectID, "err", err)
+		return
+	}
+	r.docMu.Lock()
+	r.projectionSignature = signature
+	r.docMu.Unlock()
 }
 
 // broadcast — рассылает обновление всем клиентам в комнате кроме отправителя.

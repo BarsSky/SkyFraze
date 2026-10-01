@@ -123,9 +123,16 @@ export function ProjectTimelinePage() {
     return map
   }, [assets, assetUrls])
 
-  /** Проекция дерева на сервер (серверная модель иерархии + валидация). */
+  /**
+   * Проекция дерева на сервер — только когда realtime не поднялся.
+   *
+   * Фаза 4: строки таблицы событий сервер строит сам из своего документа (он же
+   * пишет и снапшот), поэтому у подключённого клиента проекция — лишняя работа и
+   * лишний повод для 409. REST-путь остаётся для клиента без сокета (прокси без
+   * Upgrade, мобильная сеть): там сервер о правках ничего не знает.
+   */
   const pushTree = useCallback(async () => {
-    if (!collab) return
+    if (!collab || collab.connected) return
     const res = await collab.syncTree()
     if (res.ok) {
       setSyncNote(res.repaired ? `структура исправлена на сервере (${res.repaired})` : 'серверная копия обновлена')

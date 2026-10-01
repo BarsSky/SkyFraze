@@ -93,6 +93,38 @@ func (s *Service) SaveYjsStateServer(
 	return s.store.SaveProjectEventStateServer(ctx, projectID, by, state)
 }
 
+// ProjectTreeServer — проекция дерева из серверного документа (Фаза 4).
+//
+// Правила те же, что у клиентской проекции (`SyncTree`): нормализация проверяет
+// циклы, глубину и дубликаты id. Отличий два: базовая ревизия не проверяется
+// (пишет сервер, конкурентов нет) и устаревший клиент сюда попасть не может —
+// payload строится из слитого документа, а не из чужой локальной копии.
+func (s *Service) ProjectTreeServer(ctx context.Context, projectID, by uuid.UUID, nodes []NodeInput) error {
+	normalized, err := NormalizeTree(nodes)
+	if err != nil {
+		return err
+	}
+	rows := make([]store.Event, 0, len(normalized))
+	for _, n := range normalized {
+		rows = append(rows, store.Event{
+			ID:        n.ID,
+			ProjectID: projectID,
+			ParentID:  n.ParentID,
+			Position:  n.Position,
+			Depth:     n.Depth,
+			Title:     n.Title,
+			Body:      n.Body,
+			EventDate: n.EventDate.Value,
+			// Даты из документа приходят всегда строкой «YYYY-MM-DD» или пустой —
+			// значит поле авторитетно, и пустое значение здесь очищает дату.
+			EventDateSet: true,
+			CreatedBy:    &by,
+			UpdatedBy:    &by,
+		})
+	}
+	return s.store.ReplaceEventTree(ctx, projectID, by, rows)
+}
+
 // ListTree — дерево событий проекта (чтение: viewer+).
 func (s *Service) ListTree(ctx context.Context, userID, projectID uuid.UUID) ([]TreeEvent, error) {
 	if err := s.proj.RequireViewer(ctx, userID, projectID); err != nil {
