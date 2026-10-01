@@ -71,6 +71,21 @@ func (e *env) files(t *testing.T) []storage.ObjectInfo {
 	return files
 }
 
+// readObject читает файл из хранилища целиком: файлы в тестах маленькие.
+func readObject(t *testing.T, e *env, key string) []byte {
+	t.Helper()
+	rc, err := e.obj.Get(context.Background(), key)
+	if err != nil {
+		t.Fatalf("файл %s не читается: %v", key, err)
+	}
+	defer rc.Close()
+	data, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("файл %s не читается до конца: %v", key, err)
+	}
+	return data
+}
+
 // Один и тот же файл под разными именами в двух проектах лежит в хранилище один раз.
 func TestUploadDeduplicatesSameContent(t *testing.T) {
 	e := setup(t)

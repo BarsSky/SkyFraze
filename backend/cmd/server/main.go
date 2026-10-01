@@ -118,6 +118,7 @@ func main() {
 		os.Exit(1)
 	}
 	assetsSvc := assets.New(st, objStore, projSvc)
+	assetsSvc.UseLogger(logger)
 	assetsH := assets.NewHandler(assetsSvc, logger)
 
 	// Удаление проекта уносит и его файлы: иначе они оставались бы в хранилище
@@ -127,6 +128,9 @@ func main() {
 	// Уборка хранилища: отчёт о размерах после старта и удаление файлов, на
 	// которые никто не ссылается (docs/storage-compression.md, шаг 1).
 	sweeper := maintenance.New(st, objStore, logger, maintenance.Options{})
+	// И пережатие уже загруженных картинок — по требованию из админки: то, что
+	// загружено до появления пережатия, осталось в исходном весе.
+	sweeper.UseRecompressor(assetsSvc)
 	go sweeper.Run(ctx)
 
 	evSvc := events.New(st, projSvc)

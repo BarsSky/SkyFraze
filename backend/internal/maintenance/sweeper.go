@@ -23,6 +23,8 @@ import (
 	"sort"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/skyfraze/backend/internal/assets"
 	"github.com/skyfraze/backend/internal/storage"
 	"github.com/skyfraze/backend/internal/store"
 )
@@ -50,12 +52,23 @@ type Options struct {
 	Examples int
 }
 
+// Recompressor — тот, кто умеет пережимать уже загруженные картинки (реализует
+// assets.Service). Интерфейс объявлен здесь, а работа с файлами живёт в пакете
+// вложений: уборщик только ходит по хранилищу и показывает отчёт.
+type Recompressor interface {
+	RecompressStored(ctx context.Context, projectID *uuid.UUID, apply bool) (*assets.RecompressReport, error)
+}
+
+// UseRecompressor подключает пережатие уже загруженных файлов (ручка админки).
+func (s *Sweeper) UseRecompressor(recompressor Recompressor) { s.recompressor = recompressor }
+
 // Sweeper — уборщик хранилища.
 type Sweeper struct {
-	store  *store.Store
-	obj    storage.ObjectStore
-	logger *slog.Logger
-	opts   Options
+	store        *store.Store
+	obj          storage.ObjectStore
+	logger       *slog.Logger
+	opts         Options
+	recompressor Recompressor
 }
 
 func New(st *store.Store, obj storage.ObjectStore, logger *slog.Logger, opts Options) *Sweeper {
@@ -304,6 +317,29 @@ func (s *Sweeper) SweepStorage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.logReport(report, true)
+	writeJSON(w, http.StatusOK, report)
+}
+
+// RecompressStorage — POST /api/admin/storage/recompress: пережать уже загруженные
+// картинки (jpeg/png → webp). Без `?apply=1` это сухой прогон: считает выигрыш и
+// ничего не пишет — по нему видно, стоит ли запускать.
+func (s *Sweeper) RecompressStorage(w http.ResponseWriter, r *http.Request) {
+	if s.recompressor == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "recompression is not wired"})
+		return
+	}
+	apply := r.URL.Query().Get("apply") == "1"
+	report, err := s.recompressor.RecompressStored(r.Context(), nil, apply)
+	if err != nil {
+		s.logger.Error("storage recompress", "err", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "recompress failed"})
+		return
+	}
+	s.logger.Info("storage recompress done",
+		"files", report.Files, "images", report.Images, "changed", report.Changed,
+		"skipped", report.Skipped, "damaged", report.Damaged, "failed", report.Failed,
+		"bytes_from", report.BytesFrom, "bytes_to", report.BytesTo,
+		"applied", report.Applied)
 	writeJSON(w, http.StatusOK, report)
 }
 

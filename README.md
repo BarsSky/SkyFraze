@@ -415,6 +415,8 @@ SkyFraze/
 │   │   ├── teams/                invitations, roles
 │   │   ├── feed/                 публичная лента: публикация, просмотры, оценки
 │   │   ├── assets/               upload/download (filesystem) + публичная отдача
+│   │   ├── media/                пережатие картинок в WebP (PNG без потерь, JPEG с потерями)
+│   │   ├── maintenance/          отчёт о размерах хранилища и уборка осиротевших файлов
 │   │   ├── events/               Yjs binary state persistence
 │   │   ├── collab/               WebSocket hub
 │   │   ├── storage/              ObjectStore interface + LocalStore
@@ -548,6 +550,9 @@ bash deploy/storage-report.sh
 # из админки: тот же отчёт плюс сверка каталога файлов с базой и уборка
 curl -H "Authorization: Bearer $TOKEN" http://<стенд>/api/admin/storage
 curl -X POST -H "Authorization: Bearer $TOKEN" http://<стенд>/api/admin/storage/sweep
+
+# пережатие уже загруженных картинок: без ?apply=1 — сухой прогон
+curl -X POST -H "Authorization: Bearer $TOKEN" http://<стенд>/api/admin/storage/recompress
 ```
 
 Файлы удаляются вместе с проектом, а раз в сутки сервер убирает то, что осталось от
@@ -558,6 +563,23 @@ curl -X POST -H "Authorization: Bearer $TOKEN" http://<стенд>/api/admin/sto
 если такой файл уже загружен в любой проект, второй раз он не пишется — новая строка
 вложений ссылается на существующий объект. Имя, владелец и проект у каждой строки
 свои, а сам файл удаляется только с последней ссылкой на него.
+
+Картинки пережимаются в WebP: PNG — без потерь (скриншоты и схемы с текстом портить
+нельзя), JPEG — с потерями (качество 82) и с обрезкой длинной стороны до 2560 точек.
+С телефона снимок 3200×2400 q92 приезжает как **161 КБ вместо 2 МБ (×12.4)**. Если
+пережатие не выигрывает или файл не декодируется, он остаётся как есть — пережатие
+улучшение, а не условие приёма. Уже загруженные картинки пережимаются отдельным
+проходом:
+
+```bash
+# сухой прогон: покажет, сколько даст, и ничего не запишет
+curl -X POST -H "Authorization: Bearer $TOKEN" http://<стенд>/api/admin/storage/recompress
+# применить
+curl -X POST -H "Authorization: Bearer $TOKEN" 'http://<стенд>/api/admin/storage/recompress?apply=1'
+```
+
+Оригиналы при этом не сохраняются: страница показывает картинку, а не готовит её к
+печати. Подробности и замеры — `docs/storage-compression.md`.
 
 ## Лицензия
 

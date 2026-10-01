@@ -3,6 +3,8 @@ module github.com/skyfraze/backend
 go 1.26.0
 
 require (
+	github.com/Deln0r/ygo v1.21.0
+	github.com/KarpelesLab/gowebp v0.1.1
 	github.com/go-chi/chi/v5 v5.3.2
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
@@ -10,10 +12,10 @@ require (
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/kelseyhightower/envconfig v1.4.0
 	golang.org/x/crypto v0.57.0
+	golang.org/x/image v0.46.0
 )
 
 require (
-	github.com/Deln0r/ygo v1.21.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect

@@ -8,12 +8,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime"
 	"path/filepath"
 	"strings"
 
 	"github.com/google/uuid"
 
+	"github.com/skyfraze/backend/internal/media"
 	"github.com/skyfraze/backend/internal/projects"
 	"github.com/skyfraze/backend/internal/storage"
 	"github.com/skyfraze/backend/internal/store"
@@ -40,13 +42,23 @@ func ObjectKey(projectID uuid.UUID, filename string) string {
 }
 
 type Service struct {
-	store *store.Store
-	obj   storage.ObjectStore
-	proj  *projects.Service
+	store  *store.Store
+	obj    storage.ObjectStore
+	proj   *projects.Service
+	logger *slog.Logger
 }
 
 func New(s *store.Store, obj storage.ObjectStore, proj *projects.Service) *Service {
-	return &Service{store: s, obj: obj, proj: proj}
+	return &Service{store: s, obj: obj, proj: proj, logger: slog.Default()}
+}
+
+// UseLogger подключает логгер сервиса. Нужен только для одного: сообщить, что
+// картинку не удалось пережать и файл сохранён как есть (см. storeImage). Без него
+// пишем в slog по умолчанию — молча терять причину нельзя.
+func (s *Service) UseLogger(logger *slog.Logger) {
+	if logger != nil {
+		s.logger = logger
+	}
 }
 
 // UploadOpts — параметры загрузки.
@@ -58,6 +70,10 @@ type UploadOpts struct {
 }
 
 // Upload — загружает файл, сохраняет метаданные.
+//
+// Растровые картинки (jpeg/png) пережимаются в WebP: страница показывает их
+// ограниченного размера, а платит за вес сервер (см. internal/media). Остальные
+// файлы пишутся как есть, потоком.
 //
 // Файл с тем же содержимым второй раз не пишется: хеш считается по содержимому во
 // время записи, и если такой файл уже есть (в любом проекте), новая строка вложений
@@ -75,47 +91,152 @@ func (s *Service) Upload(ctx context.Context, actorID, projectID uuid.UUID, opts
 	if !MimeAllowed(mime) {
 		return nil, ErrBadMime
 	}
-	kind := KindOf(mime, opts.Filename)
 
-	// Хеш считаем на лету, пока файл пишется: второй раз читать его незачем.
+	// Картинку, которую умеем пережать, читаем в память целиком: декодировать её
+	// потоком нельзя. Предел тот же, что у пережатия (20 МБ), поэтому пик памяти
+	// ограничен; всё остальное (pdf, видео, большие файлы) идёт потоком, как раньше.
+	if media.Recompressible(mime, opts.Size) {
+		data, err := io.ReadAll(io.LimitReader(opts.Reader, media.MaxSourceBytes+1))
+		if err != nil {
+			return nil, fmt.Errorf("read upload: %w", err)
+		}
+		return s.storeImage(ctx, projectID, actorID, opts.Filename, mime, data)
+	}
+
+	return s.storeStream(ctx, projectID, actorID, putFile{
+		Name: opts.Filename,
+		Mime: mime,
+		Kind: KindOf(mime, opts.Filename),
+		Size: opts.Size,
+	}, opts.Reader)
+}
+
+// storeImage пережимает картинку (если это даёт выигрыш) и кладёт результат.
+//
+// Дедупликация считается по хешу ЗАПИСАННЫХ байтов: после пережатия они другие, и
+// две загрузки одного и того же фото должны сойтись в один файл именно в новом виде.
+func (s *Service) storeImage(
+	ctx context.Context, projectID, owner uuid.UUID, filename, mime string, data []byte,
+) (*store.Asset, error) {
+	result, err := media.Recompress(filename, mime, data)
+	if err != nil {
+		// Пережатие — улучшение, а не условие приёма: не получилось — храним исходник.
+		s.logger.Warn("asset recompress failed", "filename", filename, "err", err)
+		result = media.Result{Data: data, Mime: mime, Filename: filename}
+	}
+	return s.storeBytes(ctx, projectID, owner, putFile{
+		Name:   result.Filename,
+		Mime:   result.Mime,
+		Kind:   KindOf(result.Mime, result.Filename),
+		Size:   int64(len(result.Data)),
+		Width:  positiveOrNil(result.Width),
+		Height: positiveOrNil(result.Height),
+	}, result.Data)
+}
+
+// putFile — то, что попадёт в строку `assets` (без содержимого).
+type putFile struct {
+	Name   string
+	Mime   string
+	Kind   string
+	Size   int64
+	Width  *int
+	Height *int
+}
+
+// storeBytes записывает готовые байты и, если файл с таким содержимым уже есть в
+// любом проекте, второй раз его не пишет: строка начнёт ссылаться на существующий
+// объект (дедупликация, миграция 0007).
+func (s *Service) storeBytes(
+	ctx context.Context, projectID, owner uuid.UUID, file putFile, data []byte,
+) (*store.Asset, error) {
+	digest := sha256.Sum256(data)
+	hash := hex.EncodeToString(digest[:])
+
+	existing, err := s.store.FindAssetByHash(ctx, hash)
+	if err != nil {
+		return nil, err
+	}
+	key := ""
+	if existing != nil {
+		key = existing.S3Key
+	} else {
+		key = ObjectKey(projectID, file.Name)
+		if err := s.obj.Put(ctx, key, file.Mime, bytes.NewReader(data), int64(len(data))); err != nil {
+			return nil, fmt.Errorf("store put: %w", err)
+		}
+	}
+
+	asset, err := s.insertAsset(ctx, projectID, owner, file, key, hash)
+	if err != nil {
+		if existing == nil {
+			_ = s.obj.Delete(ctx, key)
+		}
+		return nil, err
+	}
+	return asset, nil
+}
+
+// storeStream — путь для больших и не-картиночных файлов: пишем потоком, хешируя на
+// лету, и только потом смотрим, нет ли такого же файла. Если есть — свой удаляем, а
+// строка ссылается на существующий: лишняя запись на диск дешевле, чем чтение
+// 50 МБ в память ради хеша до записи.
+func (s *Service) storeStream(
+	ctx context.Context, projectID, owner uuid.UUID, file putFile, r io.Reader,
+) (*store.Asset, error) {
 	hasher := sha256.New()
-	key := ObjectKey(projectID, opts.Filename)
-	if err := s.obj.Put(ctx, key, mime, io.TeeReader(opts.Reader, hasher), opts.Size); err != nil {
+	key := ObjectKey(projectID, file.Name)
+	if err := s.obj.Put(ctx, key, file.Mime, io.TeeReader(r, hasher), file.Size); err != nil {
 		return nil, fmt.Errorf("store put: %w", err)
 	}
 	hash := hex.EncodeToString(hasher.Sum(nil))
 
-	// Такой файл уже есть — свой только что записанный убираем, а строку связываем с
-	// существующим объектом. Дешевле потерять одну запись на диск, чем читать файл в
-	// память целиком ради хеша до записи (файлы бывают до 50 МБ).
 	existing, err := s.store.FindAssetByHash(ctx, hash)
 	if err != nil {
 		_ = s.obj.Delete(ctx, key)
 		return nil, err
 	}
-	writeOwn := existing == nil
 	if existing != nil {
 		_ = s.obj.Delete(ctx, key)
 		key = existing.S3Key
 	}
 
-	a := &store.Asset{
-		ProjectID:   projectID,
-		OwnerID:     actorID,
-		Filename:    opts.Filename,
-		Mime:        mime,
-		Size:        opts.Size,
-		S3Key:       key,
-		Kind:        kind,
-		ContentHash: &hash,
-	}
-	if err := s.store.CreateAsset(ctx, a); err != nil {
-		if writeOwn {
-			_ = s.obj.Delete(ctx, key)
-		}
+	asset, err := s.insertAsset(ctx, projectID, owner, file, key, hash)
+	if err != nil && existing == nil {
+		_ = s.obj.Delete(ctx, key)
 		return nil, err
 	}
-	return a, nil
+	return asset, err
+}
+
+// insertAsset создаёт строку вложения для уже записанного файла.
+func (s *Service) insertAsset(
+	ctx context.Context, projectID, owner uuid.UUID, file putFile, key, hash string,
+) (*store.Asset, error) {
+	asset := &store.Asset{
+		ProjectID:   projectID,
+		OwnerID:     owner,
+		Filename:    file.Name,
+		Mime:        file.Mime,
+		Size:        file.Size,
+		S3Key:       key,
+		Kind:        file.Kind,
+		Width:       file.Width,
+		Height:      file.Height,
+		ContentHash: &hash,
+	}
+	if err := s.store.CreateAsset(ctx, asset); err != nil {
+		return nil, err
+	}
+	return asset, nil
+}
+
+// positiveOrNil — размеры картинки в строку вложения: ноль означает «неизвестно».
+func positiveOrNil(value int) *int {
+	if value <= 0 {
+		return nil
+	}
+	return &value
 }
 
 // StoreFileOptions — готовый файл для записи в проект (импорт папки с md).
@@ -129,8 +250,8 @@ type StoreFileOptions struct {
 }
 
 // StoreFile кладёт в проект готовый файл — тем же путём, что и загрузка из
-// интерфейса, включая дедупликацию по содержимому: иначе импорт обходил бы её
-// стороной, и один и тот же файл лежал бы в хранилище дважды.
+// интерфейса: с пережатием картинок и с дедупликацией по содержимому. Иначе импорт
+// обходил бы и то, и другое: файл лежал бы дважды и в исходном весе.
 func (s *Service) StoreFile(ctx context.Context, opts StoreFileOptions) (*store.Asset, error) {
 	if opts.Mime == "" {
 		opts.Mime = MimeOf(opts.Filename)
@@ -138,39 +259,15 @@ func (s *Service) StoreFile(ctx context.Context, opts StoreFileOptions) (*store.
 	if opts.Kind == "" {
 		opts.Kind = KindOf(opts.Mime, opts.Filename)
 	}
-	digest := sha256.Sum256(opts.Data)
-	hash := hex.EncodeToString(digest[:])
-
-	key := ObjectKey(opts.ProjectID, opts.Filename)
-	existing, err := s.store.FindAssetByHash(ctx, hash)
-	if err != nil {
-		return nil, err
+	if media.Recompressible(opts.Mime, int64(len(opts.Data))) {
+		return s.storeImage(ctx, opts.ProjectID, opts.OwnerID, opts.Filename, opts.Mime, opts.Data)
 	}
-	writeOwn := existing == nil
-	if existing != nil {
-		// Файл уже есть — второй не пишем, ссылаемся на существующий.
-		key = existing.S3Key
-	} else if err := s.obj.Put(ctx, key, opts.Mime, bytes.NewReader(opts.Data), int64(len(opts.Data))); err != nil {
-		return nil, fmt.Errorf("store put: %w", err)
-	}
-
-	asset := &store.Asset{
-		ProjectID:   opts.ProjectID,
-		OwnerID:     opts.OwnerID,
-		Filename:    opts.Filename,
-		Mime:        opts.Mime,
-		Size:        int64(len(opts.Data)),
-		S3Key:       key,
-		Kind:        opts.Kind,
-		ContentHash: &hash,
-	}
-	if err := s.store.CreateAsset(ctx, asset); err != nil {
-		if writeOwn {
-			_ = s.obj.Delete(ctx, key)
-		}
-		return nil, err
-	}
-	return asset, nil
+	return s.storeBytes(ctx, opts.ProjectID, opts.OwnerID, putFile{
+		Name: opts.Filename,
+		Mime: opts.Mime,
+		Kind: opts.Kind,
+		Size: int64(len(opts.Data)),
+	}, opts.Data)
 }
 
 // Open — открывает поток для скачивания (после авторизации).
@@ -219,6 +316,169 @@ func (s *Service) List(ctx context.Context, actorID, projectID uuid.UUID) ([]sto
 	return s.store.ListAssets(ctx, projectID)
 }
 
+// RecompressReport — что дал проход по уже загруженным файлам.
+//
+// «Пропущено» и «битый» — разные вещи, и путать их нельзя: по отчёту решают,
+// стоит ли вообще запускать пережатие. Если свести оба случая в одно число,
+// вывод «пережатие не выигрывает на PNG» может оказаться выводом «эти PNG не
+// декодируются» — а это уже вопрос к содержимому хранилища, а не к кодировщику.
+type RecompressReport struct {
+	// Files — сколько уникальных файлов в хранилище просмотрено.
+	Files int `json:"files"`
+	// Images — из них растровых картинок подходящего размера, то есть тех, что
+	// вообще подлежат пережатию. Остальное (svg, pdf, аудио, слишком большие
+	// файлы) дальше не считается: пережимать там нечего.
+	Images int `json:"images"`
+	// Changed — сколько файлов стало меньше (и было переписано, если Applied).
+	Changed int `json:"changed"`
+	// Skipped — картинка разобралась, но webp не меньше исходника.
+	Skipped int `json:"skipped"`
+	// Damaged — картинку не удалось декодировать или закодировать. Это не беда
+	// хранения: файл остаётся как есть. Но и не «нет выигрыша» — поэтому отдельно.
+	Damaged int `json:"damaged"`
+	// Failed — не удалось прочитать или записать: файл остался как был.
+	Failed int `json:"failed"`
+	// DamagedExamples — несколько ключей битых файлов: без них по одному числу
+	// непонятно, что именно лежит в хранилище.
+	DamagedExamples []string `json:"damaged_examples,omitempty"`
+	// BytesFrom/BytesTo — вес изменённых файлов до и после.
+	BytesFrom int64 `json:"bytes_from"`
+	BytesTo   int64 `json:"bytes_to"`
+	// Applied — false означает «только посчитали» (сухой прогон).
+	Applied bool `json:"applied"`
+}
+
+// recompressExamples — сколько битых файлов показывать в отчёте.
+const recompressExamples = 10
+
+// RecompressStored пережимает уже загруженные картинки: то, что загружено до
+// появления пережатия, осталось в исходном весе.
+//
+// projectID ограничивает проход одним проектом (nil — все). Сухой прогон
+// (apply=false) считает выигрыш и ничего не пишет — по нему видно, стоит ли
+// запускать; так же устроена уборка хранилища.
+//
+// Файл переписывается под НОВЫМ ключом (расширение в ключе должно соответствовать
+// содержимому), а строки начинают на него ссылаться. Если пережатое содержимое уже
+// есть в хранилище (та же картинка попала в проект дважды), строки переводятся на
+// существующий файл: дедупликация продолжает работать и после пережатия.
+func (s *Service) RecompressStored(ctx context.Context, projectID *uuid.UUID, apply bool) (*RecompressReport, error) {
+	files, err := s.store.StoredFileKeys(ctx)
+	if err != nil {
+		return nil, err
+	}
+	report := &RecompressReport{Applied: apply}
+	for _, file := range files {
+		if projectID != nil && file.ProjectID != *projectID {
+			continue
+		}
+		report.Files++
+		data, err := s.readObject(ctx, file.S3Key)
+		if err != nil {
+			s.logger.Warn("recompress: file read failed", "key", file.S3Key, "err", err)
+			report.Failed++
+			continue
+		}
+		if !media.Recompressible(file.Mime, int64(len(data))) {
+			continue
+		}
+		report.Images++
+		result, err := media.Recompress(file.Filename, file.Mime, data)
+		if err != nil {
+			// Не декодировалось — оставляем файл как есть: это не ошибка хранения.
+			// В лог пишем подробности, в отчёт — ключ и общее число.
+			s.logger.Debug("recompress: image not decodable", "key", file.S3Key, "err", err)
+			report.Damaged++
+			if len(report.DamagedExamples) < recompressExamples {
+				report.DamagedExamples = append(report.DamagedExamples, file.S3Key)
+			}
+			continue
+		}
+		if !result.Changed {
+			report.Skipped++
+			continue
+		}
+		report.Changed++
+		report.BytesFrom += int64(len(data))
+		report.BytesTo += int64(len(result.Data))
+		if !apply {
+			continue
+		}
+		if err := s.replaceStoredFiles(ctx, file, result); err != nil {
+			s.logger.Warn("recompress: file not replaced", "key", file.S3Key, "err", err)
+			report.Failed++
+			report.Changed--
+			report.BytesFrom -= int64(len(data))
+			report.BytesTo -= int64(len(result.Data))
+		}
+	}
+	return report, nil
+}
+
+// replaceStoredFiles переписывает файл и переводит на него все строки вложений.
+func (s *Service) replaceStoredFiles(ctx context.Context, file store.Asset, result media.Result) error {
+	rows, err := s.store.ListAssetsByKey(ctx, file.S3Key)
+	if err != nil {
+		return err
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	digest := sha256.Sum256(result.Data)
+	hash := hex.EncodeToString(digest[:])
+
+	// Такой файл уже есть — второй раз не пишем, переводим строки на него.
+	target := ""
+	existing, err := s.store.FindAssetByHash(ctx, hash)
+	if err != nil {
+		return err
+	}
+	switch {
+	case existing != nil && existing.S3Key != file.S3Key:
+		target = existing.S3Key
+	default:
+		target = ObjectKey(file.ProjectID, result.Filename)
+		if err := s.obj.Put(ctx, target, result.Mime, bytes.NewReader(result.Data), int64(len(result.Data))); err != nil {
+			return err
+		}
+	}
+
+	for _, row := range rows {
+		patch := store.AssetFilePatch{
+			S3Key:       target,
+			Filename:    media.WebpName(row.Filename),
+			Mime:        result.Mime,
+			Kind:        KindOf(result.Mime, row.Filename),
+			Size:        int64(len(result.Data)),
+			ContentHash: &hash,
+			Width:       positiveOrNil(result.Width),
+			Height:      positiveOrNil(result.Height),
+		}
+		if err := s.store.UpdateAssetFile(ctx, row.ID, patch); err != nil {
+			// Строка не обновилась — файл трогать нельзя: на него ещё ссылаются.
+			return err
+		}
+	}
+	// Старый файл убираем, если на него больше никто не ссылается (после
+	// дедупликации ключ мог быть общим для нескольких проектов).
+	if target != file.S3Key {
+		if _, err := s.DeleteUnreferencedFiles(ctx, []string{file.S3Key}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// readObject читает файл из хранилища целиком: пережатие требует всех байтов.
+func (s *Service) readObject(ctx context.Context, key string) ([]byte, error) {
+	rc, err := s.obj.Get(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	defer rc.Close()
+	return io.ReadAll(rc)
+}
+
 // ProjectFileKeys — ключи файлов проекта: то, что нужно убрать, когда проект
 // удаляют.
 //
@@ -239,7 +499,6 @@ func (s *Service) ProjectFileKeys(ctx context.Context, projectID uuid.UUID) ([]s
 
 // DeleteUnreferencedFiles убирает файлы, на которые больше не ссылается ни одна
 // строка вложений, и возвращает число удалённых.
-//
 // Проверка ссылок обязательна после дедупликации: одним файлом могут пользоваться
 // несколько проектов, и удаление одного из них не должно уносить картинку у
 // остальных. Вызывается ПОСЛЕ удаления строк (проект уносит свои вложения

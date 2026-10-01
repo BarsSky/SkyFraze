@@ -21,15 +21,15 @@ import (
 
 	"github.com/skyfraze/backend/internal/collab"
 	"github.com/skyfraze/backend/internal/collab/yjs"
+	"github.com/skyfraze/backend/internal/platform/testimage"
 	"github.com/skyfraze/backend/internal/store"
 	"github.com/skyfraze/backend/internal/transfer"
 )
 
-// pngBytes — минимальный PNG: важно, что тип определяется по расширению.
-var pngBytes = []byte{
-	0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a,
-	0x00, 0x00, 0x00, 0x0d, 'I', 'H', 'D', 'R',
-}
+// pngBytes — настоящий PNG (см. testimage.SmallPNG): код пережатия пытается его
+// декодировать, поэтому «PNG из случайных байтов» давал бы предупреждение в лог на
+// каждой загрузке.
+var pngBytes = testimage.SmallPNG()
 
 func readObject(t *testing.T, e *env, key string) []byte {
 	t.Helper()
@@ -81,11 +81,16 @@ func TestImportMarkdown_AttachesImagesToNewProject(t *testing.T) {
 		t.Fatalf("вложений в проекте %d, ожидалось 1: %+v", len(assets), assets)
 	}
 	asset := assets[0]
-	if asset.Filename != "схема.png" || asset.Kind != "image" || asset.Mime != "image/png" {
+	// Картинка из набора приходит уже пережатой: имя и тип говорят о том, что
+	// лежит в хранилище, а не о том, как файл назывался в папке.
+	if asset.Filename != "схема.webp" || asset.Kind != "image" || asset.Mime != "image/webp" {
 		t.Errorf("вложение: %+v", asset)
 	}
-	if got := readObject(t, e, asset.S3Key); len(got) != len(pngBytes) {
-		t.Errorf("файл в хранилище: %d байт, ожидалось %d", len(got), len(pngBytes))
+	// Файл в хранилище соответствует строке вложения. Размер сверяем со строкой, а
+	// не с исходником: картинки пережимаются при записи (см. internal/media), и
+	// байты в хранилище — уже WebP.
+	if got := readObject(t, e, asset.S3Key); int64(len(got)) != asset.Size {
+		t.Errorf("файл в хранилище: %d байт, в строке вложения %d", len(got), asset.Size)
 	}
 
 	// Документ собран: снапшот есть, и в нём та же привязка, что увидит редактор.

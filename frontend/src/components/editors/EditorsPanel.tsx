@@ -82,6 +82,27 @@ const TYPING_IDLE_MS = 1500
 /** Совпадает с лимитом nginx (client_max_body_size) и бэкенда (assets.maxAssetSize). */
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
+/** Вес файла для подсказки: «2.0 МБ», «161 КБ». */
+function formatBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} МБ`
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} КБ`
+  return `${bytes} Б`
+}
+
+/**
+ * Что написать после загрузки файла.
+ *
+ * Сервер пережимает картинки в WebP и меняет имя (`photo.jpg` → `photo.webp`),
+ * поэтому короткое «Загружено: photo.webp» выглядело бы как подмена файла. Если
+ * имя изменилось, показываем исходный вес и результат — тогда видно, что это
+ * экономия, а не ошибка.
+ */
+export function uploadNoteFor(file: File, asset: Asset): string {
+  const renamed = asset.mime === 'image/webp' && !/\.webp$/i.test(file.name)
+  if (!renamed) return `Загружено: ${asset.filename}`
+  return `Загружено: ${asset.filename} — пережато из ${formatBytes(file.size)} в ${formatBytes(asset.size)}`
+}
+
 /** Сдвиг, после которого нажатие становится перетаскиванием, а не выбором. */
 const DRAG_THRESHOLD_PX = 6
 
@@ -602,7 +623,7 @@ export function EditorsPanel({
         map.set('bg_kind', 'asset')
         map.set('bg_asset', asset.id)
       }
-      setUploadNote(`Загружено: ${asset.filename}`)
+      setUploadNote(uploadNoteFor(file, asset))
       setVersion((v) => v + 1)
     })()
   }

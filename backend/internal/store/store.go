@@ -994,6 +994,44 @@ func (s *Store) CountAssetsByKey(ctx context.Context, key string) (int, error) {
 	return count, err
 }
 
+// ListAssetsByKey — все строки вложений, ссылающиеся на один файл: после
+// дедупликации их бывает несколько (у каждой свой проект и своё имя).
+func (s *Store) ListAssetsByKey(ctx context.Context, key string) ([]Asset, error) {
+	return qAll[Asset](ctx, s.Pool,
+		`SELECT `+assetColumns+` FROM assets WHERE s3_key=$1 ORDER BY created_at`, key)
+}
+
+// StoredFileKeys — по одному представителю на каждый файл хранилища. Нужно
+// пережатию уже загруженного: файл один, а строк может быть несколько.
+func (s *Store) StoredFileKeys(ctx context.Context) ([]Asset, error) {
+	return qAll[Asset](ctx, s.Pool,
+		`SELECT DISTINCT ON (s3_key) `+assetColumns+` FROM assets ORDER BY s3_key, created_at`)
+}
+
+// AssetFilePatch — что меняется в строке вложения, когда файл переписан
+// (пережатие картинок): содержимое другое, значит и размер, тип, хеш и имя другие.
+type AssetFilePatch struct {
+	S3Key       string  `db:"s3_key"`
+	Filename    string  `db:"filename"`
+	Mime        string  `db:"mime"`
+	Kind        string  `db:"kind"`
+	Size        int64   `db:"size"`
+	ContentHash *string `db:"content_hash"`
+	Width       *int    `db:"width"`
+	Height      *int    `db:"height"`
+}
+
+// UpdateAssetFile переписывает файловые поля строки вложения.
+func (s *Store) UpdateAssetFile(ctx context.Context, id uuid.UUID, patch AssetFilePatch) error {
+	_, err := s.Pool.Exec(ctx,
+		`UPDATE assets SET s3_key=$2, filename=$3, mime=$4, kind=$5, size=$6,
+		                   content_hash=$7, width=$8, height=$9
+		  WHERE id=$1`,
+		id, patch.S3Key, patch.Filename, patch.Mime, patch.Kind, patch.Size,
+		patch.ContentHash, patch.Width, patch.Height)
+	return err
+}
+
 // DeleteAsset убирает строку вложения. Файл удаляет вызывающий: хранилище и база
 // живут раздельно, и «удалить ещё и файл» — отдельное решение (см. assets.Service
 // и maintenance.Sweeper).

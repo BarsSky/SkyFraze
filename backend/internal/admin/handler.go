@@ -64,6 +64,9 @@ type UpdateRoutes interface {
 type StorageRoutes interface {
 	Storage(w http.ResponseWriter, r *http.Request)
 	SweepStorage(w http.ResponseWriter, r *http.Request)
+	// RecompressStorage — пережать уже загруженные картинки (сухой прогон без
+	// `?apply=1`).
+	RecompressStorage(w http.ResponseWriter, r *http.Request)
 }
 
 // Routes — /api/admin/*. Все ручки требуют токен; права проверяются в each().
@@ -87,6 +90,7 @@ func (h *Handler) Routes(authSvc *auth.Service, upd UpdateRoutes, storageRoutes 
 		// middleware, и requireAdmin, второй раз это делать негде.
 		r.Get("/storage", h.requireAdminFor(storageRoutes.Storage))
 		r.Post("/storage/sweep", h.requireAdminFor(storageRoutes.SweepStorage))
+		r.Post("/storage/recompress", h.requireAdminFor(storageRoutes.RecompressStorage))
 	}
 	return r
 }
