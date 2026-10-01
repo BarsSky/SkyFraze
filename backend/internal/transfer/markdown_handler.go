@@ -385,6 +385,10 @@ func (h *Handler) markdownError(w http.ResponseWriter, err error) {
 		// адресовано человеку, который переносит папку, поэтому добавляем, что
 		// именно случилось с проектом (в новый проект он не создан вовсе).
 		writeErr(w, http.StatusRequestEntityTooLarge, err.Error())
+	case errors.Is(err, assets.ErrHEICUndecodable):
+		// В папке лежит HEIC, а сервер его не разобрал: это ошибка набора, а не
+		// сервера — говорим об этом текстом, а не «import failed».
+		writeErr(w, http.StatusBadRequest, err.Error()+": сохраните картинку как JPEG и повторите импорт")
 	case errors.Is(err, ErrMarkdownEmpty),
 		errors.Is(err, ErrMarkdownBadZip),
 		errors.Is(err, ErrMarkdownUnsafePath):

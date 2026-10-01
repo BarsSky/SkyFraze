@@ -32,13 +32,42 @@ const exifTagOrientation = 0x0112
 // у которого тег был, — потеря ориентации, а развернуть наугад — испортить
 // картинку, которая была правильной.
 func exifOrientation(data []byte) int {
-	if len(data) < 4 || data[0] != 0xFF || data[1] != 0xD8 {
+	offset, order, ok := exifOrientationValue(data)
+	if !ok {
 		return 1
+	}
+	value := int(order.Uint16(data[offset : offset+2]))
+	if value < 1 || value > 8 {
+		return 1
+	}
+	return value
+}
+
+// normalizeJpegOrientation обнуляет тег ориентации (ставит 1 — «показывать как
+// есть»). Нужно после внешнего разворота: libheif применяет поворот из HEIC к
+// пикселям, но может оставить в JPEG исходный тег, и тогда мы развернули бы
+// картинку второй раз. Копию делаем потому, что входные байты принадлежат
+// вызывающему.
+func normalizeJpegOrientation(data []byte) []byte {
+	offset, order, ok := exifOrientationValue(data)
+	if !ok {
+		return data
+	}
+	out := append([]byte(nil), data...)
+	order.PutUint16(out[offset:offset+2], 1)
+	return out
+}
+
+// exifOrientationValue находит, где в файле лежит значение тега Orientation, и в
+// каком порядке байт оно записано. Пустой ответ — тега нет или файл не разобрался.
+func exifOrientationValue(data []byte) (int, binary.ByteOrder, bool) {
+	if len(data) < 4 || data[0] != 0xFF || data[1] != 0xD8 {
+		return 0, nil, false
 	}
 	// Идём по сегментам: маркер (2 байта), длина (2 байта, считая саму себя), тело.
 	for i := 2; i+2 <= len(data); {
 		if data[i] != 0xFF {
-			return 1
+			return 0, nil, false
 		}
 		marker := data[i+1]
 		// Заполнители и маркеры без длины: 0xFF, 0x01, 0xD0..0xD7.
@@ -52,32 +81,33 @@ func exifOrientation(data []byte) int {
 		}
 		// Начало сжатых данных или конец файла: дальше EXIF искать негде.
 		if marker == 0xDA || marker == 0xD9 {
-			return 1
+			return 0, nil, false
 		}
 		if i+4 > len(data) {
-			return 1
+			return 0, nil, false
 		}
 		length := int(data[i+2])<<8 | int(data[i+3])
 		if length < 2 || i+2+length > len(data) {
-			return 1
+			return 0, nil, false
 		}
 		if marker == 0xE1 {
-			if orientation := orientationFromAPP1(data[i+4 : i+2+length]); orientation != 0 {
-				return orientation
+			if offset, order, ok := orientationValueInAPP1(data[i+4 : i+2+length]); ok {
+				// Смещение считаем от начала файла: сегмент начинается на i+4.
+				return i + 4 + offset, order, true
 			}
 		}
 		i += 2 + length
 	}
-	return 1
+	return 0, nil, false
 }
 
-// orientationFromAPP1 разбирает полезную нагрузку APP1 и возвращает значение
-// тега Orientation, а ноль — если это не Exif или тега в нём нет.
-func orientationFromAPP1(payload []byte) int {
+// orientationValueInAPP1 разбирает полезную нагрузку APP1 и возвращает смещение
+// значения тега Orientation внутри неё.
+func orientationValueInAPP1(payload []byte) (int, binary.ByteOrder, bool) {
 	const exifHeader = "Exif\x00\x00"
 	// Заголовок Exif + минимальный TIFF-заголовок (порядок байт, 0x002A, смещение IFD0).
 	if len(payload) < len(exifHeader)+8 || string(payload[:len(exifHeader)]) != exifHeader {
-		return 0
+		return 0, nil, false
 	}
 	tiff := payload[len(exifHeader):]
 
@@ -88,14 +118,14 @@ func orientationFromAPP1(payload []byte) int {
 	case tiff[0] == 'M' && tiff[1] == 'M':
 		order = binary.BigEndian
 	default:
-		return 0
+		return 0, nil, false
 	}
 	if order.Uint16(tiff[2:4]) != 0x002A {
-		return 0
+		return 0, nil, false
 	}
 	ifd := int(order.Uint32(tiff[4:8]))
 	if ifd < 8 || ifd+2 > len(tiff) {
-		return 0
+		return 0, nil, false
 	}
 	count := int(order.Uint16(tiff[ifd : ifd+2]))
 	for entry := ifd + 2; entry+12 <= len(tiff); entry += 12 {
@@ -104,21 +134,17 @@ func orientationFromAPP1(payload []byte) int {
 		}
 		count--
 		e := tiff[entry : entry+12]
-		tag := order.Uint16(e[0:2])
-		if tag != exifTagOrientation {
+		if order.Uint16(e[0:2]) != exifTagOrientation {
 			continue
 		}
 		// Тип SHORT (3), одно значение: оно лежит прямо в поле значения.
 		if order.Uint16(e[2:4]) != 3 {
-			return 0
+			return 0, nil, false
 		}
-		value := int(order.Uint16(e[8:10]))
-		if value < 1 || value > 8 {
-			return 0
-		}
-		return value
+		// Значение внутри сегмента: смещение TIFF начинается сразу после «Exif\0\0».
+		return len(exifHeader) + entry + 8, order, true
 	}
-	return 0
+	return 0, nil, false
 }
 
 // applyOrientation разворачивает пиксели так, как просит EXIF. Значения 1 и

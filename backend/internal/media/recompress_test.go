@@ -7,6 +7,7 @@ package media_test
 
 import (
 	"bytes"
+	"context"
 	"image"
 	"testing"
 
@@ -31,7 +32,7 @@ func TestRecompressJPEG(t *testing.T) {
 	img := testimage.Photo(1200, 800)
 	source := testimage.JPEG(t, img, 92)
 
-	result, err := media.Recompress("фото.jpg", "image/jpeg", source)
+	result, err := media.Recompress(context.Background(), "фото.jpg", "image/jpeg", source)
 	if err != nil {
 		t.Fatalf("пережатие: %v", err)
 	}
@@ -58,7 +59,7 @@ func TestRecompressJPEG(t *testing.T) {
 
 	// Кодировщик детерминирован: одинаковый вход даёт одинаковые байты, иначе
 	// дедупликация по хешу не работала бы (две загрузки одного фото — один файл).
-	again, err := media.Recompress("фото.jpg", "image/jpeg", source)
+	again, err := media.Recompress(context.Background(), "фото.jpg", "image/jpeg", source)
 	if err != nil {
 		t.Fatalf("повторное пережатие: %v", err)
 	}
@@ -71,7 +72,7 @@ func TestRecompressPNGKeepsQuality(t *testing.T) {
 	img := testimage.Photo(400, 300)
 	source := testimage.PNG(t, img)
 
-	result, err := media.Recompress("схема.png", "image/png", source)
+	result, err := media.Recompress(context.Background(), "схема.png", "image/png", source)
 	if err != nil {
 		t.Fatalf("пережатие: %v", err)
 	}
@@ -100,7 +101,7 @@ func TestRecompressDownscalesBigImages(t *testing.T) {
 	img := testimage.Photo(4000, 3000)
 	source := testimage.JPEG(t, img, 85)
 
-	result, err := media.Recompress("снимок.jpeg", "image/jpeg", source)
+	result, err := media.Recompress(context.Background(), "снимок.jpeg", "image/jpeg", source)
 	if err != nil {
 		t.Fatalf("пережатие: %v", err)
 	}
@@ -134,7 +135,7 @@ func TestRecompressKeepsSmallAndForeignFiles(t *testing.T) {
 		{"битые байты под видом jpeg", "сломанный.jpg", "image/jpeg", []byte("не картинка вовсе")},
 	}
 	for _, c := range cases {
-		result, err := media.Recompress(c.filename, c.mime, c.data)
+		result, err := media.Recompress(context.Background(), c.filename, c.mime, c.data)
 		if err != nil && c.mime != "image/jpeg" {
 			t.Errorf("%s: неожиданная ошибка: %v", c.name, err)
 		}
@@ -149,7 +150,7 @@ func TestRecompressKeepsSmallAndForeignFiles(t *testing.T) {
 	// Картинка, которая и так крошечная: пережатие может дать файл больше — тогда
 	// возвращаем исходник.
 	tiny := testimage.JPEG(t, testimage.Photo(16, 16), 60)
-	result, err := media.Recompress("точка.jpg", "image/jpeg", tiny)
+	result, err := media.Recompress(context.Background(), "точка.jpg", "image/jpeg", tiny)
 	if err != nil {
 		t.Fatalf("пережатие: %v", err)
 	}

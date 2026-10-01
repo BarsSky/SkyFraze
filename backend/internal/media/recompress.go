@@ -27,6 +27,7 @@ package media
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"image"
 	_ "image/jpeg" // декодирование исходников — из стандартной библиотеки
@@ -73,20 +74,42 @@ type Result struct {
 
 // Recompressible сообщает, стоит ли вообще пытаться пережать файл такого типа.
 // SVG, pdf, аудио и видео не трогаем: это не растровые картинки.
+//
+// HEIC входит в список, хотя чистого Go-декодера для него нет: он превращается в
+// JPEG внешним конвертером (см. heic.go), а это требует прочитать файл целиком.
 func Recompressible(mime string, size int64) bool {
 	if size <= 0 || size > MaxSourceBytes {
 		return false
 	}
-	return mime == "image/jpeg" || mime == "image/png"
+	return mime == "image/jpeg" || mime == "image/png" || IsHEIC(mime)
 }
 
 // Recompress возвращает облегчённую версию картинки. Ошибка означает, что файл не
 // удалось декодировать или закодировать: вызывающий обязан сохранить исходные байты
 // (пережатие — улучшение, а не условие приёма файла).
-func Recompress(filename, mime string, data []byte) (Result, error) {
+//
+// Исключение — HEIC: его нельзя оставить как есть (браузер такого файла не
+// покажет), поэтому для HEIC ошибка означает «файл не принять, а не сохранить
+// исходник». Это решение вызывающего, и оно записано в его коде (assets.storeImage).
+func Recompress(ctx context.Context, filename, mime string, data []byte) (Result, error) {
 	original := Result{Data: data, Mime: mime, Filename: filename}
 	if !Recompressible(mime, int64(len(data))) {
 		return original, nil
+	}
+
+	// HEIC сначала превращаем в JPEG: дальше это обычная картинка, и весь путь
+	// (поворот, уменьшение, WebP) работает как для снимка с фотоаппарата.
+	if IsHEIC(mime) {
+		converted, err := heicConverter(ctx, data)
+		if err != nil {
+			return original, fmt.Errorf("преобразование HEIC: %w", err)
+		}
+		// Пиксели уже развёрнуты конвертером (libheif применяет поворот из файла),
+		// поэтому тег ориентации обнуляем: иначе развернули бы второй раз.
+		data = normalizeJpegOrientation(converted)
+		mime = "image/jpeg"
+		filename = replaceExt(filename, ".jpg")
+		original = Result{Data: data, Mime: mime, Filename: filename}
 	}
 
 	// Сначала только заголовок: так «слишком большая картинка» отсекается до
@@ -176,4 +199,14 @@ func WebpName(filename string) string {
 		base = "image"
 	}
 	return base + ".webp"
+}
+
+// replaceExt меняет расширение файла: содержимое стало другим (HEIC → JPEG), и имя
+// должно об этом говорить.
+func replaceExt(filename, ext string) string {
+	base := strings.TrimSuffix(filename, filepath.Ext(filename))
+	if base == "" {
+		base = "image"
+	}
+	return base + ext
 }

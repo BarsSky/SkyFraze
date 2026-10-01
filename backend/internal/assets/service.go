@@ -24,6 +24,10 @@ import (
 var (
 	ErrTooLarge = errors.New("file too large")
 	ErrBadMime  = errors.New("unsupported mime type")
+	// ErrHEICUndecodable — HEIC не удалось превратить в обычную картинку: в образе
+	// нет `heif-convert` (пакет libheif-tools) или файл не разобрался. Хранить его
+	// как есть нельзя: браузеры HEIC не показывают, поэтому отказ честнее.
+	ErrHEICUndecodable = errors.New("не удалось прочитать HEIC")
 )
 
 // QuotaError — в проекте не осталось места под файл. Ошибка нарочно «говорящая»:
@@ -166,6 +170,11 @@ func (s *Service) Upload(ctx context.Context, actorID, projectID uuid.UUID, opts
 	if !MimeAllowed(mime) {
 		return nil, ErrBadMime
 	}
+	// HEIC без конвертера отвергаем сразу: читать файл в память, чтобы потом
+	// отказать, незачем. Хранить HEIC как есть нельзя — его не покажет браузер.
+	if media.IsHEIC(mime) && !media.HEICAvailable() {
+		return nil, fmt.Errorf("%w: %v", ErrHEICUndecodable, media.ErrHEICUnavailable)
+	}
 
 	// Картинку, которую умеем пережать, читаем в память целиком: декодировать её
 	// потоком нельзя. Предел тот же, что у пережатия (20 МБ), поэтому пик памяти
@@ -193,9 +202,16 @@ func (s *Service) Upload(ctx context.Context, actorID, projectID uuid.UUID, opts
 func (s *Service) storeImage(
 	ctx context.Context, projectID, owner uuid.UUID, filename, mime string, data []byte,
 ) (*store.Asset, error) {
-	result, err := media.Recompress(filename, mime, data)
+	result, err := media.Recompress(ctx, filename, mime, data)
 	if err != nil {
-		// Пережатие — улучшение, а не условие приёма: не получилось — храним исходник.
+		// HEIC — единственный тип, который нельзя оставить как есть: браузеры
+		// (кроме Safari) его не показывают, и человек получил бы «картинка не
+		// открылась» вместо объяснения. Поэтому отказ, а не хранение исходника.
+		if media.IsHEIC(mime) {
+			s.logger.Warn("asset heic failed", "filename", filename, "err", err)
+			return nil, fmt.Errorf("%w: %v", ErrHEICUndecodable, err)
+		}
+		// Для остальных пережатие — улучшение, а не условие приёма: храним исходник.
 		s.logger.Warn("asset recompress failed", "filename", filename, "err", err)
 		result = media.Result{Data: data, Mime: mime, Filename: filename}
 	}
@@ -540,7 +556,7 @@ func (s *Service) RecompressStored(ctx context.Context, projectID *uuid.UUID, ap
 			continue
 		}
 		report.Images++
-		result, err := media.Recompress(file.Filename, file.Mime, data)
+		result, err := media.Recompress(ctx, file.Filename, file.Mime, data)
 		if err != nil {
 			// Не декодировалось — оставляем файл как есть: это не ошибка хранения.
 			// В лог пишем подробности, в отчёт — ключ и общее число.
@@ -697,14 +713,28 @@ func (s *Service) DeleteUnreferencedFiles(ctx context.Context, keys []string) (i
 // NormalizeMime — тип файла по заявленному Content-Type и имени: пустой или общий
 // `application/octet-stream` заменяется догадкой по расширению, параметры
 // (`; charset=…`) срезаются.
+//
+// Своя таблица расширений нужна для HEIC/HEIF: в таблице Go их нет (`mime.TypeByExtension`
+// возвращает пусто), а `/etc/mime.types` в контейнере может отсутствовать вовсе.
+// Без этой записи файл с телефона при пустом Content-Type отвергался бы как
+// «неизвестный тип».
 func NormalizeMime(ct, filename string) string {
 	ct = strings.TrimSpace(strings.ToLower(ct))
 	if ct == "" || ct == "application/octet-stream" {
+		if known := extraMimeByExt[strings.ToLower(filepath.Ext(filename))]; known != "" {
+			return known
+		}
 		if guessed := mime.TypeByExtension(filepath.Ext(filename)); guessed != "" {
 			return strings.Split(guessed, ";")[0]
 		}
 	}
 	return strings.Split(ct, ";")[0]
+}
+
+// extraMimeByExt — расширения, которых нет в таблице Go.
+var extraMimeByExt = map[string]string{
+	".heic": "image/heic",
+	".heif": "image/heif",
 }
 
 // MimeOf — тип файла только по имени (для импорта: Content-Type частей multipart

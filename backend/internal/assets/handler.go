@@ -64,6 +64,11 @@ func (h *Handler) Upload(_ *auth.Service) http.HandlerFunc {
 				writeErr(w, http.StatusRequestEntityTooLarge, "file too large")
 			case errors.Is(err, ErrBadMime):
 				writeErr(w, http.StatusUnsupportedMediaType, "unsupported mime")
+			case errors.Is(err, ErrHEICUndecodable):
+				// Совет один и для «в образе нет конвертера», и для «файл битый»:
+				// сохранить картинку как JPEG и загрузить снова.
+				writeErr(w, http.StatusUnsupportedMediaType,
+					"Не удалось прочитать HEIC (формат iPhone). Сохраните картинку как JPEG и загрузите снова.")
 			case QuotaExceeded(err):
 				// Текст ошибки показывают человеку в панели редактора: в нём
 				// занятое место, предел и вес файла.

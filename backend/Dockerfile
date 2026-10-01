@@ -27,7 +27,12 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
 FROM alpine:3.19 AS runtime
 
 # CA-certs нужны для pgx over TCP к Postgres (TLS) и для Yjs-запросов в проде.
-RUN apk add --no-cache ca-certificates tzdata && \
+# libheif-tools даёт `heif-convert`: им сервер разбирает HEIC с айфонов. Чистого
+# Go-декодера HEVC не существует, а CGO сломал бы статическую сборку, поэтому
+# конвертер живёт в образе отдельной утилитой (см. internal/media/heic.go). Если
+# пакета в образе нет, сервер честно отказывает на HEIC, а не хранит файл, который
+# браузер не покажет.
+RUN apk add --no-cache ca-certificates tzdata libheif-tools && \
     addgroup -S skyfraze && adduser -S -G skyfraze skyfraze
 
 WORKDIR /app

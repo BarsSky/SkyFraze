@@ -9,6 +9,7 @@ package media
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"image"
 	"image/color"
@@ -298,7 +299,7 @@ func TestRecompressAppliesExifOrientation(t *testing.T) {
 	plain := buf.Bytes()
 
 	// Без тега побеждает то, что лежит в файле: 80×120, светлое сверху.
-	untagged, err := Recompress("снимок.jpg", "image/jpeg", plain)
+	untagged, err := Recompress(context.Background(), "снимок.jpg", "image/jpeg", plain)
 	if err != nil {
 		t.Fatalf("пережатие без тега: %v", err)
 	}
@@ -308,7 +309,7 @@ func TestRecompressAppliesExifOrientation(t *testing.T) {
 	}
 
 	// С тегом 6 — развёрнутая картинка 120×80, светлое слева.
-	tagged, err := Recompress("снимок.jpg", "image/jpeg", withExifOrientation(t, plain, 6, false))
+	tagged, err := Recompress(context.Background(), "снимок.jpg", "image/jpeg", withExifOrientation(t, plain, 6, false))
 	if err != nil {
 		t.Fatalf("пережатие с тегом: %v", err)
 	}
