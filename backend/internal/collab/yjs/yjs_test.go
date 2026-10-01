@@ -264,6 +264,80 @@ func TestEnsureTextFieldsMigratesLegacy(t *testing.T) {
 	}
 }
 
+// Скалярные title/body после миграции — мёртвый груз: содержимое лежит дважды, а
+// читается всегда из `*_text`. Их удаление не должно менять ни текст, ни
+// совместимость: слияние с документом, где скаляры ещё есть, снова приносит их —
+// и следующая миграция убирает снова (поэтому уборка идемпотентна).
+func TestDropLegacyTextFields(t *testing.T) {
+	legacy := testyjs.State()
+	doc, err := yjs.FromState(legacy)
+	if err != nil {
+		t.Fatalf("снапшот: %v", err)
+	}
+	// До миграции текст читается из скалярных строк (textField так и делает).
+	before := doc.Events()
+
+	if created := doc.EnsureTextFields(); created == 0 {
+		t.Fatal("текстовые поля не созданы")
+	}
+	migrated := doc.EncodeState()
+	// Вот теперь содержимое лежит дважды: и в Y.Text, и в скалярной строке.
+	dead := yjs.LegacyTextBytes(migrated)
+	if dead == 0 {
+		t.Fatal("после миграции мёртвого груза нет — проверять нечего")
+	}
+
+	if dropped := doc.DropLegacyTextFields(); dropped == 0 {
+		t.Fatal("скалярные поля не удалены")
+	}
+	cleaned := doc.EncodeState()
+	// Текст на месте (читается из Y.Text), мёртвого груза больше нет, снапшот меньше.
+	for i, event := range doc.Events() {
+		if event.Title != before[i].Title || event.Body != before[i].Body {
+			t.Fatalf("текст события %d изменился: %+v → %+v", i, before[i], event)
+		}
+	}
+	if left := yjs.LegacyTextBytes(cleaned); left != 0 {
+		t.Fatalf("после уборки осталось %d байт скалярных полей", left)
+	}
+	if len(cleaned) >= len(migrated) {
+		t.Errorf("снапшот не уменьшился: до уборки %d, после %d", len(migrated), len(cleaned))
+	}
+	if again := doc.DropLegacyTextFields(); again != 0 {
+		t.Fatalf("повторная уборка удалила ещё %d полей", again)
+	}
+	// Миграция после уборки тоже ничего не находит: текстовые поля уже есть.
+	if created := doc.EnsureTextFields(); created != 0 {
+		t.Fatalf("после уборки миграция создала ещё %d полей", created)
+	}
+
+	// Слияние со «старым» документом, где скаляры ещё есть, ничего не ломает и не
+	// возвращает их: удаление ключа в CRDT необратимо (id удалённого элемента
+	// попадает в delete-set и переживает слияние). Именно поэтому уборка мёртвых
+	// скаляров безопасна — вкладка со старым снапшотом не «оживит» их обратно.
+	merged := yjs.NewDoc()
+	if err := merged.Apply(legacy); err != nil {
+		t.Fatalf("применение старого снапшота: %v", err)
+	}
+	if err := merged.Apply(cleaned); err != nil {
+		t.Fatalf("слияние: %v", err)
+	}
+	if err := merged.Apply(cleaned); err != nil {
+		t.Fatalf("повторное слияние: %v", err)
+	}
+	for i, event := range merged.Events() {
+		if event.Title != before[i].Title || event.Body != before[i].Body {
+			t.Fatalf("после слияния текст события %d: %+v", i, event)
+		}
+	}
+	if left := yjs.LegacyTextBytes(merged.EncodeState()); left != 0 {
+		t.Errorf("после слияния скаляры вернулись: %d байт", left)
+	}
+	if created := merged.EnsureTextFields(); created != 0 {
+		t.Fatalf("после слияния миграция создала %d полей", created)
+	}
+}
+
 // Место вставки куска (импорт «в место»): «после события» — после всего его
 // поддерева, «перед событием» — строго перед ним. Это не то же самое, что
 // «после предыдущего»: у главы бывают пункты, и кусок не должен встать между

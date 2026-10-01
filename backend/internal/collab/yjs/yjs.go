@@ -591,6 +591,88 @@ func textField(m *ygo.Map, field string) string {
 	return stringField(m, field)
 }
 
+// DropLegacyTextFields удаляет скалярные title/body там, где уже есть
+// title_text/body_text, и возвращает, сколько полей убрано.
+//
+// Зачем. Миграция Фазы 2 завела текстовые поля, но старые строки оставила: они были
+// нужны как откат для снапшотов, снятых до перехода. Содержимое при этом лежит
+// дважды (скалярная строка никуда не девается), и это чистый мёртвый груз: текст
+// читается из `*_text` (см. textField), а сами строки никто не удаляет.
+//
+// Удаляем ТОЛЬКО там, где текстовое поле есть: иначе событие осталось бы без
+// текста вовсе — ровно от этого защищает EnsureTextFields, который и должен идти
+// первым.
+func (d *Doc) DropLegacyTextFields() int {
+	events := ygo.NewArray(d.inner, EventsRoot)
+	type pending struct {
+		item   *ygo.Map
+		fields []string
+	}
+	var todo []pending
+
+	events.Range(func(_ uint64, value any) bool {
+		item, ok := value.(*ygo.Map)
+		if !ok {
+			return true
+		}
+		var fields []string
+		for _, field := range []string{"title", "body"} {
+			if _, isText := item.Get(field + "_text").(*ygo.Text); !isText {
+				continue
+			}
+			if _, isString := item.Get(field).(string); isString {
+				fields = append(fields, field)
+			}
+		}
+		if len(fields) > 0 {
+			todo = append(todo, pending{item: item, fields: fields})
+		}
+		return true
+	})
+
+	if len(todo) == 0 {
+		return 0
+	}
+	dropped := 0
+	txn := d.inner.WriteTxn()
+	for _, entry := range todo {
+		for _, field := range entry.fields {
+			entry.item.Delete(txn, field)
+			dropped++
+		}
+	}
+	txn.Commit()
+	return dropped
+}
+
+// legacyTextBytes считает, сколько байт занимают скалярные title/body в снапшоте —
+// мёртвый груз, который убирает DropLegacyTextFields. Нужен для замера «сколько
+// вернём», поэтому читает документ, а не меняет его.
+func LegacyTextBytes(state []byte) int {
+	doc, err := FromState(state)
+	if err != nil {
+		return 0
+	}
+	events := ygo.NewArray(doc.inner, EventsRoot)
+	total := 0
+	events.Range(func(_ uint64, value any) bool {
+		item, ok := value.(*ygo.Map)
+		if !ok {
+			return true
+		}
+		for _, field := range []string{"title", "body"} {
+			if _, isText := item.Get(field + "_text").(*ygo.Text); !isText {
+				continue
+			}
+			if legacy, isString := item.Get(field).(string); isString {
+				total += len(legacy)
+			}
+		}
+		return true
+	})
+	return total
+}
+
 func stringField(m *ygo.Map, key string) string {
 	value, ok := m.Get(key).(string)
 	if !ok {

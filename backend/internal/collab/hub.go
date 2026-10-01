@@ -489,6 +489,13 @@ func (r *Room) ensureDoc(ctx context.Context, ev *events.Service, userID, projec
 	if created := doc.EnsureTextFields(); created > 0 {
 		r.dirty = true
 	}
+	// Скалярные title/body — мёртвый груз: содержимое лежит дважды, а читается
+	// всегда из `*_text` (замер на стенде: 2.25% снапшотов, а у документов,
+	// созданных до Фазы 2, — до 39%). Убираем их сразу после миграции: иначе
+	// удалять нечего было бы.
+	if dropped := doc.DropLegacyTextFields(); dropped > 0 {
+		r.dirty = true
+	}
 	r.docMu.Unlock()
 }
 
@@ -534,6 +541,11 @@ func (r *Room) applyUpdate(by uuid.UUID, data []byte) (bool, error) {
 		if created := r.doc.EnsureTextFields(); created > 0 {
 			r.dirty = true
 			migrated = true
+		}
+		// Заодно убираем мёртвые скаляры у тех событий, которые только что
+		// получили текстовые поля.
+		if dropped := r.doc.DropLegacyTextFields(); dropped > 0 {
+			r.dirty = true
 		}
 		r.migratedEvents = count
 	}
