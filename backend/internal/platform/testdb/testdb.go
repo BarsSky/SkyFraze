@@ -65,7 +65,9 @@ var schemaSteps = []struct{ probe, file string }{
 }
 
 // Setup открывает отдельную БД для пакета (suffix), применяет миграции и
-// возвращает пул. Если сервер недоступен — тест переходит в skip.
+// возвращает пул. Если сервер недоступен — тест переходит в skip (локально) или
+// падает (в CI): пропуск в CI означал бы «зелёный» прогон, в котором не проверили
+// ничего.
 func Setup(t *testing.T, suffix string) *pgxpool.Pool {
 	t.Helper()
 	ctx := context.Background()
@@ -75,6 +77,9 @@ func Setup(t *testing.T, suffix string) *pgxpool.Pool {
 
 	pool, err := platform.NewDBPool(ctx, target)
 	if err != nil {
+		if os.Getenv("CI") != "" {
+			t.Fatalf("test DB unavailable in CI: %v", err)
+		}
 		t.Skipf("test DB unavailable: %v", err)
 	}
 	t.Cleanup(pool.Close)
