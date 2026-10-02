@@ -1,34 +1,14 @@
 import { test, expect } from '@playwright/test'
 
 /**
- * Дымовые сценарии входа — то, что проверяется в CI на ЧИСТОЙ базе.
+ * Дымовые сценарии входа, которым НЕ нужна пустая база: неверный пароль и закрытые
+ * страницы.
  *
- * Почему именно так. Этот файл — единственное, что запускает `npm run e2e`
- * (playwright.config.ts смотрит только `*.spec.ts`); остальные сценарии в
- * `tests/*.ts` — ручные инструменты разработчика: у них вписаны адреса и учётные
- * записи конкретного стенда.
- *
- * Рассчитывать на пустую инсталляцию можно только в CI: там postgres поднимается
- * заново, а первый зарегистрированный становится администратором. На рабочем
- * стенде пользователи уже есть, поэтому сценарий регистрации честно пропускается,
- * а не падает (иначе `npm run e2e` локально всегда красный).
+ * Первая регистрация переехала в install.spec.ts: она обязана идти до всех остальных
+ * сценариев (отдельный проект `install` в playwright.config.ts) и в CI не имеет права
+ * пропускаться. Здесь её держать нельзя — файлы идут по алфавиту, и к этому моменту
+ * администратора уже регистрирует кто-то другой, поэтому проверка молча пропускалась.
  */
-test('register → login → /projects (чистая инсталляция)', async ({ page }) => {
-  await page.goto('/register')
-  // Пустая инсталляция: форма создаёт первого администратора. Если идёт «Заявка на
-  // доступ», база не пустая — этот сценарий здесь не имеет смысла.
-  const heading = await page.locator('h1').innerText()
-  test.skip(!/Первый администратор/.test(heading), `инсталляция не пустая: «${heading}»`)
-
-  await page.getByPlaceholder('имя').fill('E2E User')
-  await page.getByPlaceholder('email').fill(`e2e+${Date.now()}@example.com`)
-  await page.getByPlaceholder('пароль (мин. 8)').fill('hunter22!')
-  await page.getByRole('button', { name: /Создать/ }).click()
-
-  await expect(page).toHaveURL(/\/projects$/)
-  await expect(page.getByRole('heading', { name: /Проекты/ })).toBeVisible()
-})
-
 test('login with wrong password shows error', async ({ page }) => {
   await page.goto('/login')
   await page.getByPlaceholder('email').fill('nobody@example.com')

@@ -207,9 +207,8 @@ func setup(t *testing.T, replies ...ai.Reply) *env {
 		"project_ratings", "project_views", "registration_requests", "app_settings",
 		"project_event_state", "sessions", "invitations", "event_assets", "assets",
 		"events", "team_memberships", "projects", "users")
-	// Агент — тоже пользователь: чистка users уносит и его строку, а на неё ссылаются
+	// Строку агента после чистки users возвращает сам Truncate: на неё ссылаются
 	// created_by созданных им событий и участие в проекте.
-	testdb.EnsureAIAgent(t, pool)
 
 	obj, err := storage.NewLocal(t.TempDir())
 	if err != nil {

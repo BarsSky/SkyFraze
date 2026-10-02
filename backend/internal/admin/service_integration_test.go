@@ -205,6 +205,19 @@ func TestBootstrapAndConfiguredAdminRegistration(t *testing.T) {
 
 	// Пустая инсталляция в режиме «по заявке»: первый аккаунт создать можно,
 	// иначе одобрять заявки было бы некому.
+	//
+	// В базе при этом УЖЕ есть системный аккаунт агента (миграция 0010, его строку
+	// возвращает testdb.Truncate). Именно на нём и ломался подсчёт: `COUNT(*) FROM
+	// users` видел агента, установка переставала выглядеть пустой, и регистрация
+	// первого администратора закрывалась. Проверяем это прямо, а не косвенно.
+	if n, err := e.st.CountUsers(ctx); err != nil || n != 0 {
+		t.Fatalf("людей на пустой инсталляции: %d (err=%v) — системный аккаунт агента человеком не считается", n, err)
+	}
+	if people, err := e.st.ListUsers(ctx); err != nil {
+		t.Fatalf("list users: %v", err)
+	} else if len(people) != 0 {
+		t.Fatalf("админка показывает %d человек на пустой инсталляции (первый: %s) — системные аккаунты в списке людей лишние", len(people), people[0].Email)
+	}
 	if mode, bootstrap := e.auth.RegistrationInfo(ctx); mode != store.RegistrationModeRequest || !bootstrap {
 		t.Fatalf("пустая инсталляция должна сообщать bootstrap=true, получено mode=%q bootstrap=%v", mode, bootstrap)
 	}

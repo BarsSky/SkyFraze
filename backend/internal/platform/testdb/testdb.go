@@ -13,6 +13,7 @@ import (
 	"context"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -103,11 +104,20 @@ func Setup(t *testing.T, suffix string) *pgxpool.Pool {
 
 // Truncate очищает перечисленные таблицы (RESTART IDENTITY — на них завязаны
 // проверки порядка и счётчиков).
+//
+// Если среди таблиц есть users, системный аккаунт агента возвращается на место.
+// В бою его заводит миграция 0010, и он есть ВСЕГДА; база, где его нет, отличается
+// от боевой ровно в том месте, где ломается подсчёт людей. На этом уже проехали:
+// bootstrap-тест на такой базе был зелёным и не заметил, что миграция 0010 закрыла
+// регистрацию первого администратора (`COUNT(*) FROM users` считал агента человеком).
 func Truncate(t *testing.T, pool *pgxpool.Pool, tables ...string) {
 	t.Helper()
 	if _, err := pool.Exec(context.Background(),
 		`TRUNCATE `+strings.Join(tables, ", ")+` RESTART IDENTITY CASCADE`); err != nil {
 		t.Fatalf("truncate: %v", err)
+	}
+	if slices.Contains(tables, "users") {
+		EnsureAIAgent(t, pool)
 	}
 }
 
@@ -116,8 +126,8 @@ func Truncate(t *testing.T, pool *pgxpool.Pool, tables ...string) {
 // В бою его создаёт миграция 0010, и он оттуда никуда не девается. В тестах таблицу
 // users чистят целиком, а на агента ссылаются created_by/updated_by событий и участие
 // в проекте: без строки вставка кадра падала бы на внешнем ключе — и падало бы не
-// утверждение теста, а то, что он проверяет. Поэтому после каждого Truncate с users
-// агента нужно вернуть.
+// утверждение теста, а то, что он проверяет. Truncate вызывает эту функцию сам, когда
+// среди таблиц есть users; сюда стоит ходить только если users чистят как-то иначе.
 func EnsureAIAgent(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	_, err := pool.Exec(context.Background(),
@@ -139,6 +149,17 @@ func dedicatedURL(base, suffix string) string {
 	return u.String()
 }
 
+// maintenanceURL — та же база, но служебная `postgres`: к ней можно подключиться,
+// даже когда базы из TEST_DATABASE_URL ещё нет.
+func maintenanceURL(base string) string {
+	u, err := url.Parse(base)
+	if err != nil {
+		return base
+	}
+	u.Path = "/postgres"
+	return u.String()
+}
+
 func ensureDatabase(t *testing.T, adminURL, targetURL string) {
 	t.Helper()
 	target, err := url.Parse(targetURL)
@@ -152,7 +173,14 @@ func ensureDatabase(t *testing.T, adminURL, targetURL string) {
 	ctx := context.Background()
 	pool, err := platform.NewDBPool(ctx, adminURL)
 	if err != nil {
-		return // целевая база может уже существовать и быть доступной напрямую
+		// Базовой базы может не быть — её удаляют, когда хотят прогнать сюиту
+		// «с нуля». Создаём целевые базы через служебную `postgres`: молчаливый
+		// выход здесь выглядел бы позже как «test DB unavailable», то есть как
+		// недоступный сервер, хотя сервер доступен, а базы просто нет.
+		pool, err = platform.NewDBPool(ctx, maintenanceURL(adminURL))
+		if err != nil {
+			return // целевая база может уже существовать и быть доступной напрямую
+		}
 	}
 	defer pool.Close()
 
