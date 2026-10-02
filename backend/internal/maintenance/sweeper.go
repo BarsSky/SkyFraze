@@ -115,12 +115,14 @@ type Report struct {
 
 	SnapshotCount int64 `json:"snapshot_count"`
 	SnapshotBytes int64 `json:"snapshot_bytes"`
-	// HeavySnapshots — самые тяжёлые снапшоты поимённо (по сырым байтам).
-	HeavySnapshots []store.ProjectSize `json:"heavy_snapshots,omitempty"`
-	EventRows      int64               `json:"event_rows"`
-	EventTextSize  int64               `json:"event_text_bytes"`
-	AssetRows      int64               `json:"asset_rows"`
-	AssetBytes     int64               `json:"asset_bytes"`
+	// ProjectsUsage — вес проектов поимённо, от тяжёлых к лёгким: вложения и снапшот.
+	// Содержимое проектов здесь не читается — админ отвечает за инсталляцию, а не за
+	// то, что в историях написано, но «кто занимает место» знать обязан.
+	ProjectsUsage []store.ProjectUsage `json:"projects_usage,omitempty"`
+	EventRows     int64                `json:"event_rows"`
+	EventTextSize int64                `json:"event_text_bytes"`
+	AssetRows     int64                `json:"asset_rows"`
+	AssetBytes    int64                `json:"asset_bytes"`
 
 	// Файлы в хранилище и сверка с базой.
 	FileCount int   `json:"file_count"`
@@ -171,13 +173,13 @@ func (s *Sweeper) scan(ctx context.Context, remove bool) (*Report, error) {
 	report.AssetRows = stats.AssetRows
 	report.AssetBytes = stats.AssetBytes
 
-	// Самые тяжёлые снапшоты поимённо: «база выросла» — это не ответ на вопрос
+	// Самые тяжёлые проекты поимённо: «база выросла» — это не ответ на вопрос
 	// «что с этим делать», а имя проекта в отчёте — ответ.
-	heavy, err := s.store.HeavySnapshotProjects(ctx, s.opts.HeavyExamples)
+	usage, err := s.store.ProjectUsageList(ctx, s.opts.HeavyExamples)
 	if err != nil {
 		return nil, err
 	}
-	report.HeavySnapshots = heavy
+	report.ProjectsUsage = usage
 
 	// Ключи вложений: с чем сверяем каталог.
 	keys, err := s.store.AssetKeys(ctx)
@@ -303,10 +305,12 @@ func (s *Sweeper) logReport(report *Report, swept bool) {
 		"scan_ms", report.ScanMillis,
 	}
 	// Самый тяжёлый проект — в лог: по нему сразу видно, куда идти.
-	if len(report.HeavySnapshots) > 0 {
+	if len(report.ProjectsUsage) > 0 {
 		attrs = append(attrs,
-			"heaviest_project", report.HeavySnapshots[0].Title,
-			"heaviest_snapshot_bytes", report.HeavySnapshots[0].Bytes)
+			"heaviest_project", report.ProjectsUsage[0].Title,
+			"heaviest_bytes", report.ProjectsUsage[0].Total(),
+			"heaviest_asset_bytes", report.ProjectsUsage[0].Assets,
+			"heaviest_snapshot_bytes", report.ProjectsUsage[0].Snapshot)
 	}
 	if swept {
 		attrs = append(attrs, "removed_files", report.RemovedFiles, "removed_bytes", report.RemovedBytes)

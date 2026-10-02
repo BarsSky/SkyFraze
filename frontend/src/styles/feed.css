@@ -221,3 +221,10 @@
 .admin__storage-more li span:first-child { overflow-wrap: anywhere; }
 .admin__storage-actions { margin-top: 14px; flex-wrap: wrap; gap: 8px; }
 .admin__storage-recompress { margin: 10px 0 0; font-size: 0.82rem; overflow-wrap: anywhere; }
+
+/* Вес файлов проекта в списке: обычно тихая подпись, у предела — предупреждение. */
+.proj-weight { margin: 4px 0 0; font-size: 0.8rem; }
+.proj-weight--tight { color: var(--danger); }
+
+/* Пояснение под списком весов проектов в админке. */
+.admin__storage-note { margin: 8px 0 0; font-size: 0.8rem; }

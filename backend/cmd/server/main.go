@@ -121,6 +121,9 @@ func main() {
 	assetsSvc.UseLogger(logger)
 	// Квота проекта: вес считается по строкам `assets`, то есть после пережатия.
 	assetsSvc.UseQuota(cfg.AssetQuotaBytes)
+	// Тот же предел показывает список проектов («весит 8.4 МБ из 10»): берём его у
+	// владельца квоты, а не читаем конфиг второй раз.
+	projH.UseQuota(assetsSvc.Quota())
 	assetsH := assets.NewHandler(assetsSvc, logger)
 
 	// Удаление проекта уносит и его файлы: иначе они оставались бы в хранилище

@@ -18,6 +18,14 @@ export interface Project {
   role?: 'owner' | 'editor' | 'viewer'
   /** Доступ выдан соавторством (только чтение), а не участием в команде. */
   coauthor_access?: boolean
+  /**
+   * Вес вложений проекта после пережатия и предел (`0` — без предела).
+   *
+   * Список показывает «файлы: 8.4 МБ из 10»: место в проекте видно до открытия, а не
+   * когда загрузка уже упёрлась в отказ.
+   */
+  asset_bytes?: number
+  quota_bytes?: number
 }
 
 export async function listProjects(): Promise<Project[]> {

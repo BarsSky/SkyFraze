@@ -76,6 +76,12 @@ func (s *Service) List(ctx context.Context, userID uuid.UUID) ([]store.Project, 
 	return s.store.ListProjectsForUser(ctx, userID)
 }
 
+// AssetBytesByProject — вес вложений по проектам: список показывает его у каждой
+// карточки. Считается одним запросом (см. store.ProjectAssetBytes).
+func (s *Service) AssetBytesByProject(ctx context.Context) (map[uuid.UUID]int64, error) {
+	return s.store.ProjectAssetBytes(ctx)
+}
+
 // ListSharedByCoauthors — закрытые проекты соавторов, открытые мне на чтение.
 // Это не участие в проекте: роль здесь всегда viewer, правок нет.
 func (s *Service) ListSharedByCoauthors(ctx context.Context, userID uuid.UUID) ([]store.Project, error) {

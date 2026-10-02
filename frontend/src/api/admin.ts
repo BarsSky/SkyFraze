@@ -113,11 +113,17 @@ export interface TableSize {
   bytes: number
 }
 
-/** Проект и его вес: отчёт называет тяжёлые проекты поимённо. */
-export interface ProjectSize {
+/**
+ * Проект и его вес по частям: вложения и снапшот.
+ *
+ * Админ видит вес и заголовок, но не содержимое: он отвечает за инсталляцию, а не за
+ * то, что в историях написано (см. docs/architecture.md).
+ */
+export interface ProjectUsage {
   id: string
   title: string
-  bytes: number
+  asset_bytes: number
+  snapshot_bytes: number
 }
 
 /** Файл или строка, попавшие в отчёт как проблемные. */
@@ -136,7 +142,8 @@ export interface StorageReport {
   projects: number
   snapshot_count: number
   snapshot_bytes: number
-  heavy_snapshots?: ProjectSize[]
+  /** Вес проектов, от тяжёлых к лёгким (верхушка списка). */
+  projects_usage?: ProjectUsage[]
   event_rows: number
   event_text_bytes: number
   asset_rows: number

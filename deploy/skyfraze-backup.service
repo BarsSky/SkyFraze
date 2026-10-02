@@ -1,0 +1,21 @@
+[Unit]
+Description=SkyFraze: резервная копия базы и вложений
+Documentation=https://github.com/BarsSky/SkyFraze
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Каталог установки SkyFraze (там же .env и docker-compose.prod.yml).
+WorkingDirectory=/home/skyadmin/skyfraze
+# От владельца каталога: docker compose читает .env и пишет копию в backups/;
+# под root каталог копий оказался бы root'овым, и следующий запуск от пользователя
+# не смог бы их удалить при ротации.
+User=skyadmin
+Group=skyadmin
+Environment=SKYFRAZE_DIR=/home/skyadmin/skyfraze
+# Через bash, а не «./backup.sh»: право на исполнение теряется при git checkout.
+ExecStart=/bin/bash /home/skyadmin/skyfraze/deploy/backup.sh
+# Копия больших каталогов может занять время, но не минуты: ограничение нужно,
+# чтобы зависший docker не держал юнит вечно.
+TimeoutStartSec=1800

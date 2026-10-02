@@ -288,14 +288,18 @@ func TestStorageReportNamesHeavySnapshots(t *testing.T) {
 	if err != nil {
 		t.Fatalf("отчёт: %v", err)
 	}
-	if len(report.HeavySnapshots) != 2 {
-		t.Fatalf("тяжёлых проектов в отчёте %d, ожидалось 2: %+v", len(report.HeavySnapshots), report.HeavySnapshots)
+	if len(report.ProjectsUsage) != 2 {
+		t.Fatalf("проектов в отчёте %d, ожидалось 2: %+v", len(report.ProjectsUsage), report.ProjectsUsage)
 	}
-	if report.HeavySnapshots[0].ID != heavy.ID || report.HeavySnapshots[0].Title != "Тяжёлый проект" {
-		t.Errorf("первым должен быть самый тяжёлый: %+v", report.HeavySnapshots[0])
+	if report.ProjectsUsage[0].ID != heavy.ID || report.ProjectsUsage[0].Title != "Тяжёлый проект" {
+		t.Errorf("первым должен быть самый тяжёлый: %+v", report.ProjectsUsage[0])
 	}
-	if report.HeavySnapshots[0].Bytes < report.HeavySnapshots[1].Bytes {
-		t.Errorf("порядок по весу нарушен: %+v", report.HeavySnapshots)
+	if report.ProjectsUsage[0].Total() < report.ProjectsUsage[1].Total() {
+		t.Errorf("порядок по весу нарушен: %+v", report.ProjectsUsage)
+	}
+	// Вес показан по частям: у тяжёлого проекта он из снапшота, вложений нет.
+	if report.ProjectsUsage[0].Snapshot == 0 || report.ProjectsUsage[0].Assets != 0 {
+		t.Errorf("вес по частям: %+v", report.ProjectsUsage[0])
 	}
 }
 

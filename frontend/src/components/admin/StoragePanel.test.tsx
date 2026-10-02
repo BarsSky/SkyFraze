@@ -25,7 +25,10 @@ const report = (partial: Partial<StorageReport> = {}): StorageReport => ({
   projects: 12,
   snapshot_count: 10,
   snapshot_bytes: 728242,
-  heavy_snapshots: [{ id: 'p1', title: 'Планета — АнуВаар', bytes: 16547 }],
+  projects_usage: [
+    { id: 'p1', title: 'Планета — АнуВаар', asset_bytes: 5481636, snapshot_bytes: 16209 },
+    { id: 'p2', title: 'ИНДЕКС ФАЙЛОВ', asset_bytes: 0, snapshot_bytes: 711378 },
+  ],
   event_rows: 340,
   event_text_bytes: 210 * 1024,
   asset_rows: 4,
@@ -106,9 +109,11 @@ describe('StoragePanel', () => {
     // Строка без файла — это содержимое проекта: показываем хотя бы один ключ,
     // иначе по числу непонятно, где искать.
     expect(diff).toMatch(/proj\/карта\.png/)
-    fireEvent.click(screen.getByText('Самые тяжёлые снапшоты'))
+    fireEvent.click(screen.getByText(/Проекты и их вес/))
     expect(screen.getByText('Планета — АнуВаар')).toBeTruthy()
-    expect(screen.getByText('16 КБ')).toBeTruthy()
+    // Вес по частям: вложения и история правок — разными числами.
+    expect(screen.getByText(/файлы 5\.2 МБ · история 16 КБ · всего 5\.2 МБ/)).toBeTruthy()
+    expect(screen.getByText(/не содержимое проектов/)).toBeTruthy()
   })
 
   it('уборка спрашивает подтверждение и показывает, что убрала', async () => {

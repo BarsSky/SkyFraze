@@ -16,6 +16,10 @@ import (
 type Handler struct {
 	svc    *Service
 	logger *slog.Logger
+	// quota — предел вложений проекта (0 — без предела): список проектов показывает
+	// его вместе с весом. Значение приходит из assets.Service при сборке приложения,
+	// чтобы предел имел один источник истины.
+	quota int64
 }
 
 func NewHandler(svc *Service, logger *slog.Logger) *Handler {
@@ -61,7 +65,26 @@ func (h *Handler) Routes(authSvc *auth.Service) http.Handler {
 type projectListItem struct {
 	*store.Project
 	Access string `json:"access"`
+	// AssetBytes — сколько занимают вложения проекта (после пережатия), QuotaBytes —
+	// предел. Нужны списку проектов: «проект весит 8.4 МБ из 10» видно до открытия,
+	// а не когда загрузка уже упёрлась в отказ.
+	AssetBytes int64 `json:"asset_bytes"`
+	QuotaBytes int64 `json:"quota_bytes"`
 }
+
+// listItem собирает строку списка: проект, доступ и его вес.
+func (h *Handler) listItem(p *store.Project, access string, weights map[uuid.UUID]int64) projectListItem {
+	return projectListItem{
+		Project:    p,
+		Access:     access,
+		AssetBytes: weights[p.ID],
+		QuotaBytes: h.quota,
+	}
+}
+
+// UseQuota задаёт предел вложений проекта: список показывает «сколько занято из
+// предела». Ноль означает «без предела» — тогда интерфейс показывает только вес.
+func (h *Handler) UseQuota(limit int64) { h.quota = limit }
 
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	uid, err := auth.UserIDFromCtx(r.Context())
@@ -82,16 +105,25 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Вес вложений — одним запросом на все проекты: у каждой карточки списка он
+	// показывается, и делать по запросу на проект было бы N+1.
+	weights, err := h.svc.AssetBytesByProject(r.Context())
+	if err != nil {
+		h.logger.Error("list project weights", "err", err)
+		writeErr(w, http.StatusInternalServerError, "list failed")
+		return
+	}
+
 	items := make([]projectListItem, 0, len(ps)+len(shared))
 	for i := range ps {
 		access := "member"
 		if ps[i].OwnerID == uid {
 			access = "owner"
 		}
-		items = append(items, projectListItem{Project: &ps[i], Access: access})
+		items = append(items, h.listItem(&ps[i], access, weights))
 	}
 	for i := range shared {
-		items = append(items, projectListItem{Project: &shared[i], Access: "coauthor"})
+		items = append(items, h.listItem(&shared[i], "coauthor", weights))
 	}
 	writeJSON(w, http.StatusOK, items)
 }

@@ -1,0 +1,14 @@
+[Unit]
+Description=SkyFraze: ежедневная резервная копия базы и вложений
+Documentation=https://github.com/BarsSky/SkyFraze
+
+[Timer]
+# Ночью, когда никто не правит проекты. Persistent=true — если машина была выключена,
+# копия снимется при первом же включении, а не пропустится до следующих суток.
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+# Разброс в 10 минут: если на машине есть другие ночные задачи, они не столкнутся.
+RandomizedDelaySec=600
+
+[Install]
+WantedBy=timers.target

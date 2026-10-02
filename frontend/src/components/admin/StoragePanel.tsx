@@ -179,17 +179,26 @@ export function StoragePanel() {
             </div>
           )}
 
-          {report.heavy_snapshots && report.heavy_snapshots.length > 0 && (
-            <details className="admin__storage-more">
-              <summary>Самые тяжёлые снапшоты</summary>
+          {report.projects_usage && report.projects_usage.length > 0 && (
+            <details className="admin__storage-more" open>
+              <summary>Проекты и их вес ({report.projects_usage.length})</summary>
               <ul>
-                {report.heavy_snapshots.map((p) => (
+                {report.projects_usage.map((p) => (
                   <li key={p.id}>
                     <span>{p.title}</span>
-                    <span className="muted">{formatBytes(p.bytes)}</span>
+                    {/* Вес по частям: вложения (их можно удалить) и снапшот (история
+                        правок — техническая, пользователю о ней знать нечего). */}
+                    <span className="muted">
+                      файлы {formatBytes(p.asset_bytes)} · история {formatBytes(p.snapshot_bytes)} · всего{' '}
+                      {formatBytes(p.asset_bytes + p.snapshot_bytes)}
+                    </span>
                   </li>
                 ))}
               </ul>
+              <p className="muted admin__storage-note">
+                Видны вес и названия, но не содержимое проектов: администратор отвечает за инсталляцию, а не за
+                истории.
+              </p>
             </details>
           )}
 

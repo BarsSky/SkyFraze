@@ -6,6 +6,7 @@ import { exportProject, importProject } from '../api/transfer'
 import { exportStoryMarkdown } from '../api/storyFiles'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { ImportFolderModal } from '../components/ImportFolderModal'
+import { projectWeight } from '../lib/projectWeight'
 import { copyText } from '../lib/clipboard'
 import { useAuthStore } from '../store/auth'
 
@@ -261,6 +262,18 @@ export function ProjectsPage() {
                 }}>
                   {p.description || <em>без описания</em>}
                 </p>
+                {/* Вес файлов проекта: место видно до открытия, а не когда загрузка
+                    уже упёрлась в предел. */}
+                {(() => {
+                  const weight = projectWeight(p)
+                  if (!weight) return null
+                  return (
+                    <p className={weight.tight ? 'muted proj-weight proj-weight--tight' : 'muted proj-weight'}>
+                      {weight.text}
+                      {weight.tight && ' — место заканчивается'}
+                    </p>
+                  )
+                })()}
                 {p.is_public && p.public_slug && (
                   <p className="muted pub-link">
                     <Link to={`/s/${p.public_slug}`}>/s/{p.public_slug}</Link>

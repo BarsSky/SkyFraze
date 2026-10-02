@@ -445,10 +445,11 @@ SkyFraze/
 │   ├── realtime-editor.md        фазы realtime-правок и их проверки
 │   ├── storage-compression.md    что занимает место на сервере и как его сократить
 │   ├── storage-s3.md             план по S3/MinIO: что даёт, что ломает, сколько стоит
+│   ├── backups.md                резервные копии: что копируется, расписание, восстановление
 │   └── screenshots/              картинки для этого README
 ├── deps/scroll-world/            git-САБМОДУЛЬ oso95/scroll-world — справочник по композиции
 │                                 стадии и механике прокрутки (в сборку не входит)
-├── deploy/                       скрипты и systemd-юниты механизма обновления
+├── deploy/                       скрипты и systemd-юниты механизма обновления и копий
 ├── docker-compose.prod.yml       конфигурация для сервера (см. «Развёртывание на сервере»)
 ├── docker-compose.yml            postgres + backend + frontend (локальная разработка)
 ├── .env / .env.example           JWT_SECRET, ADMIN_EMAILS, REGISTRATION_MODE и т.п.
@@ -549,6 +550,15 @@ ONLY_FUNCTIONAL=1 npx tsx ../.dsh/skills/ui-visual-audit/scripts/visual-audit.ts
 
 Что занимает место и что с этим делать по шагам — `docs/storage-compression.md`.
 План по S3/MinIO (что даёт, что ломает, почему пока не делаем) — `docs/storage-s3.md`.
+Резервные копии — `docs/backups.md`; коротко:
+
+```bash
+bash deploy/backup.sh                 # копия базы и вложений в backups/<дата>
+bash deploy/backup.sh --drill         # проверить, что копия восстанавливается
+sudo bash deploy/install-backup-units.sh   # ежедневный таймер (один раз, на хосте)
+# офсайт: BACKUP_RSYNC=user@host:/path или BACKUP_RCLONE=remote:path
+```
+
 Отчёт о размерах доступен тремя способами:
 
 - **страница `/admin` в интерфейсе** — раздел «Хранилище»: размеры базы, снапшотов

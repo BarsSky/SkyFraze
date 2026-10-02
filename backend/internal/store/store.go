@@ -848,32 +848,8 @@ func (s *Store) StorageStats(ctx context.Context) (*StorageStats, error) {
 	return out, rows.Err()
 }
 
-// ProjectSize — проект и его вес: «какой проект занимает больше всех». Отчёт о
-// хранилище показывает такие списки, чтобы место искали в конкретном проекте, а не
-// в среднем по базе (в `deploy/storage-report.sql` это «проекты-тяжеловесы»).
-type ProjectSize struct {
-	ID    uuid.UUID `json:"id"`
-	Title string    `json:"title"`
-	Bytes int64     `json:"bytes"`
-}
-
-// HeavySnapshotProjects — проекты с самыми большими снапшотами (по сырым байтам).
-//
-// Порога здесь нет намеренно: «тяжёлый» зависит от стенда, а список из нескольких
-// имён отвечает на вопрос «куда смотреть» без выдуманного числа. Сжатие TOAST в
-// расчёт не берётся — это оценка сверху, и она стабильна между проходами.
-func (s *Store) HeavySnapshotProjects(ctx context.Context, limit int) ([]ProjectSize, error) {
-	if limit <= 0 {
-		limit = 5
-	}
-	return qAll[ProjectSize](ctx, s.Pool,
-		`SELECT p.id, p.title, octet_length(s.yjs_state) AS bytes
-		   FROM project_event_state s JOIN projects p ON p.id = s.project_id
-		  ORDER BY bytes DESC, p.title
-		  LIMIT $1`, limit)
-}
-
-// AssetKeys — ключи всех вложений (ключ → проект). Нужен уборке хранилища: с этим// списком сверяется каталог, чтобы найти файлы, на которые никто не ссылается.
+// AssetKeys — ключи всех вложений (ключ → проект). Нужен уборке хранилища: с этим
+// списком сверяется каталог, чтобы найти файлы, на которые никто не ссылается.
 func (s *Store) AssetKeys(ctx context.Context) (map[string]uuid.UUID, error) {
 	rows, err := s.Pool.Query(ctx, `SELECT s3_key, project_id FROM assets`)
 	if err != nil {
@@ -1031,6 +1007,65 @@ func (s *Store) SumProjectAssetBytes(ctx context.Context, projectID uuid.UUID) (
 	err := s.Pool.QueryRow(ctx,
 		`SELECT COALESCE(sum(size), 0) FROM assets WHERE project_id=$1`, projectID).Scan(&total)
 	return total, err
+}
+
+// ProjectAssetBytes — сколько занимают вложения каждого проекта: project_id → байты.
+//
+// Одним запросом на все проекты, а не по проекту в цикле: список проектов показывает
+// вес у каждой карточки, и N+1 запросов на страницу было бы глупо. Индекс по
+// project_id есть, агрегат идёт по таблице вложений.
+func (s *Store) ProjectAssetBytes(ctx context.Context) (map[uuid.UUID]int64, error) {
+	rows, err := s.Pool.Query(ctx,
+		`SELECT project_id, coalesce(sum(size), 0) FROM assets GROUP BY project_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[uuid.UUID]int64{}
+	for rows.Next() {
+		var id uuid.UUID
+		var total int64
+		if err := rows.Scan(&id, &total); err != nil {
+			return nil, err
+		}
+		out[id] = total
+	}
+	return out, rows.Err()
+}
+
+// ProjectUsage — вес проекта по частям: вложения и снапшот CRDT.
+type ProjectUsage struct {
+	ID       uuid.UUID `json:"id" db:"id"`
+	Title    string    `json:"title" db:"title"`
+	Assets   int64     `json:"asset_bytes" db:"asset_bytes"`
+	Snapshot int64     `json:"snapshot_bytes" db:"snapshot_bytes"`
+}
+
+// Total — суммарный вес проекта: по нему список и сортируется.
+func (p ProjectUsage) Total() int64 { return p.Assets + p.Snapshot }
+
+// ProjectUsageList — вес проектов, от тяжёлых к лёгким. limit ограничивает список:
+// отчёт админки показывает верхушку, а не все проекты стенда.
+//
+// Содержимое проектов здесь не читается вовсе — только размеры и заголовки: админ
+// отвечает за инсталляцию, а не за то, что в историях написано.
+func (s *Store) ProjectUsageList(ctx context.Context, limit int) ([]ProjectUsage, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	return qAll[ProjectUsage](ctx, s.Pool,
+		`SELECT p.id,
+		        p.title,
+		        coalesce(a.bytes, 0) AS asset_bytes,
+		        coalesce(st.bytes, 0) AS snapshot_bytes
+		   FROM projects p
+		   LEFT JOIN (SELECT project_id, sum(size) AS bytes FROM assets GROUP BY project_id) a
+		          ON a.project_id = p.id
+		   LEFT JOIN (SELECT project_id, octet_length(yjs_state) AS bytes
+		                FROM project_event_state) st
+		          ON st.project_id = p.id
+		  ORDER BY coalesce(a.bytes, 0) + coalesce(st.bytes, 0) DESC, p.title
+		  LIMIT $1`, limit)
 }
 
 // ListAssetsByKey — все строки вложений, ссылающиеся на один файл: после
