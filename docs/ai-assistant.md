@@ -144,8 +144,11 @@ ai_conversations (id, project_id, user_id, title, model, created_at, updated_at)
 ai_messages      (id, conversation_id, role user|assistant|tool, content,
                   tool_calls jsonb, tool_results jsonb, model, tokens_in, tokens_out, created_at)
 ai_user_keys     (user_id, provider, key_ciphertext bytea, created_at, updated_at)  -- AES-GCM
-ai_consents      (user_id, provider, agreed_at)                                     -- согласие на отправку
 ```
+
+Согласие на отправку текста (`ai_consents (user_id, provider, agreed_at)`) появится своей
+миграцией в фазе 3, когда появится и сам вопрос в интерфейсе: 0008 уже развёрнута на стенде,
+а менять применённую миграцию нельзя.
 
 Права: беседы и инструменты — `editor+` (они меняют проект); чтение чужих бесед запрещено
 даже владельцу проекта (это личная переписка пользователя с моделью — как личные заметки).
@@ -193,6 +196,13 @@ ai_consents      (user_id, provider, agreed_at)                                 
 **Что осталось в фазе 1 из «на будущее»:** проверка ключа при сохранении не кэшируется,
 список моделей не кэшируется вовсе (запрашивается только когда человек открывает выбор
 модели). Если это станет заметно, добавим кэш на 5 минут — сейчас преждевременно.
+
+**Состояние на рабочем стенде** (v0.28.0, `d2f49f1`, 2026-10-02): миграция 0008 применена,
+таблицы `ai_user_keys`, `ai_conversations`, `ai_messages` созданы и пусты, в контейнере
+`AI_ENABLED=false` — помощник выключен, как и задумано; ручки `/api/ai/*` без входа
+отвечают `401`, то есть наружу ничего не открыто. Чтобы включить помощник, нужно задать
+`AI_ENABLED=true` в `.env` на стенде и поднять контейнер (`docs/ai-assistant.md`, README,
+«Переменные окружения»).
 
 ## 7. Риски и как их закрываем
 
