@@ -62,6 +62,34 @@ newest_backup() {
   find "$BACKUP_DIR" -maxdepth 1 -mindepth 1 -type d -name '20*' 2>/dev/null | sort | tail -1
 }
 
+# Системные аккаунты (агент «Нестор») — не люди: колонка users.is_system появилась в
+# миграции 0011. В манифесте рядом с проектами должно стоять число людей, иначе
+# «пользователей: 3» на инсталляции с двумя живыми авторами читается как ошибка.
+#
+# Колонки может не быть: этот же скрипт запускают и на развёртывании постарше (в том
+# числе из свежего чекаута). Тогда все аккаунты — люди, и запрос с is_system просто
+# упал бы — а с `set -e` это остановило бы копирование.
+has_system_column() {
+  [ "$(psql_at "SELECT count(*) FROM information_schema.columns
+                 WHERE table_name = 'users' AND column_name = 'is_system'" "${1:-$DB_NAME}")" = "1" ]
+}
+
+count_people() {
+  if has_system_column "${1:-}"; then
+    psql_at 'SELECT count(*) FROM users WHERE NOT is_system' "${1:-$DB_NAME}"
+  else
+    psql_at 'SELECT count(*) FROM users' "${1:-$DB_NAME}"
+  fi
+}
+
+count_system() {
+  if has_system_column "${1:-}"; then
+    psql_at 'SELECT count(*) FROM users WHERE is_system' "${1:-$DB_NAME}"
+  else
+    echo 0
+  fi
+}
+
 # Временные объекты проверки восстановления. Держим их не локальными переменными, а
 # переменными скрипта: trap срабатывает при выходе, когда локальных уже нет, и
 # `set -u` валил уборку («unpack: unbound variable») — временная база оставалась
@@ -102,10 +130,11 @@ create_backup() {
   log "упаковываю каталог вложений $STORAGE_PATH"
   compose exec -T "$BACKEND_SERVICE" tar czf - -C "$STORAGE_PATH" . > "$dir/assets.tar.gz"
 
-  local projects assets users events files
+  local projects assets users system events files
   projects="$(psql_at 'SELECT count(*) FROM projects')"
   assets="$(psql_at 'SELECT count(*) FROM assets')"
-  users="$(psql_at 'SELECT count(*) FROM users')"
+  users="$(count_people)"
+  system="$(count_system)"
   events="$(psql_at 'SELECT count(*) FROM events')"
   files="$(tar tzf "$dir/assets.tar.gz" | grep -cv '/$' || true)"
 
@@ -120,6 +149,9 @@ create_backup() {
     echo ""
     echo "проектов:     $projects"
     echo "пользователей: $users"
+    if [ "$system" -gt 0 ]; then
+      echo "системных:    $system (аккаунт агента, не человек)"
+    fi
     echo "событий:      $events"
     echo "вложений:     $assets (строк в базе)"
     echo "файлов:       $files (в архиве)"
@@ -196,21 +228,30 @@ drill() {
   log "распаковываю вложения во временный каталог"
   tar xzf "$dir/assets.tar.gz" -C "$unpack"
 
-  local projects assets users files missing
+  local projects assets users system files missing
   projects="$(psql_at 'SELECT count(*) FROM projects' "$scratch")"
   assets="$(psql_at 'SELECT count(*) FROM assets' "$scratch")"
-  users="$(psql_at 'SELECT count(*) FROM users' "$scratch")"
+  users="$(count_people "$scratch")"
+  system="$(count_system "$scratch")"
   files="$(find "$unpack" -type f | wc -l)"
   # Главная проверка: у каждой строки вложения в базе есть файл в архиве. Именно
   # этого не хватает, когда копию снимают в неверном порядке или «забыли» каталог.
-  psql_at 'SELECT s3_key FROM assets' "$scratch" | sort > "$unpack/.keys_from_db"
-  ( cd "$unpack" && find . -type f -printf '%P\n' | sort > .files_in_archive )
+  #
+  # `sort -u`, а не `sort`: два вложения с одинаковым содержимым делят один файл
+  # (дедупликация по content_hash), поэтому один и тот же ключ встречается в таблице
+  # несколько раз. Без -u отсутствующий файл считался столько раз, сколько на него
+  # ссылок, и в отчёте одна пропажа выглядела как восемнадцать.
+  psql_at 'SELECT s3_key FROM assets' "$scratch" | sort -u > "$unpack/.keys_from_db"
+  ( cd "$unpack" && find . -type f -printf '%P\n' | sort -u > .files_in_archive )
   missing="$(comm -23 "$unpack/.keys_from_db" "$unpack/.files_in_archive" | wc -l)"
 
   echo ""
   echo "=== копия $dir ==="
   echo "проектов:     $projects"
   echo "пользователей: $users"
+  if [ "$system" -gt 0 ]; then
+    echo "системных:    $system (аккаунт агента, не человек)"
+  fi
   echo "вложений:     $assets"
   echo "файлов:       $files"
   echo "файлов нет у вложений: $missing"
