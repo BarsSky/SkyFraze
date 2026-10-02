@@ -50,7 +50,13 @@ var (
 )
 
 // Guard — проверка доступа к проекту (реализует projects.Service).
+//
+// Две проверки, а не одна: чтение беседы доступно тому, кто проект хотя бы видит, а
+// создание беседы — тому, кто в нём может писать. Без этих проверок беседы становятся
+// «ручкой в никуда»: посторонний мог бы завести беседу с чужим project_id, а любой
+// запрос к чужому проекту отвечал бы 200 (проверено на живом стенде — так и было).
 type Guard interface {
+	RequireViewer(ctx context.Context, userID, projectID uuid.UUID) error
 	RequireEditor(ctx context.Context, userID, projectID uuid.UUID) error
 }
 
@@ -96,6 +102,32 @@ func (s *Service) Limits() Limits { return s.limits }
 // Enabled — работает ли помощник.
 func (s *Service) Enabled() bool { return s != nil && s.models != nil && s.models.Enabled() }
 
+// RequireProject проверяет доступ к проекту: чтение — viewer+, запись — editor+.
+//
+// Ошибки проектов переводим в свои: обработчик отвечает по ним 403/404, а не 500
+// (та же схема, что у импорта и выгрузки).
+func (s *Service) RequireProject(ctx context.Context, userID, projectID uuid.UUID, edit bool) error {
+	if s.guard == nil {
+		return errors.New("помощник не настроен: нет доступа к проектам")
+	}
+	var err error
+	if edit {
+		err = s.guard.RequireEditor(ctx, userID, projectID)
+	} else {
+		err = s.guard.RequireViewer(ctx, userID, projectID)
+	}
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, projects.ErrForbidden):
+		return ErrForbidden
+	case errors.Is(err, store.ErrNotFound):
+		return store.ErrNotFound
+	default:
+		return err
+	}
+}
+
 // Call — что делал один инструмент. Уходит человеку вместе с ответом: по нему видно,
 // что именно произошло, не читая JSON в тексте модели.
 type Call struct {
@@ -136,13 +168,10 @@ func (s *Service) Send(ctx context.Context, userID, projectID, conversationID uu
 	if len([]rune(text)) > 4000 {
 		return nil, errors.New("сообщение длиннее 4000 символов — разделите его на части")
 	}
-	if s.inserter == nil || s.guard == nil {
+	if s.inserter == nil {
 		return nil, errors.New("помощник не настроен: нет доступа к проектам")
 	}
-	if err := s.guard.RequireEditor(ctx, userID, projectID); err != nil {
-		if errors.Is(err, projects.ErrForbidden) {
-			return nil, ErrForbidden
-		}
+	if err := s.RequireProject(ctx, userID, projectID, true); err != nil {
 		return nil, err
 	}
 

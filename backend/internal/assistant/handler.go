@@ -47,9 +47,17 @@ func (h *Handler) Routes(r chi.Router) {
 }
 
 // ListConversations — GET .../ai/conversations: беседы этого человека в проекте.
+//
+// Проект проверяем явно: без этого ручка отвечала 200 на чужой проект (беседы-то
+// свои, но 200 на чужом проекте — это уже утечка факта «ручка работает везде» и
+// приглашение перебирать идентификаторы).
 func (h *Handler) ListConversations(w http.ResponseWriter, r *http.Request) {
 	uid, pid, ok := h.scope(w, r)
 	if !ok {
+		return
+	}
+	if err := h.svc.RequireProject(r.Context(), uid, pid, false); err != nil {
+		h.fail(w, "list conversations access", err)
 		return
 	}
 	list, err := h.svc.store.ListAIConversations(r.Context(), pid, uid)
@@ -66,10 +74,15 @@ func (h *Handler) ListConversations(w http.ResponseWriter, r *http.Request) {
 // CreateConversation — POST .../ai/conversations: завести пустую беседу.
 //
 // Нужна не всегда: отправка сообщения сама создаёт беседу. Но интерфейсу удобнее
-// показать список и «Новый разговор» сразу, не дожидаясь первого вопроса.
+// показать список и «Новый разговор» сразу, не дожидаясь первого вопроса. Права —
+// как у правки проекта: беседа привязана к проекту, и заводить её в чужом нельзя.
 func (h *Handler) CreateConversation(w http.ResponseWriter, r *http.Request) {
 	uid, pid, ok := h.scope(w, r)
 	if !ok {
+		return
+	}
+	if err := h.svc.RequireProject(r.Context(), uid, pid, true); err != nil {
+		h.fail(w, "create conversation access", err)
 		return
 	}
 	var body struct {
@@ -101,6 +114,10 @@ func (h *Handler) GetConversation(w http.ResponseWriter, r *http.Request) {
 	// беседа на сервере (иначе каждый открытый разговор оставлял бы пустую запись).
 	if cid == uuid.Nil {
 		writeErr(w, http.StatusBadRequest, "не указана беседа")
+		return
+	}
+	if err := h.svc.RequireProject(r.Context(), uid, pid, false); err != nil {
+		h.fail(w, "get conversation access", err)
 		return
 	}
 	conversation, err := h.svc.conversation(r.Context(), uid, pid, cid, "", "")

@@ -837,6 +837,35 @@ func TestAssistantHTTPContract(t *testing.T) {
 	if rec := post(messages, `{"text":"Создай главу","model":"stub:stub-1"}`, stranger); rec.Code != http.StatusOK {
 		t.Fatalf("после согласия: код %d, тело %s", rec.Code, rec.Body.String())
 	}
+
+	// Посторонний (не участник проекта) не получает ничего: ни списка бесед, ни
+	// права завести беседу в чужом проекте. Раньше список отвечал 200 — «беседы-то
+	// свои», но 200 на чужом проекте и есть та дырка, через которую перебирают
+	// идентификаторы.
+	outsider := e.user(t, "outsider@example.com")
+	get := func(path string, user uuid.UUID) *httptest.ResponseRecorder {
+		t.Helper()
+		token, err := auth.IssueAccess(testSecret, user)
+		if err != nil {
+			t.Fatalf("token: %v", err)
+		}
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		return rec
+	}
+	conversations := "/api/projects/" + projectID.String() + "/ai/conversations"
+	if rec := get(conversations, outsider); rec.Code != http.StatusForbidden {
+		t.Fatalf("список бесед чужого проекта: код %d, тело %s", rec.Code, rec.Body.String())
+	}
+	if rec := post(conversations, `{"title":"Чужая беседа"}`, outsider); rec.Code != http.StatusForbidden {
+		t.Fatalf("создание беседы в чужом проекте: код %d, тело %s", rec.Code, rec.Body.String())
+	}
+	// Участник проекта список видит.
+	if rec := get(conversations, owner); rec.Code != http.StatusOK {
+		t.Fatalf("свой проект: код %d, тело %s", rec.Code, rec.Body.String())
+	}
 }
 
 // assistantRouter собирает роутер с теми же путями и той же проверкой входа, что в
