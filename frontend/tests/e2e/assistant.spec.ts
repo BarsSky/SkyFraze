@@ -1,4 +1,5 @@
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect } from '@playwright/test'
+import { signIn } from './support'
 
 /**
  * Помощник в браузере: человек пишет в поле, модель просит создать главу, глава
@@ -12,43 +13,10 @@ import { test, expect, type Page } from '@playwright/test'
  * Провайдер — заглушка `stub-ollama.mjs` (её поднимает job e2e в CI), поэтому
  * модель считается локальной: ни ключа, ни согласия в сценарии не требуется.
  *
- * Если помощник на стенде выключен (или заглушки нет — локальный прогон), сценарий
- * пропускается: `npm run e2e` должен оставаться зелёным и на рабочем стенде.
+ * Вход общий с другими сценариями (tests/e2e/support.ts): администратора на чистой
+ * базе регистрирует первый файл по алфавиту. Если войти нечем — сценарий пропускается:
+ * `npm run e2e` должен оставаться зелёным и на рабочем стенде.
  */
-
-const EMAIL = 'assistant.e2e@example.com'
-const PASSWORD = 'hunter22!'
-
-/**
- * Вход: регистрируемся (первый администратор на чистой базе или обычная
- * регистрация, если она открыта) либо логинимся уже созданной учётной записью.
- *
- * Так сценарий работает в обоих окружениях: в CI (чистая база, режим «по заявке»)
- * — первый администратор; на стенде разработчика — своя учётная запись, если она
- * есть, иначе честный пропуск (учётку на стенде заводит администратор).
- */
-async function signIn(page: Page): Promise<boolean> {
-  await page.goto('/register')
-  const heading = await page.locator('h1').innerText()
-  if (/Первый администратор|Регистрация/.test(heading)) {
-    const email = /Регистрация/.test(heading) ? `assistant+${Date.now()}@example.com` : EMAIL
-    await page.getByPlaceholder('имя').fill('E2E Assistant')
-    await page.getByPlaceholder('email').fill(email)
-    await page.getByPlaceholder('пароль (мин. 8)').fill(PASSWORD)
-    await page.getByRole('button', { name: 'Создать' }).click()
-    await expect(page).toHaveURL(/\/projects$/)
-    return true
-  }
-  await page.goto('/login')
-  await page.getByPlaceholder('email').fill(EMAIL)
-  await page.getByPlaceholder('пароль').fill(PASSWORD)
-  await page.getByRole('button', { name: /Войти/ }).click()
-  return page
-    .waitForURL(/\/projects$/, { timeout: 10_000 })
-    .then(() => true)
-    .catch(() => false)
-}
-
 test('помощник создаёт главу по просьбе в чате', async ({ page }) => {
   test.skip(!(await signIn(page)), 'учётной записи e2e нет и регистрация закрыта')
 

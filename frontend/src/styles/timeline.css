@@ -708,10 +708,60 @@ html.sf-viewer-open body { overflow: hidden; }
   to   { opacity: 1; }
 }
 
+/* ── Заглушка загрузки проекта ────────────────────────────────────────────
+   Скелет стадии с бегущим бликом: показывает, что сейчас появится, вместо
+   заглушки «таймлайн пуст» (она врала о содержимом, пока снапшот ехал). */
+.sf-loading {
+  display: grid;
+  gap: 18px;
+  justify-items: center;
+  padding: 48px 24px;
+}
+
+.sf-loading__stage {
+  display: grid;
+  gap: 14px;
+  width: min(680px, 100%);
+  padding: 28px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elev);
+}
+
+.sf-loading__bar,
+.sf-loading__chip {
+  border-radius: 4px;
+  background: linear-gradient(
+    90deg,
+    var(--chip-bg) 0%,
+    var(--surface-line) 50%,
+    var(--chip-bg) 100%
+  );
+  background-size: 240% 100%;
+  animation: sf-shimmer 1.4s ease-in-out infinite;
+}
+
+.sf-loading__bar--title { height: 26px; width: 62%; }
+.sf-loading__bar--line { height: 12px; width: 100%; }
+.sf-loading__bar--short { width: 74%; }
+
+.sf-loading__chips { display: flex; gap: 8px; margin-top: 6px; }
+.sf-loading__chip { height: 22px; width: 74px; }
+
+@keyframes sf-shimmer {
+  from { background-position: 140% 0; }
+  to   { background-position: -140% 0; }
+}
+
+.sf-loading__label { margin: 0; font-size: 13px; }
+
 @media (prefers-reduced-motion: reduce) {
   .sf-pt { display: none; }
   .sf-hint i::after { animation: none; }
   .sf-scene__inner { will-change: auto; }
   .sf-btn:hover:not(:disabled) { transform: none; }
   .sf-copy { animation: none; }
+  /* Блик — украшение: кому движение мешает, тот видит ровный скелет. */
+  .sf-loading__bar,
+  .sf-loading__chip { animation: none; }
 }

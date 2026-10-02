@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { TimelineStage, type AssetLookup } from '../components/timeline/TimelineStage'
+import { ProjectLoading } from '../components/timeline/ProjectLoading'
 import { EditorsPanel } from '../components/editors/EditorsPanel'
 import { AssistantPanel } from '../components/assistant/AssistantPanel'
 import { PresenceBar } from '../components/collab/PresenceBar'
@@ -8,6 +9,7 @@ import { ErrorBanner } from '../components/ErrorBanner'
 import { useCollab, yAddEvent, type YMap } from '../collab/yprovider'
 import { titleString } from '../collab/text'
 import { connectionNotice } from '../collab/connection'
+import { projectPhase } from '../lib/projectPhase'
 import { assetUsage, deleteAsset, listAssets, uploadAsset, type Asset, type AssetUsage } from '../api/assets'
 import { serverErrorMessage } from '../api/client'
 import {
@@ -47,6 +49,9 @@ export function ProjectTimelinePage() {
   const realtime = collab?.connected ?? false
   const connectionStatus = collab?.status ?? 'connecting'
   const reconnectAttempt = collab?.reconnectAttempt ?? 0
+
+  // Фазу считаем ниже, после событий: она смотрит и на число событий, и на признак
+  // «контент загружен» из collab-провайдера, и на то, знаем ли мы роль пользователя.
 
   // Realtime может быть недоступен (прокси, мобильная сеть, закрытый WebSocket):
   // работать можно, но люди должны понимать, почему правки не летят другим сразу.
@@ -281,7 +286,27 @@ export function ProjectTimelinePage() {
   // `canEdit === null` — роль ещё не приехала; до этого запись не отправляем,
   // иначе читатель получал 403 в консоль (и лишний трафик).
   const canEdit = project == null ? null : project.role === 'owner' || project.role === 'editor'
-  const showEditors = canEdit !== false
+  // Пока проект (и роль в нём) не приехал, «можно править» неизвестно: панели не
+  // показываем, иначе читатель на мгновение видел бы редакторы. Та же логика, что и
+  // у фазы загрузки, поэтому оба признака смотрят на одно и то же.
+  const showEditors = project != null && canEdit !== false
+
+  /**
+   * Фаза страницы: загрузка, отказ чтения или содержимое.
+   *
+   * Пустой `Y.Array` до приезда снапшота и по-настоящему пустой проект выглядели
+   * одинаково, поэтому на каждом открытии показывалась заглушка «Таймлайн пока пуст»
+   * с кнопкой «Добавить первую главу» — вместо загрузки и с риском создать лишнюю
+   * главу на медленной связи. Состояние загрузки знает провайдер (`collab.content`),
+   * решение о фазе — в `projectPhase` (там же его тесты).
+   */
+  const phase = projectPhase({
+    projectKnown: project != null,
+    content: collab?.content ?? 'loading',
+    eventsCount,
+    failed: error != null,
+  })
+  const loading = phase === 'loading'
 
   useEffect(() => {
     collab?.setWritable(canEdit)
@@ -295,6 +320,16 @@ export function ProjectTimelinePage() {
   const presenceBar = <PresenceBar peers={collab?.presence ?? []} events={eventTitles} />
   /** Панель редакторов: только тем, кто может править, и только с событиями. */
   const editorsShown = Boolean(events && eventsCount > 0 && showEditors)
+
+  /**
+   * Пока содержимое не приехало, страница не гадает: ни заглушки «таймлайн пуст», ни
+   * пустого места — анимация загрузки. Отказ чтения (снапшот не пришёл и дерева в базе
+   * нет) показываем отдельно: это не пустой проект, и «Добавить первую главу» здесь
+   * предлагать нельзя, иначе человек создаст главу в проекте, содержимого которого не видел.
+   */
+  const retryContent = useCallback(() => {
+    void collab?.reloadFromServer().catch(() => undefined)
+  }, [collab])
 
   return (
     <div className="sf-page">
@@ -313,16 +348,29 @@ export function ProjectTimelinePage() {
           />
         </div>
       )}
-      {canEdit === false && (
+      {phase === 'failed' && (
+        <div style={{ padding: '16px 24px 0' }}>
+          <ErrorBanner
+            error={
+              new Error(
+                'Не удалось загрузить содержимое проекта: сервер не ответил или соединение прервалось.',
+              )
+            }
+            what="Проект"
+            onRetry={retryContent}
+          />
+        </div>
+      )}
+      {loading && <ProjectLoading />}
+      {canEdit === false && !loading && (
         <div className="sf-readonly" data-readonly-banner>
           {project?.coauthor_access
             ? 'Проект открыт вам как соавтору: только чтение, правок здесь нет.'
             : 'Вы наблюдатель в этом проекте: только чтение, правок здесь нет.'}
         </div>
       )}
-      {eventsCount === -1 && !error && <p className="muted">Подключение к realtime-серверу…</p>}
-      {eventsCount === 0 && showEditors && <EmptyState onCreate={createFirstChapter} />}
-      {eventsCount === 0 && !showEditors && (
+      {!loading && eventsCount === 0 && showEditors && <EmptyState onCreate={createFirstChapter} />}
+      {!loading && eventsCount === 0 && !showEditors && (
         <div className="sf-empty">
           <h3 className="sf-empty__title">Таймлайн пока пуст</h3>
           <p className="muted sf-empty__text">Автор ещё не добавил ни одной главы.</p>
@@ -355,9 +403,9 @@ export function ProjectTimelinePage() {
           fixed-слои стадии (sf-stage, z-index 10, непрозрачный фон) закрывают
           всё, что в потоке выше трека, поэтому «над стадией» у редактора было бы
           не видно вовсе. */}
-      {!editorsShown && presenceBar}
+      {!editorsShown && !loading && presenceBar}
 
-      {editorsShown && events && (
+      {editorsShown && !loading && events && (
         <>
           {presenceBar}
           <EditorsPanel
@@ -383,7 +431,7 @@ export function ProjectTimelinePage() {
       {/* Панель помощника показываем и в пустом проекте: «сделай мне проект по
           описанию» — первый же осмысленный вопрос, и он должен быть доступен до
           того, как в таймлайне появится хоть один кадр. */}
-      {showEditors && (
+      {showEditors && !loading && (
         <AssistantPanel
           projectId={projectId}
           onProjectChanged={assistantChanged}

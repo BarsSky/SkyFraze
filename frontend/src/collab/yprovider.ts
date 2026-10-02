@@ -31,6 +31,14 @@ import {
 export type YArray = Y.Array<Y.Map<unknown>>
 export type YMap = Y.Map<unknown>
 
+/**
+ * Состояние загрузки содержимого проекта.
+ *
+ * `loading` — снапшот ещё едет; `ready` — знаем, что в проекте (пусто или нет);
+ * `failed` — не смогли узнать: и снапшот не приехал, и дерева из базы не оказалось.
+ */
+export type ContentState = 'loading' | 'ready' | 'failed'
+
 export interface SyncTreeResult {
   ok: boolean
   reason?: 'forbidden' | 'rejected' | 'error' | 'conflict'
@@ -64,6 +72,17 @@ export interface CollabHandle {
   setWritable: (allowed: boolean | null) => void
   /** Открылось ли realtime-соединение: без него правки сохраняются, но не летят другим. */
   connected: boolean
+  /**
+   * Загружено ли содержимое проекта (снапшот из базы) — `loading` | `ready` | `failed`.
+   *
+   * Зачем это отдельным признаком. Пустой `Y.Array` до загрузки и по-настоящему пустой
+   * проект выглядят в интерфейсе одинаково, поэтому страница показывала «Таймлайн пока
+   * пуст» (и кнопку «Добавить первую главу») на КАЖДОМ открытии проекта, пока снапшот
+   * ехал по сети: человек видел заглушку вместо загрузки, а на медленной связи мог даже
+   * успеть нажать кнопку и создать лишнюю главу. Различить эти два состояния можно
+   * только здесь: загрузка закончилась или нет.
+   */
+  content: ContentState
   /**
    * Состояние соединения целиком: «подключаюсь», «открыто», «переподключаюсь»
    * после обрыва, «связи нет». Нужно интерфейсу, чтобы отличить временный
@@ -144,6 +163,9 @@ export function useCollab(projectId: string): CollabHandle | null {
   const [status, setStatus] = useState<CollabStatus>('connecting')
   const [reconnectAttempt, setReconnectAttempt] = useState(0)
   const [presence, setPresence] = useState<PeerState[]>([])
+  // Признак «контент загружен» живёт отдельным состоянием: он меняется один раз (или
+  // дважды при повторе) и не должен пересобирать документ.
+  const [content, setContent] = useState<ContentState>('loading')
 
   useEffect(() => {
     const doc = new Y.Doc()
@@ -393,12 +415,16 @@ export function useCollab(projectId: string): CollabHandle | null {
       // ArrayBufferLike, а не ArrayBuffer: у StateSnapshot состояние приходит
       // как Uint8Array<ArrayBufferLike>, у запаса — из base64-декодера.
       let serverState: Uint8Array<ArrayBufferLike> = new Uint8Array(0)
+      let snapshotFailed = false
       try {
         const snap = await getEventState(projectId)
         if (!active) return
         revision = snap.revision
         serverState = snap.state
       } catch (e) {
+        // Сбой снапшота ещё не означает «проект пуст»: ниже попробуем собрать дерево
+        // из базы. Признак нужен, чтобы отличить «не смогли узнать» от «узнали: пусто».
+        snapshotFailed = true
         console.log('[yprovider] snapshot fetch error:', String(e))
       }
 
@@ -445,6 +471,11 @@ export function useCollab(projectId: string): CollabHandle | null {
       // правки поля (ensureText внутри setText), когда realtime недоступен: иначе
       // два клиента, открывшие проект одновременно, создали бы по своему Y.Text и
       // правки проигравшего стали бы невидимыми (LWW на ключе).
+
+      // Загрузка закончилась. «Не смогли узнать» показываем только тогда, когда и
+      // снапшот не приехал, и дерева в базе не оказалось: иначе страница сказала бы
+      // «таймлайн пуст» о проекте, содержимое которого просто не доехало.
+      if (active) setContent(snapshotFailed && events.length === 0 ? 'failed' : 'ready')
     }
 
     // Двусторонний канал вкладок одного пользователя (см. broadcast.ts):
@@ -642,14 +673,24 @@ export function useCollab(projectId: string): CollabHandle | null {
       // ещё не отправленные. Возвращённую ревизию запоминаем — иначе следующая
       // запись снапшота получила бы 409 на устаревшей базе.
       reloadFromServer: async () => {
+        setContent('loading')
         const next = await mergeRemoteState()
-        if (next !== null) revision = next
+        if (next === null) {
+          // `null` — прочитать не удалось (mergeRemoteState не бросает). Оставляем
+          // честное «не смогли загрузить»: показывать пустой проект в этом случае
+          // значило бы врать о содержимом, а повторить человек может кнопкой.
+          if (active) setContent('failed')
+          return
+        }
+        revision = next
+        if (active) setContent('ready')
       },
       setWritable,
       connected: false,
       status: 'connecting',
       reconnectAttempt: 0,
       presence: [],
+      content: 'loading',
       setEditing: (eventId, typing) => presence.setEditing(eventId, typing),
     })
     // Контент тянем сразу, не дожидаясь WebSocket (см. loadContent).
@@ -678,7 +719,7 @@ export function useCollab(projectId: string): CollabHandle | null {
   // Состояние соединения и присутствие живут отдельно от handle: собираем
   // актуальный объект при отдаче, чтобы интерфейс видел и «переподключаюсь…»,
   // и «печатает…» без пересоздания документа.
-  return handle ? { ...handle, connected, status, reconnectAttempt, presence } : null
+  return handle ? { ...handle, connected, status, reconnectAttempt, presence, content } : null
 }
 
 /**
