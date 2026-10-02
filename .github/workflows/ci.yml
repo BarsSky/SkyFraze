@@ -77,6 +77,12 @@ jobs:
       LISTEN: ":8181"
       CORS_ORIGINS: http://localhost:5173
       REGISTRATION_MODE: request
+      # ИИ-помощник включён, но провайдер — заглушка на этом же раннере
+      # (frontend/tests/e2e/stub-ollama.mjs): ни сети, ни ключей, ни денег, а путь
+      # «сообщение → инструмент → кадр в проекте» проверяется целиком. Модель
+      # считается локальной, поэтому согласие в сценарии не требуется.
+      AI_ENABLED: "true"
+      AI_OLLAMA_URL: http://127.0.0.1:11490
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -87,6 +93,18 @@ jobs:
       # Браузер ставим с системными зависимостями: на голом ubuntu-latest Playwright
       # падает из-за отсутствующих библиотек.
       - run: cd frontend && npx playwright install --with-deps chromium
+      - name: заглушка провайдера модели
+        run: |
+          nohup node frontend/tests/e2e/stub-ollama.mjs > /tmp/stub-ollama.log 2>&1 &
+          echo $! > /tmp/stub-ollama.pid
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:11490/api/tags > /dev/null; then
+              echo "заглушка готова"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "заглушка не поднялась:"; cat /tmp/stub-ollama.log; exit 1
       - name: backend в фоне
         run: |
           mkdir -p "$STORAGE_DIR"
@@ -107,7 +125,7 @@ jobs:
       - run: cd frontend && npx playwright test
       - name: лог backend при падении
         if: failure()
-        run: cat /tmp/skyfraze-backend.log
+        run: cat /tmp/skyfraze-backend.log /tmp/stub-ollama.log
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

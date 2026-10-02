@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { TimelineStage, type AssetLookup } from '../components/timeline/TimelineStage'
 import { EditorsPanel } from '../components/editors/EditorsPanel'
+import { AssistantPanel } from '../components/assistant/AssistantPanel'
 import { PresenceBar } from '../components/collab/PresenceBar'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { useCollab, yAddEvent, type YMap } from '../collab/yprovider'
@@ -261,6 +262,19 @@ export function ProjectTimelinePage() {
     document.querySelector<HTMLElement>('[data-editor-panel]')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }, [])
 
+  const openAssistant = useCallback(() => {
+    document.querySelector<HTMLElement>('[data-assistant-panel]')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [])
+
+  /**
+   * Помощник изменил проект: с открытым сокетом апдейт уже приехал (вставку делает
+   * сервер и рассылает всем в комнате), а вкладке без realtime нужно перечитать
+   * состояние — иначе созданные кадры появятся только после перезагрузки.
+   */
+  const assistantChanged = useCallback(() => {
+    if (collab && !collab.connected) void collab.reloadFromServer()
+  }, [collab])
+
   // Правки доступны владельцу и редактору. Наблюдателю и соавтору, которому
   // владелец открыл закрытый проект, доступно только чтение: редакторы не
   // показываем вовсе — молча неработающие поля хуже, чем их отсутствие.
@@ -322,9 +336,14 @@ export function ProjectTimelinePage() {
           projectTitle={project?.title ?? 'Таймлайн'}
           actions={
             showEditors ? (
-              <button className="secondary" onClick={openEditors}>
-                Редакторы
-              </button>
+              <>
+                <button className="secondary" onClick={openAssistant} data-assistant-open>
+                  ИИ-помощник
+                </button>
+                <button className="secondary" onClick={openEditors}>
+                  Редакторы
+                </button>
+              </>
             ) : undefined
           }
         />
@@ -359,6 +378,17 @@ export function ProjectTimelinePage() {
             assetBusyId={assetBusyId}
           />
         </>
+      )}
+
+      {/* Панель помощника показываем и в пустом проекте: «сделай мне проект по
+          описанию» — первый же осмысленный вопрос, и он должен быть доступен до
+          того, как в таймлайне появится хоть один кадр. */}
+      {showEditors && (
+        <AssistantPanel
+          projectId={projectId}
+          onProjectChanged={assistantChanged}
+          onOpenEditors={openEditors}
+        />
       )}
     </div>
   )

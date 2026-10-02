@@ -1,0 +1,113 @@
+/* Панель «ИИ-помощник»: разговор с моделью и блок «что изменилось».
+   Классы с префиксом .ai- и .ai-msg: панель стоит рядом с редакторами, и её
+   разметка не должна пересекаться с .ed-* (иначе стили редакторов «протекли» бы
+   на сообщения чата). */
+
+.ai-panel {
+  margin: 16px 24px 32px;
+  padding: 16px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.ai-panel__head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.ai-panel__title { margin: 0; font-size: 16px; }
+
+.ai-panel__hint {
+  flex: 1 1 320px;
+  margin: 0;
+  font-size: 12px;
+}
+
+.ai-panel__body { margin-top: 12px; display: grid; gap: 12px; }
+
+.ai-panel__controls {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+
+.ai-panel__field { display: grid; gap: 4px; font-size: 12px; }
+.ai-panel__field span { color: var(--fg-muted); }
+.ai-panel__field select { max-width: 320px; min-height: 32px; }
+
+.ai-panel__provider-note { font-size: 12px; margin: 0; }
+.ai-panel__note { font-size: 12px; margin: 0; }
+.ai-panel__error { margin: 0; font-size: 12px; color: var(--danger); }
+
+.ai-panel__settings {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+}
+
+.ai-panel__key { display: flex; gap: 8px; flex-wrap: wrap; }
+.ai-panel__key input { min-width: 260px; min-height: 32px; }
+
+.ai-panel__consent-check {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 12px;
+  color: var(--fg-soft);
+}
+
+.ai-panel__consent {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  font-size: 13px;
+}
+
+.ai-panel__consent p { margin: 0; }
+
+.ai-panel__log {
+  display: grid;
+  gap: 10px;
+  max-height: 420px;
+  overflow-y: auto;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.ai-msg { display: grid; gap: 4px; }
+.ai-msg__who { font-size: 11px; color: var(--fg-muted); }
+.ai-msg--user .ai-msg__who { color: var(--accent-soft); }
+.ai-msg__text { margin: 0; font-size: 13px; line-height: 1.5; white-space: pre-wrap; }
+/* Разметка Markdown внутри сообщения: pre-wrap не нужен, блоки и так разложены. */
+.ai-msg--assistant .ai-msg__text { white-space: normal; }
+
+.ai-panel__thinking { font-size: 12px; margin: 0; }
+
+.ai-panel__changes {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--success);
+  border-radius: var(--radius);
+  font-size: 13px;
+}
+.ai-panel__changes ul { margin: 0; padding-left: 18px; }
+.ai-panel__changes button { justify-self: start; }
+
+.ai-panel__ask { display: grid; gap: 8px; }
+.ai-panel__ask textarea {
+  width: 100%;
+  resize: vertical;
+  font-family: var(--sf-font-body);
+  font-size: 13px;
+}
+.ai-panel__ask-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
