@@ -4,7 +4,6 @@ import {
   deleteAIConsent,
   deleteAIKey,
   getAIConfig,
-  getAIConversation,
   isCloudModelRef,
   listAIModels,
   needsConsent,
@@ -16,12 +15,19 @@ import {
   type AIChange,
   type AIMessage,
   type AIModel,
+  type AIProviderInfo,
 } from '../../api/assistant'
 import { serverErrorMessage } from '../../api/client'
 import { MarkdownBlock } from '../MarkdownBlock'
 
 /**
- * Панель «ИИ-помощник» на странице проекта.
+ * Содержимое плавающего окна помощника: переписка и настройка (два вида в одном окне).
+ *
+ * Почему окно, а не панель в потоке страницы. Стадия таймлайна — fixed-слой на весь
+ * экран (`z-index: 10`) и непрозрачный, поэтому панель в обычном потоке оказывалась под
+ * ним и под нижней кромкой окна: человек видел то обрезанный блок настроек, то пустую
+ * рамку. Плавающее окно решает это по построению: оно всегда доступно, не зависит от
+ * прокрутки и не спорит со слоями стадии.
  *
  * Что здесь решено и почему именно так:
  *
@@ -34,25 +40,42 @@ import { MarkdownBlock } from '../MarkdownBlock'
  *     поле ввода заблокировано: текст проекта не должен уходить на чужую машину по
  *     случайному нажатию. Для локальной модели согласия не спрашиваем — текст никуда
  *     не уходит.
- *   - **Настройка (ключи и модели) живёт здесь же**, свёрнутая: человек, который
- *     только что получил «нужен ключ», не должен искать другой экран.
- *   - **Правки видит и вкладка без realtime.** После ответа с изменениями страница
- *     перечитывает состояние с сервера (см. onProjectChanged в ProjectTimelinePage):
- *     с открытым сокетом апдейт и так приезжает сам, без сокета — только так.
+ *   - **Настройка (провайдер, модель, ключ, согласие) — второй вид того же окна**:
+ *     человек, который только что получил «нужен ключ», не должен искать другой экран
+ *     и не должен видеть половину настроек за краем страницы.
+ *   - **Состояние не теряется при закрытии.** Окно прячется, а не размонтируется:
+ *     история, выбранная модель и набранный вопрос остаются на месте, а ответ,
+ *     пришедший после закрытия, отмечается маркером на плавающей кнопке (`onUnread`).
  */
 interface Props {
   projectId: string
+  /** Открыто ли окно: нужно, чтобы отличить «ответ на глазах» от «ответ в фоне». */
+  open: boolean
+  onClose: () => void
+  /** Ответ пришёл, пока окно было закрыто: кнопка показывает маркер. */
+  onUnread: () => void
+  /** Идёт запрос к модели: кнопка показывает «думает», даже если окно закрыто. */
+  onThinkingChange: (thinking: boolean) => void
   /** Сообщить странице, что проект изменился (перечитать состояние без realtime). */
   onProjectChanged: () => void
   /** Перейти к панели редакторов: там созданные кадры видно в дереве. */
   onOpenEditors: () => void
 }
 
-export function AssistantPanel({ projectId, onProjectChanged, onOpenEditors }: Props) {
-  const [open, setOpen] = useState(false)
+type View = 'chat' | 'settings'
+
+export function AssistantPanel({
+  projectId,
+  open,
+  onClose,
+  onUnread,
+  onThinkingChange,
+  onProjectChanged,
+  onOpenEditors,
+}: Props) {
+  const [view, setView] = useState<View>('chat')
   const [config, setConfig] = useState<AIConfig | null>(null)
   const [configError, setConfigError] = useState<string | null>(null)
-  const [settingsOpen, setSettingsOpen] = useState(false)
   const [providerId, setProviderId] = useState('')
   const [models, setModels] = useState<AIModel[]>([])
   const [modelsNote, setModelsNote] = useState<string | null>(null)
@@ -68,9 +91,22 @@ export function AssistantPanel({ projectId, onProjectChanged, onOpenEditors }: P
   const [sendError, setSendError] = useState<string | null>(null)
   const [consentNeeded, setConsentNeeded] = useState(false)
   const listRef = useRef<HTMLDivElement | null>(null)
+  const inputRef = useRef<HTMLTextAreaElement | null>(null)
+  /**
+   * Открыто ли окно — в ref, а не только в пропсе.
+   *
+   * Запрос к модели живёт долго, и человек может закрыть окно, пока ответ ещё едет.
+   * Если решение «ответили в фоне или на глазах» читать из замыкания, оно увидит
+   * СТАРОЕ значение (`open === true`, каким оно было при отправке), и непрочитанный
+   * ответ не отметится — человек просто не узнает, что помощник ответил.
+   */
+  const openRef = useRef(open)
+  useEffect(() => {
+    openRef.current = open
+  }, [open])
 
-  // Настройка грузится при первом открытии панели: до этого мы не знаем ни включён
-  // ли помощник, ни какие провайдеры доступны, и показывать пустую панель незачем.
+  // Настройка грузится при первом открытии окна: до этого мы не знаем ни включён ли
+  // помощник, ни какие провайдеры доступны, и показывать пустое окно незачем.
   useEffect(() => {
     if (!open || config !== null || configError !== null) return
     let alive = true
@@ -91,8 +127,8 @@ export function AssistantPanel({ projectId, onProjectChanged, onOpenEditors }: P
     }
   }, [open, config, configError])
 
-  // Модели спрашиваются у провайдера, поэтому только когда человек выбрал провайдера:
-  // иначе каждое открытие панели дёргало бы чужие API.
+  // Модели спрашиваются у провайдера, поэтому только когда он выбран: иначе каждое
+  // открытие окна дёргало бы чужие API.
   useEffect(() => {
     if (!open || !providerId) return
     let alive = true
@@ -105,7 +141,6 @@ export function AssistantPanel({ projectId, onProjectChanged, onOpenEditors }: P
           setModelsNote('У этого провайдера нет доступных моделей — проверьте ключ.')
           return
         }
-        // Модель по умолчанию и выбранную ранее оставляем, если она есть у провайдера.
         setModelRef((current) => {
           if (current.startsWith(providerId + ':')) return current
           const preferred = list.find((m) => m.ref === config?.defaultModel) ?? list[0]
@@ -125,12 +160,12 @@ export function AssistantPanel({ projectId, onProjectChanged, onOpenEditors }: P
   useEffect(() => {
     // Новые сообщения должны быть видны без прокрутки вручную. Проверяем наличие
     // scrollTo: в jsdom (и в очень старых браузерах) его нет, а падать из-за
-    // прокрутки панель не должна.
+    // прокрутки окно не должно.
     const list = listRef.current
-    if (list && typeof list.scrollTo === 'function') {
+    if (open && list && typeof list.scrollTo === 'function') {
       list.scrollTo({ top: list.scrollHeight })
     }
-  }, [messages.length, sending])
+  }, [messages.length, sending, open])
 
   const provider = useMemo(
     () => config?.providers.find((item) => item.id === providerId) ?? null,
@@ -157,6 +192,30 @@ export function AssistantPanel({ projectId, onProjectChanged, onOpenEditors }: P
       /* настройка не критична для уже открытого разговора */
     }
   }, [])
+
+  /**
+   * Перечитать список моделей: кнопка «Проверить связь» в настройке.
+   *
+   * Нужна именно человеку: если своего сервера нет на месте или ключ не принят, он видит
+   * пустой список моделей и не понимает, дело в сети, в ключе или в адресе. Кнопка
+   * повторяет запрос и говорит словами, что вышло.
+   */
+  const checkModels = useCallback(async () => {
+    if (!providerId) return
+    setModelsNote('Проверяю…')
+    try {
+      const list = await listAIModels(providerId)
+      setModels(list)
+      setModelsNote(
+        list.length === 0
+          ? 'Сервер ответил, но моделей нет: проверьте, что модель скачана или загружена на сервере.'
+          : `Связь есть, моделей: ${list.length}.`,
+      )
+    } catch (e) {
+      setModels([])
+      setModelsNote((await serverErrorMessage(e)) ?? 'Модель не ответила: проверьте адрес и ключ.')
+    }
+  }, [providerId])
 
   const agree = useCallback(async () => {
     setSendError(null)
@@ -216,26 +275,12 @@ export function AssistantPanel({ projectId, onProjectChanged, onOpenEditors }: P
     }
   }, [providerId, refreshConfig])
 
-  const openConversation = useCallback(
-    async (id: string) => {
-      if (id === 'new') {
-        setConversationId('new')
-        setMessages([])
-        setChanges([])
-        return
-      }
-      try {
-        const loaded = await getAIConversation(projectId, id)
-        setConversationId(id)
-        setMessages(loaded.messages)
-        setChanges([])
-        if (loaded.conversation?.model) setModelRef(loaded.conversation.model)
-      } catch (e) {
-        setSendError((await serverErrorMessage(e)) ?? 'Не удалось открыть беседу.')
-      }
-    },
-    [projectId],
-  )
+  const startNewConversation = useCallback(() => {
+    setConversationId('new')
+    setMessages([])
+    setChanges([])
+    setSendError(null)
+  }, [])
 
   const ask = useCallback(async () => {
     const question = text.trim()
@@ -267,6 +312,8 @@ export function AssistantPanel({ projectId, onProjectChanged, onOpenEditors }: P
       ])
       setChanges(turn.changes)
       if (turn.changes.length > 0) onProjectChanged()
+      // Ответ пришёл, пока окно закрыто: человек узнает об этом по маркеру на кнопке.
+      if (!openRef.current) onUnread()
     } catch (e) {
       const { message, consentRequired } = await readAIError(e)
       setConsentNeeded(consentRequired)
@@ -280,77 +327,115 @@ export function AssistantPanel({ projectId, onProjectChanged, onOpenEditors }: P
     } finally {
       setSending(false)
     }
-  }, [text, sending, modelRef, projectId, conversationId, onProjectChanged])
+  }, [text, sending, modelRef, projectId, conversationId, onProjectChanged, onUnread])
+
+  // Фокус в поле ввода при открытии: человек открыл окно, чтобы написать.
+  useEffect(() => {
+    if (!open || view !== 'chat') return
+    inputRef.current?.focus()
+  }, [open, view])
+
+  // Состояние запроса наружу: плавающая кнопка показывает «думает», пока ответ не пришёл,
+  // — в том числе если человек закрыл окно и вернулся к проекту.
+  useEffect(() => {
+    onThinkingChange(sending)
+  }, [sending, onThinkingChange])
+
+  const hasAnswer = messages.some((m) => m.role === 'assistant')
+
+  /**
+   * Куда уходит текст проекта — одной строкой. Это главное, что человек должен знать о
+   * помощнике, поэтому подпись висит в переписке всегда, а не только в настройке:
+   * «локальная модель» и «чужой сервис» — разные вещи, и путать их нельзя.
+   */
+  const privacy = privacyNote(provider, modelIsCloud)
 
   return (
-    <section className="ai-panel" data-assistant-panel>
-      <div className="ai-panel__head">
-        <h3 className="ai-panel__title">ИИ-помощник</h3>
-        <p className="muted ai-panel__hint">
-          Помощник создаёт главы и под-события с описанием в Markdown. Изменения применяются
-          сразу и видны всем, у кого проект открыт.
-        </p>
-        <button className="secondary" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
-          {open ? 'Свернуть' : 'Открыть'}
-        </button>
-      </div>
+    <>
+      <header className="ai-head">
+        <div className="ai-head__title">
+          <span className="ai-head__name">ИИ-помощник</span>
+          <span className="ai-head__model" title={modelRef || 'модель не выбрана'}>
+            {modelLabel || 'модель не выбрана'}
+          </span>
+        </div>
+        <div className="ai-head__actions">
+          <button
+            type="button"
+            className="ai-icon"
+            aria-pressed={view === 'settings'}
+            aria-label="Настройка помощника"
+            title="Провайдер, модель, ключ и согласие"
+            data-assistant-settings
+            onClick={() => setView((v) => (v === 'settings' ? 'chat' : 'settings'))}
+          >
+            <GearIcon />
+          </button>
+          <button
+            type="button"
+            className="ai-icon"
+            aria-label="Закрыть помощника"
+            title="Закрыть (Esc)"
+            data-assistant-close
+            onClick={onClose}
+          >
+            <CloseIcon />
+          </button>
+        </div>
+      </header>
 
-      {open && configError != null && <p className="ai-panel__error">{configError}</p>}
+      {configError != null && <p className="ai-error ai-error--padded">{configError}</p>}
 
-      {open && config != null && !config.enabled && (
-        <p className="ai-panel__note">
-          Помощник выключен на этом стенде. Включить его может администратор: текст проекта
-          уходит провайдеру модели, поэтому это осознанное решение, а не настройка по умолчанию
-          (<code>AI_ENABLED=true</code>).
-        </p>
+      {config != null && !config.enabled && (
+        <div className="ai-body">
+          <p className="ai-note">
+            Помощник выключен на этом стенде. Включить его может администратор: текст проекта
+            уходит провайдеру модели, поэтому это осознанное решение, а не настройка по
+            умолчанию (<code>AI_ENABLED=true</code>).
+          </p>
+        </div>
       )}
 
-      {open && config != null && config.enabled && (
-        <div className="ai-panel__body">
-          <div className="ai-panel__controls">
-            <label className="ai-panel__field">
-              <span>Провайдер</span>
-              <select
-                value={providerId}
-                onChange={(e) => {
-                  setProviderId(e.target.value)
-                  setKeyNote(null)
-                }}
-              >
-                {config.providers.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.title}
-                    {p.local ? ' — локальная' : p.hasKey ? '' : ' — нужен ключ'}
-                  </option>
-                ))}
-              </select>
-            </label>
+      {config != null && config.enabled && view === 'settings' && (
+        <div className="ai-body ai-body--settings" data-assistant-settings-view>
+          <label className="ai-field">
+            <span>Провайдер</span>
+            <select
+              value={providerId}
+              onChange={(e) => {
+                setProviderId(e.target.value)
+                setKeyNote(null)
+              }}
+            >
+              {config.providers.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.title}
+                  {p.keyless ? ' — без ключа' : p.local ? ' — локальная' : p.hasKey ? '' : ' — нужен ключ'}
+                </option>
+              ))}
+            </select>
+          </label>
 
-            <label className="ai-panel__field">
-              <span>Модель</span>
-              <select
-                value={modelRef}
-                onChange={(e) => setModelRef(e.target.value)}
-                disabled={models.length === 0}
-              >
-                {models.length === 0 && <option value="">нет доступных моделей</option>}
-                {models.map((m) => (
-                  <option key={m.ref || m.id} value={m.ref || `${m.provider}:${m.id}`}>
-                    {m.title}
-                    {m.cloud ? ' · облачная' : m.local ? ' · локальная' : m.free ? ' · бесплатная' : ''}
-                    {m.tools ? '' : ' · без инструментов'}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <button className="secondary" onClick={() => setSettingsOpen((v) => !v)}>
-              {settingsOpen ? 'Скрыть настройку' : 'Ключи и доступ'}
-            </button>
-          </div>
+          <label className="ai-field">
+            <span>Модель</span>
+            <select
+              value={modelRef}
+              onChange={(e) => setModelRef(e.target.value)}
+              disabled={models.length === 0}
+            >
+              {models.length === 0 && <option value="">нет доступных моделей</option>}
+              {models.map((m) => (
+                <option key={m.ref || m.id} value={m.ref || `${m.provider}:${m.id}`}>
+                  {m.title}
+                  {m.cloud ? ' · облачная' : m.local ? ' · локальная' : m.free ? ' · бесплатная' : ''}
+                  {m.tools ? '' : ' · без инструментов'}
+                </option>
+              ))}
+            </select>
+          </label>
 
           {provider != null && (
-            <p className={modelIsCloud ? 'ai-panel__warn' : 'muted ai-panel__provider-note'}>
+            <p className={modelIsCloud ? 'ai-warn' : 'ai-note'}>
               {modelIsCloud
                 ? 'Выбрана ОБЛАЧНАЯ модель: она считается на удалённом сервере (ollama.com), и текст проекта уходит туда. Локальные модели того же Ollama считаются на машине стенда — выберите «локальная».'
                 : provider.local
@@ -365,96 +450,121 @@ export function AssistantPanel({ projectId, onProjectChanged, onOpenEditors }: P
             </p>
           )}
 
-          {modelsNote != null && <p className="muted ai-panel__note">{modelsNote}</p>}
+          {modelsNote != null && <p className="ai-note">{modelsNote}</p>}
 
-          {settingsOpen && provider != null && (
-            <div className="ai-panel__settings">
-              <div className="ai-panel__key">
-                <input
-                  type="password"
-                  placeholder="ключ провайдера"
-                  value={keyDraft}
-                  onChange={(e) => setKeyDraft(e.target.value)}
-                  disabled={provider.local || !config.keysReady}
-                  aria-label="Ключ провайдера"
-                />
-                <button onClick={saveKey} disabled={keyBusy || provider.local || !config.keysReady}>
-                  Сохранить ключ
+          {provider != null && !provider.local && (
+            <div className="ai-key">
+              <input
+                type="password"
+                placeholder="ключ провайдера"
+                value={keyDraft}
+                onChange={(e) => setKeyDraft(e.target.value)}
+                disabled={!config.keysReady}
+                aria-label="Ключ провайдера"
+              />
+              <button onClick={saveKey} disabled={keyBusy || !config.keysReady}>
+                Сохранить
+              </button>
+              {provider.hasKey && (
+                <button className="secondary" onClick={removeKey} disabled={keyBusy}>
+                  Удалить
                 </button>
-                {provider.hasKey && !provider.local && (
-                  <button className="secondary" onClick={removeKey} disabled={keyBusy}>
-                    Удалить
-                  </button>
-                )}
-              </div>
-              {!config.keysReady && (
-                <p className="muted ai-panel__note">
-                  На стенде не настроено хранение своих ключей (<code>AI_SECRET_KEY</code>): можно
-                  пользоваться локальной моделью или ключом стенда.
-                </p>
-              )}
-              {keyNote != null && <p className="muted ai-panel__note">{keyNote}</p>}
-
-              {!provider.local && (
-                <label className="ai-panel__consent-check">
-                  <input
-                    type="checkbox"
-                    checked={config.consents.includes(provider.id)}
-                    onChange={(e) => {
-                      if (e.target.checked) void agree()
-                      else void revoke()
-                    }}
-                  />
-                  <span>
-                    Отправлять текст проекта провайдеру «{provider.title}» (это чужая
-                    инфраструктура: в запрос уходит оглавление проекта и те кадры, которые
-                    помощник прочитает)
-                  </span>
-                </label>
               )}
             </div>
           )}
 
-          {consentBlocked && (
-            <div className="ai-panel__consent" data-consent-required>
-              <p>
-                {modelIsCloud
-                  ? `Чтобы продолжить, подтвердите: текст проекта (оглавление и прочитанные кадры) уйдёт ОБЛАЧНОЙ модели «${modelLabel}» — она считается на удалённом сервере, а не на машине стенда.`
-                  : `Чтобы продолжить, подтвердите: текст проекта (оглавление и прочитанные кадры) уйдёт провайдеру «${provider?.title ?? providerId}».`}
-              </p>
-              <button onClick={agree}>Согласен, продолжить</button>
-            </div>
-          )}
-
-          {consentNeeded && !consentBlocked && (
-            <p className="ai-panel__error">
-              Сервер запросил согласие заново — откройте «Ключи и доступ» и подтвердите отправку.
+          {!config.keysReady && (
+            <p className="ai-note">
+              На стенде не настроено хранение своих ключей (<code>AI_SECRET_KEY</code>): можно
+              пользоваться локальной моделью или ключом стенда.
             </p>
           )}
+          {keyNote != null && <p className="ai-note">{keyNote}</p>}
 
-          {messages.length > 0 && (
-            <div className="ai-panel__log" ref={listRef} data-assistant-log>
-              {messages.map((message) => (
-                <div
-                  key={message.id}
-                  className={
-                    message.role === 'user' ? 'ai-msg ai-msg--user' : 'ai-msg ai-msg--assistant'
-                  }
-                >
-                  <span className="ai-msg__who">{message.role === 'user' ? 'Вы' : 'Помощник'}</span>
-                  {message.role === 'user' ? (
-                    <p className="ai-msg__text">{message.content}</p>
-                  ) : (
-                    <MarkdownBlock source={message.content} className="ai-msg__text" />
-                  )}
-                </div>
-              ))}
-              {sending && <p className="muted ai-panel__thinking">Помощник думает…</p>}
-            </div>
+          {provider != null && !provider.local && (
+            <label className="ai-consent-check">
+              <input
+                type="checkbox"
+                checked={config.consents.includes(provider.id)}
+                onChange={(e) => {
+                  if (e.target.checked) void agree()
+                  else void revoke()
+                }}
+              />
+              <span>
+                Отправлять текст проекта провайдеру «{provider.title}» (это чужая
+                инфраструктура: в запрос уходит оглавление проекта и те кадры, которые
+                помощник прочитает)
+              </span>
+            </label>
           )}
 
+          <button className="secondary ai-body__back" onClick={() => setView('chat')}>
+            Вернуться к переписке
+          </button>
+
+          {/* Что помощник умеет и чем ограничен — прямо в настройке: вопрос «а что он
+              может?» возникает именно здесь, а не в переписке. */}
+          <div className="ai-about">
+            <p className="ai-about__title">Что умеет</p>
+            <ul className="ai-note">
+              <li>создавать главы верхнего уровня и под-события с текстом в Markdown;</li>
+              <li>смотреть дерево проекта и читать отдельный кадр перед тем, как дописать;</li>
+              <li>ставить дату кадра (вид ГГГГ-ММ-ДД).</li>
+            </ul>
+            <p className="ai-note">
+              Чего не делает: не удаляет, не переписывает существующие кадры и не перемещает их —
+              это делается руками в редакторах. За один ответ — до {config.maxToolCalls} новых
+              кадров; всё созданное видно отдельным блоком над полем ввода.
+            </p>
+            <button className="secondary" onClick={checkModels}>
+              Проверить связь с моделью
+            </button>
+          </div>
+        </div>
+      )}
+
+      {config != null && config.enabled && view === 'chat' && (
+        <>
+          {privacy && (
+            <p className={modelIsCloud ? 'ai-warn ai-head__privacy' : 'ai-note ai-head__privacy'} data-assistant-privacy>
+              {privacy}
+            </p>
+          )}
+          <div className="ai-body" ref={listRef} data-assistant-log>
+            {messages.length === 0 && (
+              <div className="ai-empty">
+                <p className="ai-empty__title">О чём спросить</p>
+                <p className="ai-note">
+                  Помощник создаёт главы и под-события с описанием в Markdown — например,
+                  «добавь главу «Пролог» с описанием мира» или «разбей главу 2 на три
+                  под-события».
+                </p>
+                <p className="ai-note">
+                  Изменения применяются сразу и видны всем, у кого проект открыт.
+                </p>
+              </div>
+            )}
+            {messages.map((message) => (
+              <div
+                key={message.id}
+                className={
+                  message.role === 'user' ? 'ai-msg ai-msg--user' : 'ai-msg ai-msg--assistant'
+                }
+              >
+                <span className="ai-msg__who">{message.role === 'user' ? 'Вы' : 'Помощник'}</span>
+                {message.role === 'user' ? (
+                  <p className="ai-msg__text">{message.content}</p>
+                ) : (
+                  <MarkdownBlock source={message.content} className="ai-msg__text" />
+                )}
+              </div>
+            ))}
+            {sending && <p className="ai-thinking">Помощник думает…</p>}
+          </div>
+
           {changes.length > 0 && (
-            <div className="ai-panel__changes" data-assistant-changes>
+            <div className="ai-changes" data-assistant-changes>
               <strong>Изменения в проекте</strong>
               <ul>
                 {changes.map((change) => (
@@ -467,29 +577,111 @@ export function AssistantPanel({ projectId, onProjectChanged, onOpenEditors }: P
             </div>
           )}
 
-          {sendError != null && <p className="ai-panel__error">{sendError}</p>}
+          {consentBlocked && (
+            <div className="ai-consent" data-consent-required>
+              <p>
+                {modelIsCloud
+                  ? `Чтобы продолжить, подтвердите: текст проекта (оглавление и прочитанные кадры) уйдёт ОБЛАЧНОЙ модели «${modelLabel}» — она считается на удалённом сервере, а не на машине стенда.`
+                  : `Чтобы продолжить, подтвердите: текст проекта (оглавление и прочитанные кадры) уйдёт провайдеру «${provider?.title ?? providerId}».`}
+              </p>
+              <button onClick={agree}>Согласен, продолжить</button>
+            </div>
+          )}
 
-          <div className="ai-panel__ask">
+          {consentNeeded && !consentBlocked && (
+            <p className="ai-error ai-error--padded">
+              Сервер запросил согласие заново — откройте настройку и подтвердите отправку.
+            </p>
+          )}
+
+          {sendError != null && <p className="ai-error ai-error--padded">{sendError}</p>}
+
+          <footer className="ai-composer">
             <textarea
+              ref={inputRef}
               value={text}
               onChange={(e) => setText(e.target.value)}
+              onKeyDown={(e) => {
+                // Enter отправляет, Shift+Enter — перенос строки: так ждёт человек,
+                // привыкший к мессенджерам.
+                if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
+                  e.preventDefault()
+                  void ask()
+                }
+              }}
               placeholder="Например: добавь главу «Пролог» с описанием мира в Markdown"
-              rows={3}
-              disabled={sending || consentBlocked}
+              rows={2}
+              disabled={sending || consentBlocked || !config.enabled}
               aria-label="Сообщение помощнику"
             />
-            <div className="ai-panel__ask-row">
+            <div className="ai-composer__row">
               <button onClick={ask} disabled={sending || consentBlocked || text.trim() === ''}>
                 {sending ? 'Отправляю…' : 'Спросить'}
               </button>
-              <span className="muted ai-panel__note">
-                {modelLabel ? `Модель: ${modelLabel}. ` : ''}
-                До {config.maxToolCalls} новых кадров за один ответ; изменения применяются сразу.
+              <button
+                type="button"
+                className="secondary"
+                onClick={startNewConversation}
+                disabled={sending || !hasAnswer}
+                title="Начать разговор заново: прежняя история остаётся на сервере"
+              >
+                Новый
+              </button>
+              <span className="ai-note ai-composer__hint">
+                До {config.maxToolCalls} кадров за ответ
               </span>
             </div>
-          </div>
-        </div>
+          </footer>
+        </>
       )}
-    </section>
+    </>
+  )
+}
+
+/**
+ * Куда уходит текст проекта — одной строкой. Возвращает пустую строку, если провайдер
+ * ещё не приехал: лучше ничего, чем неверное «локальная» или «чужая».
+ */
+function privacyNote(provider: AIProviderInfo | null, modelIsCloud: boolean): string {
+  if (provider == null) return ''
+  if (modelIsCloud) {
+    return 'Облачная модель: считается на удалённом сервере (ollama.com), текст проекта уходит туда.'
+  }
+  if (provider.local) {
+    return provider.keyless
+      ? 'Свой сервер моделей: считает на вашей машине (или в вашей сети) — текст проекта никуда не уходит.'
+      : 'Локальная модель: текст проекта не покидает сервер стенда.'
+  }
+  if (provider.standKey) {
+    return `Провайдер «${provider.title}» по ключу стенда: текст проекта уходит ему. Согласие спрашивается один раз.`
+  }
+  return `Провайдер «${provider.title}»: текст проекта уходит ему — согласие спрашивается один раз.`
+}
+
+/** Шестерёнка: настройка помощника (провайдер, модель, ключ, согласие). */
+function GearIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+      <path
+        fill="currentColor"
+        d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm0 6a2 2 0 1 1 0-4 2 2 0 0 1 0 4Z"
+      />
+      <path
+        fill="currentColor"
+        d="m19.6 12.7-.1.9 1.2 1.6-1.4 2.4-2-.5-.8.6-1.5 1v2.1h-2.8v-2.1l-1.5-1-.8-.6-2 .5-1.4-2.4 1.2-1.6-.1-.9.1-.9L6.4 10l1.4-2.4 2 .5.8-.6 1.5-1V4.4h2.8v2.1l1.5 1 .8.6 2-.5 1.4 2.4-1.2 1.6.1.9ZM12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"
+      />
+    </svg>
+  )
+}
+
+/** Крестик: закрыть окно. */
+function CloseIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+      <path
+        fill="currentColor"
+        d="M18.3 5.7 12 12l6.3 6.3-1.4 1.4L10.6 13.4 4.3 19.7 2.9 18.3 9.2 12 2.9 5.7 4.3 4.3l6.3 6.3 6.3-6.3z"
+      />
+    </svg>
   )
 }

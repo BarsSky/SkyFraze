@@ -237,11 +237,33 @@ const PROBE = `(() => {
   })
 
   // Пересечения интерактивных элементов (кроме вложенных)
+  //
+  // Исключение — НАМЕРЕННЫЙ плавающий слой (атрибут data-overlay; у проекта это кнопка
+  // ИИ-помощника) поверх того, что можно прокрутить: такую кнопку перекрыть нельзя
+  // «случайно», она плавающая по замыслу, а закрытый ею элемент уезжает из-под неё
+  // прокруткой. Всё, что закреплено на экране (панель «назад/дальше» стадии, шапка),
+  // под исключение НЕ попадает: если плавающая кнопка перекрывает закреплённый
+  // control, это настоящая поломка — «нажать нельзя, а убрать нечем».
+  const deliberateOverlayOver = (overlay, other) => {
+    if (!overlay.hasAttribute('data-overlay')) return false
+    // Прокручивается ли содержимое вокруг второго элемента: если да, он уходит
+    // из-под плавающей кнопки прокруткой, и «перекрытие» не мешает нажать.
+    let cur = other.parentElement
+    while (cur) {
+      const cs = getComputedStyle(cur)
+      if ((cs.overflowY === 'auto' || cs.overflowY === 'scroll') && cur.scrollHeight > cur.clientHeight + 1) return true
+      if (cur.classList && cur.classList.contains('sf-copy__scroll') && cur.scrollHeight > cur.clientHeight + 1) return true
+      cur = cur.parentElement
+    }
+    return false
+  }
+
   for (let i = 0; i < interactive.length && out.overlaps.length < 8; i++) {
     for (let j = i + 1; j < interactive.length && out.overlaps.length < 8; j++) {
       const a = interactive[i]
       const b = interactive[j]
       if (a.contains(b) || b.contains(a)) continue
+      if (deliberateOverlayOver(a, b) || deliberateOverlayOver(b, a)) continue
       const ra = a.getBoundingClientRect()
       const rb = b.getBoundingClientRect()
       const ox = Math.min(ra.right, rb.right) - Math.max(ra.left, rb.left)

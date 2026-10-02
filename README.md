@@ -433,7 +433,7 @@ SkyFraze/
 │   │   ├── pages/                LoginPage, RegisterPage, ProjectsPage, ProjectTimelinePage, FeedPage, PublicStoryPage, AdminPage, ...
 │   │   ├── components/timeline/  стадия: TimelineStage, timelineModel, publicDoc, stage/* (Sky/Scene/Copy/Route/Chips/TopBar)
 │   │   ├── components/editors/   редакторы: EditorsPanel, EventEditor, BackgroundPicker
-│   │   ├── components/assistant/ панель ИИ-помощника: чат, выбор модели, ключи и согласие
+│   │   ├── components/assistant/ плавающий ИИ-помощник: AssistantDock (кнопка + окно), AssistantPanel (чат и настройка)
 │   │   ├── components/           RatingStars — оценка публичной истории
 │   │   ├── styles/               tokens.css (темы), timeline.css, editors.css, feed.css, assistant.css
 │   │   ├── lib/                  форматирование (просмотры/оценки, русские склонения)

@@ -29,10 +29,13 @@ test('помощник создаёт главу по просьбе в чате
   await page.getByRole('link', { name: title }).click()
   await expect(page).toHaveURL(/\/projects\/[0-9a-f-]+$/)
 
-  // Проект пустой: панель помощника есть и здесь — как раз чтобы собрать проект с нуля.
+  // Проект пустой: плавающий помощник есть и здесь — как раз чтобы собрать проект с нуля.
+  // Кнопка всегда в углу экрана, поэтому окно не зависит от прокрутки и слоёв стадии.
+  const fab = page.locator('[data-assistant-fab]')
+  await expect(fab).toBeVisible()
+  await fab.click()
   const panel = page.locator('[data-assistant-panel]')
   await expect(panel).toBeVisible()
-  await panel.getByRole('button', { name: 'Открыть' }).click()
 
   // Помощник выключен на стенде (нет AI_ENABLED) — сценарий не имеет смысла.
   const disabled = panel.getByText('Помощник выключен на этом стенде')
@@ -52,10 +55,22 @@ test('помощник создаёт главу по просьбе в чате
   await expect(panel.getByText('Создал главу «Пролог».')).toBeVisible({ timeout: 60_000 })
   await expect(panel.locator('[data-assistant-changes]')).toContainText('создана глава «Пролог»')
 
-  // Главное: кадр действительно появился в проекте. Проверяем его строкой дерева:
-  // заголовок в сцене лежит вне видимой области, пока прокрутка не дошла до кадра
-  // (стадия — пошаговый скролл), а строка дерева в панели редакторов видна всегда.
-  await expect(page.getByRole('button', { name: /01 Пролог/ })).toBeVisible({ timeout: 15_000 })
+  // Главное: кадр действительно появился в проекте. Проверяем строкой дерева в панели
+  // редакторов: заголовок в сцене лежит вне видимой области, пока прокрутка не дошла до
+  // кадра (стадия — пошаговый скролл), а строка дерева видна всегда. Селектор по классу
+  // строки, а не по тексту: «01 Пролог» есть и в чипах глав стадии — по тексту проверка
+  // ловила бы два элемента и падала на строгом режиме.
+  await expect(page.locator('.ed-row--chapter', { hasText: 'Пролог' }).first()).toBeVisible({
+    timeout: 15_000,
+  })
   // И текст, который прислала модель, доехал до кадра — не только заголовок.
   await expect(page.getByText('Так начинается история.').first()).toBeAttached()
+
+  // Окно закрывается и снова открывается — переписка на месте: оно прячется, а не
+  // размонтируется, иначе человек терял бы историю при каждом сворачивании.
+  await panel.locator('[data-assistant-close]').click()
+  await expect(panel).toBeHidden()
+  await fab.click()
+  await expect(panel).toBeVisible()
+  await expect(panel.getByText('Создал главу «Пролог».')).toBeVisible()
 })

@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router-dom'
 import { TimelineStage, type AssetLookup } from '../components/timeline/TimelineStage'
 import { ProjectLoading } from '../components/timeline/ProjectLoading'
 import { EditorsPanel } from '../components/editors/EditorsPanel'
-import { AssistantPanel } from '../components/assistant/AssistantPanel'
+import { AssistantDock } from '../components/assistant/AssistantDock'
 import { PresenceBar } from '../components/collab/PresenceBar'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { useCollab, yAddEvent, type YMap } from '../collab/yprovider'
@@ -43,6 +43,8 @@ export function ProjectTimelinePage() {
   const [connectionNote, setConnectionNote] = useState<string | null>(null)
   const [error, setError] = useState<unknown>(null)
   const [attempt, setAttempt] = useState(0)
+  /** Открыто ли плавающее окно помощника: кнопка «ИИ-помощник» в шапке стадии тоже его открывает. */
+  const [assistantOpen, setAssistantOpen] = useState(false)
 
   const collab = useCollab(projectId)
   const events = collab?.events
@@ -268,7 +270,7 @@ export function ProjectTimelinePage() {
   }, [])
 
   const openAssistant = useCallback(() => {
-    document.querySelector<HTMLElement>('[data-assistant-panel]')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    setAssistantOpen(true)
   }, [])
 
   /**
@@ -428,12 +430,15 @@ export function ProjectTimelinePage() {
         </>
       )}
 
-      {/* Панель помощника показываем и в пустом проекте: «сделай мне проект по
-          описанию» — первый же осмысленный вопрос, и он должен быть доступен до
-          того, как в таймлайне появится хоть один кадр. */}
+      {/* Плавающий помощник: кнопка в углу и окно поверх проекта. Он есть и в пустом
+          проекте — «собери проект по описанию» первый же осмысленный вопрос, — и
+          остаётся доступным при любой прокрутке: панель в потоке страницы уезжала под
+          фиксированную стадию. */}
       {showEditors && !loading && (
-        <AssistantPanel
+        <AssistantDock
           projectId={projectId}
+          open={assistantOpen}
+          onOpenChange={setAssistantOpen}
           onProjectChanged={assistantChanged}
           onOpenEditors={openEditors}
         />

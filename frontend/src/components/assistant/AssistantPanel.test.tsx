@@ -4,14 +4,15 @@ import type { AIConfig, AIModel, AITurn } from '../../api/assistant'
 import { AssistantPanel } from './AssistantPanel'
 
 /**
- * Панель помощника: то, что видит и чего не видит человек.
+ * Содержимое окна помощника: то, что видит и чего не видит человек.
  *
  * Сеть подменена целиком. Проверяем правила, а не разметку:
  *   - пока нет согласия на отправку текста внешнему провайдеру, поле ввода
  *     заблокировано, а согласие можно выдать одной кнопкой;
  *   - у локальной модели согласия не спрашивают вовсе (текст никуда не уходит);
  *   - «что изменилось» показывается из ответа СЕРВЕРА, а не из текста модели;
- *   - выключенный помощник не притворяется работающим.
+ *   - настройка (провайдер, модель, ключ, согласие) — второй вид того же окна;
+ *   - ответ, пришедший при закрытом окне, отмечается как непрочитанный (`onUnread`).
  *
  * Markdown-рендер подменён: панель проверяется как поведение, а сам рендер разметки
  * покрыт своими тестами (MarkdownBlock).
@@ -105,8 +106,22 @@ const TURN: AITurn = {
   message: { id: 'm2', role: 'assistant', content: 'Создал главу «Пролог».', createdAt: '' },
 }
 
-function open() {
-  fireEvent.click(screen.getByRole('button', { name: 'Открыть' }))
+/** Панель всегда живёт внутри окна: по умолчанию считаем его открытым. */
+function renderPanel(props: Partial<Parameters<typeof AssistantPanel>[0]> = {}) {
+  const all = {
+    projectId: 'p1',
+    open: true,
+    onClose: () => {},
+    onUnread: () => {},
+    onThinkingChange: () => {},
+    onProjectChanged: () => {},
+    onOpenEditors: () => {},
+    ...props,
+  }
+  const view = render(<AssistantPanel {...all} />)
+  // Пропсы отдаём наружу: тесту нужно «закрыть окно» повторным рендером
+  // (в доке окно именно прячется, а не размонтируется).
+  return { view, props: all }
 }
 
 beforeEach(() => {
@@ -122,19 +137,16 @@ afterEach(() => cleanup())
 describe('AssistantPanel', () => {
   it('выключенный помощник честно об этом говорит и не даёт поля ввода', async () => {
     mocks.config.mockResolvedValue({ ...LOCAL, enabled: false })
-    render(<AssistantPanel projectId="p1" onProjectChanged={() => {}} onOpenEditors={() => {}} />)
-    open()
+    renderPanel()
     expect(await screen.findByText(/Помощник выключен на этом стенде/)).toBeTruthy()
     expect(screen.queryByLabelText('Сообщение помощнику')).toBeNull()
   })
 
   it('без согласия поле ввода заблокировано, кнопка согласия его открывает', async () => {
     mocks.config.mockResolvedValue(REMOTE)
-    render(<AssistantPanel projectId="p1" onProjectChanged={() => {}} onOpenEditors={() => {}} />)
-    open()
+    renderPanel()
 
-    const consent = await screen.findByText(/уйдёт провайдеру «Groq»/)
-    expect(consent).toBeTruthy()
+    expect(await screen.findByText(/уйдёт провайдеру «Groq»/)).toBeTruthy()
     const input = screen.getByLabelText('Сообщение помощнику') as HTMLTextAreaElement
     expect(input.disabled).toBe(true)
 
@@ -151,8 +163,8 @@ describe('AssistantPanel', () => {
     mocks.models.mockResolvedValue([
       { id: 'qwen2.5:7b', ref: 'ollama:qwen2.5:7b', provider: 'ollama', title: 'qwen2.5:7b', free: true, local: true, tools: true },
     ])
-    render(<AssistantPanel projectId="p1" onProjectChanged={() => {}} onOpenEditors={() => {}} />)
-    open()
+    renderPanel()
+
     expect(await screen.findByText(/текст проекта не покидает сервер стенда/)).toBeTruthy()
     expect(screen.queryByText(/уйдёт провайдеру/)).toBeNull()
     expect((screen.getByLabelText('Сообщение помощнику') as HTMLTextAreaElement).disabled).toBe(false)
@@ -162,8 +174,7 @@ describe('AssistantPanel', () => {
     mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
     mocks.send.mockResolvedValue(TURN)
     const changed = vi.fn()
-    render(<AssistantPanel projectId="p1" onProjectChanged={changed} onOpenEditors={() => {}} />)
-    open()
+    renderPanel({ onProjectChanged: changed })
 
     const input = (await screen.findByLabelText('Сообщение помощнику')) as HTMLTextAreaElement
     await waitFor(() => expect(input.disabled).toBe(false))
@@ -172,11 +183,36 @@ describe('AssistantPanel', () => {
 
     await waitFor(() => expect(mocks.send).toHaveBeenCalledWith('p1', 'new', 'Добавь главу «Пролог»', 'groq:llama-3.1-8b'))
     expect(await screen.findByText('Создал главу «Пролог».')).toBeTruthy()
-    const block = await screen.findByText('Изменения в проекте')
-    expect(block).toBeTruthy()
+    expect(await screen.findByText('Изменения в проекте')).toBeTruthy()
     expect(screen.getByText('создана глава «Пролог»')).toBeTruthy()
     // Страница должна узнать об изменениях: без realtime иначе не перечитать проект.
     expect(changed).toHaveBeenCalled()
+  })
+
+  it('ответ при закрытом окне отмечается как непрочитанный', async () => {
+    mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
+    // Запрос «висит»: человек закрывает окно, ответ приходит уже без него.
+    let resolveSend: (turn: AITurn) => void = () => {}
+    mocks.send.mockImplementation(
+      () =>
+        new Promise<AITurn>((resolve) => {
+          resolveSend = resolve
+        }),
+    )
+    const unread = vi.fn()
+    const { view, props } = renderPanel({ onUnread: unread })
+
+    const input = (await screen.findByLabelText('Сообщение помощнику')) as HTMLTextAreaElement
+    await waitFor(() => expect(input.disabled).toBe(false))
+    fireEvent.change(input, { target: { value: 'Создай главу' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Спросить' }))
+    await waitFor(() => expect(mocks.send).toHaveBeenCalled())
+
+    // Окно закрыто (в доке оно просто прячется), панель продолжает работать.
+    view.rerender(<AssistantPanel {...props} open={false} />)
+    resolveSend(TURN)
+
+    await waitFor(() => expect(unread).toHaveBeenCalled())
   })
 
   it('на просьбу о согласии в ответе показывает согласие, а не «ошибку сервера»', async () => {
@@ -185,8 +221,7 @@ describe('AssistantPanel', () => {
     mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
     mocks.send.mockRejectedValue(new Error('409'))
     mocks.error.mockResolvedValue({ message: 'нужно согласие', consentRequired: true })
-    render(<AssistantPanel projectId="p1" onProjectChanged={() => {}} onOpenEditors={() => {}} />)
-    open()
+    renderPanel()
 
     const input = (await screen.findByLabelText('Сообщение помощнику')) as HTMLTextAreaElement
     await waitFor(() => expect(input.disabled).toBe(false))
@@ -205,31 +240,60 @@ describe('AssistantPanel', () => {
       // Облачная модель того же провайдера: считается на ollama.com.
       { id: 'glm-5.2:cloud', ref: 'ollama:glm-5.2:cloud', provider: 'ollama', title: 'glm-5.2:cloud', free: false, local: false, cloud: true, tools: true },
     ])
-    render(<AssistantPanel projectId="p1" onProjectChanged={() => {}} onOpenEditors={() => {}} />)
-    open()
+    renderPanel()
 
     // По умолчанию выбрана локальная: ни предупреждения, ни согласия.
     expect(await screen.findByText(/текст проекта не покидает сервер стенда/)).toBeTruthy()
     expect(screen.queryByText(/Выбрана ОБЛАЧНАЯ модель/)).toBeNull()
 
+    // Модель выбирается в настройке — втором виде того же окна.
+    fireEvent.click(screen.getByRole('button', { name: 'Настройка помощника' }))
     fireEvent.change(screen.getByLabelText('Модель'), { target: { value: 'ollama:glm-5.2:cloud' } })
 
     expect(await screen.findByText(/Выбрана ОБЛАЧНАЯ модель/)).toBeTruthy()
-    expect(screen.getByText(/уйдёт ОБЛАЧНОЙ модели/)).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Вернуться к переписке' }))
+    expect(await screen.findByText(/уйдёт ОБЛАЧНОЙ модели/)).toBeTruthy()
     expect((screen.getByLabelText('Сообщение помощнику') as HTMLTextAreaElement).disabled).toBe(true)
   })
 
-  it('сохраняет ключ провайдера и не отправляет его куда-либо ещё', async () => {
+  it('настройка — второй вид окна: провайдер, модель, ключ и возврат к переписке', async () => {
     mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
-    render(<AssistantPanel projectId="p1" onProjectChanged={() => {}} onOpenEditors={() => {}} />)
-    open()
+    renderPanel()
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Ключи и доступ' }))
+    // В переписке настроек нет: они не отвлекают от разговора.
+    expect(await screen.findByLabelText('Сообщение помощнику')).toBeTruthy()
+    expect(screen.queryByLabelText('Ключ провайдера')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Настройка помощника' }))
+    expect(await screen.findByText('Провайдер')).toBeTruthy()
+    expect(screen.getByLabelText('Модель')).toBeTruthy()
+
     const field = screen.getByLabelText('Ключ провайдера')
     fireEvent.change(field, { target: { value: 'gsk_secret' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Сохранить ключ' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }))
 
     await waitFor(() => expect(mocks.saveKey).toHaveBeenCalledWith('groq', 'gsk_secret'))
     expect(await screen.findByText(/Ключ сохранён/)).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Вернуться к переписке' }))
+    expect(await screen.findByLabelText('Сообщение помощнику')).toBeTruthy()
+    expect(screen.queryByLabelText('Ключ провайдера')).toBeNull()
+  })
+
+  it('Enter отправляет вопрос, Shift+Enter оставляет перенос строки', async () => {
+    mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
+    mocks.send.mockResolvedValue(TURN)
+    renderPanel()
+
+    const input = (await screen.findByLabelText('Сообщение помощнику')) as HTMLTextAreaElement
+    await waitFor(() => expect(input.disabled).toBe(false))
+
+    fireEvent.change(input, { target: { value: 'Первая строка' } })
+    fireEvent.keyDown(input, { key: 'Enter', shiftKey: true })
+    expect(mocks.send).not.toHaveBeenCalled()
+
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() => expect(mocks.send).toHaveBeenCalledTimes(1))
   })
 })

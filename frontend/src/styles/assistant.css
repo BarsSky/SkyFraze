@@ -1,116 +1,317 @@
-/* Панель «ИИ-помощник»: разговор с моделью и блок «что изменилось».
-   Классы с префиксом .ai- и .ai-msg: панель стоит рядом с редакторами, и её
-   разметка не должна пересекаться с .ed-* (иначе стили редакторов «протекли» бы
-   на сообщения чата). */
+/* Плавающий ИИ-помощник: кнопка в углу и окно поверх проекта.
+   Классы .ai-*: окно живёт поверх стадии таймлайна, поэтому его слои и размеры
+   подобраны так, чтобы не спорить ни со стадией, ни с модальными окнами.
 
-.ai-panel {
-  margin: 16px 24px 32px;
-  padding: 16px;
+   Слои проекта (для справки, см. timeline.css / editors.css / markdown.css):
+     10  стадия таймлайна (fixed, на весь экран, непрозрачная)
+     20  слой копирайта (pointer-events: none)
+     30  подсказка о прокрутке
+     46  навигация по главам
+     60  полоса прогресса
+     70  шапка приложения
+     80  помощник (эта панель)
+     90  подпись перетаскивания (pointer-events: none)
+     95  модальные окна (просмотр картинки, перенос проекта) */
+
+.ai-dock {
+  /* Контейнер не ловит клики: их ловят кнопка и окно. Иначе невидимая рамка
+     перекрывала бы угол проекта (fixed-слои уже ломали так клики у стадии). */
+  position: fixed;
+  right: clamp(12px, 2.2vw, 24px);
+  bottom: clamp(12px, 2.2vw, 24px);
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  pointer-events: none;
+}
+
+.ai-dock > * { pointer-events: auto; }
+
+/* ── Окно ─────────────────────────────────────────────────────────────── */
+
+.ai-window {
+  display: flex;
+  flex-direction: column;
+  width: min(420px, calc(100vw - 32px));
+  /* vh, а не dvh: в браузерах без динамических единиц объявление с dvh отбрасывается
+     целиком, и окно теряет высоту (правило проекта — основное на vh, апгрейд в @supports). */
+  height: min(620px, calc(100vh - 140px));
+  max-height: calc(100vh - 96px);
+  overflow: hidden;
   background: var(--bg-elev);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: 12px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.35);
+  color: var(--fg);
 }
 
-.ai-panel__head {
+/* Окно скрыто — но остаётся в дереве: состояние (история, черновик) не теряется. */
+.ai-window[hidden] { display: none; }
+
+@supports (height: 100dvh) {
+  .ai-window {
+    height: min(620px, calc(100dvh - 140px));
+    max-height: calc(100dvh - 96px);
+  }
+}
+
+/* ── Шапка окна ───────────────────────────────────────────────────────── */
+
+.ai-head {
   display: flex;
   align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.ai-panel__title { margin: 0; font-size: 16px; }
-
-.ai-panel__hint {
-  flex: 1 1 320px;
-  margin: 0;
-  font-size: 12px;
-}
-
-.ai-panel__body { margin-top: 12px; display: grid; gap: 12px; }
-
-.ai-panel__controls {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  align-items: flex-end;
-}
-
-.ai-panel__field { display: grid; gap: 4px; font-size: 12px; }
-.ai-panel__field span { color: var(--fg-muted); }
-.ai-panel__field select { max-width: 320px; min-height: 32px; }
-
-.ai-panel__provider-note { font-size: 12px; margin: 0; }
-.ai-panel__note { font-size: 12px; margin: 0; }
-.ai-panel__error { margin: 0; font-size: 12px; color: var(--danger); }
-/* Предупреждение о том, что текст уходит наружу: не ошибка, но и не «muted» —
-   человек должен это заметить. */
-.ai-panel__warn { margin: 0; font-size: 12px; color: var(--danger); }
-
-.ai-panel__settings {
-  display: grid;
   gap: 8px;
-  padding: 10px;
-  border: 1px dashed var(--border);
-  border-radius: var(--radius);
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-elev) 92%, var(--accent) 8%);
 }
 
-.ai-panel__key { display: flex; gap: 8px; flex-wrap: wrap; }
-.ai-panel__key input { min-width: 260px; min-height: 32px; }
+.ai-head__title { display: grid; gap: 2px; flex: 1; min-width: 0; }
+.ai-head__name { font-weight: 600; font-size: 14px; }
+.ai-head__model {
+  font-size: 12px;
+  color: var(--fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
-.ai-panel__consent-check {
+.ai-head__actions { display: flex; gap: 6px; flex: 0 0 auto; }
+
+/* Куда уходит текст проекта — строка под шапкой. Обязана переноситься: длинный текст
+   без переноса вылезал за края окна и обрезался его же `overflow: hidden`. */
+.ai-head__privacy {
+  padding: 8px 12px 0;
+  overflow-wrap: anywhere;
+}
+
+.ai-about { display: grid; gap: 8px; }
+.ai-about__title { margin: 0; font-size: 13px; font-weight: 600; }
+.ai-about ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+
+.ai-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fg-soft);
+  cursor: pointer;
+}
+
+.ai-icon:hover { border-color: var(--accent); color: var(--accent); }
+.ai-icon[aria-pressed='true'] {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--chip-bg);
+}
+
+/* ── Тело: переписка или настройка ────────────────────────────────────── */
+
+.ai-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+
+.ai-body--settings { gap: 12px; }
+.ai-body__back { justify-self: start; }
+
+.ai-field { display: grid; gap: 4px; font-size: 12px; }
+.ai-field > span { color: var(--fg-muted); }
+.ai-field select { width: 100%; min-height: 34px; }
+
+.ai-note { margin: 0; font-size: 12px; line-height: 1.45; color: var(--fg-muted); }
+.ai-warn { margin: 0; font-size: 12px; line-height: 1.45; color: var(--danger); }
+.ai-error { margin: 0; font-size: 12px; line-height: 1.45; color: var(--danger); }
+.ai-error--padded { padding: 0 12px 8px; }
+
+.ai-empty { display: grid; gap: 8px; padding: 4px 2px; }
+.ai-empty__title { margin: 0; font-size: 13px; font-weight: 600; }
+
+.ai-key { display: flex; gap: 8px; flex-wrap: wrap; }
+.ai-key input { flex: 1 1 160px; min-height: 34px; }
+
+.ai-consent-check {
   display: flex;
   gap: 8px;
   align-items: flex-start;
   font-size: 12px;
+  line-height: 1.45;
   color: var(--fg-soft);
 }
 
-.ai-panel__consent {
+.ai-consent {
   display: grid;
   gap: 8px;
+  margin: 0 12px 10px;
   padding: 10px;
   border: 1px solid var(--accent);
-  border-radius: var(--radius);
+  border-radius: 8px;
   font-size: 13px;
 }
 
-.ai-panel__consent p { margin: 0; }
+.ai-consent p { margin: 0; line-height: 1.45; }
 
-.ai-panel__log {
-  display: grid;
-  gap: 10px;
-  max-height: 420px;
-  overflow-y: auto;
-  padding: 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-}
+/* ── Переписка ────────────────────────────────────────────────────────── */
 
 .ai-msg { display: grid; gap: 4px; }
 .ai-msg__who { font-size: 11px; color: var(--fg-muted); }
 .ai-msg--user .ai-msg__who { color: var(--accent-soft); }
-.ai-msg__text { margin: 0; font-size: 13px; line-height: 1.5; white-space: pre-wrap; }
-/* Разметка Markdown внутри сообщения: pre-wrap не нужен, блоки и так разложены. */
+.ai-msg--user .ai-msg__text {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--chip-bg);
+  white-space: pre-wrap;
+}
+.ai-msg__text { margin: 0; font-size: 13px; line-height: 1.5; }
+/* Разметка Markdown внутри ответа: pre-wrap не нужен, блоки и так разложены. */
 .ai-msg--assistant .ai-msg__text { white-space: normal; }
 
-.ai-panel__thinking { font-size: 12px; margin: 0; }
+.ai-thinking { margin: 0; font-size: 12px; color: var(--fg-muted); }
 
-.ai-panel__changes {
+.ai-changes {
   display: grid;
   gap: 6px;
+  margin: 0 12px 10px;
   padding: 10px;
   border: 1px solid var(--success);
-  border-radius: var(--radius);
+  border-radius: 8px;
   font-size: 13px;
 }
-.ai-panel__changes ul { margin: 0; padding-left: 18px; }
-.ai-panel__changes button { justify-self: start; }
+.ai-changes ul { margin: 0; padding-left: 18px; }
+.ai-changes button { justify-self: start; }
 
-.ai-panel__ask { display: grid; gap: 8px; }
-.ai-panel__ask textarea {
+/* ── Поле ввода ───────────────────────────────────────────────────────── */
+
+.ai-composer {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.ai-composer textarea {
   width: 100%;
   resize: vertical;
+  min-height: 56px;
+  max-height: 160px;
   font-family: var(--sf-font-body);
   font-size: 13px;
 }
-.ai-panel__ask-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+
+.ai-composer__row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.ai-composer__hint { margin-left: auto; font-size: 11px; }
+
+/* ── Плавающая кнопка ─────────────────────────────────────────────────── */
+
+.ai-fab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  padding: 0;
+  border: 1px solid var(--accent);
+  border-radius: 50%;
+  background: var(--accent-strong);
+  color: #fff;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+  transition: transform 0.15s var(--sf-ease), box-shadow 0.15s var(--sf-ease);
+}
+
+.ai-fab:hover { transform: translateY(-2px); }
+.ai-fab:focus-visible { outline: 2px solid var(--accent-soft); outline-offset: 2px; }
+
+.ai-fab__badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+/* «Думает»: пульсирующая точка — запрос ушёл, ответ ждём. */
+.ai-fab__pulse {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  animation: ai-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes ai-pulse {
+  0%, 100% { transform: scale(0.7); opacity: 0.55; }
+  50%      { transform: scale(1.15); opacity: 1; }
+}
+
+/* ── Мобильный: окно становится листом на весь экран ───────────────────── */
+
+@media (max-width: 640px) {
+  /* Кнопка помощника поднята над нижней панелью стадии («назад» / «дальше: …»):
+     в самом углу она перекрывала её (аудит интерфейса: пересечение 29–32 px), и
+     человек попадал в помощника вместо перехода к следующему кадру. Высота выбрана
+     с запасом на узкие экраны, где панель переносится в две строки. */
+  .ai-dock {
+    right: 12px;
+    bottom: calc(120px + env(safe-area-inset-bottom, 0px));
+    left: 12px;
+    align-items: stretch;
+  }
+
+  /* Открытое окно занимает экран целиком: кнопка «свернуть» в его шапке, а плавающая
+     кнопка внизу перекрывала бы нижнюю навигацию стадии («дальше»). */
+  .ai-dock--open { bottom: 12px; }
+  .ai-dock--open .ai-fab { display: none; }
+
+  .ai-fab { width: 48px; height: 48px; align-self: flex-end; }
+
+  .ai-window {
+    width: 100%;
+    height: calc(100vh - 24px);
+    max-height: calc(100vh - 24px);
+    border-radius: 12px;
+  }
+
+  @supports (height: 100dvh) {
+    .ai-window {
+      height: calc(100dvh - 24px);
+      max-height: calc(100dvh - 24px);
+    }
+  }
+
+  .ai-composer__hint { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-fab { transition: none; }
+  .ai-fab:hover { transform: none; }
+  .ai-fab__pulse { animation: none; }
+}
