@@ -72,6 +72,10 @@ var schemaSteps = []struct{ probe, file string }{
 	{`SELECT EXISTS (SELECT 1 FROM information_schema.tables
 	                  WHERE table_schema='public' AND table_name='project_ai_settings')`,
 		"0010_ai_agent.up.sql"},
+	{`SELECT EXISTS (SELECT 1 FROM information_schema.columns
+	                  WHERE table_schema='public' AND table_name='users'
+	                    AND column_name='is_system')`,
+		"0011_users_is_system.up.sql"},
 }
 
 // Setup открывает отдельную БД для пакета (suffix), применяет миграции и
@@ -117,8 +121,8 @@ func Truncate(t *testing.T, pool *pgxpool.Pool, tables ...string) {
 func EnsureAIAgent(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	_, err := pool.Exec(context.Background(),
-		`INSERT INTO users (id, email, username, password_hash, display_name, discoverable)
-		 VALUES ($1, $2, $3, '!', $4, false)
+		`INSERT INTO users (id, email, username, password_hash, display_name, discoverable, is_system)
+		 VALUES ($1, $2, $3, '!', $4, false, true)
 		 ON CONFLICT (id) DO NOTHING`,
 		ai.AgentUserID, ai.AgentEmail, ai.AgentUsername, ai.AgentName)
 	if err != nil {

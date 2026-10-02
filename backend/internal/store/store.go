@@ -147,10 +147,12 @@ func (s *Store) CountAdmins(ctx context.Context) (int, error) {
 	return n, err
 }
 
-// ListUsers — для админки: кто вообще есть на инсталляции.
+// ListUsers — для админки: кто вообще есть на инсталляции. Системные аккаунты
+// (ИИ-агент) не показываем: это не человек, и в списке «кто зарегистрирован» ему не место —
+// он виден в участниках тех проектов, где работает.
 func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 	return qAll[User](ctx, s.Pool,
-		`SELECT `+userColumns+` FROM users ORDER BY created_at`)
+		`SELECT `+userColumns+` FROM users WHERE NOT is_system ORDER BY created_at`)
 }
 
 // ProfileUpdate — правки профиля. nil-поле означает «не прислали»: интерфейс

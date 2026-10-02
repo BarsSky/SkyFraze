@@ -102,7 +102,7 @@ func (s *Store) CatalogUsers(ctx context.Context, viewerID uuid.UUID, f UserFilt
 	  LEFT JOIN coauthor_links l
 	         ON (l.requester_id = $1 AND l.addressee_id = u.id)
 	         OR (l.addressee_id = $1 AND l.requester_id = u.id)
-	 WHERE u.discoverable
+	 WHERE u.discoverable AND NOT u.is_system
 	   AND u.id <> $1
 	   AND ($2::text IS NULL OR u.username ILIKE $2 || '%' OR u.display_name ILIKE '%' || $2 || '%')
 	   AND ($3::text IS NULL OR $3 = ANY(u.crafts))
