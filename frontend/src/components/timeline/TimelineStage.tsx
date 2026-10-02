@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { yEnsureEventIds, yEventParentId, type YArray, type YMap } from '../../collab/yprovider'
 import { textString, titleString } from '../../collab/text'
 import { getScrollRoot, prefersReducedMotion, visibleBox } from './scrollRoot'
+import { stageIsActive } from './stageVisibility'
 import {
   CHAPTER_ACCENTS_DARK,
   CHAPTER_ACCENTS_LIGHT,
@@ -55,6 +56,23 @@ interface EventMeta {
 
 function normalizeBgKind(value: unknown): 'inherit' | 'tone' | 'asset' {
   return value === 'tone' || value === 'asset' ? value : 'inherit'
+}
+
+/**
+ * Первый содержательный блок ПОСЛЕ стадии (панель редакторов).
+ *
+ * Нужен, чтобы понять, когда стадия перестала быть нужной: в потоке под ней живут
+ * редакторы, и её fixed-слой не должен их перекрывать. Пустые обёртки (например, бар
+ * присутствия без соседей) пропускаем: у них нулевая высота, и «входом в экран» они
+ * ничего не значат.
+ */
+function nextBlockAfter(track: HTMLElement): HTMLElement | null {
+  let node = track.parentElement?.nextElementSibling as HTMLElement | null
+  while (node) {
+    if (node.getBoundingClientRect().height > 1) return node
+    node = node.nextElementSibling as HTMLElement | null
+  }
+  return null
 }
 
 function resolveAssets(assetIds: string[], lookup: Record<string, AssetLookup>): StageAsset[] {
@@ -231,8 +249,7 @@ export function TimelineStage({ events, assetsById, projectTitle, actions, copyF
   // через состояние: состояние квантовано (1/50 кадра), и на длинной главе шаг
   // кванта — это сотни пикселей, текст дёргался бы.
   const frameLocalRef = useRef(0)
-  const driveText = useCallback(() => {
-    const scroll = document.querySelector<HTMLElement>('.sf-copy__scroll')
+  const driveText = useCallback(() => {    const scroll = document.querySelector<HTMLElement>('.sf-copy__scroll')
     if (!scroll) return
     const max = scroll.scrollHeight - scroll.clientHeight
     if (max <= 0) return
@@ -265,10 +282,18 @@ export function TimelineStage({ events, assetsById, projectTitle, actions, copyF
       frameLocalRef.current = next.frameLocal
       driveText()
 
-      // Стадия живёт, пока трек занимает существенную часть вьюпорта. Иначе её
-      // fixed-слои перекрывают блок редакторов под треком и крадут клики.
-      const visibleTrack = Math.min(rect.bottom, box.bottom) - Math.max(rect.top, box.top)
-      const inView = visibleTrack > viewport * 0.5
+      // Стадия живёт, пока трек занимает экран И под ним ещё не показался следующий
+      // блок (панель редакторов). Иначе её fixed-слои перекрывают редактор и крадут
+      // по нему клики: человек видел «пустую область» вместо панели, пока не долистает
+      // до конца. Решение — в stageIsActive (там же тесты).
+      const nextBlock = nextBlockAfter(track)
+      const inView = stageIsActive({
+        trackTop: rect.top,
+        trackBottom: rect.bottom,
+        boxTop: box.top,
+        boxBottom: box.bottom,
+        nextTop: nextBlock ? nextBlock.getBoundingClientRect().top : null,
+      })
       if (inView !== stageActiveRef.current) {
         stageActiveRef.current = inView
         setStageActive(inView)
