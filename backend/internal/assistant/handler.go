@@ -303,6 +303,16 @@ func (h *Handler) fail(w http.ResponseWriter, op string, err error) {
 			"error":            err.Error(),
 			"consent_required": true,
 		})
+	case errors.Is(err, ErrProjectDisabled):
+		writeErr(w, http.StatusConflict, err.Error())
+	case errors.Is(err, ErrTokenBudget):
+		// 429, а не 400: это не ошибка запроса, а исчерпанный предел. Интерфейс по
+		// этому коду говорит «завтра снова» и показывает расход.
+		writeJSON(w, http.StatusTooManyRequests, map[string]any{
+			"error":        err.Error(),
+			"token_budget": true,
+			"token_limit":  h.svc.models.TokensPerDay(),
+		})
 	case errors.Is(err, ErrForbidden):
 		writeErr(w, http.StatusForbidden, err.Error())
 	case errors.Is(err, ErrModelRequired):

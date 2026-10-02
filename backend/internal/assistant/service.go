@@ -50,6 +50,8 @@ var (
 	// ErrProjectDisabled — владелец выключил агента в этом проекте (настройки проекта,
 	// а не стенда: можно попросить помощника не трогать одну историю).
 	ErrProjectDisabled = errors.New("агент выключен в этом проекте — включить может владелец")
+	// ErrTokenBudget — на стенде задан предел расхода на сутки, и человек его выбрал.
+	ErrTokenBudget = errors.New("исчерпан предел расхода токенов на сутки")
 )
 
 // maxInstructionsChars — предел на указания владельца: они уходят в каждый запрос к
@@ -338,6 +340,11 @@ func (s *Service) SendStream(
 		}
 		return nil, fmt.Errorf("%w (%s)", ErrConsent, label)
 	}
+	// Предел расхода проверяем ДО создания беседы и записи вопроса: если человек
+	// упёрся в предел, в истории не должно остаться вопроса без ответа.
+	if err := s.checkBudget(ctx, userID); err != nil {
+		return nil, err
+	}
 
 	conversation, err := s.conversation(ctx, userID, projectID, conversationID, modelRef, text)
 	if err != nil {
@@ -403,6 +410,27 @@ func (s *Service) SendStream(
 			"changes", len(turn.Changes), "calls", len(turn.Calls), "stopped", turn.Stopped)
 	}
 	return turn, nil
+}
+
+// checkBudget проверяет предел расхода за сутки.
+//
+// Предел задаёт админ стенда (AI_TOKENS_PER_DAY); 0 — без предела. Сбой подсчёта НЕ
+// запрещает разговор: это ограничение расходов, а не защита секретов, и падать из-за
+// него в самый неподходящий момент было бы хуже, чем потерять контроль за сутки.
+func (s *Service) checkBudget(ctx context.Context, userID uuid.UUID) error {
+	limit := s.models.TokensPerDay()
+	if limit <= 0 {
+		return nil
+	}
+	spent, err := s.models.SpentTokens(ctx, userID)
+	if err != nil {
+		s.logger.Warn("ai: расход за сутки не посчитан", "user", userID, "err", err)
+		return nil
+	}
+	if spent >= limit {
+		return fmt.Errorf("%w: израсходовано %d из %d за последние сутки", ErrTokenBudget, spent, limit)
+	}
+	return nil
 }
 
 // resolveModel выбирает модель: явную или модель по умолчанию стенда.
@@ -490,10 +518,23 @@ func (s *Service) converse(
 	// Куски проходят через streamGate: модель может отвечать не текстом, а вызовом
 	// инструмента или рассуждениями в служебном канале, и показывать это человеку
 	// нельзя (подробности — в stream_gate.go).
+	//
+	// Счётчики токенов: у провайдера они точные, но приходят не от всех серверов
+	// (в потоке — далеко не от всех). Если счётчика нет, считаем оценкой: иначе расход
+	// молча оказался бы нулевым и предел не работал бы ровно там, где он нужен.
+	fillTokens := func(req ai.Request, reply ai.Reply) ai.Reply {
+		if reply.TokensIn <= 0 {
+			reply.TokensIn = ai.EstimateRequestTokens(req)
+		}
+		if reply.TokensOut <= 0 {
+			reply.TokensOut = ai.EstimateTokens(reply.Content)
+		}
+		return reply
+	}
 	ask := func(req ai.Request) (ai.Reply, string, error) {
 		if emit == nil {
 			reply, err := s.models.Chat(ctx, userID, provider, req)
-			return reply, "", err
+			return fillTokens(req, reply), "", err
 		}
 		gate := newStreamGate(func(text string) error {
 			if err := emit(Event{Type: EventDelta, Text: text}); err != nil {
@@ -509,7 +550,7 @@ func (s *Service) converse(
 				err = finishErr
 			}
 		}
-		return reply, gate.visibleText(), err
+		return fillTokens(req, reply), gate.visibleText(), err
 	}
 
 	for round := 0; round < s.limits.MaxRounds; round++ {
@@ -649,6 +690,9 @@ func (s *Service) finishStopped(
 	if strings.TrimSpace(partial) == "" {
 		return turn, nil
 	}
+	// Расход оборванного ответа оцениваем: провайдер счётчиков уже не пришлёт, а
+	// сказанное моделью было потрачено по-настоящему.
+	tokensOut += ai.EstimateTokens(partial)
 	saved, err := s.store.AppendAIMessage(context.WithoutCancel(ctx), store.AIMessage{
 		ConversationID: conversation.ID, Role: "assistant", Content: partial,
 		Model: model, TokensIn: tokensIn, TokensOut: tokensOut, Stopped: true,

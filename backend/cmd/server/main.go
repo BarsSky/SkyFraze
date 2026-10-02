@@ -180,6 +180,7 @@ func main() {
 		DefaultModel:      cfg.AIDefaultModel,
 		MaxToolCalls:      cfg.AIMaxToolCalls,
 		TimeoutSeconds:    cfg.AITimeoutSeconds,
+		TokensPerDay:      cfg.AITokensPerDay,
 	}, map[string]string{
 		"GROQ_API_KEY":       os.Getenv("GROQ_API_KEY"),
 		"OPENROUTER_API_KEY": os.Getenv("OPENROUTER_API_KEY"),

@@ -64,6 +64,8 @@ const LOCAL: AIConfig = {
   keysReady: true,
   defaultModel: '',
   maxToolCalls: 10,
+  tokensToday: 0,
+  tokenLimit: 0,
   providers: [
     {
       id: 'ollama',
@@ -259,6 +261,46 @@ describe('AssistantPanel', () => {
     expect(await screen.findByText('Создал главу «Пролог».')).toBeTruthy()
   })
 
+  it('при исчерпанном пределе расхода объясняет это и не даёт отправить', async () => {
+    mocks.config.mockResolvedValue({
+      ...REMOTE,
+      consents: ['groq'],
+      tokensToday: 1000,
+      tokenLimit: 1000,
+    })
+    renderPanel()
+
+    expect(await screen.findByText(/Предел расхода на сутки исчерпан/)).toBeTruthy()
+    expect(screen.getByText(/Израсходовано 1000 из 1000 токенов за сутки/)).toBeTruthy()
+    // Поле заблокировано ДО нажатия: человек видит причину, а не отказ после отправки.
+    expect((screen.getByLabelText('Сообщение помощнику') as HTMLTextAreaElement).disabled).toBe(
+      true,
+    )
+  })
+
+  it('после ответа обновляет счётчик расхода без нового запроса', async () => {
+    mocks.config.mockResolvedValue({
+      ...REMOTE,
+      consents: ['groq'],
+      tokensToday: 100,
+      tokenLimit: 0,
+    })
+    mocks.stream.mockResolvedValue({
+      ...TURN,
+      message: { ...TURN.message, tokensIn: 120, tokensOut: 40 },
+    })
+    renderPanel()
+
+    const input = (await screen.findByLabelText('Сообщение помощнику')) as HTMLTextAreaElement
+    await waitFor(() => expect(input.disabled).toBe(false))
+    fireEvent.change(input, { target: { value: 'Добавь главу' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Спросить' }))
+
+    // 100 + 120 + 40: расход берётся из ответа, а не отдельным запросом к настройке.
+    expect(await screen.findByText(/Израсходовано 260 токенов за сутки/)).toBeTruthy()
+    expect(mocks.config).toHaveBeenCalledTimes(1)
+  })
+
   it('«стоп» обрывает ответ и оставляет сказанное с пометкой', async () => {
     mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
     mocks.stream.mockImplementation(
@@ -277,8 +319,7 @@ describe('AssistantPanel', () => {
             error.name = 'AbortError'
             reject(error)
           })
-        }),
-    )
+        }),    )
     renderPanel()
 
     const input = (await screen.findByLabelText('Сообщение помощнику')) as HTMLTextAreaElement

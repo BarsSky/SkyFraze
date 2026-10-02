@@ -199,6 +199,22 @@ func (s *Store) ListAIMessages(ctx context.Context, conversationID uuid.UUID, li
 	return rows, nil
 }
 
+// AITokensSince — сколько токенов человек израсходовал с указанного времени.
+//
+// Считаем и вход, и выход: платят за оба, а вопрос «сколько я уже потратил» должен
+// иметь один ответ, а не два. Токены лежат в сообщениях беседы (их пишет помощник),
+// поэтому считаем по сообщениям СВОИХ бесед человека.
+func (s *Store) AITokensSince(ctx context.Context, userID uuid.UUID, since time.Time) (int, error) {
+	var total int
+	err := s.Pool.QueryRow(ctx,
+		`SELECT COALESCE(SUM(m.tokens_in + m.tokens_out), 0)
+		   FROM ai_messages m
+		   JOIN ai_conversations c ON c.id = m.conversation_id
+		  WHERE c.user_id = $1 AND m.created_at >= $2`,
+		userID, since).Scan(&total)
+	return total, err
+}
+
 // rawJSONOrEmpty — исходный JSON или пустой массив.
 func rawJSONOrEmpty(raw json.RawMessage) json.RawMessage {
 	if len(raw) == 0 || !json.Valid(raw) {

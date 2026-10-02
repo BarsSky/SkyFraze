@@ -73,11 +73,21 @@ func (h *Handler) Config(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "не удалось получить согласия")
 		return
 	}
+	// Расход за сутки и предел отдаём вместе с настройкой: человек должен видеть,
+	// сколько уже израсходовано, ДО того как упрётся в предел. Ошибка счёта не
+	// ломает настройку — показываем ноль и работаем дальше.
+	spent, err := h.svc.SpentTokens(r.Context(), uid)
+	if err != nil {
+		h.logger.Warn("ai: не удалось посчитать расход токенов", "err", err)
+		spent = 0
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"enabled":        h.svc.Enabled(),
 		"keys_ready":     h.svc.KeysReady(),
 		"default_model":  h.svc.DefaultModel(),
 		"max_tool_calls": h.svc.MaxToolCalls(),
+		"tokens_today":   spent,
+		"token_limit":    h.svc.TokensPerDay(),
 		"providers":      providers,
 		"consents":       nonNil(consents),
 	})

@@ -106,7 +106,7 @@ func newStub(t *testing.T, replies ...ai.Reply) *stubProvider {
 		writeStubJSON(w, map[string]any{
 			"model":   "stub-1",
 			"choices": []map[string]any{{"message": message, "finish_reason": "stop"}},
-			"usage":   map[string]int{"prompt_tokens": 11, "completion_tokens": 7},
+			"usage":   map[string]int{"prompt_tokens": reply.TokensIn, "completion_tokens": reply.TokensOut},
 		})
 	})
 	// Тот же сервер отвечает и по-олламовски: так проверяется, что локальная модель
@@ -140,7 +140,7 @@ func newStub(t *testing.T, replies ...ai.Reply) *stubProvider {
 		}
 		writeStubJSON(w, map[string]any{
 			"model": "stub-1", "message": message,
-			"prompt_eval_count": 11, "eval_count": 7,
+			"prompt_eval_count": reply.TokensIn, "eval_count": reply.TokensOut,
 		})
 	})
 	stub.server = httptest.NewServer(mux)
@@ -230,7 +230,7 @@ func writeStubOllamaStream(w http.ResponseWriter, reply ai.Reply) {
 	}
 	write(map[string]any{
 		"model": "stub-1", "done": true, "message": message,
-		"prompt_eval_count": 11, "eval_count": 7,
+		"prompt_eval_count": reply.TokensIn, "eval_count": reply.TokensOut,
 	})
 }
 
@@ -270,7 +270,7 @@ func writeStubOpenAIStream(w http.ResponseWriter, reply ai.Reply) {
 	write(map[string]any{
 		"model":   "stub-1",
 		"choices": []map[string]any{},
-		"usage":   map[string]int{"prompt_tokens": 11, "completion_tokens": 7},
+		"usage":   map[string]int{"prompt_tokens": reply.TokensIn, "completion_tokens": reply.TokensOut},
 	})
 	fmt.Fprint(w, "data: [DONE]\n\n")
 	if flusher != nil {

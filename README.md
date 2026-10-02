@@ -494,6 +494,7 @@ SkyFraze/
 | `AI_DEFAULT_MODEL` | модель по умолчанию в интерфейсе (`provider:model`) | пусто |
 | `AI_MAX_TOOL_CALLS` | сколько инструментов модель может вызвать за одно сообщение | `10` |
 | `AI_TIMEOUT_SECONDS` | предел на один запрос к модели | `120` |
+| `AI_TOKENS_PER_DAY` | предел расхода токенов на человека за сутки (`0` — без предела); расход видно в окне помощника всегда | `0` |
 | `LISTEN` | bind address backend | `:8080` |
 | `APP_ENV` | environment marker | `production` |
 

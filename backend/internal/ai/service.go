@@ -36,6 +36,13 @@ type Config struct {
 	DefaultModel      string
 	MaxToolCalls      int
 	TimeoutSeconds    int
+	// TokensPerDay — предел расхода на человека за сутки (0 — без предела).
+	//
+	// Зачем предел вообще. Ключ стенда платит админ, и «один человек спросил 300 раз
+	// подряд» — это его счёт. Для своих ключей предел тоже полезен: интерфейс
+	// показывает расход, а не удивляет счётом в конце месяца. По умолчанию 0:
+	// локальная модель бесплатна, и запрет «на всякий случай» только мешал бы.
+	TokensPerDay int
 }
 
 // Service — доступные модели и ключи пользователей.
@@ -91,6 +98,36 @@ func (s *Service) UseProviders(list []Provider) { s.providers = list }
 
 // KeysReady — можно ли хранить пользовательские ключи (задан AI_SECRET_KEY).
 func (s *Service) KeysReady() bool { return s != nil && s.cipher != nil }
+
+// TokensPerDay — предел расхода на человека за сутки (0 — без предела).
+func (s *Service) TokensPerDay() int {
+	if s == nil {
+		return 0
+	}
+	return s.cfg.TokensPerDay
+}
+
+// SetTokensPerDay задаёт предел расхода (тесты и стенды, где предел меняют на ходу).
+func (s *Service) SetTokensPerDay(limit int) {
+	if s == nil {
+		return
+	}
+	if limit < 0 {
+		limit = 0
+	}
+	s.cfg.TokensPerDay = limit
+}
+
+// SpentTokens — сколько токенов человек израсходовал за последние сутки.
+//
+// Окно скользящее (24 часа), а не «с полуночи»: у стенда и у человека часовые пояса
+// могут не совпадать, и сброс «в полночь по серверу» выглядел бы случайным.
+func (s *Service) SpentTokens(ctx context.Context, userID uuid.UUID) (int, error) {
+	if s == nil || s.store == nil {
+		return 0, nil
+	}
+	return s.store.AITokensSince(ctx, userID, time.Now().Add(-24*time.Hour))
+}
 
 // DefaultModel — модель, которую интерфейс выбирает первой.
 func (s *Service) DefaultModel() string { return s.cfg.DefaultModel }

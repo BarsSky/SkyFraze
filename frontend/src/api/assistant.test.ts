@@ -46,6 +46,8 @@ const config: AIConfig = {
   keysReady: true,
   defaultModel: 'groq:llama-3.1-8b',
   maxToolCalls: 10,
+  tokensToday: 0,
+  tokenLimit: 0,
   providers: [
     {
       id: 'ollama',
@@ -253,13 +255,34 @@ describe('readAIError', () => {
         }),
       },
     })
-    expect(consent).toEqual({ message: 'нужно согласие', consentRequired: true })
+    expect(consent).toEqual({
+      message: 'нужно согласие',
+      consentRequired: true,
+      tokenBudget: false,
+    })
 
     const plain = await readAIError({ response: { clone: () => ({ json: async () => ({}) }) } })
-    expect(plain).toEqual({ message: null, consentRequired: false })
+    expect(plain).toEqual({ message: null, consentRequired: false, tokenBudget: false })
 
     const none = await readAIError(new Error('сеть'))
-    expect(none).toEqual({ message: null, consentRequired: false })
+    expect(none).toEqual({ message: null, consentRequired: false, tokenBudget: false })
+  })
+
+  it('узнаёт исчерпанный предел расхода (429) и не путает его с ошибкой', async () => {
+    const budget = await readAIError({
+      response: {
+        clone: () => ({
+          json: async () => ({
+            error: 'исчерпан предел расхода токенов на сутки: 900 из 900',
+            token_budget: true,
+            token_limit: 900,
+          }),
+        }),
+      },
+    })
+    expect(budget.tokenBudget).toBe(true)
+    expect(budget.consentRequired).toBe(false)
+    expect(budget.message).toContain('предел расхода')
   })
 })
 

@@ -406,6 +406,14 @@ export function AssistantPanel({
         turn.message,
       ])
       setChanges(turn.changes)
+      // Счётчик расхода обновляем локально: расход пришёл вместе с ответом, и лишний
+      // запрос к серверу ради одной цифры не нужен.
+      const spentNow = (turn.message.tokensIn ?? 0) + (turn.message.tokensOut ?? 0)
+      if (spentNow > 0) {
+        setConfig((current) =>
+          current ? { ...current, tokensToday: current.tokensToday + spentNow } : current,
+        )
+      }
       if (turn.changes.length > 0) onProjectChanged()
       // Ответ пришёл, пока окно закрыто: человек узнает об этом по маркеру на кнопке.
       if (!openRef.current) onUnread()
@@ -424,7 +432,7 @@ export function AssistantPanel({
           },
         ])
       } else {
-        const { message, consentRequired } = await readAIError(e)
+        const { message, consentRequired, tokenBudget } = await readAIError(e)
         setConsentNeeded(consentRequired)
         setMessages((current) => current.filter((m) => m.id !== pending.id))
         setText(question)
@@ -433,6 +441,9 @@ export function AssistantPanel({
             (await serverErrorMessage(e)) ??
             'Помощник не ответил. Проверьте связь и модель.',
         )
+        // Упёрлись в предел — перечитываем настройку: счётчик должен показать правду
+        // (локальная цифра могла отстать), а кнопка — заблокироваться.
+        if (tokenBudget) void refreshConfig()
       }
     } finally {
       abortRef.current = null
@@ -440,7 +451,7 @@ export function AssistantPanel({
       setLiveCalls([])
       setSending(false)
     }
-  }, [text, sending, modelRef, projectId, conversationId, onProjectChanged, onUnread])
+  }, [text, sending, modelRef, projectId, conversationId, onProjectChanged, onUnread, refreshConfig])
 
   /** «Стоп»: обрываем запрос — сервер сохранит то, что модель успела сказать. */
   const stop = useCallback(() => {
@@ -462,6 +473,14 @@ export function AssistantPanel({
   const hasAnswer = messages.some((m) => m.role === 'assistant')
   /** Имя агента: зашито на сервере, в интерфейсе — как имя соавтора. */
   const agentName = agent?.agentName || 'Агент'
+  /**
+   * Исчерпан ли предел расхода за сутки.
+   *
+   * Считаем по счётчику из настройки: сервер всё равно откажет, но человек должен
+   * видеть, ПОЧЕМУ поле ввода заблокировано, до нажатия, а не после.
+   */
+  const budgetExhausted =
+    config != null && config.tokenLimit > 0 && config.tokensToday >= config.tokenLimit
 
   /**
    * Куда уходит текст проекта — одной строкой. Это главное, что человек должен знать о
@@ -805,6 +824,13 @@ export function AssistantPanel({
 
           {sendError != null && <p className="ai-error ai-error--padded">{sendError}</p>}
 
+          {budgetExhausted && (
+            <p className="ai-error ai-error--padded" data-assistant-budget>
+              Предел расхода на сутки исчерпан ({config?.tokensToday} из {config?.tokenLimit}{' '}
+              токенов). Помощник заработает снова, когда счётчик за сутки сбросится.
+            </p>
+          )}
+
           <footer className="ai-composer">
             <textarea
               ref={inputRef}
@@ -820,7 +846,7 @@ export function AssistantPanel({
               }}
               placeholder="Например: добавь главу «Пролог» с описанием мира в Markdown"
               rows={2}
-              disabled={sending || consentBlocked || !config.enabled}
+              disabled={sending || consentBlocked || budgetExhausted || !config.enabled}
               aria-label="Сообщение помощнику"
             />
             <div className="ai-composer__row">
@@ -831,7 +857,10 @@ export function AssistantPanel({
                   Стоп
                 </button>
               ) : (
-                <button onClick={ask} disabled={consentBlocked || text.trim() === ''}>
+                <button
+                  onClick={ask}
+                  disabled={consentBlocked || budgetExhausted || text.trim() === ''}
+                >
                   Спросить
                 </button>
               )}
@@ -844,8 +873,11 @@ export function AssistantPanel({
               >
                 Новый
               </button>
-              <span className="ai-note ai-composer__hint">
-                До {config.maxToolCalls} кадров за ответ
+              <span className="ai-note ai-composer__hint" data-assistant-tokens>
+                {config.tokenLimit > 0
+                  ? `Израсходовано ${config.tokensToday} из ${config.tokenLimit} токенов за сутки`
+                  : `Израсходовано ${config.tokensToday} токенов за сутки`}
+                {' · '}до {config.maxToolCalls} кадров за ответ
               </span>
             </div>
           </footer>

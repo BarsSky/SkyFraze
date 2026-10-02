@@ -42,6 +42,15 @@ export interface AIConfig {
   keysReady: boolean
   defaultModel: string
   maxToolCalls: number
+  /**
+   * Сколько токенов израсходовано за последние сутки — по всем беседам человека.
+   *
+   * Показываем всегда, даже когда предел не задан: «сколько это стоит» — вопрос,
+   * который человек задаёт раньше, чем упирается в ограничение.
+   */
+  tokensToday: number
+  /** Предел расхода за сутки (0 — без предела): задаёт администратор стенда. */
+  tokenLimit: number
   providers: AIProviderInfo[]
   /** Провайдеры, на отправку текста которым человек уже согласился. */
   consents: string[]
@@ -91,6 +100,9 @@ export interface AIMessage {
    * неё частью ответа.
    */
   stopped?: boolean
+  /** Расход этого сообщения: по нему интерфейс обновляет счётчик без лишнего запроса. */
+  tokensIn?: number
+  tokensOut?: number
 }
 
 export interface AIConversation {
@@ -449,29 +461,34 @@ export function needsConsent(config: AIConfig | null, providerId: string, modelR
 }
 
 /**
- * Разбор ошибки помощника: текст для человека и признак «нужно согласие».
+ * Разбор ошибки помощника: текст для человека и признаки, по которым интерфейс
+ * показывает не «ошибку сервера», а объяснение.
  *
  * `consent_required` приходит кодом 409 и означает не сбой, а вопрос: интерфейс по
- * нему показывает согласие, а не красную плашку «ошибка сервера».
+ * нему показывает согласие. `token_budget` — код 429: исчерпан предел расхода за
+ * сутки, и человеку нужно сказать это словами (и показать счётчик), а не «что-то
+ * пошло не так».
  */
 export async function readAIError(
   error: unknown,
-): Promise<{ message: string | null; consentRequired: boolean }> {
+): Promise<{ message: string | null; consentRequired: boolean; tokenBudget: boolean }> {
   const response = (error as { response?: Response } | null)?.response
   if (!response || typeof response.clone !== 'function') {
-    return { message: null, consentRequired: false }
+    return { message: null, consentRequired: false, tokenBudget: false }
   }
   try {
     const body = (await response.clone().json()) as {
       error?: unknown
       consent_required?: unknown
+      token_budget?: unknown
     }
     return {
       message: typeof body?.error === 'string' && body.error ? body.error : null,
       consentRequired: body?.consent_required === true,
+      tokenBudget: body?.token_budget === true,
     }
   } catch {
-    return { message: null, consentRequired: false }
+    return { message: null, consentRequired: false, tokenBudget: false }
   }
 }
 
@@ -483,6 +500,8 @@ export function parseAIConfig(raw: unknown): AIConfig {
     keysReady: record?.keys_ready === true,
     defaultModel: asText(record?.default_model),
     maxToolCalls: asWhole(record?.max_tool_calls),
+    tokensToday: asWhole(record?.tokens_today),
+    tokenLimit: asWhole(record?.token_limit),
     providers: Array.isArray(record?.providers)
       ? record.providers
           .map(parseProvider)
@@ -617,6 +636,8 @@ function parseMessage(raw: unknown): AIMessage | null {
     content: asText(record.content),
     createdAt: asText(record.created_at),
     stopped: record.stopped === true,
+    tokensIn: asWhole(record.tokens_in),
+    tokensOut: asWhole(record.tokens_out),
   }
 }
 
