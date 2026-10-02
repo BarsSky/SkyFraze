@@ -564,6 +564,11 @@ cd frontend && npx tsx tests/project-transfer.ts
 # E2E импорта «в место»: кусок md вставляется между главами — полем формы и
 # перетаскиванием на строку дерева; вкладка видит вставку без перезагрузки
 cd frontend && npx tsx tests/import-into-place.ts
+
+# Поток ответа помощника через прокси: печатает время появления каждого куска.
+# Так проверяется, что SSE действительно поток, а не буферизованный ответ
+# (нужны адрес стенда, токен и ссылка модели):
+node frontend/tests/stream-timing.mjs <url>/ai/conversations/new/stream <token> custom:<модель>
 ```
 
 Основные наборы (`scrollytelling.ts`, `public-feed.ts`, `admin-registration.ts`, скилл

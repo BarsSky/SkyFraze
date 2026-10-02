@@ -135,6 +135,35 @@ func TestSendStreamEmitsDeltasCallsAndChanges(t *testing.T) {
 	}
 }
 
+// Служебный протокол в поток не попадает. Слабые локальные модели (на стенде —
+// gemma-4) отвечают вызовом инструмента ТЕКСТОМ, и в потоке человек видел бы сырой
+// JSON вместо ответа. Проверено живьём: до этой проверки в поток уходило
+// `[{"id":…,"name":"create_sub_event",…}]` и рассуждения из служебного канала.
+func TestSendStreamHidesTextualToolCalls(t *testing.T) {
+	textCall := `[{"name":"create_chapter","arguments":{"title":"Пролог","body_md":"Начало."}}]`
+	e := setup(t, ai.Reply{Content: textCall}, ai.Reply{Content: "Готово."})
+	ctx := context.Background()
+	owner := e.user(t, "owner@example.com")
+	projectID, _, _ := e.seedProject(t, owner)
+
+	events := &collector{}
+	turn, err := e.asst.SendStream(ctx, owner, projectID, uuid.Nil, "stub:stub-1",
+		"Добавь главу «Пролог»", events.emit)
+	if err != nil {
+		t.Fatalf("поток: %v", err)
+	}
+	seen := events.text()
+	if strings.Contains(seen, "create_chapter") || strings.Contains(seen, "arguments") {
+		t.Fatalf("служебный JSON показан человеку: %q", seen)
+	}
+	if len(turn.Changes) != 1 || turn.Changes[0].Title != "Пролог" {
+		t.Fatalf("глава должна быть создана: %+v", turn.Changes)
+	}
+	if turn.Answer != "Готово." {
+		t.Errorf("ответ: %q", turn.Answer)
+	}
+}
+
 // «Стоп» — обрыв потока. Модель успела сказать половину: её надо сохранить, пометить
 // остановленной и не превращать в ошибку помощника.
 func TestSendStreamStopKeepsPartialAnswer(t *testing.T) {

@@ -486,21 +486,30 @@ func (s *Service) converse(
 	// ask — один запрос к модели. Потоком, если события нужны, и обычным запросом,
 	// если нет. Возвращает и то, что уже ушло человеку кусками: при обрыве это
 	// единственный текст, который у него есть, и его надо сохранить.
+	//
+	// Куски проходят через streamGate: модель может отвечать не текстом, а вызовом
+	// инструмента или рассуждениями в служебном канале, и показывать это человеку
+	// нельзя (подробности — в stream_gate.go).
 	ask := func(req ai.Request) (ai.Reply, string, error) {
 		if emit == nil {
 			reply, err := s.models.Chat(ctx, userID, provider, req)
 			return reply, "", err
 		}
-		var streamed strings.Builder
-		reply, err := s.models.StreamChat(ctx, userID, provider, req, func(text string) error {
-			streamed.WriteString(text)
+		gate := newStreamGate(func(text string) error {
 			if err := emit(Event{Type: EventDelta, Text: text}); err != nil {
 				// Писать больше некуда: прекращаем генерацию, а не копим текст в никуда.
 				return errStreamStopped
 			}
 			return nil
 		})
-		return reply, streamed.String(), err
+		reply, err := s.models.StreamChat(ctx, userID, provider, req, gate.feed)
+		if err == nil {
+			// Раунд кончился: придержанное начало (короткий ответ) пора показать.
+			if finishErr := gate.finish(); finishErr != nil {
+				err = finishErr
+			}
+		}
+		return reply, gate.visibleText(), err
 	}
 
 	for round := 0; round < s.limits.MaxRounds; round++ {
