@@ -354,10 +354,12 @@ describe('streamAIMessage', () => {
     const calls: string[] = []
     const changes: string[] = []
     const turn = await streamAIMessage('p1', 'new', 'Добавь главу', 'groq:llama', {
-      onStart: (id) => started.push(id),
-      onDelta: (text) => deltas.push(text),
-      onCall: (call) => calls.push(call.name),
-      onChange: (change) => changes.push(change.title),
+      handlers: {
+        onStart: (id) => started.push(id),
+        onDelta: (text) => deltas.push(text),
+        onCall: (call) => calls.push(call.name),
+        onChange: (change) => changes.push(change.title),
+      },
     })
 
     expect(started).toEqual(['c1'])
@@ -368,6 +370,18 @@ describe('streamAIMessage', () => {
     expect(turn.conversationId).toBe('c1')
     // Запрос уходит на потоковую ручку, а не на обычную.
     expect(mocks.post.mock.calls[0]?.[0]).toBe('projects/p1/ai/conversations/new/stream')
+  })
+
+  it('картинки уходят в теле запроса вместе с вопросом', async () => {
+    mocks.post.mockResolvedValue(
+      body(['data: {"type":"done","turn":{"conversation_id":"c1","answer":"Вижу.","model":"m",' +
+        '"calls":[],"changes":[],"message":{"id":"m2","role":"assistant","content":"Вижу."}}}\n\n']),
+    )
+    const image = 'data:image/png;base64,iVBORw0KGgo='
+    await streamAIMessage('p1', 'new', 'Что на картинке?', 'ollama:зрячая', { images: [image] })
+
+    const options = mocks.post.mock.calls[0]?.[1] as { json?: { images?: string[] } }
+    expect(options?.json?.images).toEqual([image])
   })
 
   it('сбой посреди потока приходит ошибкой, а не коротким ответом', async () => {

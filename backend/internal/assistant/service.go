@@ -291,6 +291,23 @@ func (s *Service) Send(ctx context.Context, userID, projectID, conversationID uu
 func (s *Service) SendStream(
 	ctx context.Context, userID, projectID, conversationID uuid.UUID, modelRef, text string, emit Emitter,
 ) (*Turn, error) {
+	return s.SendStreamImages(ctx, userID, projectID, conversationID, modelRef, text, nil, emit)
+}
+
+// SendStreamImages — тот же вопрос, но с приложенными картинками (data URL).
+//
+// Отдельным методом, а не лишним аргументом в SendStream: вопреки распространённому
+// мнению, картинки к сообщению — редкий случай, и тащить их через все вызовы (включая
+// тесты) ради одного сценария значит усложнить обычный путь. SendStream остаётся тем же
+// и просто передаёт «картинок нет».
+//
+// Картинки НЕ сохраняются в истории беседы: они нужны для одного запроса, а в базе
+// лежали бы мегабайтами, которые никто не перечитывает. Ответ модели остаётся в истории
+// текстом — и если человек захочет показать картинку снова, он приложит её снова.
+func (s *Service) SendStreamImages(
+	ctx context.Context, userID, projectID, conversationID uuid.UUID, modelRef, text string,
+	images []string, emit Emitter,
+) (*Turn, error) {
 	if !s.Enabled() {
 		return nil, ErrDisabled
 	}
@@ -345,6 +362,23 @@ func (s *Service) SendStream(
 	if err := s.checkBudget(ctx, userID); err != nil {
 		return nil, err
 	}
+	// Картинки: проверяем формат и размер до всего остального — незачем заводить беседу
+	// и записывать вопрос, чтобы потом отказать из-за формата файла.
+	if err := ai.ValidateImages(images); err != nil {
+		return nil, err
+	}
+	if len(images) > 0 {
+		// Умеет ли модель смотреть картинки — спрашиваем у провайдера, а не надеемся,
+		// что «как-нибудь разберётся»: модель, которая картинок не видит, ответит так,
+		// будто их не было, и человек будет думать, что она их посмотрела.
+		vision, err := s.models.SupportsVision(ctx, userID, provider, model)
+		if err != nil {
+			return nil, err
+		}
+		if !vision {
+			return nil, fmt.Errorf("%w: %s", ai.ErrNoVision, model)
+		}
+	}
 
 	conversation, err := s.conversation(ctx, userID, projectID, conversationID, modelRef, text)
 	if err != nil {
@@ -390,7 +424,9 @@ func (s *Service) SendStream(
 			treeContext(list, s.limits.MaxEventsInPrompt),
 	})
 	messages = append(messages, history...)
-	messages = append(messages, ai.Message{Role: "user", Content: text})
+	// Картинки идут с вопросом человека и только с ним: в историю они не пишутся (см.
+	// SendStreamImages), а в этом запросе модель должна их видеть.
+	messages = append(messages, ai.Message{Role: "user", Content: text, Images: images})
 
 	// Кадры помощник создаёт САМ: автором правок становится агент, а не человек,
 	// который нажал «спросить» (права при этом проверяются по человеку).

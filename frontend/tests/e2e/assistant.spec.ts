@@ -88,3 +88,47 @@ test('помощник создаёт главу по просьбе в чате
   await expect(panel).toBeVisible()
   await expect(panel.getByText('Создал главу «Пролог».')).toBeVisible()
 })
+
+/**
+ * Приложенная картинка доезжает до провайдера.
+ *
+ * Проверяем весь путь файла: выбор в браузере → чтение в data URL → тело запроса →
+ * проверка «модель видит картинки» на сервере → провайдер. Заглушка отвечает про
+ * картинку только тогда, когда получила её в запросе, поэтому «Вижу картинку» в чате и
+ * есть доказательство, что изображение не потерялось по дороге.
+ */
+test('картинка к вопросу доезжает до модели', async ({ page }) => {
+  test.skip(!(await signIn(page)), 'учётной записи e2e нет и регистрация закрыта')
+
+  const title = `Картинка ${Date.now()}`
+  await page.getByRole('button', { name: '+ Новый проект' }).click()
+  await page.getByPlaceholder('Название').fill(title)
+  await page.getByRole('button', { name: 'Создать' }).click()
+  await page.getByRole('link', { name: title }).click()
+  await expect(page).toHaveURL(/\/projects\/[0-9a-f-]+$/)
+
+  await page.locator('[data-assistant-fab]').click()
+  const panel = page.locator('[data-assistant-panel]')
+  await expect(panel).toBeVisible()
+  const input = panel.getByLabel('Сообщение помощнику')
+  await expect(input).toBeEnabled({ timeout: 15_000 })
+
+  // Кнопка прикрепления есть: заглушка объявляет себя зрячей (capabilities: vision).
+  // Настоящая картинка 1×1: подделывать формат нельзя — сервер проверяет base64.
+  await panel.locator('[data-assistant-file]').setInputFiles({
+    name: 'маяк.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==',
+      'base64',
+    ),
+  })
+  await expect(panel.locator('[data-assistant-attach] img')).toBeVisible()
+
+  await input.fill('Что на картинке?')
+  await panel.getByRole('button', { name: 'Спросить' }).click()
+
+  await expect(panel.getByText('Вижу картинку: на ней маяк.')).toBeVisible({ timeout: 60_000 })
+  // После отправки превью исчезает: картинка была для одного вопроса.
+  await expect(panel.locator('[data-assistant-attach]')).toHaveCount(0)
+})

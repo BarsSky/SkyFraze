@@ -22,6 +22,7 @@ import {
 } from '../../api/assistant'
 import { serverErrorMessage } from '../../api/client'
 import { MarkdownBlock } from '../MarkdownBlock'
+import { MAX_IMAGES, imageFileError, readImageFile } from './imageAttach'
 import { promptHints } from './promptHints'
 
 /**
@@ -106,6 +107,12 @@ export function AssistantPanel({
   const [streaming, setStreaming] = useState<string | null>(null)
   /** Живые вызовы инструментов: счётчик того, что помощник успел сделать. */
   const [liveCalls, setLiveCalls] = useState<string[]>([])
+  /**
+   * Приложенные картинки (data URL). Живут до отправки: история их не помнит, и это
+   * осознанно — хранить мегабайты в переписке незачем (см. SendStreamImages на сервере).
+   */
+  const [images, setImages] = useState<string[]>([])
+  const [attachError, setAttachError] = useState<string | null>(null)
   const [sendError, setSendError] = useState<string | null>(null)
   const [consentNeeded, setConsentNeeded] = useState(false)
   const [agent, setAgent] = useState<AISettings | null>(null)
@@ -120,6 +127,8 @@ export function AssistantPanel({
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
   /** Текущий поток ответа: `abort()` — это и есть кнопка «стоп». */
   const abortRef = useRef<AbortController | null>(null)
+  /** Поле выбора файлов: своя кнопка «Картинка» нажимает его программно. */
+  const fileRef = useRef<HTMLInputElement | null>(null)
   /**
    * Открыто ли окно — в ref, а не только в пропсе.
    *
@@ -221,6 +230,17 @@ export function AssistantPanel({
   const modelIsCloud = useMemo(() => {
     const found = models.find((m) => m.ref === modelRef)
     return found ? found.cloud === true : isCloudModelRef(modelRef)
+  }, [models, modelRef])
+  /**
+   * Видит ли выбранная модель картинки.
+   *
+   * Признак приходит от провайдера (или по имени модели — см. vision.go на сервере).
+   * Если он не подтверждён, кнопка «приложить» не показывается: обещать зрение и молча
+   * отправить картинку туда, где её не увидят, — обман.
+   */
+  const modelSeesImages = useMemo(() => {
+    const found = models.find((m) => m.ref === modelRef)
+    return found?.vision === true
   }, [models, modelRef])
 
   // Согласие — по выбранной МОДЕЛИ, а не по провайдеру: у Ollama рядом с локальными
@@ -365,6 +385,10 @@ export function AssistantPanel({
       setSendError('Выберите модель: без неё помощник не знает, к кому обращаться.')
       return
     }
+    if (images.length > 0 && !modelSeesImages) {
+      setSendError('Выбранная модель не видит картинки: уберите их или выберите другую модель.')
+      return
+    }
     setSending(true)
     setSendError(null)
     setConsentNeeded(false)
@@ -380,19 +404,19 @@ export function AssistantPanel({
     }
     setMessages((current) => [...current, pending])
     setText('')
+    // Картинки уходят с вопросом и после отправки не нужны: в истории их нет, и держать
+    // их в поле значило бы отправить ту же картинку со следующим вопросом «за компанию».
+    setImages([])
 
     const controller = new AbortController()
     abortRef.current = controller
     let answer = ''
     try {
-      const turn = await streamAIMessage(
-        projectId,
-        conversationId,
-        question,
-        modelRef,
-        {
-          // Беседа могла быть только что создана: её идентификатор нужен сразу, иначе
-          // остановленный ответ остался бы в беседе, о которой интерфейс не знает.
+      const turn = await streamAIMessage(projectId, conversationId, question, modelRef, {
+        images,
+        // Беседа могла быть только что создана: её идентификатор нужен сразу, иначе
+        // остановленный ответ остался бы в беседе, о которой интерфейс не знает.
+        handlers: {
           onStart: (id) => setConversationId(id),
           onDelta: (piece) => {
             answer += piece
@@ -401,8 +425,8 @@ export function AssistantPanel({
           onCall: (call) => setLiveCalls((current) => [...current, call.detail || call.name]),
           onChange: (change) => setChanges((current) => [...current, change]),
         },
-        controller.signal,
-      )
+        signal: controller.signal,
+      })
       setConversationId(turn.conversationId || conversationId)
       setMessages((current) => [
         ...current.filter((m) => m.id !== pending.id),
@@ -455,11 +479,56 @@ export function AssistantPanel({
       setLiveCalls([])
       setSending(false)
     }
-  }, [text, sending, modelRef, projectId, conversationId, onProjectChanged, onUnread, refreshConfig])
+  }, [
+    text,
+    sending,
+    modelRef,
+    images,
+    modelSeesImages,
+    projectId,
+    conversationId,
+    onProjectChanged,
+    onUnread,
+    refreshConfig,
+  ])
 
   /** «Стоп»: обрываем запрос — сервер сохранит то, что модель успела сказать. */
   const stop = useCallback(() => {
     abortRef.current?.abort()
+  }, [])
+
+  /**
+   * Прикрепить выбранные файлы.
+   *
+   * Проверяем каждый файл и говорим словами, что не так: молча «не прикрепилось» —
+   * худший вариант, человек не поймёт, что произошло. Файлы читаются по очереди: так
+   * порядок превью совпадает с порядком, в котором человек их выбирал.
+   */
+  const attachFiles = useCallback(
+    async (files: FileList | null) => {
+      if (!files || files.length === 0) return
+      setAttachError(null)
+      const next = [...images]
+      for (const file of Array.from(files)) {
+        const problem = imageFileError(file, next.length)
+        if (problem) {
+          setAttachError(problem)
+          continue
+        }
+        try {
+          next.push(await readImageFile(file))
+        } catch {
+          setAttachError(`«${file.name}»: не удалось прочитать файл`)
+        }
+      }
+      setImages(next)
+    },
+    [images],
+  )
+
+  const removeImage = useCallback((index: number) => {
+    setImages((current) => current.filter((_, i) => i !== index))
+    setAttachError(null)
   }, [])
 
   // Фокус в поле ввода при открытии: человек открыл окно, чтобы написать.
@@ -852,6 +921,24 @@ export function AssistantPanel({
           )}
 
           <footer className="ai-composer">
+            {images.length > 0 && (
+              <div className="ai-attach" data-assistant-attach>
+                {images.map((image, index) => (
+                  <span className="ai-attach__item" key={`${index}-${image.length}`}>
+                    <img src={image} alt={`Приложенная картинка ${index + 1}`} />
+                    <button
+                      type="button"
+                      className="ai-attach__remove"
+                      onClick={() => removeImage(index)}
+                      aria-label={`Убрать картинку ${index + 1}`}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+            {attachError != null && <p className="ai-error ai-error--padded">{attachError}</p>}
             <textarea
               ref={inputRef}
               value={text}
@@ -883,6 +970,39 @@ export function AssistantPanel({
                 >
                   Спросить
                 </button>
+              )}
+              {/* Кнопка прикрепления — только у модели, которая картинки видит: иначе
+                  она обещала бы то, чего модель не умеет. */}
+              {modelSeesImages && (
+                <>
+                  <input
+                    ref={fileRef}
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp,image/gif"
+                    multiple
+                    hidden
+                    data-assistant-file
+                    onChange={(e) => {
+                      void attachFiles(e.target.files)
+                      // Очищаем поле: иначе повторный выбор того же файла не сработает.
+                      e.target.value = ''
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => fileRef.current?.click()}
+                    disabled={sending || images.length >= MAX_IMAGES}
+                    title={
+                      images.length >= MAX_IMAGES
+                        ? `Больше ${MAX_IMAGES} картинок к одному вопросу не приложить`
+                        : 'Приложить картинку: модель умеет их смотреть'
+                    }
+                    data-assistant-attach-button
+                  >
+                    Картинка
+                  </button>
+                </>
               )}
               <button
                 type="button"

@@ -88,6 +88,10 @@ func (c *openAIClient) ListModels(ctx context.Context) ([]Model, error) {
 			Local:     c.provider.Local,
 			Tools:     supportsParameter(m.SupportedParameters, "tools"),
 			ContextKB: m.Context / 1024,
+			// Зрение: сначала метаданные (OpenRouter перечисляет модальности входа),
+			// если их нет — по имени модели (см. vision.go).
+			Vision: (m.Architecture != nil && supportsVisionModality(m.Architecture.InputModalities)) ||
+				looksLikeVisionModel(m.ID),
 		})
 	}
 	return models, nil
@@ -130,11 +134,71 @@ type openAIChatRequest struct {
 }
 
 type openAIMessage struct {
-	Role       string           `json:"role"`
-	Content    string           `json:"content"`
+	Role string `json:"role"`
+	// Content — строка ИЛИ массив частей (текст + картинки). Тип `any`, потому что
+	// этой же структурой разбирается ОТВЕТ сервера: у части серверов контент ответа
+	// тоже приходит массивом частей, и жёсткая строка ломала бы разбор.
+	Content    any              `json:"content"`
 	ToolCalls  []openAIToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string           `json:"tool_call_id,omitempty"`
 	Name       string           `json:"name,omitempty"`
+}
+
+// openAIContentPart — часть контента сообщения: текст или картинка.
+type openAIContentPart struct {
+	Type     string `json:"type"`
+	Text     string `json:"text,omitempty"`
+	ImageURL *struct {
+		URL string `json:"url"`
+	} `json:"image_url,omitempty"`
+}
+
+// contentFor собирает контент сообщения: строку, если картинок нет, и массив частей,
+// если есть (стандартная форма OpenAI — сначала текст, потом картинки).
+//
+// Строкой, а не массивом, когда картинок нет намеренно: часть серверов (и старых
+// версий llama.cpp) массив частей не принимает, и ломать им обычный чат незачем.
+func contentFor(text string, images []string) any {
+	if len(images) == 0 {
+		return text
+	}
+	parts := make([]openAIContentPart, 0, len(images)+1)
+	if strings.TrimSpace(text) != "" {
+		parts = append(parts, openAIContentPart{Type: "text", Text: text})
+	}
+	for _, image := range images {
+		part := openAIContentPart{Type: "image_url"}
+		// data URL уходит как есть: OpenAI-совместимые серверы принимают картинку
+		// именно в таком виде.
+		part.ImageURL = &struct {
+			URL string `json:"url"`
+		}{URL: image}
+		parts = append(parts, part)
+	}
+	return parts
+}
+
+// textOf достаёт текст из контента ответа: обычно это строка, но некоторые серверы
+// отдают массив частей.
+func textOf(content any) string {
+	switch value := content.(type) {
+	case string:
+		return value
+	case []any:
+		var out strings.Builder
+		for _, item := range value {
+			part, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			if text, ok := part["text"].(string); ok {
+				out.WriteString(text)
+			}
+		}
+		return out.String()
+	default:
+		return ""
+	}
 }
 
 type openAITool struct {
@@ -190,7 +254,7 @@ func (c *openAIClient) Chat(ctx context.Context, req Request) (Reply, error) {
 	}
 	choice := out.Choices[0]
 	reply := Reply{
-		Content:   choice.Message.Content,
+		Content:   textOf(choice.Message.Content),
 		Model:     firstNonEmpty(out.Model, req.Model),
 		TokensIn:  out.Usage.PromptTokens,
 		TokensOut: out.Usage.CompletionTokens,
@@ -220,7 +284,8 @@ type openAIStreamChunk struct {
 	Model   string `json:"model"`
 	Choices []struct {
 		Delta struct {
-			Content   string `json:"content"`
+			// Content — строка или массив частей (см. textOf).
+			Content   any `json:"content"`
 			ToolCalls []struct {
 				Index    int    `json:"index"`
 				ID       string `json:"id"`
@@ -310,10 +375,10 @@ func (c *openAIClient) ChatStream(ctx context.Context, req Request, onText func(
 			return nil
 		}
 		delta := chunk.Choices[0].Delta
-		if delta.Content != "" {
-			text.WriteString(delta.Content)
+		if piece := textOf(delta.Content); piece != "" {
+			text.WriteString(piece)
 			if onText != nil {
-				if err := onText(delta.Content); err != nil {
+				if err := onText(piece); err != nil {
 					return err
 				}
 			}
@@ -368,7 +433,12 @@ func (c *openAIClient) ChatStream(ctx context.Context, req Request, onText func(
 func (c *openAIClient) chatBody(req Request) openAIChatRequest {
 	body := openAIChatRequest{Model: req.Model, Temperature: req.Temperature}
 	for _, m := range req.Messages {
-		msg := openAIMessage{Role: m.Role, Content: m.Content, ToolCallID: m.ToolCallID, Name: m.Name}
+		msg := openAIMessage{
+			Role:       m.Role,
+			Content:    contentFor(m.Content, m.Images),
+			ToolCallID: m.ToolCallID,
+			Name:       m.Name,
+		}
 		for _, call := range m.ToolCalls {
 			var tc openAIToolCall
 			tc.ID = call.ID

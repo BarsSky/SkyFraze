@@ -166,6 +166,10 @@ type Model struct {
 	Local     bool   `json:"local"`
 	Tools     bool   `json:"tools"`
 	ContextKB int    `json:"context_kb,omitempty"`
+	// Vision — модель умеет смотреть картинки: к сообщению можно приложить
+	// изображение, и модель его увидит. Признак нужен интерфейсу ДО отправки: обещать
+	// зрение и молча отправить картинку туда, где её не увидят, — обман.
+	Vision bool `json:"vision,omitempty"`
 	// Cloud — модель считается на удалённом сервере, хотя провайдер «локальный»
 	// (облачные модели Ollama: `…:cloud`, `remote_host`). Признак живёт у модели,
 	// а не у провайдера: у одного и того же Ollama локальные и облачные модели
@@ -201,6 +205,11 @@ type Message struct {
 	ToolCallID string `json:"tool_call_id,omitempty"`
 	// Name — имя инструмента у tool-сообщения.
 	Name string `json:"name,omitempty"`
+	// Images — картинки, приложенные к сообщению, в виде data URL
+	// (`data:image/png;base64,…`). Единый вид для всех провайдеров: Ollama ждёт
+	// чистый base64, OpenAI-совместимые — data URL внутри части контента, и перевод
+	// делает клиент провайдера, а не вызывающий.
+	Images []string `json:"images,omitempty"`
 }
 
 // ToolDef — описание инструмента в OpenAI-совместимом виде: его получает модель.

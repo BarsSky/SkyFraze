@@ -50,7 +50,9 @@ const server = createServer((req, res) => {
   if (req.method === 'GET' && req.url?.startsWith('/api/tags')) {
     send({
       models: [
-        { name: 'e2e-stub:latest', model: 'e2e-stub:latest', capabilities: ['tools'] },
+        // vision — чтобы у модели в интерфейсе появилась кнопка «Картинка»: e2e
+        // проверяет и приложенное изображение (см. assistant.spec.ts).
+        { name: 'e2e-stub:latest', model: 'e2e-stub:latest', capabilities: ['tools', 'vision'] },
       ],
     })
     return
@@ -68,23 +70,30 @@ const server = createServer((req, res) => {
       // получил бы «ответ словами» вместо вызова инструмента. Признак того, что
       // инструмент уже выполнен, — сообщение с ролью tool в переписке.
       const messages = Array.isArray(body?.messages) ? body.messages : []
+      // Картинка в запросе — отдельный ответ: так e2e видит, что изображение доехало
+      // до провайдера, а не потерялось по дороге.
+      const hasImage = messages.some(
+        (message) => Array.isArray(message?.images) && message.images.length > 0,
+      )
       const toolDone = messages.some((message) => message.role === 'tool')
-      const answer = toolDone
-        ? { content: 'Создал главу «Пролог».', toolCalls: [] }
-        : {
-            content: '',
-            toolCalls: [
-              {
-                function: {
-                  name: 'create_chapter',
-                  arguments: {
-                    title: 'Пролог',
-                    body_md: '## Начало\n\nТак **начинается** история.',
+      const answer = hasImage
+        ? { content: 'Вижу картинку: на ней маяк.', toolCalls: [] }
+        : toolDone
+          ? { content: 'Создал главу «Пролог».', toolCalls: [] }
+          : {
+              content: '',
+              toolCalls: [
+                {
+                  function: {
+                    name: 'create_chapter',
+                    arguments: {
+                      title: 'Пролог',
+                      body_md: '## Начало\n\nТак **начинается** история.',
+                    },
                   },
                 },
-              },
-            ],
-          }
+              ],
+            }
 
       if (!body?.stream) {
         send({

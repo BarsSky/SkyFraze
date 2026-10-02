@@ -84,10 +84,11 @@ func (c *ollamaClient) ListModels(ctx context.Context) ([]Model, error) {
 			Title:    title,
 			// Облачная модель бесплатной не бывает: за неё платит аккаунт Ollama,
 			// и человек должен видеть это до отправки текста.
-			Free:  !remote,
-			Local: !remote,
-			Cloud: remote,
-			Tools: supportsTools(m.Capabilities),
+			Free:   !remote,
+			Local:  !remote,
+			Cloud:  remote,
+			Tools:  supportsTools(m.Capabilities),
+			Vision: supportsVisionCapability(m.Capabilities),
 		})
 	}
 	return models, nil
@@ -140,6 +141,9 @@ type ollamaMessage struct {
 	Content   string           `json:"content"`
 	ToolCalls []ollamaToolCall `json:"tool_calls,omitempty"`
 	ToolName  string           `json:"tool_name,omitempty"`
+	// Images — картинки сообщения. Ollama ждёт ЧИСТЫЙ base64 без data-заголовка
+	// (в отличие от OpenAI-совместимых, где нужен data URL).
+	Images []string `json:"images,omitempty"`
 }
 
 type ollamaTool struct {
@@ -291,6 +295,9 @@ func (c *ollamaClient) chatBody(req Request) ollamaChatRequest {
 	}
 	for _, m := range req.Messages {
 		msg := ollamaMessage{Role: m.Role, Content: m.Content, ToolName: m.Name}
+		for _, image := range m.Images {
+			msg.Images = append(msg.Images, rawImageData(image))
+		}
 		for _, call := range m.ToolCalls {
 			var tc ollamaToolCall
 			tc.Function.Name = call.Name

@@ -73,6 +73,12 @@ export interface AIModel {
    */
   cloud?: boolean
   contextKb?: number
+  /**
+   * Модель умеет смотреть картинки. Признак нужен ДО отправки: приложить картинку
+   * модели, которая её не видит, значит получить ответ, где картинка молча
+   * проигнорирована, — а человек будет думать, что модель её посмотрела.
+   */
+  vision?: boolean
 }
 
 export interface AICall {
@@ -307,6 +313,18 @@ export interface AIStreamHandlers {
   onChange?: (change: AIChange) => void
 }
 
+/** Необязательная часть вопроса: картинки, обработчики событий и «стоп». */
+export interface AIAskOptions {
+  /**
+   * Картинки в виде data URL. Единый вид с сервером: он сам переводит их в то, что
+   * ждёт конкретный провайдер (Ollama — чистый base64, OpenAI — data URL в части
+   * контента).
+   */
+  images?: string[]
+  handlers?: AIStreamHandlers
+  signal?: AbortSignal
+}
+
 /**
  * Разбор буфера SSE: готовые события и «хвост», который ещё не дописан.
  *
@@ -368,12 +386,12 @@ export async function streamAIMessage(
   conversationId: string,
   text: string,
   model: string,
-  handlers: AIStreamHandlers = {},
-  signal?: AbortSignal,
+  options: AIAskOptions = {},
 ): Promise<AITurn> {
+  const { images = [], handlers = {}, signal } = options
   const response = await http.post(
     `projects/${encodeURIComponent(projectId)}/ai/conversations/${encodeURIComponent(conversationId)}/stream`,
-    { json: { text, model }, signal },
+    { json: { text, model, images }, signal },
   )
   const reader = response.body?.getReader()
   if (!reader) {
@@ -548,6 +566,9 @@ export function parseAIModels(raw: unknown): AIModel[] {
       // Поле необязательное: старый сервер его не присылает, и «не знаем» честнее
       // показать как «умеет» — отказ модели виден в чате.
       tools: model?.tools !== false,
+      // А вот зрение наоборот: «не знаем» показываем как «не умеет». Обещать зрение и
+      // молча потерять картинку хуже, чем не показать кнопку.
+      vision: model?.vision === true,
       contextKb: typeof model?.context_kb === 'number' ? model.context_kb : undefined,
     })
   }

@@ -58,6 +58,10 @@ type stubProvider struct {
 	replies  []ai.Reply
 	requests []stubRequest
 	server   *httptest.Server
+	// raw — тело последнего запроса как есть: нужен там, где важно, ЧТО именно ушло
+	// провайдеру (картинки уходят частями контента, и разбирать их в структуру ради
+	// проверки незачем).
+	raw string
 }
 
 type stubRequest struct {
@@ -81,11 +85,20 @@ func newStub(t *testing.T, replies ...ai.Reply) *stubProvider {
 	mux.HandleFunc("/models", func(w http.ResponseWriter, r *http.Request) {
 		writeStubJSON(w, map[string]any{"data": []map[string]any{
 			{"id": "stub-1", "name": "Заглушка", "supported_parameters": []string{"tools"}},
+			// Зрячая модель: провайдер сам говорит, что принимает картинки. Нужна,
+			// чтобы проверять приложенные изображения (см. stream/tokens тесты).
+			{
+				"id": "stub-vision", "name": "Зрячая заглушка",
+				"supported_parameters": []string{"tools"},
+				"architecture":         map[string]any{"input_modalities": []string{"text", "image"}},
+			},
 		}})
 	})
 	mux.HandleFunc("/chat/completions", func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
 		var req stubRequest
-		_ = json.NewDecoder(r.Body).Decode(&req)
+		_ = json.Unmarshal(raw, &req)
+		stub.setRaw(string(raw))
 		reply := stub.record(req)
 		if req.Stream {
 			writeStubOpenAIStream(w, reply)
@@ -121,8 +134,10 @@ func newStub(t *testing.T, replies ...ai.Reply) *stubProvider {
 		}})
 	})
 	mux.HandleFunc("/api/chat", func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
 		var req stubRequest
-		_ = json.NewDecoder(r.Body).Decode(&req)
+		_ = json.Unmarshal(raw, &req)
+		stub.setRaw(string(raw))
 		reply := stub.record(req)
 		if req.Stream {
 			writeStubOllamaStream(w, reply)
@@ -165,6 +180,20 @@ func (s *stubProvider) setReplies(replies ...ai.Reply) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.replies = replies
+}
+
+func (s *stubProvider) setRaw(raw string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.raw = raw
+}
+
+// lastRaw — тело последнего запроса к провайдеру как есть: картинки уходят частями
+// контента, и проверять их удобнее по тому, что реально было отправлено.
+func (s *stubProvider) lastRaw() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.raw
 }
 
 func (s *stubProvider) calls() int {

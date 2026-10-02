@@ -231,12 +231,12 @@ describe('AssistantPanel', () => {
         _conversationId: string,
         _text: string,
         _model: string,
-        handlers: { onDelta?: (text: string) => void } = {},
+        options: { handlers?: { onDelta?: (text: string) => void } } = {},
       ) =>
         new Promise<AITurn>((resolve) => {
           // Сервер сначала присылает куски текста, и только потом — итог.
-          handlers.onDelta?.('Создал ')
-          handlers.onDelta?.('главу «Пролог».')
+          options.handlers?.onDelta?.('Создал ')
+          options.handlers?.onDelta?.('главу «Пролог».')
           finish = resolve
         }),
     )
@@ -323,6 +323,98 @@ describe('AssistantPanel', () => {
     expect(screen.queryByRole('button', { name: 'Продолжи историю' })).toBeNull()
   })
 
+  it('кнопку прикрепления показывает только у модели, которая видит картинки', async () => {
+    // Слепая модель: кнопки нет. Обещать зрение и молча потерять картинку нельзя.
+    mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
+    renderPanel()
+    await screen.findByLabelText('Сообщение помощнику')
+    expect(screen.queryByRole('button', { name: 'Картинка' })).toBeNull()
+
+    cleanup()
+    mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'], defaultModel: 'groq:зрячая' })
+    mocks.models.mockResolvedValue([
+      {
+        id: 'зрячая',
+        ref: 'groq:зрячая',
+        provider: 'groq',
+        title: 'Зрячая',
+        free: false,
+        local: false,
+        tools: true,
+        vision: true,
+      },
+    ])
+    renderPanel()
+    expect(await screen.findByRole('button', { name: 'Картинка' })).toBeTruthy()
+  })
+
+  it('прикрепляет картинку, показывает превью и отправляет её с вопросом', async () => {
+    mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'], defaultModel: 'groq:зрячая' })
+    mocks.models.mockResolvedValue([
+      {
+        id: 'зрячая',
+        ref: 'groq:зрячая',
+        provider: 'groq',
+        title: 'Зрячая',
+        free: false,
+        local: false,
+        tools: true,
+        vision: true,
+      },
+    ])
+    mocks.stream.mockResolvedValue(TURN)
+    renderPanel()
+
+    const input = (await screen.findByLabelText('Сообщение помощнику')) as HTMLTextAreaElement
+    await waitFor(() => expect(input.disabled).toBe(false))
+    const fileInput = document.querySelector('[data-assistant-file]') as HTMLInputElement
+    expect(fileInput).not.toBeNull()
+    fireEvent.change(fileInput, {
+      target: { files: [new File([new Uint8Array([137, 80, 78, 71])], 'маяк.png', { type: 'image/png' })] },
+    })
+
+    // Превью появляется после чтения файла — и вместе с ним кнопка «убрать».
+    await waitFor(() => expect(document.querySelector('[data-assistant-attach] img')).not.toBeNull())
+    expect(screen.getByRole('button', { name: 'Убрать картинку 1' })).toBeTruthy()
+
+    fireEvent.change(input, { target: { value: 'Что на картинке?' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Спросить' }))
+
+    await waitFor(() => {
+      const options = mocks.stream.mock.calls[0]?.[4] as { images?: string[] } | undefined
+      expect(options?.images?.length).toBe(1)
+      expect(options?.images?.[0]?.startsWith('data:image/png;base64,')).toBe(true)
+    })
+    // После отправки превью исчезает: картинка была для одного вопроса, а не «навсегда».
+    await waitFor(() => expect(document.querySelector('[data-assistant-attach]')).toBeNull())
+  })
+
+  it('объясняет, почему файл не прикрепился', async () => {
+    mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'], defaultModel: 'groq:зрячая' })
+    mocks.models.mockResolvedValue([
+      {
+        id: 'зрячая',
+        ref: 'groq:зрячая',
+        provider: 'groq',
+        title: 'Зрячая',
+        free: false,
+        local: false,
+        tools: true,
+        vision: true,
+      },
+    ])
+    renderPanel()
+    await screen.findByLabelText('Сообщение помощнику')
+
+    const fileInput = document.querySelector('[data-assistant-file]') as HTMLInputElement
+    fireEvent.change(fileInput, {
+      target: { files: [new File([new Uint8Array([1, 2, 3])], 'схема.svg', { type: 'image/svg+xml' })] },
+    })
+
+    expect(await screen.findByText(/схема\.svg/)).toBeTruthy()
+    expect(document.querySelector('[data-assistant-attach]')).toBeNull()
+  })
+
   it('«стоп» обрывает ответ и оставляет сказанное с пометкой', async () => {
     mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
     mocks.stream.mockImplementation(
@@ -331,12 +423,14 @@ describe('AssistantPanel', () => {
         _conversationId: string,
         _text: string,
         _model: string,
-        handlers: { onDelta?: (text: string) => void } = {},
-        signal?: AbortSignal,
+        options: {
+          handlers?: { onDelta?: (text: string) => void }
+          signal?: AbortSignal
+        } = {},
       ) =>
         new Promise<AITurn>((_resolve, reject) => {
-          handlers.onDelta?.('Первый абзац')
-          signal?.addEventListener('abort', () => {
+          options.handlers?.onDelta?.('Первый абзац')
+          options.signal?.addEventListener('abort', () => {
             const error = new Error('aborted')
             error.name = 'AbortError'
             reject(error)

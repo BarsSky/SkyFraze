@@ -208,19 +208,24 @@ func (h *Handler) SendMessage(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var body struct {
-		Text  string `json:"text"`
-		Model string `json:"model"`
-	}
-	if err := decodeJSON(w, r, &body); err != nil {
+	var body messageBody
+	if err := decodeLargeJSON(w, r, &body); err != nil {
 		return
 	}
-	turn, err := h.svc.Send(r.Context(), uid, pid, cid, body.Model, body.Text)
+	turn, err := h.svc.SendStreamImages(r.Context(), uid, pid, cid, body.Model, body.Text, body.Images, nil)
 	if err != nil {
 		h.fail(w, "send message", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, turn)
+}
+
+// messageBody — тело запроса на вопрос помощнику. Картинки необязательны.
+type messageBody struct {
+	Text  string `json:"text"`
+	Model string `json:"model"`
+	// Images — картинки в виде data URL (`data:image/png;base64,…`).
+	Images []string `json:"images"`
 }
 
 // StreamMessage — POST .../ai/conversations/{cid}/stream: тот же вопрос, но ответ
@@ -238,11 +243,8 @@ func (h *Handler) StreamMessage(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var body struct {
-		Text  string `json:"text"`
-		Model string `json:"model"`
-	}
-	if err := decodeJSON(w, r, &body); err != nil {
+	var body messageBody
+	if err := decodeLargeJSON(w, r, &body); err != nil {
 		return
 	}
 
@@ -250,7 +252,7 @@ func (h *Handler) StreamMessage(w http.ResponseWriter, r *http.Request) {
 	defer stream.close()
 	go stream.ping(r.Context(), ssePingEvery)
 
-	turn, err := h.svc.SendStream(r.Context(), uid, pid, cid, body.Model, body.Text, stream.send)
+	turn, err := h.svc.SendStreamImages(r.Context(), uid, pid, cid, body.Model, body.Text, body.Images, stream.send)
 	if err != nil {
 		if !stream.startedNow() {
 			h.fail(w, "stream message", err)
@@ -322,6 +324,9 @@ func (h *Handler) fail(w http.ResponseWriter, op string, err error) {
 			"для этой модели нужен ключ провайдера — добавьте свой в настройках помощника")
 	case errors.Is(err, ai.ErrUnauthorized):
 		writeErr(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, ai.ErrNoVision):
+		// Не «ошибка сервера», а объяснение: выбранная модель картинок не видит.
+		writeErr(w, http.StatusUnsupportedMediaType, err.Error())
 	case errors.Is(err, ai.ErrUnavailable):
 		writeErr(w, http.StatusBadGateway, err.Error())
 	case errors.Is(err, store.ErrNotFound):
@@ -335,6 +340,20 @@ func (h *Handler) fail(w http.ResponseWriter, op string, err error) {
 // decodeJSON читает небольшое тело запроса и отвечает 400 на мусор.
 func decodeJSON(w http.ResponseWriter, r *http.Request, out any) error {
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(out); err != nil {
+		writeErr(w, http.StatusBadRequest, "не разобрал запрос")
+		return err
+	}
+	return nil
+}
+
+// decodeLargeJSON — то же, но с запасом под приложенные картинки.
+//
+// Предел считается так: до трёх картинок по 4 МБ в base64 (это ~5.3 МБ каждая) плюс
+// текст вопроса. Ставить общий предел в мегабайты для ВСЕХ ручек незачем — там хватает
+// 64 КБ; здесь он свой, и это видно по названию функции.
+func decodeLargeJSON(w http.ResponseWriter, r *http.Request, out any) error {
+	const limit = int64(ai.MaxImageDataURLLen*ai.MaxImagesPerMessage + 256<<10)
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit)).Decode(out); err != nil {
 		writeErr(w, http.StatusBadRequest, "не разобрал запрос")
 		return err
 	}
