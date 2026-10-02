@@ -53,6 +53,7 @@ const config: AIConfig = {
       freeByDefault: true,
       hasKey: true,
       standKey: false,
+      keyless: false,
       keyRequired: false,
     },
     {
@@ -63,6 +64,7 @@ const config: AIConfig = {
       freeByDefault: true,
       hasKey: false,
       standKey: false,
+      keyless: false,
       keyRequired: true,
     },
   ],

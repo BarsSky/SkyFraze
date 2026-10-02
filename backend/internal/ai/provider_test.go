@@ -12,14 +12,24 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/skyfraze/backend/internal/ai"
 )
+
+// testLogger — логгер в никуда: в тестах сообщения сервиса не нужны.
+func testLogger(t *testing.T) *slog.Logger {
+	t.Helper()
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
 
 // stub — поддельный провайдер: отдаёт то, что мы ему сказали, и записывает, что у
 // него спросили.
@@ -27,6 +37,8 @@ type stub struct {
 	server   *httptest.Server
 	lastPath string
 	lastBody map[string]any
+	// lastAuth — заголовок Authorization как он пришёл (пусто — заголовка не было).
+	lastAuth string
 }
 
 func newStub(t *testing.T, handler func(w http.ResponseWriter, r *http.Request, s *stub)) *stub {
@@ -35,6 +47,7 @@ func newStub(t *testing.T, handler func(w http.ResponseWriter, r *http.Request, 
 	s.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.lastPath = r.URL.Path
 		s.lastBody = nil
+		s.lastAuth = r.Header.Get("Authorization")
 		if r.Body != nil && r.Method == http.MethodPost {
 			var body map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&body)
@@ -257,6 +270,144 @@ func TestOllamaCloudModelsAreNotLocal(t *testing.T) {
 	// до него.
 	if !ai.IsCloudModelRef("glm-5.2:cloud") || ai.IsCloudModelRef("qwen2.5:7b") {
 		t.Errorf("признак облачной модели по имени работает неверно")
+	}
+}
+
+// Свой сервер моделей (llama.cpp, vLLM) ключа обычно не требует.
+//
+// Два правила, и оба проверены здесь: клиент не отказывается работать без ключа, и
+// заголовок Authorization не отправляется пустым — часть серверов на «Bearer » с
+// пустым значением отвечает 401, хотя без заголовка работала бы.
+func TestOpenAIKeylessServerWithoutKey(t *testing.T) {
+	s := newStub(t, func(w http.ResponseWriter, r *http.Request, _ *stub) {
+		switch r.URL.Path {
+		case "/models":
+			_, _ = w.Write([]byte(`{"data":[{"id":"gemma-4-E4B-it-Q4_K_M"}]}`))
+		case "/chat/completions":
+			_, _ = w.Write([]byte(`{"model":"gemma-4-E4B-it-Q4_K_M","choices":[{"message":{
+				"role":"assistant","content":"Привет"}}],"usage":{"prompt_tokens":5,"completion_tokens":2}}`))
+		default:
+			t.Errorf("неожиданный путь: %s", r.URL.Path)
+		}
+	})
+	provider := s.provider(ai.KindOpenAI, "custom")
+	provider.Keyless = true
+	provider.Local = true
+
+	client, err := ai.NewClient(provider, "", 5*time.Second)
+	if err != nil {
+		t.Fatalf("сервер без ключа: %v", err)
+	}
+	models, err := client.ListModels(context.Background())
+	if err != nil || len(models) != 1 {
+		t.Fatalf("список моделей: %v (%d)", err, len(models))
+	}
+	// Модель своего сервера — локальная: интерфейс по этому признаку говорит, что
+	// текст проекта никуда не уходит.
+	if !models[0].Local {
+		t.Errorf("модель своего сервера не помечена локальной: %+v", models[0])
+	}
+	if s.lastAuth != "" {
+		t.Errorf("ключ не задан, а заголовок отправлен: %q", s.lastAuth)
+	}
+	if _, err := client.Chat(context.Background(), ai.Request{
+		Model: "gemma-4-E4B-it-Q4_K_M", Messages: []ai.Message{{Role: "user", Content: "привет"}},
+	}); err != nil {
+		t.Fatalf("чат без ключа: %v", err)
+	}
+
+	// Тот же сервер, но помеченный как требующий ключа: отказ ДО запроса, чтобы
+	// человек видел «нужен ключ», а не 401 от чужого сервиса.
+	strict := s.provider(ai.KindOpenAI, "groq")
+	if _, err := ai.NewClient(strict, "", 5*time.Second); !errors.Is(err, ai.ErrNoKey) {
+		t.Fatalf("провайдер с ключом должен требовать ключ, получено: %v", err)
+	}
+}
+
+// Явный размер контекста для Ollama-подобного сервера.
+//
+// Без него llama.cpp-подобные серверы уходят в автоперезагрузку модели и отвечают
+// «retry in 30s» на каждый запрос; с ним — обрабатывают сразу.
+func TestOllamaSendsNumCtxOnlyWhenConfigured(t *testing.T) {
+	s := newStub(t, func(w http.ResponseWriter, _ *http.Request, _ *stub) {
+		_, _ = w.Write([]byte(`{"model":"gemma-4-E4B-it-Q4_K_M","message":{"role":"assistant","content":"Привет"}}`))
+	})
+	provider := s.provider(ai.KindOllama, "ollama")
+	provider.NumCtx = 8192
+
+	client, _ := ai.NewClient(provider, "", 5*time.Second)
+	if _, err := client.Chat(context.Background(), ai.Request{
+		Model: "gemma-4-E4B-it-Q4_K_M", Messages: []ai.Message{{Role: "user", Content: "привет"}},
+		Temperature: 0.4,
+	}); err != nil {
+		t.Fatalf("чат: %v", err)
+	}
+	options, _ := s.lastBody["options"].(map[string]any)
+	if options == nil || options["num_ctx"] != float64(8192) {
+		t.Fatalf("num_ctx не передан: %+v", s.lastBody["options"])
+	}
+	if options["temperature"] != 0.4 {
+		t.Errorf("температура потерялась: %+v", options)
+	}
+
+	// Не задан — поля нет вовсе: у настоящей Ollama свой разумный размер контекста,
+	// и навязывать ей наше значение нельзя.
+	plain := s.provider(ai.KindOllama, "ollama")
+	plainClient, _ := ai.NewClient(plain, "", 5*time.Second)
+	if _, err := plainClient.Chat(context.Background(), ai.Request{
+		Model: "qwen2.5:7b", Messages: []ai.Message{{Role: "user", Content: "привет"}},
+		Temperature: 0.4,
+	}); err != nil {
+		t.Fatalf("чат: %v", err)
+	}
+	options, _ = s.lastBody["options"].(map[string]any)
+	if _, ok := options["num_ctx"]; ok {
+		t.Fatalf("num_ctx передан без настройки: %+v", options)
+	}
+}
+
+// Свой OpenAI-совместимый сервер: без ключа и без согласия, если админ сказал, что он
+// локальный. Проверяем и обратное — по умолчанию он «чужой», и согласие нужно.
+func TestProviderListCustomServerFlags(t *testing.T) {
+	local := ai.ProviderList(ai.ProviderOptions{
+		OpenAICompatURL: "http://host.docker.internal:18080/v1", OpenAICompatLocal: true,
+	})
+	if len(local) != 5 {
+		t.Fatalf("провайдеров %d, ожидалось 5 (только свои серверы плюс размещённые)", len(local))
+	}
+	custom := local[0]
+	if custom.ID != "custom" || !custom.Keyless || !custom.Local || custom.BaseURL != "http://host.docker.internal:18080/v1" {
+		t.Fatalf("свой локальный сервер разобран неверно: %+v", custom)
+	}
+
+	remote := ai.ProviderList(ai.ProviderOptions{OpenAICompatURL: "https://gateway.example.com/v1"})
+	if remote[0].Local {
+		t.Errorf("сервер без пометки «локальный» не должен считаться своим: %+v", remote[0])
+	}
+	if !remote[0].Keyless {
+		t.Errorf("свой сервер не должен требовать ключ: %+v", remote[0])
+	}
+
+	ollama := ai.ProviderList(ai.ProviderOptions{OllamaURL: "http://host.docker.internal:18080", OllamaNumCtx: 8192})
+	if ollama[0].ID != "ollama" || ollama[0].NumCtx != 8192 {
+		t.Fatalf("Ollama-провайдер: %+v", ollama[0])
+	}
+}
+
+// Локальный провайдер не требует согласия: текст проекта остаётся у человека.
+func TestLocalProviderNeedsNoConsent(t *testing.T) {
+	// Хранилище намеренно nil: если бы решение о согласии шло в базу, тест упал бы —
+	// а для своего сервера туда ходить незачем.
+	svc := ai.New(nil, ai.Config{
+		Enabled: true, OpenAICompatURL: "http://host.docker.internal:18080/v1", OpenAICompatLocal: true,
+	}, nil, testLogger(t))
+
+	if !svc.IsLocal("custom") {
+		t.Fatalf("свой сервер должен считаться локальным")
+	}
+	allowed, err := svc.HasConsentFor(context.Background(), uuid.New(), "custom", "gemma-4-E4B-it-Q4_K_M")
+	if err != nil || !allowed {
+		t.Fatalf("для своего сервера согласие не нужно: %v (%v)", allowed, err)
 	}
 }
 

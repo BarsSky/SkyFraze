@@ -51,6 +51,25 @@ type Provider struct {
 	// KeyEnv — переменная окружения с ключом стенда (пусто — ключа стенда нет).
 	// Ключ пользователя имеет приоритет над ключом стенда.
 	KeyEnv string
+	// Keyless — ключ не нужен вовсе: свой сервер в локальной сети (llama.cpp, vLLM)
+	// обычно не проверяет Authorization, и требовать «введите ключ, чтобы поговорить
+	// со своим же сервером» бессмысленно. Если ключ всё же задан — он отправляется.
+	Keyless bool
+	// NumCtx — явный размер контекста для запросов к Ollama-подобному серверу
+	// (`options.num_ctx`); 0 — не задавать.
+	//
+	// Зачем это нужно. У llama.cpp-подобных серверов есть автоперезагрузка модели под
+	// «правильный» контекст: без явного `num_ctx` сервер решает, что запросу нужен
+	// большой контекст, уходит в перезагрузку и отвечает «retry in 30s» на КАЖДЫЙ
+	// запрос — со стороны это выглядит как «модель не работает». С явным небольшим
+	// значением (например, 8192) запрос обрабатывается сразу.
+	NumCtx int
+	// Local — модели считаются на СВОЕЙ машине (или в своей сети), а не у чужого
+	// сервиса. Для согласия это принципиально: текст проекта никуда не уходит, и
+	// спрашивать разрешение было бы формальностью, приучающей нажимать «согласен»
+	// не читая. Ставится админом для своего OpenAI-совместимого сервера: локальный
+	// он или корпоративный шлюз — знает только он.
+	Local bool
 	// FreeByDefault — модели этого провайдера бесплатны для человека либо потому,
 	// что провайдер локальный (Ollama), либо потому, что тариф бесплатный (Groq,
 	// Google). У OpenRouter решает цена конкретной модели (см. models.go).
@@ -59,21 +78,36 @@ type Provider struct {
 	Note string
 }
 
+// ProviderOptions — что стенд знает о своих серверах моделей (из окружения).
+type ProviderOptions struct {
+	// OllamaURL — адрес Ollama-совместимого сервера (пусто — такого провайдера нет).
+	OllamaURL string
+	// OllamaNumCtx — явный размер контекста для него (0 — не задавать).
+	OllamaNumCtx int
+	// OpenAICompatURL — адрес своего OpenAI-совместимого сервера.
+	OpenAICompatURL string
+	// OpenAICompatLocal — считать ли этот сервер своим (считает на своей машине или в
+	// своей сети). Знает только админ: llama.cpp в соседней комнате и корпоративный
+	// шлюз в интернете выглядят для кода одинаково.
+	OpenAICompatLocal bool
+}
+
 // ProviderList — провайдеры, которые видит стенд. Собирается из конфигурации:
 // локальный сервер — если задан его адрес, остальные — всегда (они просто требуют
 // ключ, а его может дать пользователь).
 //
 // Почему список фиксирован, а не «все провайдеры интернета»: у каждого свой формат, и
 // обещать «автоматически подключим всё бесплатное» было бы обманом — бесплатно без
-// ключа работает только локальная модель.
-func ProviderList(ollamaURL, compatURL string) []Provider {
+// ключа работает только модель на своей машине.
+func ProviderList(opts ProviderOptions) []Provider {
 	out := make([]Provider, 0, 4)
-	if strings.TrimSpace(ollamaURL) != "" {
+	if strings.TrimSpace(opts.OllamaURL) != "" {
 		out = append(out, Provider{
 			ID:            "ollama",
 			Title:         "Ollama",
 			Kind:          KindOllama,
-			BaseURL:       strings.TrimRight(strings.TrimSpace(ollamaURL), "/"),
+			BaseURL:       strings.TrimRight(strings.TrimSpace(opts.OllamaURL), "/"),
+			NumCtx:        opts.OllamaNumCtx,
 			FreeByDefault: true,
 			// Локальность — свойство МОДЕЛИ, а не провайдера: у Ollama рядом с
 			// локальными бывают облачные (`…:cloud`, считаются на ollama.com).
@@ -81,11 +115,18 @@ func ProviderList(ollamaURL, compatURL string) []Provider {
 			Note: "модели на своей машине работают без ключа; облачные («:cloud») считаются на ollama.com и требуют согласия",
 		})
 	}
-	if strings.TrimSpace(compatURL) != "" {
+	if strings.TrimSpace(opts.OpenAICompatURL) != "" {
+		note := "OpenAI-совместимый сервер (llama.cpp, vLLM, шлюз): ключ не нужен, если его не требует сам сервер"
+		if opts.OpenAICompatLocal {
+			note = "свой OpenAI-совместимый сервер (llama.cpp, vLLM): считает на вашей машине, ключ не нужен"
+		}
 		out = append(out, Provider{
 			ID: "custom", Title: "Свой сервер моделей", Kind: KindOpenAI,
-			BaseURL: strings.TrimRight(strings.TrimSpace(compatURL), "/"), KeyEnv: "CUSTOM_AI_API_KEY",
-			Note: "OpenAI-совместимый сервер (llama.cpp, vLLM, шлюз): нужен ваш ключ",
+			BaseURL: strings.TrimRight(strings.TrimSpace(opts.OpenAICompatURL), "/"), KeyEnv: "CUSTOM_AI_API_KEY",
+			Keyless:       true,
+			Local:         opts.OpenAICompatLocal,
+			FreeByDefault: true,
+			Note:          note,
 		})
 	}
 	out = append(out,
@@ -216,13 +257,13 @@ func httpTimeout(seconds int) time.Duration {
 }
 
 // NewClient собирает клиента для провайдера. key — ключ (пользователя или стенда);
-// для Ollama он не нужен.
+// для Ollama и для провайдеров с Keyless он не нужен.
 func NewClient(p Provider, key string, timeout time.Duration) (Client, error) {
 	switch p.Kind {
 	case KindOllama:
 		return newOllama(p, timeout), nil
 	case KindOpenAI:
-		if strings.TrimSpace(key) == "" {
+		if strings.TrimSpace(key) == "" && !p.Keyless {
 			return nil, fmt.Errorf("%w: %s", ErrNoKey, p.ID)
 		}
 		return newOpenAI(p, key, timeout), nil

@@ -42,13 +42,22 @@ type toolBlock struct {
 
 // ParseTextToolCalls вынимает вызовы из текста ответа и возвращает текст без них.
 //
+// Два случая, и оба встречаются на живых локальных моделях:
+//
+//  1. блок ```skyfraze-tools``` — формат, которому мы учим модель в правилах;
+//  2. «голый» JSON в ответе — так отвечает, например, gemma4 через Ollama-подобный
+//     сервер: `[{"type":"function","function":{"name":"create_chapter",…}}]` текстом.
+//     Принимаем его, только если среди вызовов есть ХОТЯ БЫ ОДИН известный инструмент:
+//     иначе любой JSON-ответ модели (а это бывает и просто данными) превращался бы в
+//     попытку что-то создать.
+//
 // Ошибку разбора не возвращаем намеренно: сломанный JSON — это не «сбой сервера», а
 // ответ модели, и человек должен увидеть её текст, а не пятисотую ошибку. Поэтому
 // неразобранный блок просто остаётся в тексте (его видно), а вызовов нет.
 func ParseTextToolCalls(content string) (string, []ai.ToolCall) {
 	block, ok := findToolBlock(content)
 	if !ok {
-		return content, nil
+		return parseLooseToolCalls(content)
 	}
 	calls := decodeTextCalls(content[block.bodyStart:block.bodyEnd])
 	if len(calls) == 0 {
@@ -56,6 +65,42 @@ func ParseTextToolCalls(content string) (string, []ai.ToolCall) {
 	}
 	cleaned := strings.TrimSpace(content[:block.start] + content[block.end:])
 	return cleaned, calls
+}
+
+// parseLooseToolCalls разбирает ответ, целиком состоящий из JSON-вызовов.
+//
+// Хвосты вида `<end_of_turn>` и `<|im_end|>` отрезаем: локальные модели дописывают их
+// в текст ответа, и из-за одного такого хвоста JSON перестал бы разбираться.
+func parseLooseToolCalls(content string) (string, []ai.ToolCall) {
+	trimmed := trimSpecialTokens(strings.TrimSpace(content))
+	if !strings.HasPrefix(trimmed, "[") && !strings.HasPrefix(trimmed, "{") {
+		return content, nil
+	}
+	calls := decodeTextCalls(trimmed)
+	if !hasKnownTool(calls) {
+		return content, nil
+	}
+	return "", calls
+}
+
+// trimSpecialTokens убирает служебные токены локальных моделей по краям ответа.
+func trimSpecialTokens(s string) string {
+	for _, token := range []string{"<end_of_turn>", "<|im_end|>", "<|eot_id|>", "<|end|>", "</s>"} {
+		s = strings.ReplaceAll(s, token, "")
+	}
+	return strings.TrimSpace(s)
+}
+
+// hasKnownTool — есть ли среди вызовов инструмент, который мы действительно умеем
+// выполнять. Это и есть защита от «JSON-ответа, который не вызов».
+func hasKnownTool(calls []ai.ToolCall) bool {
+	for _, call := range calls {
+		switch call.Name {
+		case ToolListEvents, ToolReadEvent, ToolCreateChapter, ToolCreateSub:
+			return true
+		}
+	}
+	return false
 }
 
 // findToolBlock ищет блок ```skyfraze-tools … ```.

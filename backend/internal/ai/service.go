@@ -27,11 +27,15 @@ import (
 type Config struct {
 	Enabled         bool
 	OllamaURL       string
+	OllamaNumCtx    int
 	OpenAICompatURL string
-	SecretKey       string
-	DefaultModel    string
-	MaxToolCalls    int
-	TimeoutSeconds  int
+	// OpenAICompatLocal — свой ли это сервер (считает на своей машине или в своей
+	// сети). От этого зависит, нужно ли согласие на отправку текста проекта.
+	OpenAICompatLocal bool
+	SecretKey         string
+	DefaultModel      string
+	MaxToolCalls      int
+	TimeoutSeconds    int
 }
 
 // Service — доступные модели и ключи пользователей.
@@ -50,11 +54,16 @@ type Service struct {
 // функция, и вместо падения он должен честно сказать, чего не хватает.
 func New(st *store.Store, cfg Config, envKeys map[string]string, logger *slog.Logger) *Service {
 	svc := &Service{
-		store:     st,
-		logger:    logger,
-		providers: ProviderList(cfg.OllamaURL, cfg.OpenAICompatURL),
-		cfg:       cfg,
-		envKeys:   envKeys,
+		store:  st,
+		logger: logger,
+		providers: ProviderList(ProviderOptions{
+			OllamaURL:         cfg.OllamaURL,
+			OllamaNumCtx:      cfg.OllamaNumCtx,
+			OpenAICompatURL:   cfg.OpenAICompatURL,
+			OpenAICompatLocal: cfg.OpenAICompatLocal,
+		}),
+		cfg:     cfg,
+		envKeys: envKeys,
 	}
 	if cfg.SecretKey != "" {
 		cipher, err := NewCipher(cfg.SecretKey)
@@ -98,6 +107,8 @@ type ProviderInfo struct {
 	Free     bool   `json:"free_by_default"`
 	HasKey   bool   `json:"has_key"`
 	StandKey bool   `json:"stand_key"`
+	// Keyless — ключ не нужен вовсе (свой сервер моделей).
+	Keyless bool `json:"keyless"`
 	// KeyRequired — без ключа провайдер работать не будет.
 	KeyRequired bool `json:"key_required"`
 }
@@ -114,12 +125,15 @@ func (s *Service) Providers(ctx context.Context, userID uuid.UUID) ([]ProviderIn
 	out := make([]ProviderInfo, 0, len(s.providers))
 	for _, p := range s.providers {
 		stand := s.standKey(p) != ""
-		hasKey := p.Kind == KindOllama || mine[p.ID] || stand
+		// Провайдер без ключа (свой сервер) готов сразу: ключа у него нет и не нужно.
+		ready := p.Kind == KindOllama || p.Keyless || stand
+		hasKey := ready || mine[p.ID]
 		out = append(out, ProviderInfo{
 			ID: p.ID, Title: p.Title, Note: p.Note,
-			Local: p.Kind == KindOllama, Free: p.FreeByDefault,
+			Local: s.IsLocal(p.ID), Free: p.FreeByDefault,
 			HasKey: hasKey, StandKey: stand,
-			KeyRequired: p.Kind != KindOllama && !hasKey,
+			Keyless:     p.Keyless,
+			KeyRequired: !ready && !mine[p.ID],
 		})
 	}
 	return out, nil
@@ -183,18 +197,20 @@ func (s *Service) DeleteKey(ctx context.Context, userID uuid.UUID, providerID st
 	return s.store.DeleteAIKey(ctx, userID, providerID)
 }
 
-// IsLocal — работает ли провайдер на этой же машине.
+// IsLocal — считает ли провайдер модели на своей машине (или в своей сети).
 //
 // Нужно согласию: отправка текста проекта ЛОКАЛЬНОЙ модели ничего никуда не отправляет,
 // и спрашивать разрешение на «поговорить с собственной машиной» было бы формальностью,
-// которая приучает нажимать «согласен» не читая.
+// которая приучает нажимать «согласен» не читая. Для своего OpenAI-совместимого сервера
+// это решает админ (`AI_OPENAI_COMPAT_LOCAL`): код не отличает llama.cpp в соседней
+// комнате от корпоративного шлюза в интернете.
 //
 // Осторожно: у Ollama, кроме локальных, бывают ОБЛАЧНЫЕ модели (`…:cloud`) — они
 // считаются на ollama.com, хотя провайдер тот же. Поэтому для решения о согласии этого
 // признака мало, см. HasConsentFor.
 func (s *Service) IsLocal(providerID string) bool {
 	provider, ok := s.providerByID(providerID)
-	return ok && provider.Kind == KindOllama
+	return ok && (provider.Local || provider.Kind == KindOllama)
 }
 
 // Consents — провайдеры, на отправку которым пользователь согласился (и которые ещё
@@ -373,7 +389,7 @@ func (s *Service) clientFor(ctx context.Context, userID uuid.UUID, provider Prov
 	if key == "" {
 		key = s.standKey(provider)
 	}
-	if key == "" && provider.Kind != KindOllama {
+	if key == "" && provider.Kind != KindOllama && !provider.Keyless {
 		return nil, fmt.Errorf("%w: %s", ErrNoKey, provider.Title)
 	}
 	return NewClient(provider, key, httpTimeout(s.cfg.TimeoutSeconds))

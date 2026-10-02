@@ -76,11 +76,15 @@ func (c *openAIClient) ListModels(ctx context.Context) ([]Model, error) {
 			title = m.Name
 		}
 		models = append(models, Model{
-			ID:        m.ID,
-			Ref:       c.provider.ID + ":" + m.ID,
-			Provider:  c.provider.ID,
-			Title:     title,
-			Free:      free,
+			ID:       m.ID,
+			Ref:      c.provider.ID + ":" + m.ID,
+			Provider: c.provider.ID,
+			Title:    title,
+			Free:     free,
+			// Локальность — свойство провайдера: свой сервер (llama.cpp, vLLM) считает
+			// на своей машине, облачные — нет. Модели облачных сервисов локальными не
+			// бывают никогда.
+			Local:     c.provider.Local,
 			Tools:     supportsParameter(m.SupportedParameters, "tools"),
 			ContextKB: m.Context / 1024,
 		})
@@ -233,7 +237,7 @@ func (c *openAIClient) get(ctx context.Context, path string, out any) error {
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.key)
+	c.authorize(req)
 	return c.do(req, out)
 }
 
@@ -247,8 +251,19 @@ func (c *openAIClient) post(ctx context.Context, path string, body any, out any)
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+c.key)
+	c.authorize(req)
 	return c.do(req, out)
+}
+
+// authorize ставит заголовок авторизации, только если ключ есть.
+//
+// Свой сервер (llama.cpp, vLLM) ключа обычно не требует, и отправлять ему
+// «Authorization: Bearer » с пустым значением нельзя: часть серверов на такое
+// отвечает 401, хотя без заголовка работала бы.
+func (c *openAIClient) authorize(req *http.Request) {
+	if c.key != "" {
+		req.Header.Set("Authorization", "Bearer "+c.key)
+	}
 }
 
 func (c *openAIClient) do(req *http.Request, out any) error {

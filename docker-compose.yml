@@ -59,7 +59,12 @@ services:
       # AI_OLLAMA_URL=http://host.docker.internal:11434 (в Linux — адрес docker0).
       AI_ENABLED: ${AI_ENABLED:-false}
       AI_OLLAMA_URL: ${AI_OLLAMA_URL:-}
+      # Явный размер контекста для Ollama-подобных серверов (llama.cpp без него уходит
+      # в бесконечную автоперезагрузку модели). 0 — не задавать.
+      AI_OLLAMA_NUM_CTX: ${AI_OLLAMA_NUM_CTX:-0}
       AI_OPENAI_COMPAT_URL: ${AI_OPENAI_COMPAT_URL:-}
+      # Свой ли это сервер (считает на своей машине): для него согласие не нужно.
+      AI_OPENAI_COMPAT_LOCAL: ${AI_OPENAI_COMPAT_LOCAL:-false}
       AI_SECRET_KEY: ${AI_SECRET_KEY:-}
       AI_DEFAULT_MODEL: ${AI_DEFAULT_MODEL:-}
       AI_MAX_TOOL_CALLS: ${AI_MAX_TOOL_CALLS:-10}

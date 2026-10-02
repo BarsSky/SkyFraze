@@ -200,6 +200,44 @@ func TestParseTextToolCallsUnknownArgumentShape(t *testing.T) {
 	}
 }
 
+// Голый JSON-вызов без ограждения: так отвечает, например, gemma4 через
+// Ollama-подобный сервер — `tool_calls` он не отдаёт, а пишет вызов текстом.
+func TestParseTextToolCallsLooseJSON(t *testing.T) {
+	content := "[{\"call_id\": \"call_1\", \"type\": \"function\", \"function\": " +
+		"{\"name\": \"create_chapter\", \"arguments\": \"{\\\"title\\\": \\\"Пролог\\\", " +
+		"\\\"body_md\\\": \\\"так начинается история\\\"}\"}}]\n<end_of_turn>"
+	cleaned, calls := ParseTextToolCalls(content)
+	if len(calls) != 1 || calls[0].Name != ToolCreateChapter {
+		t.Fatalf("вызовы: %+v", calls)
+	}
+	if calls[0].Arguments["title"] != "Пролог" || calls[0].Arguments["body_md"] != "так начинается история" {
+		t.Fatalf("аргументы: %+v", calls[0].Arguments)
+	}
+	// Служебный JSON не показывается человеку — он уже превратился в действие.
+	if cleaned != "" {
+		t.Fatalf("текст ответа: %q", cleaned)
+	}
+}
+
+// Голый JSON с НЕЗНАКОМЫМ инструментом вызовом не считается: иначе любой JSON-ответ
+// модели (например, просто данные) превращался бы в попытку что-то создать.
+func TestParseTextToolCallsLooseJSONNeedsKnownTool(t *testing.T) {
+	content := `{"события": [{"title": "Пролог"}]}`
+	cleaned, calls := ParseTextToolCalls(content)
+	if len(calls) != 0 {
+		t.Fatalf("JSON без известного инструмента разобран как вызов: %+v", calls)
+	}
+	if cleaned != content {
+		t.Fatalf("текст изменён: %q", cleaned)
+	}
+
+	unknown := `[{"name": "delete_project", "arguments": {}}]`
+	cleaned, calls = ParseTextToolCalls(unknown)
+	if len(calls) != 0 || cleaned != unknown {
+		t.Fatalf("незнакомый инструмент не должен разбираться: %+v / %q", calls, cleaned)
+	}
+}
+
 // Описания инструментов — часть контракта с моделью: у каждого должна быть схема
 // параметров, иначе провайдер отклонит запрос целиком.
 func TestToolDefsAreWellFormed(t *testing.T) {

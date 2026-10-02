@@ -193,6 +193,15 @@ func (c *ollamaClient) Chat(ctx context.Context, req Request) (Reply, error) {
 	if req.Temperature > 0 {
 		body.Options = map[string]any{"temperature": req.Temperature}
 	}
+	// Явный размер контекста (AI_OLLAMA_NUM_CTX). Нужен llama.cpp-подобным серверам:
+	// без него они решают, что запросу нужен большой контекст, уходят в автоперезагрузку
+	// модели и отвечают «retry in 30s» на каждый запрос.
+	if c.provider.NumCtx > 0 {
+		if body.Options == nil {
+			body.Options = map[string]any{}
+		}
+		body.Options["num_ctx"] = c.provider.NumCtx
+	}
 
 	var out ollamaChatResponse
 	if err := c.post(ctx, "/api/chat", body, &out); err != nil {

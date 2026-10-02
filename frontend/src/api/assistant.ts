@@ -30,6 +30,8 @@ export interface AIProviderInfo {
   hasKey: boolean
   /** Ключ задан администратором стенда: модели доступны без своего ключа. */
   standKey: boolean
+  /** Ключ не нужен вовсе: свой сервер моделей (llama.cpp, vLLM) в своей сети. */
+  keyless: boolean
   /** Без ключа провайдер не заработает — интерфейс предложит его добавить. */
   keyRequired: boolean
 }
@@ -272,6 +274,7 @@ function parseProvider(raw: unknown): AIProviderInfo | null {
     freeByDefault: record?.free_by_default === true,
     hasKey: record?.has_key === true,
     standKey: record?.stand_key === true,
+    keyless: record?.keyless === true,
     keyRequired: record?.key_required === true,
   }
 }
