@@ -40,12 +40,18 @@ SELECT (SELECT pg_size_pretty(coalesce(sum(octet_length(yjs_state)), 0)::bigint)
 
 \echo ''
 \echo '=== Проекты-тяжеловесы (топ-20 по снапшоту) ==='
+-- Название показываем ТОЛЬКО у опубликованных проектов: у приватных его заменяет
+-- владелец. Название приватного проекта — такое же содержимое, как текст главы, а для
+-- действия («попросить владельца почистить») хватает владельца и id.
 SELECT p.id,
-       left(p.title, 40) AS title,
+       CASE WHEN p.is_public THEN left(p.title, 40) ELSE '— приватный —' END AS title,
+       coalesce(u.email, '') AS owner,
        pg_size_pretty(coalesce(octet_length(s.yjs_state), 0)::bigint) AS snapshot,
        (SELECT count(*) FROM events e WHERE e.project_id = p.id) AS events,
        pg_size_pretty(coalesce((SELECT sum(a.size) FROM assets a WHERE a.project_id = p.id), 0)::bigint) AS assets_size
-  FROM projects p LEFT JOIN project_event_state s ON s.project_id = p.id
+  FROM projects p
+  LEFT JOIN users u ON u.id = p.owner_id
+  LEFT JOIN project_event_state s ON s.project_id = p.id
  ORDER BY octet_length(s.yjs_state) DESC NULLS LAST
  LIMIT 20;
 

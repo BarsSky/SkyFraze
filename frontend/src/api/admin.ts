@@ -121,7 +121,14 @@ export interface TableSize {
  */
 export interface ProjectUsage {
   id: string
-  title: string
+  /**
+   * Название приходит только у опубликованных проектов: название приватного проекта —
+   * такое же содержимое, как текст главы, и админу оно не нужно. Для действий есть
+   * владелец и id.
+   */
+  title?: string
+  is_public: boolean
+  owner_email: string
   asset_bytes: number
   snapshot_bytes: number
 }

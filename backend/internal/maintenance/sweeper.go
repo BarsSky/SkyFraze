@@ -116,8 +116,9 @@ type Report struct {
 	SnapshotCount int64 `json:"snapshot_count"`
 	SnapshotBytes int64 `json:"snapshot_bytes"`
 	// ProjectsUsage — вес проектов поимённо, от тяжёлых к лёгким: вложения и снапшот.
-	// Содержимое проектов здесь не читается — админ отвечает за инсталляцию, а не за
-	// то, что в историях написано, но «кто занимает место» знать обязан.
+	// Названия приходят только у опубликованных проектов: название приватного проекта —
+	// такое же содержимое, как текст главы, и админу оно не нужно. Для действий в
+	// отчёте есть владелец (owner_email) и id.
 	ProjectsUsage []store.ProjectUsage `json:"projects_usage,omitempty"`
 	EventRows     int64                `json:"event_rows"`
 	EventTextSize int64                `json:"event_text_bytes"`
@@ -304,13 +305,17 @@ func (s *Sweeper) logReport(report *Report, swept bool) {
 		"missing", report.MissingFiles,
 		"scan_ms", report.ScanMillis,
 	}
-	// Самый тяжёлый проект — в лог: по нему сразу видно, куда идти.
+	// Самый тяжёлый проект — в лог: по нему сразу видно, куда идти. Название только
+	// у публичных проектов (Display), у приватных — владелец: логи читает тот же
+	// админ, а название приватного проекта — содержимое.
 	if len(report.ProjectsUsage) > 0 {
+		heaviest := report.ProjectsUsage[0]
 		attrs = append(attrs,
-			"heaviest_project", report.ProjectsUsage[0].Title,
-			"heaviest_bytes", report.ProjectsUsage[0].Total(),
-			"heaviest_asset_bytes", report.ProjectsUsage[0].Assets,
-			"heaviest_snapshot_bytes", report.ProjectsUsage[0].Snapshot)
+			"heaviest_project", heaviest.Display(),
+			"heaviest_project_id", heaviest.ID,
+			"heaviest_bytes", heaviest.Total(),
+			"heaviest_asset_bytes", heaviest.Assets,
+			"heaviest_snapshot_bytes", heaviest.Snapshot)
 	}
 	if swept {
 		attrs = append(attrs, "removed_files", report.RemovedFiles, "removed_bytes", report.RemovedBytes)

@@ -26,8 +26,17 @@ const report = (partial: Partial<StorageReport> = {}): StorageReport => ({
   snapshot_count: 10,
   snapshot_bytes: 728242,
   projects_usage: [
-    { id: 'p1', title: 'Планета — АнуВаар', asset_bytes: 5481636, snapshot_bytes: 16209 },
-    { id: 'p2', title: 'ИНДЕКС ФАЙЛОВ', asset_bytes: 0, snapshot_bytes: 711378 },
+    // Публичный проект: название видно и так, в ленте.
+    {
+      id: 'p1',
+      title: 'Планета — АнуВаар',
+      is_public: true,
+      owner_email: 'author@example.com',
+      asset_bytes: 5481636,
+      snapshot_bytes: 16209,
+    },
+    // Приватный: названия нет вовсе — сервер его не присылает, видно владельца.
+    { id: 'p2', is_public: false, owner_email: 'owner@example.com', asset_bytes: 0, snapshot_bytes: 711378 },
   ],
   event_rows: 340,
   event_text_bytes: 210 * 1024,
@@ -93,7 +102,7 @@ describe('StoragePanel', () => {
     expect(screen.getByText(/обход каталога: 12 мс/)).toBeTruthy()
   })
 
-  it('объясняет расхождения каталога с базой и называет тяжёлый проект', async () => {
+  it('показывает вес проектов, но названия — только у публичных', async () => {
     calls.report.mockResolvedValue(
       report({ pending_files: 2, missing_files: 1, missing_examples: [{ key: 'proj/карта.png' }] }),
     )
@@ -109,11 +118,17 @@ describe('StoragePanel', () => {
     // Строка без файла — это содержимое проекта: показываем хотя бы один ключ,
     // иначе по числу непонятно, где искать.
     expect(diff).toMatch(/proj\/карта\.png/)
-    fireEvent.click(screen.getByText(/Проекты и их вес/))
-    expect(screen.getByText('Планета — АнуВаар')).toBeTruthy()
+
+    // Публичный проект — по названию (оно и так видно в ленте), приватный — по
+    // владельцу: название приватного проекта админу не показываем.
+    const table = document.querySelector('.admin__storage-more')?.textContent ?? ''
+    expect(table).toMatch(/Планета — АнуВаар/)
+    expect(table).toMatch(/публичный/)
+    expect(table).toMatch(/приватный проект/)
+    expect(table).toMatch(/owner@example\.com/)
     // Вес по частям: вложения и история правок — разными числами.
-    expect(screen.getByText(/файлы 5\.2 МБ · история 16 КБ · всего 5\.2 МБ/)).toBeTruthy()
-    expect(screen.getByText(/не содержимое проектов/)).toBeTruthy()
+    expect(table).toMatch(/файлы 5\.2 МБ · история 16 КБ · всего 5\.2 МБ/)
+    expect(screen.getByText(/Название приватного проекта — тоже содержимое/)).toBeTruthy()
   })
 
   it('уборка спрашивает подтверждение и показывает, что убрала', async () => {

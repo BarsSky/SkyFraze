@@ -263,7 +263,7 @@ func TestDeleteProjectRemovesFiles(t *testing.T) {
 
 // Отчёт называет тяжёлые проекты поимённо: «база выросла» — не ответ на вопрос
 // «что с этим делать», а имя проекта в отчёте — ответ.
-func TestStorageReportNamesHeavySnapshots(t *testing.T) {
+func TestStorageReportNamesHeavyProjects(t *testing.T) {
 	e := setup(t)
 	ctx := context.Background()
 	owner := e.user(t, "owner@example.com")
@@ -291,8 +291,19 @@ func TestStorageReportNamesHeavySnapshots(t *testing.T) {
 	if len(report.ProjectsUsage) != 2 {
 		t.Fatalf("проектов в отчёте %d, ожидалось 2: %+v", len(report.ProjectsUsage), report.ProjectsUsage)
 	}
-	if report.ProjectsUsage[0].ID != heavy.ID || report.ProjectsUsage[0].Title != "Тяжёлый проект" {
+	if report.ProjectsUsage[0].ID != heavy.ID {
 		t.Errorf("первым должен быть самый тяжёлый: %+v", report.ProjectsUsage[0])
+	}
+	// Приватный проект в отчёте без названия: названия видны только у публичных, а
+	// вместо них — владелец, по которому и договариваются об уборке.
+	if report.ProjectsUsage[0].Title != "" {
+		t.Errorf("название приватного проекта попало в отчёт: %q", report.ProjectsUsage[0].Title)
+	}
+	if report.ProjectsUsage[0].OwnerEmail != "owner@example.com" {
+		t.Errorf("владелец проекта в отчёте: %q", report.ProjectsUsage[0].OwnerEmail)
+	}
+	if got := report.ProjectsUsage[0].Display(); got != "приватный проект · owner@example.com" {
+		t.Errorf("подпись проекта: %q", got)
 	}
 	if report.ProjectsUsage[0].Total() < report.ProjectsUsage[1].Total() {
 		t.Errorf("порядок по весу нарушен: %+v", report.ProjectsUsage)

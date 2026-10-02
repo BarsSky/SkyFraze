@@ -1034,31 +1034,55 @@ func (s *Store) ProjectAssetBytes(ctx context.Context) (map[uuid.UUID]int64, err
 }
 
 // ProjectUsage — вес проекта по частям: вложения и снапшот CRDT.
+//
+// Название приходит ТОЛЬКО у опубликованных проектов (в запросе оно маскируется):
+// название приватного проекта — такое же содержимое, как текст главы, и админ его
+// видеть не должен. Для действий («попросить владельца почистить») хватает id и
+// владельца, а публичное название и так видно всем в ленте.
 type ProjectUsage struct {
-	ID       uuid.UUID `json:"id" db:"id"`
-	Title    string    `json:"title" db:"title"`
-	Assets   int64     `json:"asset_bytes" db:"asset_bytes"`
-	Snapshot int64     `json:"snapshot_bytes" db:"snapshot_bytes"`
+	ID         uuid.UUID `json:"id" db:"id"`
+	Title      string    `json:"title,omitempty" db:"title"`
+	IsPublic   bool      `json:"is_public" db:"is_public"`
+	OwnerEmail string    `json:"owner_email" db:"owner_email"`
+	Assets     int64     `json:"asset_bytes" db:"asset_bytes"`
+	Snapshot   int64     `json:"snapshot_bytes" db:"snapshot_bytes"`
 }
 
 // Total — суммарный вес проекта: по нему список и сортируется.
 func (p ProjectUsage) Total() int64 { return p.Assets + p.Snapshot }
 
+// Display — как проект называть в отчёте: публичный — по названию, приватный — как
+// «приватный проект» с владельцем. Одна функция, чтобы интерфейс, лог и SQL-отчёт
+// говорили одно и то же.
+func (p ProjectUsage) Display() string {
+	if p.IsPublic && p.Title != "" {
+		return p.Title
+	}
+	if p.OwnerEmail != "" {
+		return "приватный проект · " + p.OwnerEmail
+	}
+	return "приватный проект"
+}
+
 // ProjectUsageList — вес проектов, от тяжёлых к лёгким. limit ограничивает список:
 // отчёт админки показывает верхушку, а не все проекты стенда.
 //
-// Содержимое проектов здесь не читается вовсе — только размеры и заголовки: админ
-// отвечает за инсталляцию, а не за то, что в историях написано.
+// Содержимое проектов здесь не читается вовсе — ни названий приватных проектов, ни
+// текстов: только размеры, владелец и признак публикации. Админ отвечает за
+// инсталляцию, а не за то, что в историях написано.
 func (s *Store) ProjectUsageList(ctx context.Context, limit int) ([]ProjectUsage, error) {
 	if limit <= 0 {
 		limit = 20
 	}
 	return qAll[ProjectUsage](ctx, s.Pool,
 		`SELECT p.id,
-		        p.title,
+		        CASE WHEN p.is_public THEN p.title ELSE '' END AS title,
+		        p.is_public,
+		        coalesce(u.email, '') AS owner_email,
 		        coalesce(a.bytes, 0) AS asset_bytes,
 		        coalesce(st.bytes, 0) AS snapshot_bytes
 		   FROM projects p
+		   LEFT JOIN users u ON u.id = p.owner_id
 		   LEFT JOIN (SELECT project_id, sum(size) AS bytes FROM assets GROUP BY project_id) a
 		          ON a.project_id = p.id
 		   LEFT JOIN (SELECT project_id, octet_length(yjs_state) AS bytes
