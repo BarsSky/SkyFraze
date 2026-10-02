@@ -1732,11 +1732,41 @@ func (s *Service) UseLiveDoc(live LiveDoc) { s.live = live }
 type ImportIntoResult struct {
 	// Events — сколько событий вставлено.
 	Events int
+	// Created — что именно вставлено: идентификатор и заголовок каждого события.
+	// Нужно тому, кто вставил: интерфейсу — открыть созданный кадр, ИИ-помощнику —
+	// сказать «создана глава „Пролог“» со ссылкой. Без этого пришлось бы сравнивать
+	// дерево до и после, а у помощника дерево читается из проекции и могло бы
+	// отстать от документа.
+	Created []CreatedEvent
 	// Warning — вставка сделана, но что-то на серверной стороне не доехало
 	// (например, не сохранился снапшот или не перестроилась таблица событий).
 	// Это не ошибка запроса: события уже в документе проекта, и повторный импорт
 	// только задвоил бы кусок. Поэтому человеку это показывают предупреждением.
 	Warning string
+}
+
+// CreatedEvent — одно вставленное событие.
+type CreatedEvent struct {
+	ID    uuid.UUID `json:"id"`
+	Title string    `json:"title"`
+	// Root — корень куска: то событие, которое встало в выбранное место, а не
+	// подвесилось под другим событием куска. Помощнику и интерфейсу почти всегда
+	// нужен именно он.
+	Root bool `json:"root"`
+}
+
+// createdEvents сопоставляет вставленные события с заголовками разбора: порядок у
+// них общий (buildSeeds идёт по parsed.Events подряд), поэтому индексы совпадают.
+func createdEvents(parsed *ParsedMarkdown, seeds []yjs.EventSeed) []CreatedEvent {
+	out := make([]CreatedEvent, 0, len(seeds))
+	for i, seed := range seeds {
+		title := ""
+		if i < len(parsed.Events) {
+			title = parsed.Events[i].Title
+		}
+		out = append(out, CreatedEvent{ID: uuid.MustParse(seed.ID), Title: title, Root: i == 0})
+	}
+	return out
 }
 
 // ImportMarkdownInto вставляет разобранный кусок в СУЩЕСТВУЮЩИЙ проект.
@@ -1790,6 +1820,7 @@ func (s *Service) ImportMarkdownInto(
 	// создан).
 	seeds := buildSeeds(parsed, assetIDs, place.ParentID)
 	chunkDepth := yjs.SeedDepth(seeds)
+	created := createdEvents(parsed, seeds)
 
 	// Живая комната — главный путь: в ней документ, который редакторы видят сейчас.
 	// Глубину она проверяет сама, по своему документу (он может быть свежее базы).
@@ -1805,7 +1836,7 @@ func (s *Service) ImportMarkdownInto(
 			return ImportIntoResult{}, ErrMarkdownBusy
 		case outcome.Handled:
 			inserted = true
-			return ImportIntoResult{Events: len(seeds), Warning: outcome.Warning}, nil
+			return ImportIntoResult{Events: len(seeds), Created: created, Warning: outcome.Warning}, nil
 		}
 	}
 
@@ -1866,7 +1897,7 @@ func (s *Service) ImportMarkdownInto(
 	// делает хаб после правок редакторов: один источник правды, одна проекция.
 	// Её сбой вставку не отменяет (снапшот уже записан), поэтому это
 	// предупреждение, а не ошибка: иначе человек повторил бы импорт и задвоил кусок.
-	result := ImportIntoResult{Events: len(seeds)}
+	result := ImportIntoResult{Events: len(seeds), Created: created}
 	if err := s.projectDocument(ctx, projectID, userID, doc); err != nil {
 		result.Warning = fmt.Sprintf(
 			"кусок вставлен в проект, но таблица событий не перестроена (%v) — она обновится при следующем сохранении", err)

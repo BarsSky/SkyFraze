@@ -18,6 +18,7 @@ import (
 	"github.com/skyfraze/backend/internal/admin"
 	"github.com/skyfraze/backend/internal/ai"
 	"github.com/skyfraze/backend/internal/assets"
+	"github.com/skyfraze/backend/internal/assistant"
 	"github.com/skyfraze/backend/internal/auth"
 	"github.com/skyfraze/backend/internal/coauthors"
 	"github.com/skyfraze/backend/internal/collab"
@@ -185,6 +186,12 @@ func main() {
 		"CUSTOM_AI_API_KEY":  os.Getenv("CUSTOM_AI_API_KEY"),
 	}, logger)
 	aiH := ai.NewHandler(aiSvc, logger)
+
+	// Беседы внутри проекта: контекст, инструменты и выполнение изменений. Помощник
+	// создаёт кадры ТЕМ ЖЕ путём, что импорт Markdown «в место» (transfer), поэтому
+	// открытые вкладки видят созданное сразу, а не после перезагрузки.
+	assistantSvc := assistant.New(st, aiSvc, projSvc, transferSvc, cfg.AIMaxToolCalls, logger)
+	assistantH := assistant.NewHandler(assistantSvc, logger)
 
 	collabHub := collab.NewHub(logger, cfg.JWTSecret, evSvc, cfg.CORSOrigins)
 	go collabHub.Run(ctx)
@@ -360,6 +367,10 @@ func main() {
 		// выбранное место дерева (`parent_id` / `after_id` в форме). Отдельно от
 		// /api/projects/import/markdown, который создаёт НОВЫЙ проект.
 		r.Post("/import/markdown", transferH.MarkdownImportInto)
+
+		// ИИ-помощник: беседы и создание кадров инструментами. Права проверяет
+		// сервис (editor+), согласие на отправку текста провайдеру — тоже он.
+		assistantH.Routes(r)
 	})
 
 	// global invitation acceptance

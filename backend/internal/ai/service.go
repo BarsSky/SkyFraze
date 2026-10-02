@@ -183,6 +183,90 @@ func (s *Service) DeleteKey(ctx context.Context, userID uuid.UUID, providerID st
 	return s.store.DeleteAIKey(ctx, userID, providerID)
 }
 
+// IsLocal — работает ли провайдер на этой же машине.
+//
+// Нужно согласию: отправка текста проекта ЛОКАЛЬНОЙ модели ничего никуда не отправляет,
+// и спрашивать разрешение на «поговорить с собственной машиной» было бы формальностью,
+// которая приучает нажимать «согласен» не читая.
+func (s *Service) IsLocal(providerID string) bool {
+	provider, ok := s.providerByID(providerID)
+	return ok && provider.Kind == KindOllama
+}
+
+// Consents — провайдеры, на отправку которым пользователь согласился (и которые ещё
+// существуют на стенде: список провайдеров может измениться после перенастройки).
+func (s *Service) Consents(ctx context.Context, userID uuid.UUID) ([]string, error) {
+	if !s.Enabled() {
+		return nil, nil
+	}
+	stored, err := s.store.AIConsents(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(stored))
+	for _, id := range stored {
+		if _, ok := s.providerByID(id); ok {
+			out = append(out, id)
+		}
+	}
+	return out, nil
+}
+
+// HasConsent — можно ли отправлять текст этому провайдеру. Локальный — всегда можно.
+func (s *Service) HasConsent(ctx context.Context, userID uuid.UUID, providerID string) (bool, error) {
+	if s.IsLocal(providerID) {
+		return true, nil
+	}
+	consents, err := s.Consents(ctx, userID)
+	if err != nil {
+		return false, err
+	}
+	wanted := strings.ToLower(strings.TrimSpace(providerID))
+	for _, id := range consents {
+		if id == wanted {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// SetConsent — человек согласился отправлять текст проекта этому провайдеру.
+func (s *Service) SetConsent(ctx context.Context, userID uuid.UUID, providerID string) error {
+	provider, ok := s.providerByID(providerID)
+	if !ok {
+		return fmt.Errorf("неизвестный провайдер: %s", providerID)
+	}
+	return s.store.SetAIConsent(ctx, userID, provider.ID)
+}
+
+// DeleteConsent — согласие отозвано.
+func (s *Service) DeleteConsent(ctx context.Context, userID uuid.UUID, providerID string) error {
+	providerID = strings.ToLower(strings.TrimSpace(providerID))
+	if providerID == "" {
+		return errors.New("не указан провайдер")
+	}
+	return s.store.DeleteAIConsent(ctx, userID, providerID)
+}
+
+// ProviderTitle — человеческое имя провайдера (для сообщений об ошибке).
+func (s *Service) ProviderTitle(providerID string) string {
+	if provider, ok := s.providerByID(providerID); ok {
+		return provider.Title
+	}
+	return providerID
+}
+
+// ParseModelRef разбирает 'provider:model' на части. Модель может содержать
+// двоеточия (например, «qwen2.5:7b»), поэтому делим по ПЕРВОМУ двоеточию.
+func ParseModelRef(ref string) (provider, model string, err error) {
+	ref = strings.TrimSpace(ref)
+	idx := strings.Index(ref, ":")
+	if idx <= 0 || idx == len(ref)-1 {
+		return "", "", fmt.Errorf("модель задаётся как 'провайдер:модель', а не %q", ref)
+	}
+	return strings.ToLower(strings.TrimSpace(ref[:idx])), strings.TrimSpace(ref[idx+1:]), nil
+}
+
 // checkKey проверяет ключ запросом списка моделей: 401/403 означает «ключ не принят»,
 // недоступность провайдера — не повод не сохранить ключ (может, у него перерыв).
 func (s *Service) checkKey(ctx context.Context, provider Provider, key string) error {

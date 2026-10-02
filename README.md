@@ -420,6 +420,9 @@ SkyFraze/
 │   │   ├── events/               Yjs binary state persistence
 │   │   ├── collab/               WebSocket hub
 │   │   ├── storage/              ObjectStore interface + LocalStore
+│   │   ├── transfer/             экспорт/импорт архива и Markdown (в т.ч. вставка «в место»)
+│   │   ├── ai/                   ИИ-помощник: провайдеры моделей, ключи, согласия
+│   │   ├── assistant/            ИИ-помощник в проекте: инструменты, беседы, лимиты
 │   │   ├── store/                typed pgx queries
 │   │   └── platform/              config, logger, db pool, migrate
 │   ├── migrations/                SQL schema (versioned: schema_migrations, идемпотентные 0001+)

@@ -39,6 +39,8 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Get("/models", h.Models)
 	r.Post("/keys", h.SetKey)
 	r.Delete("/keys/{provider}", h.DeleteKey)
+	r.Post("/consent", h.SetConsent)
+	r.Delete("/consent/{provider}", h.DeleteConsent)
 }
 
 type providerDTO struct {
@@ -63,13 +65,63 @@ func (h *Handler) Config(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "не удалось получить провайдеров")
 		return
 	}
+	// Согласия отдаём вместе с провайдерами: интерфейсу нужно и то, и другое сразу —
+	// иначе он показал бы «можно спрашивать», не зная, спрашивали ли уже.
+	consents, err := h.svc.Consents(r.Context(), uid)
+	if err != nil {
+		h.logger.Error("ai consents", "err", err)
+		writeErr(w, http.StatusInternalServerError, "не удалось получить согласия")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"enabled":        h.svc.Enabled(),
 		"keys_ready":     h.svc.KeysReady(),
 		"default_model":  h.svc.DefaultModel(),
 		"max_tool_calls": h.svc.MaxToolCalls(),
 		"providers":      providers,
+		"consents":       nonNil(consents),
 	})
+}
+
+// SetConsent — POST /api/ai/consent {provider}: человек разрешил отправлять текст
+// проекта этому провайдеру. Отдельная ручка, а не галочка «при первом сообщении»
+// на сервере: согласие должно быть явным действием человека, а не побочным эффектом
+// запроса на создание главы.
+func (h *Handler) SetConsent(w http.ResponseWriter, r *http.Request) {
+	uid, err := auth.UserIDFromCtx(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var body struct {
+		Provider string `json:"provider"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "не разобрал запрос")
+		return
+	}
+	if err := h.svc.SetConsent(r.Context(), uid, body.Provider); err != nil {
+		h.writeAIError(w, "ai set consent", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"provider": strings.ToLower(strings.TrimSpace(body.Provider)),
+		"agreed":   true,
+	})
+}
+
+// DeleteConsent — DELETE /api/ai/consent/{provider}: согласие отозвано.
+func (h *Handler) DeleteConsent(w http.ResponseWriter, r *http.Request) {
+	uid, err := auth.UserIDFromCtx(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if err := h.svc.DeleteConsent(r.Context(), uid, chi.URLParam(r, "provider")); err != nil {
+		h.writeAIError(w, "ai delete consent", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // Models — GET /api/ai/models?provider=groq: модели одного провайдера.
@@ -161,4 +213,13 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 
 func writeErr(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
+}
+
+// nonNil — пустой список в JSON должен быть [], а не null: интерфейс перебирает его
+// и не должен проверять на null.
+func nonNil(list []string) []string {
+	if list == nil {
+		return []string{}
+	}
+	return list
 }
