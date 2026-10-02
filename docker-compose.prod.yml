@@ -116,6 +116,31 @@ services:
     networks:
       - skyfraze-net
 
+  # Локальная модель (Ollama) — ЕДИНСТВЕННЫЙ вариант «бесплатно и без ключа»:
+  # считает на машине стенда, текст проекта никуда не уходит.
+  #
+  # Намеренно НЕ включена и закомментирована, а не спрятана в профиль: обычное
+  # обновление не должно тянуть гигабайты образа и занимать память. Эта подсказка
+  # живёт в репозитории специально — compose приезжает из него и перезаписывается
+  # обновлением, поэтому локальная правка файла на стенде была бы потеряна.
+  #
+  # Как включить (нужен запас памяти: 7B в 4-битном квантовании просит ~5 ГБ,
+  # маленькие 1–3B — 1–2 ГБ; на слабой машине модель будет отвечать медленно):
+  #
+  #   1. раскомментировать сервис ниже;
+  #   2. в .env добавить AI_OLLAMA_URL=http://ollama:11434;
+  #   3. docker compose -f docker-compose.prod.yml up -d
+  #      docker compose -f docker-compose.prod.yml exec ollama ollama pull qwen2.5:3b
+  #
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   container_name: skyfraze-ollama
+  #   restart: unless-stopped
+  #   volumes:
+  #     - ollama:/root/.ollama
+  #   networks:
+  #     - skyfraze-net
+
 volumes:
   pgdata:
   assets:
