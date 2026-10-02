@@ -22,6 +22,7 @@ import {
 } from '../../api/assistant'
 import { serverErrorMessage } from '../../api/client'
 import { MarkdownBlock } from '../MarkdownBlock'
+import { promptHints } from './promptHints'
 
 /**
  * Содержимое плавающего окна помощника: переписка и настройка (два вида в одном окне).
@@ -63,6 +64,8 @@ interface Props {
   onProjectChanged: () => void
   /** Перейти к панели редакторов: там созданные кадры видно в дереве. */
   onOpenEditors: () => void
+  /** Пуст ли проект: от этого зависят подсказки в пустом чате. */
+  projectIsEmpty?: boolean
 }
 
 type View = 'chat' | 'settings'
@@ -75,6 +78,7 @@ export function AssistantPanel({
   onThinkingChange,
   onProjectChanged,
   onOpenEditors,
+  projectIsEmpty = true,
 }: Props) {
   const [view, setView] = useState<View>('chat')
   const [config, setConfig] = useState<AIConfig | null>(null)
@@ -743,10 +747,26 @@ export function AssistantPanel({
               <div className="ai-empty">
                 <p className="ai-empty__title">О чём спросить</p>
                 <p className="ai-note">
-                  Помощник создаёт главы и под-события с описанием в Markdown — например,
-                  «добавь главу «Пролог» с описанием мира» или «разбей главу 2 на три
-                  под-события».
+                  Помощник создаёт главы и под-события с описанием в Markdown. Нажмите на
+                  подсказку — текст подставится в поле, и его можно поправить.
                 </p>
+                <div className="ai-hints" data-assistant-hints>
+                  {promptHints(agent?.role ?? '', projectIsEmpty).map((hint) => (
+                    <button
+                      key={hint.label}
+                      type="button"
+                      className="ai-hint"
+                      onClick={() => {
+                        // Подставляем, а не отправляем: человек должен увидеть, что именно
+                        // уйдёт модели (и сколько это будет стоить), до отправки.
+                        setText(hint.prompt)
+                        inputRef.current?.focus()
+                      }}
+                    >
+                      {hint.label}
+                    </button>
+                  ))}
+                </div>
                 <p className="ai-note">
                   Изменения применяются сразу и видны всем, у кого проект открыт.
                 </p>

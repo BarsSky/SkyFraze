@@ -301,6 +301,28 @@ describe('AssistantPanel', () => {
     expect(mocks.config).toHaveBeenCalledTimes(1)
   })
 
+  it('в пустом чате показывает подсказки и подставляет выбранную в поле', async () => {
+    mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
+    renderPanel({ projectIsEmpty: false })
+
+    // Подсказка не отправляется сама: нажатие только подставляет текст, чтобы человек
+    // увидел, что именно уйдёт модели.
+    const hint = await screen.findByRole('button', { name: 'Продолжи историю' })
+    fireEvent.click(hint)
+
+    const input = (await screen.findByLabelText('Сообщение помощнику')) as HTMLTextAreaElement
+    expect(input.value).toMatch(/дальше/i)
+    expect(mocks.stream).not.toHaveBeenCalled()
+  })
+
+  it('в пустом проекте первая подсказка — «собери проект с нуля»', async () => {
+    mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
+    renderPanel({ projectIsEmpty: true })
+
+    expect(await screen.findByRole('button', { name: 'Собери проект с нуля' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Продолжи историю' })).toBeNull()
+  })
+
   it('«стоп» обрывает ответ и оставляет сказанное с пометкой', async () => {
     mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
     mocks.stream.mockImplementation(

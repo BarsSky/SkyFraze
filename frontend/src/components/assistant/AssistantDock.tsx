@@ -27,9 +27,21 @@ interface Props {
   onOpenChange: (open: boolean) => void
   onProjectChanged: () => void
   onOpenEditors: () => void
+  /**
+   * Пуст ли проект (нет ни одного кадра). Нужно подсказкам в пустом чате: в пустом
+   * проекте первое осмысленное предложение — «собери проект с нуля», а не «продолжи».
+   */
+  projectIsEmpty?: boolean
 }
 
-export function AssistantDock({ projectId, open, onOpenChange, onProjectChanged, onOpenEditors }: Props) {
+export function AssistantDock({
+  projectId,
+  open,
+  onOpenChange,
+  onProjectChanged,
+  onOpenEditors,
+  projectIsEmpty = true,
+}: Props) {
   const [unread, setUnread] = useState(0)
   const [thinking, setThinking] = useState(false)
   const buttonRef = useRef<HTMLButtonElement | null>(null)
@@ -70,9 +82,11 @@ export function AssistantDock({ projectId, open, onOpenChange, onProjectChanged,
         role="dialog"
         aria-label="ИИ-помощник"
         data-assistant-panel
-      >        <AssistantPanel
+      >
+        <AssistantPanel
           projectId={projectId}
           open={open}
+          projectIsEmpty={projectIsEmpty}
           onClose={() => closeDock(true)}
           onUnread={() => setUnread((n) => n + 1)}
           onThinkingChange={setThinking}

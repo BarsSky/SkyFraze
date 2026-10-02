@@ -223,6 +223,35 @@
 
 .ai-note--padded { margin: 0 12px 8px; }
 
+/* Подсказки в пустом чате: кнопки-формулировки, а не абзац текста «что умеет помощник».
+   Нажатие подставляет текст в поле — человек видит, что уйдёт модели, до отправки. */
+.ai-hints {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ai-hint {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--fg-soft);
+  font-size: 12px;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.ai-hint:hover {
+  border-color: var(--accent);
+  color: var(--fg);
+}
+
+.ai-hint:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .ai-changes {
   display: grid;
   gap: 6px;

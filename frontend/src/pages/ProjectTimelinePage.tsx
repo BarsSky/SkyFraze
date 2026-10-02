@@ -441,6 +441,7 @@ export function ProjectTimelinePage() {
           onOpenChange={setAssistantOpen}
           onProjectChanged={assistantChanged}
           onOpenEditors={openEditors}
+          projectIsEmpty={eventsCount === 0}
         />
       )}
     </div>
