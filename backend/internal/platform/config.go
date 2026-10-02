@@ -59,6 +59,33 @@ type Config struct {
 	// UpdateStateDir — каталог, общий с хостом: сюда админка пишет заявку
 	// (request.json), а хост-скрипт — состояние (status.json) и лог (update.log).
 	UpdateStateDir string `envconfig:"UPDATE_STATE_DIR" default:""`
+
+	// --- ИИ-помощник (docs/ai-assistant.md) ---
+	//
+	// AIEnabled — главный выключатель. По умолчанию выключено: разговор с моделью
+	// означает, что текст проекта уходит третьей стороне, и включать это молча
+	// нельзя.
+	AIEnabled bool `envconfig:"AI_ENABLED" default:"false"`
+	// AIOllamaURL — локальный сервер моделей (Ollama). Это единственный вариант
+	// «бесплатно и без ключа»: ничего никуда не отправляется, модель считает на
+	// своей машине. Пусто — локальных моделей нет.
+	AIOllamaURL string `envconfig:"AI_OLLAMA_URL" default:""`
+	// AIOpenAICompatURL — свой сервер, совместимый с OpenAI API (llama.cpp, vLLM,
+	// корпоративный шлюз): адрес задаёт админ, ключ — пользователь. Пусто — нет такого
+	// провайдера.
+	AIOpenAICompatURL string `envconfig:"AI_OPENAI_COMPAT_URL" default:""`
+	// AISecretKey — ключ шифрования пользовательских ключей провайдеров
+	// (AES-256-GCM). Пусто — функция «свой ключ» выключена целиком: хранить ключи
+	// без шифрования нельзя.
+	AISecretKey string `envconfig:"AI_SECRET_KEY" default:""`
+	// AIDefaultModel — модель по умолчанию в интерфейсе ('provider:model').
+	AIDefaultModel string `envconfig:"AI_DEFAULT_MODEL" default:""`
+	// AIMaxToolCalls — сколько инструментов модель может вызвать за одно сообщение:
+	// защита от модели, которая «зациклилась» и создаёт главы бесконечно.
+	AIMaxToolCalls int `envconfig:"AI_MAX_TOOL_CALLS" default:"10"`
+	// AITimeout — предел на один запрос к модели: локальные модели на слабой машине
+	// думают долго, но не бесконечно.
+	AITimeoutSeconds int `envconfig:"AI_TIMEOUT_SECONDS" default:"120"`
 }
 
 // AdminEmailList — ADMIN_EMAILS как список (нормализованный, без пустых).

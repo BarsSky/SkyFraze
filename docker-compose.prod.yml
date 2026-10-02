@@ -55,6 +55,24 @@ services:
       APP_ENV: production
       ADMIN_EMAILS: ${ADMIN_EMAILS:-}
       REGISTRATION_MODE: ${REGISTRATION_MODE:-request}
+      # Предел вложений проекта (после пережатия), байт; 0 — без предела.
+      ASSET_QUOTA_BYTES: ${ASSET_QUOTA_BYTES:-10485760}
+      # ИИ-помощник (docs/ai-assistant.md). Выключен по умолчанию: текст проекта
+      # уходит на чужую машину только по осознанному решению оператора.
+      AI_ENABLED: ${AI_ENABLED:-false}
+      AI_OLLAMA_URL: ${AI_OLLAMA_URL:-}
+      AI_OPENAI_COMPAT_URL: ${AI_OPENAI_COMPAT_URL:-}
+      AI_SECRET_KEY: ${AI_SECRET_KEY:-}
+      AI_DEFAULT_MODEL: ${AI_DEFAULT_MODEL:-}
+      AI_MAX_TOOL_CALLS: ${AI_MAX_TOOL_CALLS:-10}
+      AI_TIMEOUT_SECONDS: ${AI_TIMEOUT_SECONDS:-120}
+      # Ключи стенда к размещённым провайдерам (необязательны: без них работают
+      # локальная модель и ключи самих пользователей)
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      CUSTOM_AI_API_KEY: ${CUSTOM_AI_API_KEY:-}
       # Механизм обновления: откуда брать релизы и где общий с хостом каталог заявок
       UPDATE_REPO: ${UPDATE_REPO:-}
       UPDATE_TOKEN: ${UPDATE_TOKEN:-}

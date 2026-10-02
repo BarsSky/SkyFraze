@@ -16,6 +16,7 @@ import (
 	chimw "github.com/go-chi/chi/v5/middleware"
 
 	"github.com/skyfraze/backend/internal/admin"
+	"github.com/skyfraze/backend/internal/ai"
 	"github.com/skyfraze/backend/internal/assets"
 	"github.com/skyfraze/backend/internal/auth"
 	"github.com/skyfraze/backend/internal/coauthors"
@@ -164,6 +165,26 @@ func main() {
 	// Предпросмотр импорта показывает предел вложений: набор, который не помещается,
 	// лучше отклонить до создания проекта, чем на первом же файле.
 	transferSvc.UseQuota(assetsSvc)
+
+	// ИИ-помощник (docs/ai-assistant.md). Ключи стенда — по именам переменных,
+	// объявленным у провайдеров; у большинства стендов их нет, и это нормально:
+	// работает локальная модель и ключи самих пользователей.
+	aiSvc := ai.New(st, ai.Config{
+		Enabled:         cfg.AIEnabled,
+		OllamaURL:       cfg.AIOllamaURL,
+		OpenAICompatURL: cfg.AIOpenAICompatURL,
+		SecretKey:       cfg.AISecretKey,
+		DefaultModel:    cfg.AIDefaultModel,
+		MaxToolCalls:    cfg.AIMaxToolCalls,
+		TimeoutSeconds:  cfg.AITimeoutSeconds,
+	}, map[string]string{
+		"GROQ_API_KEY":       os.Getenv("GROQ_API_KEY"),
+		"OPENROUTER_API_KEY": os.Getenv("OPENROUTER_API_KEY"),
+		"GOOGLE_API_KEY":     os.Getenv("GOOGLE_API_KEY"),
+		"OPENAI_API_KEY":     os.Getenv("OPENAI_API_KEY"),
+		"CUSTOM_AI_API_KEY":  os.Getenv("CUSTOM_AI_API_KEY"),
+	}, logger)
+	aiH := ai.NewHandler(aiSvc, logger)
 
 	collabHub := collab.NewHub(logger, cfg.JWTSecret, evSvc, cfg.CORSOrigins)
 	go collabHub.Run(ctx)
@@ -348,6 +369,13 @@ func main() {
 	// Download читает пользователя из контекста — без WithUser он всегда отдавал
 	// 401, из-за чего картинки ассетов нигде не отображались.
 	r.With(authSvc.WithUser).Get("/api/assets/{id}", assetsH.Download(authSvc))
+
+	// ИИ-помощник: подключение моделей и свои ключи. Беседы и инструменты появятся
+	// в этом же поддереве (docs/ai-assistant.md, фазы 2–3).
+	r.Route("/api/ai", func(r chi.Router) {
+		r.Use(authSvc.WithUser)
+		aiH.Routes(r)
+	})
 
 	srv := &http.Server{
 		Addr:              cfg.Listen,

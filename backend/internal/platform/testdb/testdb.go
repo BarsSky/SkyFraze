@@ -62,6 +62,9 @@ var schemaSteps = []struct{ probe, file string }{
 	                  WHERE table_schema='public' AND table_name='assets'
 	                    AND column_name='content_hash')`,
 		"0007_asset_dedup.up.sql"},
+	{`SELECT EXISTS (SELECT 1 FROM information_schema.tables
+	                  WHERE table_schema='public' AND table_name='ai_user_keys')`,
+		"0008_ai_assistant.up.sql"},
 }
 
 // Setup открывает отдельную БД для пакета (suffix), применяет миграции и

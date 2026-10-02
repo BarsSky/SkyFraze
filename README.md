@@ -468,8 +468,24 @@ SkyFraze/
 | `CORS_ORIGINS` | comma-separated список origin для CORS | `http://localhost` |
 | `STORAGE_DIR` | директория для ассетов (filesystem) | `/app/storage` (volume) |
 | `ASSET_QUOTA_BYTES` | предел суммы вложений проекта (после пережатия); 0 — без предела | `10485760` (10 МиБ) |
+| `AI_ENABLED` | ИИ-помощник в проекте (см. `docs/ai-assistant.md`); по умолчанию выключен | `false` |
+| `AI_OLLAMA_URL` | локальный сервер моделей (Ollama): работает без ключа и без интернета | пусто |
+| `AI_OPENAI_COMPAT_URL` | свой OpenAI-совместимый сервер (llama.cpp, vLLM, шлюз) | пусто |
+| `AI_SECRET_KEY` | ключ шифрования пользовательских ключей (32 байта, hex/base64). Пусто — свои ключи выключены | пусто |
+| `AI_DEFAULT_MODEL` | модель по умолчанию в интерфейсе (`provider:model`) | пусто |
+| `AI_MAX_TOOL_CALLS` | сколько инструментов модель может вызвать за одно сообщение | `10` |
+| `AI_TIMEOUT_SECONDS` | предел на один запрос к модели | `120` |
 | `LISTEN` | bind address backend | `:8080` |
 | `APP_ENV` | environment marker | `production` |
+
+Ключи стенда к размещённым провайдерам нужны, только если вы сами оплачиваете модель
+для всех: `GROQ_API_KEY`, `OPENROUTER_API_KEY`, `GOOGLE_API_KEY`, `OPENAI_API_KEY`,
+`CUSTOM_AI_API_KEY` (для своего шлюза из `AI_OPENAI_COMPAT_URL`). Без них работает
+локальная модель и ключи самих пользователей — ключ пользователя приоритетнее ключа
+стенда. Задаются в `.env` (compose передаёт их в контейнер), пустые значения безвредны.
+После правки `.env` нужен `docker compose -f docker-compose.prod.yml up -d` — сам файл
+compose приходит из репозитория и обновлением перезаписывается, а `.env` обновление не
+трогает, поэтому все настройки стенда живут именно там.
 
 ## Тесты
 
