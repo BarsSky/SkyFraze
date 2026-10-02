@@ -569,6 +569,10 @@ cd frontend && npx tsx tests/import-into-place.ts
 # Так проверяется, что SSE действительно поток, а не буферизованный ответ
 # (нужны адрес стенда, токен и ссылка модели):
 node frontend/tests/stream-timing.mjs <url>/ai/conversations/new/stream <token> custom:<модель>
+
+# То же, но напрямую к серверу моделей: отдаёт ли ОН ответ потоком.
+# Разница между этими двумя запусками показывает, где теряется поток — у нас или у него:
+node frontend/tests/provider-stream.mjs http://127.0.0.1:18080/v1 <модель>
 ```
 
 Основные наборы (`scrollytelling.ts`, `public-feed.ts`, `admin-registration.ts`, скилл
