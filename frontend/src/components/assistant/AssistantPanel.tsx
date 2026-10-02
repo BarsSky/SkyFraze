@@ -11,7 +11,7 @@ import {
   readAIError,
   saveAIKey,
   saveAISettings,
-  sendAIMessage,
+  streamAIMessage,
   setAIConsent,
   type AIConfig,
   type AIChange,
@@ -91,6 +91,17 @@ export function AssistantPanel({
   const [changes, setChanges] = useState<AIChange[]>([])
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
+  /**
+   * Текст, который модель уже сказала, но который ещё не стал сообщением истории.
+   *
+   * `null` — поток не идёт. Пустая строка — идёт, но модель ещё молчит («думает…»).
+   * Показываем его отдельным блоком, а не сообщением в списке: пока ответ не пришёл
+   * целиком, это ещё не факт истории, и подменять им переписку нельзя — при обрыве
+   * человек увидел бы текст, которого на сервере нет.
+   */
+  const [streaming, setStreaming] = useState<string | null>(null)
+  /** Живые вызовы инструментов: счётчик того, что помощник успел сделать. */
+  const [liveCalls, setLiveCalls] = useState<string[]>([])
   const [sendError, setSendError] = useState<string | null>(null)
   const [consentNeeded, setConsentNeeded] = useState(false)
   const [agent, setAgent] = useState<AISettings | null>(null)
@@ -103,6 +114,8 @@ export function AssistantPanel({
   const [agentBusy, setAgentBusy] = useState(false)
   const listRef = useRef<HTMLDivElement | null>(null)
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
+  /** Текущий поток ответа: `abort()` — это и есть кнопка «стоп». */
+  const abortRef = useRef<AbortController | null>(null)
   /**
    * Открыто ли окно — в ref, а не только в пропсе.
    *
@@ -332,6 +345,15 @@ export function AssistantPanel({
     }
   }, [projectId, agentDraft])
 
+  /**
+   * Отправка вопроса. Ответ читается ПОТОКОМ: пока модель пишет, текст появляется на
+   * глазах, а не после минутной тишины.
+   *
+   * «Стоп» — обрыв запроса (`AbortController`), а не отдельная ручка: сервер видит
+   * отмену контекста, прекращает генерацию у провайдера и сохраняет то, что успел
+   * сказать. Показанный на лету текст остаётся в переписке с пометкой «остановлено» —
+   * иначе человек потерял бы то, что уже прочитал.
+   */
   const ask = useCallback(async () => {
     const question = text.trim()
     if (!question || sending) return
@@ -342,6 +364,8 @@ export function AssistantPanel({
     setSending(true)
     setSendError(null)
     setConsentNeeded(false)
+    setStreaming('')
+    setLiveCalls([])
     // Вопрос показываем сразу: ждать ответа модели, глядя на пустое поле, — худший
     // вариант, а история всё равно придёт с сервера в следующий раз.
     const pending: AIMessage = {
@@ -352,8 +376,29 @@ export function AssistantPanel({
     }
     setMessages((current) => [...current, pending])
     setText('')
+
+    const controller = new AbortController()
+    abortRef.current = controller
+    let answer = ''
     try {
-      const turn = await sendAIMessage(projectId, conversationId, question, modelRef)
+      const turn = await streamAIMessage(
+        projectId,
+        conversationId,
+        question,
+        modelRef,
+        {
+          // Беседа могла быть только что создана: её идентификатор нужен сразу, иначе
+          // остановленный ответ остался бы в беседе, о которой интерфейс не знает.
+          onStart: (id) => setConversationId(id),
+          onDelta: (piece) => {
+            answer += piece
+            setStreaming(answer)
+          },
+          onCall: (call) => setLiveCalls((current) => [...current, call.detail || call.name]),
+          onChange: (change) => setChanges((current) => [...current, change]),
+        },
+        controller.signal,
+      )
       setConversationId(turn.conversationId || conversationId)
       setMessages((current) => [
         ...current.filter((m) => m.id !== pending.id),
@@ -365,19 +410,42 @@ export function AssistantPanel({
       // Ответ пришёл, пока окно закрыто: человек узнает об этом по маркеру на кнопке.
       if (!openRef.current) onUnread()
     } catch (e) {
-      const { message, consentRequired } = await readAIError(e)
-      setConsentNeeded(consentRequired)
-      setMessages((current) => current.filter((m) => m.id !== pending.id))
-      setText(question)
-      setSendError(
-        message ??
-          (await serverErrorMessage(e)) ??
-          'Помощник не ответил. Проверьте связь и модель.',
-      )
+      if (isAbort(e)) {
+        // Остановили сами: сказанное остаётся в переписке помеченным, а не исчезает.
+        setMessages((current) => [
+          ...current.filter((m) => m.id !== pending.id),
+          { ...pending, id: `${pending.id}-sent` },
+          {
+            id: `stopped-${Date.now()}`,
+            role: 'assistant',
+            content: answer,
+            createdAt: new Date().toISOString(),
+            stopped: true,
+          },
+        ])
+      } else {
+        const { message, consentRequired } = await readAIError(e)
+        setConsentNeeded(consentRequired)
+        setMessages((current) => current.filter((m) => m.id !== pending.id))
+        setText(question)
+        setSendError(
+          message ??
+            (await serverErrorMessage(e)) ??
+            'Помощник не ответил. Проверьте связь и модель.',
+        )
+      }
     } finally {
+      abortRef.current = null
+      setStreaming(null)
+      setLiveCalls([])
       setSending(false)
     }
   }, [text, sending, modelRef, projectId, conversationId, onProjectChanged, onUnread])
+
+  /** «Стоп»: обрываем запрос — сервер сохранит то, что модель успела сказать. */
+  const stop = useCallback(() => {
+    abortRef.current?.abort()
+  }, [])
 
   // Фокус в поле ввода при открытии: человек открыл окно, чтобы написать.
   useEffect(() => {
@@ -676,11 +744,32 @@ export function AssistantPanel({
                 {message.role === 'user' ? (
                   <p className="ai-msg__text">{message.content}</p>
                 ) : (
-                  <MarkdownBlock source={message.content} className="ai-msg__text" />
+                  <>
+                    <MarkdownBlock source={message.content} className="ai-msg__text" />
+                    {message.stopped && (
+                      <p className="ai-msg__stopped" data-assistant-stopped>
+                        Остановлено — в историю попало то, что модель успела сказать.
+                      </p>
+                    )}
+                  </>
                 )}
               </div>
             ))}
-            {sending && <p className="ai-thinking">Помощник думает…</p>}
+            {/* Текст, который модель пишет прямо сейчас. Отдельным блоком, а не
+                сообщением: пока ответ не пришёл целиком, это ещё не история. */}
+            {streaming !== null && streaming !== '' && (
+              <div className="ai-msg ai-msg--assistant ai-msg--live" data-assistant-live>
+                <span className="ai-msg__who">{agentName}</span>
+                <MarkdownBlock source={streaming} className="ai-msg__text" />
+                <span className="ai-caret" aria-hidden="true" />
+              </div>
+            )}
+            {sending && streaming === '' && <p className="ai-thinking">Помощник думает…</p>}
+            {sending && liveCalls.length > 0 && (
+              <p className="ai-note ai-note--padded" data-assistant-live-calls>
+                Уже сделано: {liveCalls.length}
+              </p>
+            )}
           </div>
 
           {changes.length > 0 && (
@@ -735,9 +824,17 @@ export function AssistantPanel({
               aria-label="Сообщение помощнику"
             />
             <div className="ai-composer__row">
-              <button onClick={ask} disabled={sending || consentBlocked || text.trim() === ''}>
-                {sending ? 'Отправляю…' : 'Спросить'}
-              </button>
+              {sending ? (
+                // Пока ответ идёт, главная кнопка — «стоп»: остановить генерацию
+                // человек должен уметь в любой момент, а не ждать конца.
+                <button type="button" className="secondary" onClick={stop} data-assistant-stop>
+                  Стоп
+                </button>
+              ) : (
+                <button onClick={ask} disabled={consentBlocked || text.trim() === ''}>
+                  Спросить
+                </button>
+              )}
               <button
                 type="button"
                 className="secondary"
@@ -804,4 +901,14 @@ function CloseIcon() {
       />
     </svg>
   )
+}
+
+/**
+ * Оборван ли запрос кнопкой «стоп» (или закрытой вкладкой).
+ *
+ * `AbortError` — не сбой помощника: это решение человека, и показывать на него
+ * красную плашку «не ответил» значило бы ругать его за собственную кнопку.
+ */
+function isAbort(error: unknown): boolean {
+  return (error as { name?: string } | null)?.name === 'AbortError'
 }

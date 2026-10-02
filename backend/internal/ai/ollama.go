@@ -170,10 +170,124 @@ type ollamaChatResponse struct {
 }
 
 func (c *ollamaClient) Chat(ctx context.Context, req Request) (Reply, error) {
+	body := c.chatBody(req)
+	body.Stream = false
+
+	var out ollamaChatResponse
+	if err := c.post(ctx, "/api/chat", body, &out); err != nil {
+		return Reply{}, err
+	}
+	if out.Error != "" {
+		return Reply{}, fmt.Errorf("%w: %s", ErrUnavailable, out.Error)
+	}
+	reply := Reply{
+		Content:   out.Message.Content,
+		Model:     firstNonEmpty(out.Model, req.Model),
+		TokensIn:  out.PromptEvalCount,
+		TokensOut: out.EvalCount,
+	}
+	for i, call := range out.Message.ToolCalls {
+		args := call.Function.Arguments
+		if args == nil {
+			args = map[string]any{}
+		}
+		reply.ToolCalls = append(reply.ToolCalls, ToolCall{
+			ID:        fmt.Sprintf("ollama-%d-%s", i, call.Function.Name),
+			Name:      call.Function.Name,
+			Arguments: args,
+		})
+	}
+	return reply, nil
+}
+
+// ChatStream — потоковый вариант Chat: Ollama отдаёт по строке JSON на кусок.
+//
+// Последняя строка помечена `done: true` и несёт счётчики токенов. Вызовы инструментов
+// приходят там же, в message.tool_calls, и собираются целиком: по частям их выполнить
+// нельзя, а показать «половину вызова» человеку — бессмысленно.
+func (c *ollamaClient) ChatStream(ctx context.Context, req Request, onText func(string) error) (Reply, error) {
+	body := c.chatBody(req)
+	body.Stream = true
+
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return Reply{}, err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.provider.BaseURL+"/api/chat", bytes.NewReader(raw))
+	if err != nil {
+		return Reply{}, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "application/x-ndjson")
+
+	resp, err := c.client.Do(httpReq)
+	if err != nil {
+		return Reply{}, fmt.Errorf("%w: %s: %v", ErrUnavailable, c.provider.BaseURL, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		limited, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			return Reply{}, fmt.Errorf("%w: %s", ErrUnauthorized, strings.TrimSpace(string(limited)))
+		}
+		return Reply{}, fmt.Errorf("%w: код %d: %s", ErrUnavailable, resp.StatusCode, strings.TrimSpace(string(limited)))
+	}
+
+	reply := Reply{Model: req.Model}
+	var text strings.Builder
+	err = readJSONLines(resp.Body, func(line []byte) error {
+		var chunk ollamaChatResponse
+		if err := json.Unmarshal(line, &chunk); err != nil {
+			return fmt.Errorf("%w: разбор потока: %v", ErrUnavailable, err)
+		}
+		if chunk.Error != "" {
+			return fmt.Errorf("%w: %s", ErrUnavailable, chunk.Error)
+		}
+		if chunk.Model != "" {
+			reply.Model = chunk.Model
+		}
+		// Счётчики приходят в последней строке; в промежуточных они нули.
+		if chunk.PromptEvalCount > 0 {
+			reply.TokensIn = chunk.PromptEvalCount
+		}
+		if chunk.EvalCount > 0 {
+			reply.TokensOut = chunk.EvalCount
+		}
+		if piece := chunk.Message.Content; piece != "" {
+			text.WriteString(piece)
+			if onText != nil {
+				if err := onText(piece); err != nil {
+					return err
+				}
+			}
+		}
+		for _, call := range chunk.Message.ToolCalls {
+			args := call.Function.Arguments
+			if args == nil {
+				args = map[string]any{}
+			}
+			reply.ToolCalls = append(reply.ToolCalls, ToolCall{
+				ID:        fmt.Sprintf("ollama-%d-%s", len(reply.ToolCalls), call.Function.Name),
+				Name:      call.Function.Name,
+				Arguments: args,
+			})
+		}
+		return nil
+	})
+	if err != nil {
+		return Reply{}, streamStopped(ctx, err)
+	}
+	reply.Content = text.String()
+	return reply, nil
+}
+
+// chatBody собирает тело запроса к /api/chat — общее для обычного и потокового
+// вариантов. Одно место на двоих: иначе температура и num_ctx рано или поздно
+// разошлись бы между ними.
+func (c *ollamaClient) chatBody(req Request) ollamaChatRequest {
 	body := ollamaChatRequest{
 		Model:    req.Model,
 		Messages: make([]ollamaMessage, 0, len(req.Messages)),
-		Stream:   false,
 	}
 	for _, m := range req.Messages {
 		msg := ollamaMessage{Role: m.Role, Content: m.Content, ToolName: m.Name}
@@ -202,32 +316,16 @@ func (c *ollamaClient) Chat(ctx context.Context, req Request) (Reply, error) {
 		}
 		body.Options["num_ctx"] = c.provider.NumCtx
 	}
+	return body
+}
 
-	var out ollamaChatResponse
-	if err := c.post(ctx, "/api/chat", body, &out); err != nil {
-		return Reply{}, err
+// streamStopped превращает обрыв потока в понятную ошибку: отмену контекста отдаём
+// как есть (это «стоп» от человека, а не сбой), остальное — как ошибку провайдера.
+func streamStopped(ctx context.Context, err error) error {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
 	}
-	if out.Error != "" {
-		return Reply{}, fmt.Errorf("%w: %s", ErrUnavailable, out.Error)
-	}
-	reply := Reply{
-		Content:   out.Message.Content,
-		Model:     firstNonEmpty(out.Model, req.Model),
-		TokensIn:  out.PromptEvalCount,
-		TokensOut: out.EvalCount,
-	}
-	for i, call := range out.Message.ToolCalls {
-		args := call.Function.Arguments
-		if args == nil {
-			args = map[string]any{}
-		}
-		reply.ToolCalls = append(reply.ToolCalls, ToolCall{
-			ID:        fmt.Sprintf("ollama-%d-%s", i, call.Function.Name),
-			Name:      call.Function.Name,
-			Arguments: args,
-		})
-	}
-	return reply, nil
+	return err
 }
 
 func (c *ollamaClient) get(ctx context.Context, path string, out any) error {

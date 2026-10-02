@@ -366,6 +366,44 @@ func (s *Service) Chat(ctx context.Context, userID uuid.UUID, providerID string,
 	return client.Chat(ctx, req)
 }
 
+// StreamChat — то же, что Chat, но текст ответа отдаётся по мере генерации.
+//
+// onText получает приращения текста; ошибка из onText прекращает генерацию (так
+// останавливают ответ, когда писать больше некуда). Клиент, который потока не умеет
+// (заглушки в тестах, будущие провайдеры), отвечает как обычно — его текст уходит
+// одним куском, и вызывающий этого не замечает.
+func (s *Service) StreamChat(
+	ctx context.Context, userID uuid.UUID, providerID string, req Request, onText func(string) error,
+) (Reply, error) {
+	if !s.Enabled() {
+		return Reply{}, errors.New("ИИ-помощник выключен на этом стенде")
+	}
+	provider, ok := s.providerByID(providerID)
+	if !ok {
+		return Reply{}, fmt.Errorf("неизвестный провайдер: %s", providerID)
+	}
+	client, err := s.clientFor(ctx, userID, provider)
+	if err != nil {
+		return Reply{}, err
+	}
+	if req.Temperature == 0 {
+		req.Temperature = 0.4
+	}
+	if streamer, ok := client.(Streamer); ok {
+		return streamer.ChatStream(ctx, req, onText)
+	}
+	reply, err := client.Chat(ctx, req)
+	if err != nil {
+		return Reply{}, err
+	}
+	if reply.Content != "" && onText != nil {
+		if err := onText(reply.Content); err != nil {
+			return Reply{}, err
+		}
+	}
+	return reply, nil
+}
+
 // clientFor выбирает ключ: свой → ключ стенда → ошибка «нужен ключ».
 func (s *Service) clientFor(ctx context.Context, userID uuid.UUID, provider Provider) (Client, error) {
 	key := ""

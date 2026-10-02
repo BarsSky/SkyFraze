@@ -62,6 +62,7 @@ type stubProvider struct {
 
 type stubRequest struct {
 	Model    string `json:"model"`
+	Stream   bool   `json:"stream"`
 	Messages []struct {
 		Role    string `json:"role"`
 		Content string `json:"content"`
@@ -86,6 +87,10 @@ func newStub(t *testing.T, replies ...ai.Reply) *stubProvider {
 		var req stubRequest
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		reply := stub.record(req)
+		if req.Stream {
+			writeStubOpenAIStream(w, reply)
+			return
+		}
 		message := map[string]any{"role": "assistant", "content": reply.Content}
 		if len(reply.ToolCalls) > 0 {
 			calls := make([]map[string]any, 0, len(reply.ToolCalls))
@@ -119,6 +124,10 @@ func newStub(t *testing.T, replies ...ai.Reply) *stubProvider {
 		var req stubRequest
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		reply := stub.record(req)
+		if req.Stream {
+			writeStubOllamaStream(w, reply)
+			return
+		}
 		message := map[string]any{"role": "assistant", "content": reply.Content}
 		if len(reply.ToolCalls) > 0 {
 			calls := make([]map[string]any, 0, len(reply.ToolCalls))
@@ -187,6 +196,100 @@ func (s *stubProvider) firstRequest() stubRequest {
 func writeStubJSON(w http.ResponseWriter, body any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(body)
+}
+
+// writeStubOllamaStream отдаёт ответ потоком так, как это делает Ollama: по строке
+// JSON на кусок текста, последняя строка с done и счётчиками.
+//
+// Текст режем пополам НАМЕРЕННО: если бы он уходил одним куском, тест не отличил бы
+// настоящий поток от «подождали и отдали целиком».
+func writeStubOllamaStream(w http.ResponseWriter, reply ai.Reply) {
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	flusher, _ := w.(http.Flusher)
+	write := func(line map[string]any) {
+		_ = json.NewEncoder(w).Encode(line)
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+	for _, piece := range splitInHalf(reply.Content) {
+		write(map[string]any{
+			"model": "stub-1", "done": false,
+			"message": map[string]any{"role": "assistant", "content": piece},
+		})
+	}
+	message := map[string]any{"role": "assistant", "content": ""}
+	if len(reply.ToolCalls) > 0 {
+		calls := make([]map[string]any, 0, len(reply.ToolCalls))
+		for _, call := range reply.ToolCalls {
+			calls = append(calls, map[string]any{
+				"function": map[string]any{"name": call.Name, "arguments": call.Arguments},
+			})
+		}
+		message["tool_calls"] = calls
+	}
+	write(map[string]any{
+		"model": "stub-1", "done": true, "message": message,
+		"prompt_eval_count": 11, "eval_count": 7,
+	})
+}
+
+// writeStubOpenAIStream отдаёт ответ потоком в формате OpenAI: события SSE, причём
+// имя вызова инструмента и его аргументы приходят РАЗНЫМИ событиями — так же, как у
+// настоящих провайдеров, и так же проверяется склейка на нашей стороне.
+func writeStubOpenAIStream(w http.ResponseWriter, reply ai.Reply) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	flusher, _ := w.(http.Flusher)
+	write := func(chunk map[string]any) {
+		raw, _ := json.Marshal(chunk)
+		fmt.Fprintf(w, "data: %s\n\n", raw)
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+	for _, piece := range splitInHalf(reply.Content) {
+		write(map[string]any{
+			"model":   "stub-1",
+			"choices": []map[string]any{{"delta": map[string]any{"content": piece}}},
+		})
+	}
+	for index, call := range reply.ToolCalls {
+		write(map[string]any{
+			"choices": []map[string]any{{"delta": map[string]any{"tool_calls": []map[string]any{{
+				"index": index, "id": call.ID, "type": "function",
+				"function": map[string]any{"name": call.Name},
+			}}}}},
+		})
+		args, _ := json.Marshal(call.Arguments)
+		write(map[string]any{
+			"choices": []map[string]any{{"delta": map[string]any{"tool_calls": []map[string]any{{
+				"index": index, "function": map[string]any{"arguments": string(args)},
+			}}}}},
+		})
+	}
+	write(map[string]any{
+		"model":   "stub-1",
+		"choices": []map[string]any{},
+		"usage":   map[string]int{"prompt_tokens": 11, "completion_tokens": 7},
+	})
+	fmt.Fprint(w, "data: [DONE]\n\n")
+	if flusher != nil {
+		flusher.Flush()
+	}
+}
+
+// splitInHalf режет текст на две части (по границе рун, а не байт — иначе кириллица
+// развалилась бы на недопустимые символы).
+func splitInHalf(text string) []string {
+	runes := []rune(text)
+	if len(runes) < 2 {
+		if len(runes) == 0 {
+			return nil
+		}
+		return []string{text}
+	}
+	mid := len(runes) / 2
+	return []string{string(runes[:mid]), string(runes[mid:])}
 }
 
 // ============================ окружение теста ============================

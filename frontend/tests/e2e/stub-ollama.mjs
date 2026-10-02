@@ -7,6 +7,10 @@
 //   1-й запрос — модель «просит» создать главу (native tool-call);
 //   2-й запрос — она «отвечает словами», увидев результат инструмента.
 //
+// Оба ответа отдаются ПОТОКОМ (backend просит stream: true), причём текст режется на
+// куски: так e2e проверяет не «ответ дошёл», а весь путь потока — провайдер → сервер →
+// SSE → браузер. Заглушка, отдающая готовый JSON, эту часть не проверяла бы вовсе.
+//
 // Порт берётся из AI_STUB_PORT (по умолчанию 11490) и должен совпадать с
 // AI_OLLAMA_URL у backend: провайдер считает модель локальной, поэтому ключ и
 // согласие в сценарии не нужны.
@@ -14,16 +18,27 @@
 import { createServer } from 'node:http'
 
 const port = Number(process.env.AI_STUB_PORT ?? 11490)
-let requests = 0
 
 /** Сообщения из запроса /api/chat (нужны только роли). */
-function parseMessages(raw) {
+function parseBody(raw) {
   try {
-    const body = JSON.parse(raw)
-    return Array.isArray(body?.messages) ? body.messages : []
+    return JSON.parse(raw)
   } catch {
-    return []
+    return {}
   }
+}
+
+/** Режем текст на куски по границе слов: так видно, что поток действительно поток. */
+function chunkText(text) {
+  if (!text) return []
+  const words = text.split(' ')
+  if (words.length < 2) return [text]
+  const pieces = []
+  for (let i = 0; i < words.length; i += 2) {
+    const piece = words.slice(i, i + 2).join(' ')
+    pieces.push(i + 2 < words.length ? `${piece} ` : piece)
+  }
+  return pieces
 }
 
 const server = createServer((req, res) => {
@@ -47,20 +62,18 @@ const server = createServer((req, res) => {
       raw += chunk
     })
     req.on('end', () => {
-      requests += 1
+      const body = parseBody(raw)
       // Решение принимаем по СОДЕРЖИМОМУ запроса, а не по счётчику: счётчик зависит
       // от того, сколько раз сценарий уже прогоняли на этом стенде, и второй прогон
       // получил бы «ответ словами» вместо вызова инструмента. Признак того, что
       // инструмент уже выполнен, — сообщение с ролью tool в переписке.
-      const messages = parseMessages(raw)
+      const messages = Array.isArray(body?.messages) ? body.messages : []
       const toolDone = messages.some((message) => message.role === 'tool')
-      if (!toolDone) {
-        send({
-          model: 'e2e-stub:latest',
-          message: {
-            role: 'assistant',
+      const answer = toolDone
+        ? { content: 'Создал главу «Пролог».', toolCalls: [] }
+        : {
             content: '',
-            tool_calls: [
+            toolCalls: [
               {
                 function: {
                   name: 'create_chapter',
@@ -71,18 +84,38 @@ const server = createServer((req, res) => {
                 },
               },
             ],
-          },
+          }
+
+      if (!body?.stream) {
+        send({
+          model: 'e2e-stub:latest',
+          message: { role: 'assistant', content: answer.content, tool_calls: answer.toolCalls },
           prompt_eval_count: 12,
           eval_count: 8,
         })
         return
       }
-      send({
-        model: 'e2e-stub:latest',
-        message: { role: 'assistant', content: 'Создал главу «Пролог».' },
-        prompt_eval_count: 14,
-        eval_count: 6,
-      })
+
+      // Поток: по строке JSON на кусок, последняя строка — done со счётчиками.
+      res.writeHead(200, { 'Content-Type': 'application/x-ndjson' })
+      for (const piece of chunkText(answer.content)) {
+        res.write(
+          `${JSON.stringify({
+            model: 'e2e-stub:latest',
+            done: false,
+            message: { role: 'assistant', content: piece },
+          })}\n`,
+        )
+      }
+      res.end(
+        `${JSON.stringify({
+          model: 'e2e-stub:latest',
+          done: true,
+          message: { role: 'assistant', content: '', tool_calls: answer.toolCalls },
+          prompt_eval_count: 12,
+          eval_count: 8,
+        })}\n`,
+      )
     })
     return
   }

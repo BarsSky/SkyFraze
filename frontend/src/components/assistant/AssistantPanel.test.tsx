@@ -21,7 +21,7 @@ import { AssistantPanel } from './AssistantPanel'
 const mocks = vi.hoisted(() => ({
   config: vi.fn(),
   models: vi.fn(),
-  send: vi.fn(),
+  stream: vi.fn(),
   consent: vi.fn(),
   revoke: vi.fn(),
   saveKey: vi.fn(),
@@ -45,7 +45,7 @@ vi.mock('../../api/assistant', async () => {
     getAISettings: mocks.settings,
     saveAISettings: mocks.saveSettings,
     listAIModels: mocks.models,
-    sendAIMessage: mocks.send,
+    streamAIMessage: mocks.stream,
     setAIConsent: mocks.consent,
     deleteAIConsent: mocks.revoke,
     saveAIKey: mocks.saveKey,
@@ -196,7 +196,7 @@ describe('AssistantPanel', () => {
 
   it('показывает ответ модели и отдельный блок «что изменилось» из ответа сервера', async () => {
     mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
-    mocks.send.mockResolvedValue(TURN)
+    mocks.stream.mockResolvedValue(TURN)
     const changed = vi.fn()
     renderPanel({ onProjectChanged: changed })
 
@@ -205,7 +205,14 @@ describe('AssistantPanel', () => {
     fireEvent.change(input, { target: { value: 'Добавь главу «Пролог»' } })
     fireEvent.click(screen.getByRole('button', { name: 'Спросить' }))
 
-    await waitFor(() => expect(mocks.send).toHaveBeenCalledWith('p1', 'new', 'Добавь главу «Пролог»', 'groq:llama-3.1-8b'))
+    await waitFor(() =>
+      expect(mocks.stream.mock.calls[0]?.slice(0, 4)).toEqual([
+        'p1',
+        'new',
+        'Добавь главу «Пролог»',
+        'groq:llama-3.1-8b',
+      ]),
+    )
     expect(await screen.findByText('Создал главу «Пролог».')).toBeTruthy()
     expect(await screen.findByText('Изменения в проекте')).toBeTruthy()
     expect(screen.getByText('создана глава «Пролог»')).toBeTruthy()
@@ -213,11 +220,92 @@ describe('AssistantPanel', () => {
     expect(changed).toHaveBeenCalled()
   })
 
+  it('показывает текст ответа по мере генерации, а не после конца', async () => {
+    mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
+    let finish: (turn: AITurn) => void = () => {}
+    mocks.stream.mockImplementation(
+      (
+        _projectId: string,
+        _conversationId: string,
+        _text: string,
+        _model: string,
+        handlers: { onDelta?: (text: string) => void } = {},
+      ) =>
+        new Promise<AITurn>((resolve) => {
+          // Сервер сначала присылает куски текста, и только потом — итог.
+          handlers.onDelta?.('Создал ')
+          handlers.onDelta?.('главу «Пролог».')
+          finish = resolve
+        }),
+    )
+    renderPanel()
+
+    const input = (await screen.findByLabelText('Сообщение помощнику')) as HTMLTextAreaElement
+    await waitFor(() => expect(input.disabled).toBe(false))
+    fireEvent.change(input, { target: { value: 'Добавь главу' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Спросить' }))
+
+    // Текст виден ДО того, как ответ пришёл целиком: ради этого поток и делался.
+    await waitFor(() =>
+      expect(document.querySelector('[data-assistant-live]')?.textContent).toContain(
+        'Создал главу «Пролог».',
+      ),
+    )
+    // Пока ответ не закончен, он не подменяет историю: это ещё не факт на сервере.
+    expect(screen.queryByText('Изменения в проекте')).toBeNull()
+
+    finish(TURN)
+    await waitFor(() => expect(document.querySelector('[data-assistant-live]')).toBeNull())
+    expect(await screen.findByText('Создал главу «Пролог».')).toBeTruthy()
+  })
+
+  it('«стоп» обрывает ответ и оставляет сказанное с пометкой', async () => {
+    mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
+    mocks.stream.mockImplementation(
+      (
+        _projectId: string,
+        _conversationId: string,
+        _text: string,
+        _model: string,
+        handlers: { onDelta?: (text: string) => void } = {},
+        signal?: AbortSignal,
+      ) =>
+        new Promise<AITurn>((_resolve, reject) => {
+          handlers.onDelta?.('Первый абзац')
+          signal?.addEventListener('abort', () => {
+            const error = new Error('aborted')
+            error.name = 'AbortError'
+            reject(error)
+          })
+        }),
+    )
+    renderPanel()
+
+    const input = (await screen.findByLabelText('Сообщение помощнику')) as HTMLTextAreaElement
+    await waitFor(() => expect(input.disabled).toBe(false))
+    fireEvent.change(input, { target: { value: 'Расскажи' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Спросить' }))
+
+    // Пока ответ идёт, вместо «Спросить» стоит «Стоп».
+    const stop = await screen.findByRole('button', { name: 'Стоп' })
+    await waitFor(() =>
+      expect(document.querySelector('[data-assistant-live]')?.textContent).toContain('Первый абзац'),
+    )
+    fireEvent.click(stop)
+
+    // Сказанное остаётся в переписке с пометкой, а не пропадает и не превращается в
+    // «помощник не ответил»: остановку выбрал сам человек.
+    await waitFor(() => expect(document.querySelector('[data-assistant-stopped]')).not.toBeNull())
+    expect(screen.getByText('Первый абзац')).toBeTruthy()
+    expect(screen.queryByText(/Помощник не ответил/)).toBeNull()
+    expect(await screen.findByRole('button', { name: 'Спросить' })).toBeTruthy()
+  })
+
   it('ответ при закрытом окне отмечается как непрочитанный', async () => {
     mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
     // Запрос «висит»: человек закрывает окно, ответ приходит уже без него.
     let resolveSend: (turn: AITurn) => void = () => {}
-    mocks.send.mockImplementation(
+    mocks.stream.mockImplementation(
       () =>
         new Promise<AITurn>((resolve) => {
           resolveSend = resolve
@@ -230,7 +318,7 @@ describe('AssistantPanel', () => {
     await waitFor(() => expect(input.disabled).toBe(false))
     fireEvent.change(input, { target: { value: 'Создай главу' } })
     fireEvent.click(screen.getByRole('button', { name: 'Спросить' }))
-    await waitFor(() => expect(mocks.send).toHaveBeenCalled())
+    await waitFor(() => expect(mocks.stream).toHaveBeenCalled())
 
     // Окно закрыто (в доке оно просто прячется), панель продолжает работать.
     view.rerender(<AssistantPanel {...props} open={false} />)
@@ -243,7 +331,7 @@ describe('AssistantPanel', () => {
     // Согласие считалось выданным, а сервер его не видит (отозвали в другой вкладке):
     // панель должна показать просьбу о согласии и не потерять набранный вопрос.
     mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
-    mocks.send.mockRejectedValue(new Error('409'))
+    mocks.stream.mockRejectedValue(new Error('409'))
     mocks.error.mockResolvedValue({ message: 'нужно согласие', consentRequired: true })
     renderPanel()
 
@@ -307,7 +395,7 @@ describe('AssistantPanel', () => {
 
   it('Enter отправляет вопрос, Shift+Enter оставляет перенос строки', async () => {
     mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
-    mocks.send.mockResolvedValue(TURN)
+    mocks.stream.mockResolvedValue(TURN)
     renderPanel()
 
     const input = (await screen.findByLabelText('Сообщение помощнику')) as HTMLTextAreaElement
@@ -315,15 +403,15 @@ describe('AssistantPanel', () => {
 
     fireEvent.change(input, { target: { value: 'Первая строка' } })
     fireEvent.keyDown(input, { key: 'Enter', shiftKey: true })
-    expect(mocks.send).not.toHaveBeenCalled()
+    expect(mocks.stream).not.toHaveBeenCalled()
 
     fireEvent.keyDown(input, { key: 'Enter' })
-    await waitFor(() => expect(mocks.send).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(mocks.stream).toHaveBeenCalledTimes(1))
   })
 
   it('называет агента по имени в шапке и в подписи ответов', async () => {
     mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
-    mocks.send.mockResolvedValue(TURN)
+    mocks.stream.mockResolvedValue(TURN)
     renderPanel()
 
     expect(await screen.findByText('Нестор')).toBeTruthy()

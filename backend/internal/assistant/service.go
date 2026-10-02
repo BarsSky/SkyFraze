@@ -269,10 +269,26 @@ type Turn struct {
 	Model          string          `json:"model"`
 	Calls          []Call          `json:"calls"`
 	Changes        []Change        `json:"changes"`
+	// Stopped — ответ оборван человеком (кнопка «стоп»). В истории уже лежит то,
+	// что модель успела сказать, и интерфейс по этому признаку говорит «остановлено».
+	Stopped bool `json:"stopped,omitempty"`
 }
 
 // Send отправляет вопрос модели и выполняет то, что она попросила.
 func (s *Service) Send(ctx context.Context, userID, projectID, conversationID uuid.UUID, modelRef, text string) (*Turn, error) {
+	return s.SendStream(ctx, userID, projectID, conversationID, modelRef, text, nil)
+}
+
+// SendStream — то же, что Send, но по ходу дела отдаёт события (emitter).
+//
+// emitter == nil — обычный ответ одним JSON-ом: так работает прежняя ручка
+// `/messages`, и так же ведут себя тесты. Отдельной реализации для потока нет
+// намеренно: цикл «спросили модель → выполнили инструменты → спросили снова» должен
+// существовать в одном месте, иначе поток и обычный ответ разойдутся в поведении
+// (лимиты, согласие, порядок событий).
+func (s *Service) SendStream(
+	ctx context.Context, userID, projectID, conversationID uuid.UUID, modelRef, text string, emit Emitter,
+) (*Turn, error) {
 	if !s.Enabled() {
 		return nil, ErrDisabled
 	}
@@ -350,6 +366,16 @@ func (s *Service) Send(ctx context.Context, userID, projectID, conversationID uu
 		return nil, err
 	}
 
+	// Первое событие потока — идентификатор беседы. При «новой беседе» он известен
+	// только сейчас, а без него остановленный ответ остался бы в беседе, о которой
+	// интерфейс не знает: следующий вопрос завёл бы вторую, и кусок ответа потерялся
+	// бы из переписки.
+	if emit != nil {
+		if err := emit(Event{Type: EventStart, ConversationID: conversation.ID.String()}); err != nil {
+			return s.finishStopped(ctx, conversation, model, "", 0, 0)
+		}
+	}
+
 	messages := make([]ai.Message, 0, len(history)+3)
 	messages = append(messages, ai.Message{
 		Role: "system",
@@ -361,18 +387,20 @@ func (s *Service) Send(ctx context.Context, userID, projectID, conversationID uu
 
 	// Кадры помощник создаёт САМ: автором правок становится агент, а не человек,
 	// который нажал «спросить» (права при этом проверяются по человеку).
-	turn, err := s.converse(ctx, ai.AgentUserID, userID, provider, model, conversation, messages)
+	turn, err := s.converse(ctx, ai.AgentUserID, userID, provider, model, conversation, messages, emit)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.store.TouchAIConversation(ctx, conversation.ID, modelRef); err != nil {
+	// Отметка «свежая» — тем же контекстом без отмены: если человек нажал «стоп»,
+	// беседа всё равно должна обновиться (ответ-то в ней уже есть).
+	if err := s.store.TouchAIConversation(context.WithoutCancel(ctx), conversation.ID, modelRef); err != nil {
 		// История важнее отметки «свежая»: сбой обновления времени не повод терять ответ.
 		s.logger.Warn("ai: не удалось обновить беседу", "conversation", conversation.ID, "err", err)
 	}
 	if len(turn.Changes) > 0 {
 		s.logger.Info("ai: помощник изменил проект",
 			"user", userID, "project", projectID, "provider", provider,
-			"changes", len(turn.Changes), "calls", len(turn.Calls))
+			"changes", len(turn.Changes), "calls", len(turn.Calls), "stopped", turn.Stopped)
 	}
 	return turn, nil
 }
@@ -438,9 +466,12 @@ func (s *Service) history(ctx context.Context, conversationID uuid.UUID) ([]ai.M
 // actorID — от чьего имени помощник правит проект (агент), userID — чьими правами он
 // это делает (человек, нажавший «спросить»). Две разные вещи: агент участник проекта,
 // но действует только там, где человек имеет право писать.
+//
+// emit == nil — человек ждёт один JSON; иначе текст уходит кусками по мере генерации,
+// а вызовы инструментов — событиями сразу после выполнения.
 func (s *Service) converse(
 	ctx context.Context, actorID, userID uuid.UUID, provider, model string,
-	conversation *store.AIConversation, messages []ai.Message,
+	conversation *store.AIConversation, messages []ai.Message, emit Emitter,
 ) (*Turn, error) {
 	turn := &Turn{
 		ConversationID: conversation.ID,
@@ -452,14 +483,37 @@ func (s *Service) converse(
 	answer := ""
 	tokensIn, tokensOut := 0, 0
 
+	// ask — один запрос к модели. Потоком, если события нужны, и обычным запросом,
+	// если нет. Возвращает и то, что уже ушло человеку кусками: при обрыве это
+	// единственный текст, который у него есть, и его надо сохранить.
+	ask := func(req ai.Request) (ai.Reply, string, error) {
+		if emit == nil {
+			reply, err := s.models.Chat(ctx, userID, provider, req)
+			return reply, "", err
+		}
+		var streamed strings.Builder
+		reply, err := s.models.StreamChat(ctx, userID, provider, req, func(text string) error {
+			streamed.WriteString(text)
+			if err := emit(Event{Type: EventDelta, Text: text}); err != nil {
+				// Писать больше некуда: прекращаем генерацию, а не копим текст в никуда.
+				return errStreamStopped
+			}
+			return nil
+		})
+		return reply, streamed.String(), err
+	}
+
 	for round := 0; round < s.limits.MaxRounds; round++ {
-		reply, err := s.models.Chat(ctx, userID, provider, ai.Request{
+		reply, partial, err := ask(ai.Request{
 			Model:       model,
 			Messages:    messages,
 			Tools:       ToolDefs(),
 			Temperature: 0.4,
 		})
 		if err != nil {
+			if stoppedByClient(err) {
+				return s.finishStopped(ctx, conversation, model, partial, tokensIn, tokensOut)
+			}
 			return nil, err
 		}
 		tokensIn += reply.TokensIn
@@ -518,15 +572,32 @@ func (s *Service) converse(
 		}); err != nil {
 			return nil, err
 		}
+		// События — ПОСЛЕ записи в историю: человек должен видеть только то, что уже
+		// не потеряется, если он закроет окно через секунду.
+		if emit != nil {
+			for _, res := range results {
+				report := res.report
+				if err := emit(Event{Type: EventCall, Call: &report}); err != nil {
+					return s.finishStopped(ctx, conversation, model, "", tokensIn, tokensOut)
+				}
+				if res.change != nil {
+					change := *res.change
+					if err := emit(Event{Type: EventChange, Change: &change}); err != nil {
+						return s.finishStopped(ctx, conversation, model, "", tokensIn, tokensOut)
+					}
+				}
+			}
+		}
 	}
 
 	if answer == "" {
 		// Раунды кончились на вызовах: просим итог словами, уже без инструментов —
 		// человек должен получить ответ, а не молчание с созданными кадрами.
-		reply, err := s.models.Chat(ctx, userID, provider, ai.Request{
-			Model: model, Messages: messages, Temperature: 0.4,
-		})
+		reply, partial, err := ask(ai.Request{Model: model, Messages: messages, Temperature: 0.4})
 		if err != nil {
+			if stoppedByClient(err) {
+				return s.finishStopped(ctx, conversation, model, partial, tokensIn, tokensOut)
+			}
 			return nil, err
 		}
 		tokensIn += reply.TokensIn
@@ -546,6 +617,38 @@ func (s *Service) converse(
 	}
 	turn.Message = *saved
 	turn.Answer = answer
+	return turn, nil
+}
+
+// finishStopped сохраняет то, что модель успела сказать, и возвращает итог с пометкой
+// «остановлено».
+//
+// Контекст берём без отмены: запрос уже оборван, и обычный ctx не дал бы записать
+// ровно то, ради чего всё делается. Пустой текст не сохраняем — сообщения-призрака без
+// содержания в истории быть не должно (вопрос человека там уже есть, и его отсутствие
+// ответа — правда).
+func (s *Service) finishStopped(
+	ctx context.Context, conversation *store.AIConversation, model, partial string, tokensIn, tokensOut int,
+) (*Turn, error) {
+	turn := &Turn{
+		ConversationID: conversation.ID,
+		Model:          model,
+		Stopped:        true,
+		Calls:          []Call{},
+		Changes:        []Change{},
+	}
+	if strings.TrimSpace(partial) == "" {
+		return turn, nil
+	}
+	saved, err := s.store.AppendAIMessage(context.WithoutCancel(ctx), store.AIMessage{
+		ConversationID: conversation.ID, Role: "assistant", Content: partial,
+		Model: model, TokensIn: tokensIn, TokensOut: tokensOut, Stopped: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+	turn.Message = *saved
+	turn.Answer = partial
 	return turn, nil
 }
 

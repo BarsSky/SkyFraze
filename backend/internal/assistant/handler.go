@@ -44,6 +44,8 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Post("/ai/conversations", h.CreateConversation)
 	r.Get("/ai/conversations/{cid}", h.GetConversation)
 	r.Post("/ai/conversations/{cid}/messages", h.SendMessage)
+	// Тот же вопрос, но ответ приходит потоком: текст по кускам и события по ходу дела.
+	r.Post("/ai/conversations/{cid}/stream", h.StreamMessage)
 	// Роль и поведение агента: читает участник проекта, меняет только владелец.
 	r.Get("/ai/settings", h.GetSettings)
 	r.Put("/ai/settings", h.SaveSettings)
@@ -219,6 +221,45 @@ func (h *Handler) SendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, turn)
+}
+
+// StreamMessage — POST .../ai/conversations/{cid}/stream: тот же вопрос, но ответ
+// приходит потоком событий (SSE): куски текста, выполненные вызовы, изменения, итог.
+//
+// Ошибку до первого события отдаём обычным ответом с кодом: интерфейс по коду решает,
+// показать ли вопрос о согласии, просьбу добавить ключ или красную плашку. После начала
+// потока так уже нельзя — код ответа отправлен, поэтому сбой уходит событием `error`.
+func (h *Handler) StreamMessage(w http.ResponseWriter, r *http.Request) {
+	uid, pid, ok := h.scope(w, r)
+	if !ok {
+		return
+	}
+	cid, ok := h.conversationID(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Text  string `json:"text"`
+		Model string `json:"model"`
+	}
+	if err := decodeJSON(w, r, &body); err != nil {
+		return
+	}
+
+	stream := newSSEStream(w)
+	defer stream.close()
+	go stream.ping(r.Context(), ssePingEvery)
+
+	turn, err := h.svc.SendStream(r.Context(), uid, pid, cid, body.Model, body.Text, stream.send)
+	if err != nil {
+		if !stream.startedNow() {
+			h.fail(w, "stream message", err)
+			return
+		}
+		_ = stream.send(Event{Type: EventError, Error: err.Error()})
+		return
+	}
+	_ = stream.send(Event{Type: EventDone, Turn: turn})
 }
 
 // scope достаёт пользователя и проект из запроса.

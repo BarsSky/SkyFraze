@@ -85,6 +85,12 @@ export interface AIMessage {
   role: string
   content: string
   createdAt: string
+  /**
+   * Ответ оборван человеком (кнопка «стоп»). Отдельным признаком, а не припиской в
+   * тексте: тот же текст уходит модели как история, и «остановлено» выглядело бы для
+   * неё частью ответа.
+   */
+  stopped?: boolean
 }
 
 export interface AIConversation {
@@ -262,6 +268,155 @@ export async function sendAIMessage(
     )
     .json<unknown>()
   return parseAITurn(raw)
+}
+
+/**
+ * Одно событие потока ответа.
+ *
+ * Поля необязательные: у `start` — идентификатор беседы, у `delta` — кусок текста,
+ * у `call`/`change` — что помощник сделал, у `done` — итог целиком, у `error` — текст
+ * сбоя, случившегося уже после начала потока.
+ */
+export interface AIStreamEvent {
+  type: string
+  conversationId?: string
+  text?: string
+  call?: AICall
+  change?: AIChange
+  turn?: AITurn
+  error?: string
+}
+
+/** Что интерфейс делает с событиями по мере их прихода. */
+export interface AIStreamHandlers {
+  onStart?: (conversationId: string) => void
+  onDelta?: (text: string) => void
+  onCall?: (call: AICall) => void
+  onChange?: (change: AIChange) => void
+}
+
+/**
+ * Разбор буфера SSE: готовые события и «хвост», который ещё не дописан.
+ *
+ * Отдельной чистой функцией, а не внутри чтения потока: сеть режет данные как угодно,
+ * кусок события приходит в середине кадра, и это единственное место в потоковой части,
+ * где ошибка была бы незаметной (потерялся кусок текста — и всё).
+ */
+export function parseSSEBuffer(buffer: string): { events: AIStreamEvent[]; rest: string } {
+  const events: AIStreamEvent[] = []
+  let rest = buffer
+  for (;;) {
+    // Разделитель кадров — пустая строка, причём перевод строки может быть и CRLF:
+    // так пишет часть прокси, и по формату это допустимо. Регулярным выражением, а не
+    // `split('\n\n')`: разделитель бывает разрезан между двумя чтениями из сети, и
+    // тогда «хвост» нужно считать от фактически найденного места.
+    const boundary = /\r?\n\r?\n/.exec(rest)
+    if (!boundary) break
+    const frame = rest.slice(0, boundary.index)
+    rest = rest.slice(boundary.index + boundary[0].length)
+    // В кадре несколько строк data склеиваются переводом строки (так велит формат),
+    // а служебные строки (`event:`, `id:`, комментарии) нам не нужны.
+    const payload = frame
+      .split('\n')
+      .map((line) => line.replace(/\r$/, ''))
+      .filter((line) => line.startsWith('data:'))
+      .map((line) => line.slice('data:'.length).replace(/^ /, ''))
+      .join('\n')
+    if (payload.trim() === '') continue
+    events.push(parseStreamEvent(payload))
+  }
+  return { events, rest }
+}
+
+function parseStreamEvent(payload: string): AIStreamEvent {
+  const record = asRecord(JSON.parse(payload))
+  return {
+    type: asText(record?.type),
+    conversationId: asText(record?.conversation_id) || undefined,
+    text: asText(record?.text) || undefined,
+    call: parseCall(record?.call) ?? undefined,
+    change: parseChange(record?.change) ?? undefined,
+    turn: record?.turn != null ? parseAITurn(record.turn) : undefined,
+    error: asText(record?.error) || undefined,
+  }
+}
+
+/**
+ * Отправляет вопрос и читает ответ потоком.
+ *
+ * Возвращает итог — тот же, что у обычного запроса: по нему интерфейс заменяет текст,
+ * показанный «на лету», сообщением из истории (и только тогда он становится правдой —
+ * сервер мог и не сохранить то, что успел показать).
+ *
+ * `signal` — кнопка «стоп»: запрос прерывается, и сервер сохраняет то, что модель
+ * успела сказать. Это не ошибка, а обычное действие человека.
+ */
+export async function streamAIMessage(
+  projectId: string,
+  conversationId: string,
+  text: string,
+  model: string,
+  handlers: AIStreamHandlers = {},
+  signal?: AbortSignal,
+): Promise<AITurn> {
+  const response = await http.post(
+    `projects/${encodeURIComponent(projectId)}/ai/conversations/${encodeURIComponent(conversationId)}/stream`,
+    { json: { text, model }, signal },
+  )
+  const reader = response.body?.getReader()
+  if (!reader) {
+    throw new Error('сервер не отдал поток ответа')
+  }
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let turn: AITurn | null = null
+
+  const apply = (event: AIStreamEvent): AITurn | null => {
+    switch (event.type) {
+      case 'start':
+        if (event.conversationId) handlers.onStart?.(event.conversationId)
+        return null
+      case 'delta':
+        handlers.onDelta?.(event.text ?? '')
+        return null
+      case 'call':
+        if (event.call) handlers.onCall?.(event.call)
+        return null
+      case 'change':
+        if (event.change) handlers.onChange?.(event.change)
+        return null
+      case 'done':
+        return event.turn ?? null
+      case 'error':
+        throw new Error(event.error || 'помощник не смог ответить')
+      default:
+        // Незнакомое событие — не повод рвать ответ: сервер может научиться присылать
+        // новое, а старый интерфейс просто его не покажет.
+        return null
+    }
+  }
+
+  for (;;) {
+    const { value, done } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const parsed = parseSSEBuffer(buffer)
+    buffer = parsed.rest
+    for (const event of parsed.events) {
+      turn = apply(event) ?? turn
+    }
+  }
+  // Поток мог закончиться без пустой строки после последнего события: дочитываем хвост.
+  buffer += decoder.decode()
+  if (buffer.trim() !== '') {
+    for (const event of parseSSEBuffer(`${buffer}\n\n`).events) {
+      turn = apply(event) ?? turn
+    }
+  }
+  if (!turn) {
+    throw new Error('помощник не прислал итог — попробуйте ещё раз')
+  }
+  return turn
 }
 
 /**
@@ -461,6 +616,7 @@ function parseMessage(raw: unknown): AIMessage | null {
     role,
     content: asText(record.content),
     createdAt: asText(record.created_at),
+    stopped: record.stopped === true,
   }
 }
 

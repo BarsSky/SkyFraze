@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 )
@@ -174,28 +175,8 @@ type openAIChatResponse struct {
 }
 
 func (c *openAIClient) Chat(ctx context.Context, req Request) (Reply, error) {
-	body := openAIChatRequest{Model: req.Model, Temperature: req.Temperature, Stream: false}
-	for _, m := range req.Messages {
-		msg := openAIMessage{Role: m.Role, Content: m.Content, ToolCallID: m.ToolCallID, Name: m.Name}
-		for _, call := range m.ToolCalls {
-			var tc openAIToolCall
-			tc.ID = call.ID
-			tc.Type = "function"
-			tc.Function.Name = call.Name
-			raw, err := json.Marshal(call.Arguments)
-			if err != nil {
-				return Reply{}, err
-			}
-			tc.Function.Arguments = string(raw)
-			msg.ToolCalls = append(msg.ToolCalls, tc)
-		}
-		body.Messages = append(body.Messages, msg)
-	}
-	for _, t := range req.Tools {
-		body.Tools = append(body.Tools, openAITool{Type: "function", Function: openAIToolBrief{
-			Name: t.Name, Description: t.Description, Parameters: t.Parameters,
-		}})
-	}
+	body := c.chatBody(req)
+	body.Stream = false
 
 	var out openAIChatResponse
 	if err := c.post(ctx, "/chat/completions", body, &out); err != nil {
@@ -230,6 +211,184 @@ func (c *openAIClient) Chat(ctx context.Context, req Request) (Reply, error) {
 		reply.ToolCalls = append(reply.ToolCalls, ToolCall{ID: id, Name: call.Function.Name, Arguments: args})
 	}
 	return reply, nil
+}
+
+// openAIStreamChunk — одно событие потока. Куски вызова инструмента приходят по
+// частям: имя в одном событии, аргументы (строкой JSON) — в нескольких следующих,
+// и склеивать их нужно по index.
+type openAIStreamChunk struct {
+	Model   string `json:"model"`
+	Choices []struct {
+		Delta struct {
+			Content   string `json:"content"`
+			ToolCalls []struct {
+				Index    int    `json:"index"`
+				ID       string `json:"id"`
+				Type     string `json:"type"`
+				Function struct {
+					Name      string `json:"name"`
+					Arguments string `json:"arguments"`
+				} `json:"function"`
+			} `json:"tool_calls"`
+		} `json:"delta"`
+		FinishReason string `json:"finish_reason"`
+	} `json:"choices"`
+	Usage *struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+	} `json:"usage"`
+	Error *struct {
+		Message string `json:"message"`
+	} `json:"error"`
+}
+
+// ChatStream — потоковый вариант Chat: сервер отдаёт события SSE со кусками текста.
+//
+// Счётчики токенов в потоковом режиме приходят не всегда: их присылают, только если
+// попросить (`stream_options.include_usage`), а часть серверов на незнакомое поле
+// отвечает ошибкой. Поэтому просить не будем: точные счётчики не стоят того, чтобы
+// ради них ломать совместимость с чужим сервером, а оценка расхода — дело вызывающего
+// (см. фазу лимитов по токенам).
+func (c *openAIClient) ChatStream(ctx context.Context, req Request, onText func(string) error) (Reply, error) {
+	body := c.chatBody(req)
+	body.Stream = true
+
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return Reply{}, err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.provider.BaseURL+"/chat/completions", bytes.NewReader(raw))
+	if err != nil {
+		return Reply{}, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "text/event-stream")
+	c.authorize(httpReq)
+
+	resp, err := c.client.Do(httpReq)
+	if err != nil {
+		return Reply{}, fmt.Errorf("%w: %s: %v", ErrUnavailable, c.provider.Title, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		limited, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			return Reply{}, fmt.Errorf("%w: %s", ErrUnauthorized, strings.TrimSpace(string(limited)))
+		}
+		return Reply{}, fmt.Errorf("%w: код %d: %s", ErrUnavailable, resp.StatusCode, strings.TrimSpace(string(limited)))
+	}
+
+	type toolAcc struct {
+		id   string
+		name string
+		args strings.Builder
+	}
+	acc := map[int]*toolAcc{}
+	order := []int{}
+	reply := Reply{Model: req.Model}
+	var text strings.Builder
+
+	err = readSSE(resp.Body, func(data string) error {
+		if strings.TrimSpace(data) == "[DONE]" {
+			return errStreamEnd
+		}
+		var chunk openAIStreamChunk
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			return fmt.Errorf("%w: разбор потока: %v", ErrUnavailable, err)
+		}
+		if chunk.Error != nil {
+			return fmt.Errorf("%w: %s", ErrUnavailable, chunk.Error.Message)
+		}
+		if chunk.Model != "" {
+			reply.Model = chunk.Model
+		}
+		if chunk.Usage != nil {
+			reply.TokensIn = chunk.Usage.PromptTokens
+			reply.TokensOut = chunk.Usage.CompletionTokens
+		}
+		if len(chunk.Choices) == 0 {
+			return nil
+		}
+		delta := chunk.Choices[0].Delta
+		if delta.Content != "" {
+			text.WriteString(delta.Content)
+			if onText != nil {
+				if err := onText(delta.Content); err != nil {
+					return err
+				}
+			}
+		}
+		for _, call := range delta.ToolCalls {
+			item, ok := acc[call.Index]
+			if !ok {
+				item = &toolAcc{}
+				acc[call.Index] = item
+				order = append(order, call.Index)
+			}
+			if call.ID != "" {
+				item.id = call.ID
+			}
+			if call.Function.Name != "" {
+				item.name = call.Function.Name
+			}
+			item.args.WriteString(call.Function.Arguments)
+		}
+		return nil
+	})
+	if err := streamEndOrError(err); err != nil {
+		return Reply{}, streamStopped(ctx, err)
+	}
+
+	sort.Ints(order)
+	for _, index := range order {
+		item := acc[index]
+		if item.name == "" {
+			continue
+		}
+		args := map[string]any{}
+		if raw := strings.TrimSpace(item.args.String()); raw != "" {
+			if err := json.Unmarshal([]byte(raw), &args); err != nil {
+				// Аргументы не разобрались — ошибка модели, а не наша: отдаём как есть,
+				// и валидация вызова отвергнет его с понятным текстом.
+				args = map[string]any{"_raw": raw}
+			}
+		}
+		id := item.id
+		if id == "" {
+			id = fmt.Sprintf("%s-%d-%s", c.provider.ID, index, item.name)
+		}
+		reply.ToolCalls = append(reply.ToolCalls, ToolCall{ID: id, Name: item.name, Arguments: args})
+	}
+	reply.Content = text.String()
+	return reply, nil
+}
+
+// chatBody собирает тело запроса к /chat/completions — общее для обычного и потокового
+// вариантов, чтобы поля не разъезжались между ними.
+func (c *openAIClient) chatBody(req Request) openAIChatRequest {
+	body := openAIChatRequest{Model: req.Model, Temperature: req.Temperature}
+	for _, m := range req.Messages {
+		msg := openAIMessage{Role: m.Role, Content: m.Content, ToolCallID: m.ToolCallID, Name: m.Name}
+		for _, call := range m.ToolCalls {
+			var tc openAIToolCall
+			tc.ID = call.ID
+			tc.Type = "function"
+			tc.Function.Name = call.Name
+			raw, err := json.Marshal(call.Arguments)
+			if err != nil {
+				continue
+			}
+			tc.Function.Arguments = string(raw)
+			msg.ToolCalls = append(msg.ToolCalls, tc)
+		}
+		body.Messages = append(body.Messages, msg)
+	}
+	for _, t := range req.Tools {
+		body.Tools = append(body.Tools, openAITool{Type: "function", Function: openAIToolBrief{
+			Name: t.Name, Description: t.Description, Parameters: t.Parameters,
+		}})
+	}
+	return body
 }
 
 func (c *openAIClient) get(ctx context.Context, path string, out any) error {

@@ -21,11 +21,13 @@ import {
   needsConsent,
   parseAIConfig,
   parseAIModels,
+  parseSSEBuffer,
   parseAITurn,
   readAIError,
   saveAIKey,
   sendAIMessage,
   setAIConsent,
+  streamAIMessage,
   type AIConfig,
 } from './assistant'
 
@@ -258,5 +260,109 @@ describe('readAIError', () => {
 
     const none = await readAIError(new Error('сеть'))
     expect(none).toEqual({ message: null, consentRequired: false })
+  })
+})
+
+/**
+ * Поток ответа: разбор кадров SSE и чтение ответа по кускам.
+ *
+ * Здесь ломается незаметно: сеть режет данные как угодно, и потерянный из-за этого
+ * кусок текста выглядел бы просто «модель сказала меньше». Поэтому проверяем и
+ * неполный кадр, и склейку нескольких строк `data` в одном кадре, и разделитель CRLF,
+ * и «стоп» (обрыв чтения).
+ */
+describe('parseSSEBuffer', () => {
+  it('отдаёт готовые события и оставляет недописанный хвост', () => {
+    const first = parseSSEBuffer(
+      'data: {"type":"start","conversation_id":"c1"}\n\ndata: {"type":"delta","text":"При',
+    )
+    expect(first.events).toHaveLength(1)
+    expect(first.events[0]).toEqual({ type: 'start', conversationId: 'c1' })
+    expect(first.rest).toBe('data: {"type":"delta","text":"При')
+
+    const second = parseSSEBuffer(`${first.rest}` + 'вет"}\n\n')
+    expect(second.events).toEqual([{ type: 'delta', text: 'Привет' }])
+    expect(second.rest).toBe('')
+  })
+
+  it('склеивает несколько строк data одного кадра и терпит CRLF', () => {
+    const parsed = parseSSEBuffer('data: {"type":"delta",\r\ndata: "text":"Часть"}\r\n\r\n')
+    expect(parsed.events).toEqual([{ type: 'delta', text: 'Часть' }])
+    expect(parsed.rest).toBe('')
+  })
+
+  it('не разбирает комментарии и служебные поля', () => {
+    const parsed = parseSSEBuffer(': ping\n\nevent: delta\nid: 7\n\ndata: {"type":"done"}\n\n')
+    expect(parsed.events).toEqual([{ type: 'done' }])
+  })
+})
+
+describe('streamAIMessage', () => {
+  /** Чтение «как из сети»: куски приходят по границам, а не по событиям. */
+  function body(chunks: string[]) {
+    const encoder = new TextEncoder()
+    let index = 0
+    return {
+      body: {
+        getReader: () => ({
+          read: async () =>
+            index < chunks.length
+              ? { done: false, value: encoder.encode(chunks[index++]) }
+              : { done: true, value: undefined },
+        }),
+      },
+    }
+  }
+
+  it('собирает ответ из кусков и отдаёт итог', async () => {
+    // Кусок приходит ПОСЕРЕДИНЕ события: так это и работает по сети.
+    mocks.post.mockResolvedValue(
+      body([
+        'data: {"type":"start","conversation_id":"c1"}\n\ndata: {"type":"delta","text":"Соз',
+        'дал главу."}\n\ndata: {"type":"call","call":{"name":"create_chapter","ok":true}}\n\ndata:',
+        ' {"type":"change","change":{"action":"created_chapter","id":"e1","title":"Пролог"}}\n\n',
+        'data: {"type":"done","turn":{"conversation_id":"c1","answer":"Создал главу.",',
+        '"model":"m","calls":[],"changes":[],"message":{"id":"m2","role":"assistant","content":"Создал главу."}}}\n\n',
+      ]),
+    )
+
+    const started: string[] = []
+    const deltas: string[] = []
+    const calls: string[] = []
+    const changes: string[] = []
+    const turn = await streamAIMessage('p1', 'new', 'Добавь главу', 'groq:llama', {
+      onStart: (id) => started.push(id),
+      onDelta: (text) => deltas.push(text),
+      onCall: (call) => calls.push(call.name),
+      onChange: (change) => changes.push(change.title),
+    })
+
+    expect(started).toEqual(['c1'])
+    expect(deltas).toEqual(['Создал главу.'])
+    expect(calls).toEqual(['create_chapter'])
+    expect(changes).toEqual(['Пролог'])
+    expect(turn.answer).toBe('Создал главу.')
+    expect(turn.conversationId).toBe('c1')
+    // Запрос уходит на потоковую ручку, а не на обычную.
+    expect(mocks.post.mock.calls[0]?.[0]).toBe('projects/p1/ai/conversations/new/stream')
+  })
+
+  it('сбой посреди потока приходит ошибкой, а не коротким ответом', async () => {
+    mocks.post.mockResolvedValue(
+      body([
+        'data: {"type":"delta","text":"Начал"}\n\n',
+        'data: {"type":"error","error":"провайдер отвалился"}\n\n',
+      ]),
+    )
+    await expect(
+      streamAIMessage('p1', 'new', 'вопрос', 'groq:llama', {}),
+    ).rejects.toThrow('провайдер отвалился')
+  })
+
+  it('поток без итога — ошибка: показывать недописанный ответ как готовый нельзя', async () => {
+    mocks.post.mockResolvedValue(body(['data: {"type":"delta","text":"Начал"}\n\n']))
+    await expect(streamAIMessage('p1', 'new', 'вопрос', 'groq:llama', {})).rejects.toThrow(
+      /не прислал итог/,
+    )
   })
 })

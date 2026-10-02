@@ -77,6 +77,10 @@ var schemaSteps = []struct{ probe, file string }{
 	                  WHERE table_schema='public' AND table_name='users'
 	                    AND column_name='is_system')`,
 		"0011_users_is_system.up.sql"},
+	{`SELECT EXISTS (SELECT 1 FROM information_schema.columns
+	                  WHERE table_schema='public' AND table_name='ai_messages'
+	                    AND column_name='stopped')`,
+		"0012_ai_messages_stopped.up.sql"},
 }
 
 // Setup открывает отдельную БД для пакета (suffix), применяет миграции и

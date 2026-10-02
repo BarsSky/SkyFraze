@@ -91,6 +91,7 @@ type AIConversation struct {
 // отдельные колонки под каждый значили бы миграцию на каждый новый инструмент. Наружу
 // они уходят теми же JSON-массивами: интерфейсу нужно показать «что модель попросила»
 // и «что получилось», и он это делает из истории, а не из отдельного запроса.
+// AIMessage — реплика беседы.
 type AIMessage struct {
 	ID             uuid.UUID       `db:"id" json:"id"`
 	ConversationID uuid.UUID       `db:"conversation_id" json:"conversation_id"`
@@ -101,11 +102,15 @@ type AIMessage struct {
 	Model          string          `db:"model" json:"model"`
 	TokensIn       int             `db:"tokens_in" json:"tokens_in"`
 	TokensOut      int             `db:"tokens_out" json:"tokens_out"`
-	CreatedAt      time.Time       `db:"created_at" json:"created_at"`
+	// Stopped — ответ оборван человеком (кнопка «стоп»). Отдельным полем, а не
+	// пометкой в тексте: история уходит модели, и служебная приписка в ней выглядела
+	// бы как часть ответа. Интерфейс по этому признаку говорит «остановлено».
+	Stopped   bool      `db:"stopped" json:"stopped"`
+	CreatedAt time.Time `db:"created_at" json:"created_at"`
 }
 
 const aiMessageColumns = `id, conversation_id, role, content, tool_calls, tool_results,
-	model, tokens_in, tokens_out, created_at`
+	model, tokens_in, tokens_out, stopped, created_at`
 
 // CreateAIConversation заводит беседу. Пустой заголовок — нормально: его поставит
 // первый вопрос человека (обрезанный), чтобы список бесед не был списком «Новая беседа».
@@ -166,11 +171,11 @@ func (s *Store) AppendAIMessage(ctx context.Context, m AIMessage) (*AIMessage, e
 	toolResults := rawJSONOrEmpty(m.ToolResults)
 	return qOne[AIMessage](ctx, s.Pool,
 		`INSERT INTO ai_messages
-		   (conversation_id, role, content, tool_calls, tool_results, model, tokens_in, tokens_out)
-		 VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7, $8)
+		   (conversation_id, role, content, tool_calls, tool_results, model, tokens_in, tokens_out, stopped)
+		 VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7, $8, $9)
 		 RETURNING `+aiMessageColumns,
 		m.ConversationID, m.Role, m.Content, string(toolCalls), string(toolResults),
-		m.Model, m.TokensIn, m.TokensOut)
+		m.Model, m.TokensIn, m.TokensOut, m.Stopped)
 }
 
 // ListAIMessages — история беседы по порядку. limit ограничивает выборку с конца:
