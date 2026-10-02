@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { Asset } from '../../api/assets'
 
-import { uploadErrorNote, uploadNoteFor } from './EditorsPanel'
+import { outcomeNote, uploadErrorNote, uploadNoteFor } from './EditorsPanel'
 
 /**
  * Подсказка после загрузки. Сервер пережимает картинки в WebP и меняет имя файла,
@@ -69,5 +69,29 @@ describe('uploadErrorNote', () => {
     expect(await uploadErrorNote(new TypeError('Failed to fetch'))).toBe(
       'Не удалось загрузить файл: сервер отклонил запрос.',
     )
+  })
+})
+
+describe('outcomeNote', () => {
+  it('один файл — подробность про пережатие, как раньше', () => {
+    const files = [file('photo.jpg', 2_000_531, 'image/jpeg')]
+    const note = outcomeNote(files, [
+      {
+        file: files[0],
+        asset: asset({ filename: 'photo.webp', mime: 'image/webp', size: 161_396 }),
+        error: null,
+      },
+    ])
+    expect(note).toBe('Загружено: photo.webp — пережато из 1.9 МБ в 158 КБ')
+  })
+
+  it('несколько файлов — сводка «сколько дошло» и причины отказов', () => {
+    const files = [file('a.png', 10, 'image/png'), file('b.png', 10, 'image/png')]
+    const note = outcomeNote(files, [
+      { file: files[0], asset: asset({ filename: 'a.webp', mime: 'image/webp', size: 8 }), error: null },
+      { file: files[1], asset: null, error: 'не помещается' },
+    ])
+    expect(note).toMatch(/загружено 1 из 2/)
+    expect(note).toMatch(/b\.png: не помещается/)
   })
 })

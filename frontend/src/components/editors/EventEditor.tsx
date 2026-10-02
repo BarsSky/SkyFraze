@@ -15,6 +15,8 @@ interface Props {
   /** id ассета → blob-URL (ассеты требуют авторизации, прямые ссылки дают 401). */
   assetUrls: Record<string, string>
   onUpload: (file: File) => void
+  /** Несколько файлов сразу: очередь загрузки и сводка — в панели редакторов. */
+  onUploadMany: (files: File[]) => void
   onAttach: (assetId: string) => void
   onDetach: (assetId: string) => void
   onBackgroundChange: (value: BackgroundValue) => void
@@ -78,7 +80,7 @@ function useFieldDraft(field: TextField, ymap: YMap, write: (field: TextField, m
  * стадии: смотреть картинку удобно и во время правки, не выходя из проекта.
  */
 export function EventEditor({
-  ymap, assets, images, assetUrls, onUpload, onAttach, onDetach, onBackgroundChange, background, onChange, onTyping,
+  ymap, assets, images, assetUrls, onUpload, onUploadMany, onAttach, onDetach, onBackgroundChange, background, onChange, onTyping,
 }: Props) {
   /**
    * Записать правку поля.
@@ -240,13 +242,17 @@ export function EventEditor({
           <label className="ed-upload">
             <input
               type="file"
+              multiple
               accept="image/*,.pdf,.svg"
               onChange={(e) => {
-                const file = e.target.files?.[0]
-                if (file) onUpload(file)
+                // Несколько файлов сразу: очередь разберётся с ними по одному и
+                // расскажет, что вышло по каждому (см. lib/uploadQueue.ts).
+                const files = Array.from(e.target.files ?? [])
+                if (files.length > 0) onUploadMany(files)
+                e.target.value = ''
               }}
             />
-            + загрузить файл
+            + загрузить файлы
           </label>
           {unattached.length > 0 && (
             <select

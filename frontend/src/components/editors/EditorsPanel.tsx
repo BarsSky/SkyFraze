@@ -15,6 +15,12 @@ import {
 import { DIRECTORY_PICK } from '../../lib/directoryPick'
 import { formatBytes, plural } from '../../lib/format'
 import { importWeight } from '../../lib/importWeight'
+import { runUploads, uploadSummary, type UploadOutcome } from '../../lib/uploadQueue'
+import {
+  attachmentsByAsset,
+  planAssetMove,
+  type TransferFrame,
+} from '../../lib/assetTransfer'
 import { serverErrorMessage } from '../../api/client'
 import {
   yAddEvent,
@@ -124,6 +130,58 @@ export function uploadNoteFor(file: File, asset: Asset): string {
  */
 export async function uploadErrorNote(e: unknown): Promise<string> {
   return (await serverErrorMessage(e)) ?? 'Не удалось загрузить файл: сервер отклонил запрос.'
+}
+
+/**
+ * Итог загрузки для человека.
+ *
+ * Один файл — с подробностью про пережатие («пережато из 2.4 МБ в 300 КБ»), потому что
+ * сервер переименовывает картинки и без пояснения это выглядит подменой файла. Несколько
+ * — сводкой «загружено 3 из 5» с причинами отказов.
+ */
+export function outcomeNote(files: File[], outcomes: UploadOutcome[]): string {
+  const first = outcomes[0]
+  if (files.length === 1 && first?.asset) return uploadNoteFor(files[0], first.asset)
+  return uploadSummary(outcomes)
+}
+
+/**
+ * Кадры в том виде, в каком их видит перенос файлов: подпись, вложения, фон.
+ *
+ * Читаем прямо из документа (а не из проекции): перенос делает клиент, и решать по
+ * устаревшей таблице значило бы терять вложения соавтора. Номера считаем тем же
+ * обходом дерева, что и навигатор, — чтобы «01.1» в подписи переноса совпадал с
+ * номером кадра в стадии.
+ */
+export function transferFrames(list: YMap[]): TransferFrame[] {
+  const flat: Array<EventLike & { title: string }> = list
+    .map((m) => ({
+      id: (m.get('id') as string | undefined) ?? '',
+      parentId: yEventParentId(m),
+      title: titleString(m),
+    }))
+    .filter((e) => e.id.length > 0)
+  const byId = new Map<string, YMap>()
+  for (const map of list) byId.set((map.get('id') as string) ?? '', map)
+
+  const out: TransferFrame[] = []
+  const walk = (node: EventTreeNode<(typeof flat)[number]>, number: string) => {
+    const map = byId.get(node.item.id)
+    const assets = ((map?.get('assets') as string[] | undefined) ?? []).filter(Boolean)
+    const background =
+      map?.get('bg_kind') === 'asset' ? ((map.get('bg_asset') as string | undefined) ?? null) : null
+    out.push({
+      id: node.item.id,
+      label: `${number} ${node.item.title || 'Без названия'}`.trim(),
+      assetIds: assets,
+      backgroundAssetId: background,
+    })
+    node.children.forEach((child, index) => walk(child, `${number}.${index + 1}`))
+  }
+  buildEventTree(flat, DEFAULT_MAX_DEPTH).forEach((root, index) => {
+    walk(root, String(index + 1).padStart(2, '0'))
+  })
+  return out
 }
 
 /** Сдвиг, после которого нажатие становится перетаскиванием, а не выбором. */
@@ -293,7 +351,7 @@ export function EditorsPanel({
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [filter, setFilter] = useState('')
   const [version, setVersion] = useState(0) // перерисовка после правок CRDT
-  const [uploadNote, setUploadNote] = useState<string | null>(null)
+  const [filesNote, setFilesNote] = useState<string | null>(null)
   const [drag, setDrag] = useState<DragView | null>(null)
   /** Подсказка для клавиатурных переносов: что не получилось и почему. */
   const [notice, setNotice] = useState<string | null>(null)
@@ -418,6 +476,19 @@ export function EditorsPanel({
     })
     return out
   }, [events, version])
+
+  /**
+   * Кадры для списка файлов: где лежит каждый файл и куда его можно перенести.
+   *
+   * Считается здесь, а не в ProjectFiles: документ доступен панели, а списку файлов
+   * нужны только готовые подписи и вложения.
+   */
+  const frames = useMemo<TransferFrame[]>(() => {
+    void version
+    if (!events) return []
+    return transferFrames(events.toArray() as YMap[])
+  }, [events, version])
+  const attachments = useMemo(() => attachmentsByAsset(frames), [frames])
 
   // Обработчики жеста читают строки из ref: за время перетаскивания дерево
   // может приехать от соавтора, и проверять ход надо по свежему состоянию.
@@ -664,45 +735,110 @@ export function EditorsPanel({
     onChanged()
   }
 
-  function uploadAndAttach(file: File) {
-    setUploadNote(null)
-    if (file.size > MAX_UPLOAD_BYTES) {
-      setUploadNote(`Файл больше ${Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)} МБ — сервер его не примет.`)
-      return
-    }
+  /**
+   * Загрузить НЕСКОЛЬКО файлов и прикрепить их к выбранному кадру.
+   *
+   * Очередь (lib/uploadQueue.ts) решает три вещи, которые в лоб не решаются:
+   * загрузка идёт по одному файлу (сервер пережимает картинки — десяток
+   * одновременных загрузок кладёт слабую машину), по каждому файлу виден итог, а
+   * когда кончилось место — остаток не отправляется вовсе.
+   */
+  function uploadAndAttachMany(files: File[]) {
+    // Прикрепляем к тому событию, для которого выбирали файлы: за время загрузки
+    // человек мог переключиться в навигаторе.
     const targetId = selectedId
+    setFilesNote(null)
     void (async () => {
-      let asset: Asset | null = null
-      try {
-        asset = await onUpload(file)
-      } catch (e) {
-        // Сервер объясняет отказ своими словами — «в проекте занято 9.4 МБ из
-        // 10 МБ — файл на 1.2 МБ не помещается». Показать вместо этого «сервер
-        // отклонил запрос» значит заставить человека гадать, что не так.
-        setUploadNote(await uploadErrorNote(e))
-        return
+      const outcomes = await runUploads(files, (f) => onUpload(f), {
+        maxBytes: MAX_UPLOAD_BYTES,
+        onProgress: (done, total) => {
+          if (total > 1 && done < total) setFilesNote(`Загружаю ${done + 1} из ${total}…`)
+        },
+        describeError: (e) => uploadErrorNote(e),
+      })
+
+      let first = true
+      for (const outcome of outcomes) {
+        if (!outcome.asset) continue
+        attachTo(targetId, outcome.asset, first && outcomes.length > 1)
+        first = false
       }
-      if (!asset) {
-        setUploadNote('Не удалось загрузить файл (сервер отклонил запрос).')
-        return
-      }
-      // Прикрепляем к тому событию, для которого выбирали файл: за время
-      // загрузки пользователь мог переключиться в навигаторе.
-      const target = (events?.toArray() as YMap[] | undefined)?.find(
-        (m) => (m.get('id') as string) === targetId,
-      )
-      const map = target ?? selectedMap
-      if (!map) return
-      const list = ((map.get('assets') as string[] | undefined) ?? []).filter(Boolean)
-      map.set('assets', [...list, asset.id])
-      // Первая картинка сразу становится фоном кадра — обычно это и нужно.
-      if (asset.mime.startsWith('image/') && map.get('bg_kind') !== 'asset') {
-        map.set('bg_kind', 'asset')
-        map.set('bg_asset', asset.id)
-      }
-      setUploadNote(uploadNoteFor(file, asset))
+      setFilesNote(outcomeNote(files, outcomes))
       setVersion((v) => v + 1)
     })()
+  }
+
+  /**
+   * Загрузить файлы в проект БЕЗ прикрепления к кадру.
+   *
+   * Нужно для «положить в проект десяток картинок сразу»: привязка к кадрам — отдельное
+   * действие (в кадре или переносом из списка файлов), и навязывать её при загрузке
+   * нельзя: файл может быть нужен сразу нескольким кадрам или пока ни одному.
+   */
+  function uploadProjectFiles(files: File[]) {
+    setFilesNote(null)
+    void (async () => {
+      const outcomes = await runUploads(files, (f) => onUpload(f), {
+        maxBytes: MAX_UPLOAD_BYTES,
+        onProgress: (done, total) => {
+          if (total > 1 && done < total) setFilesNote(`Загружаю ${done + 1} из ${total}…`)
+        },
+        describeError: (e) => uploadErrorNote(e),
+      })
+      setFilesNote(outcomeNote(files, outcomes))
+      setVersion((v) => v + 1)
+    })()
+  }
+
+  /** Прикрепить загруженный файл к кадру; первая картинка становится фоном кадра. */
+  function attachTo(targetId: string | null, asset: Asset, becomeBackground: boolean) {
+    const list = (events?.toArray() as YMap[] | undefined) ?? []
+    const map = list.find((m) => (m.get('id') as string) === targetId) ?? selectedMap
+    if (!map) return
+    const current = ((map.get('assets') as string[] | undefined) ?? []).filter(Boolean)
+    if (!current.includes(asset.id)) map.set('assets', [...current, asset.id])
+    // Первая картинка сразу становится фоном кадра — обычно это и нужно. При
+    // загрузке нескольких файлов фон получает только первая, иначе каждая следующая
+    // перебивала бы предыдущую и в кадре оказалась случайная картинка.
+    if (asset.mime.startsWith('image/') && (becomeBackground || map.get('bg_kind') !== 'asset')) {
+      map.set('bg_kind', 'asset')
+      map.set('bg_asset', asset.id)
+    }
+  }
+
+  /**
+   * Перенос вложения из кадра в кадр (глава ↔ под-событие).
+   *
+   * Решение целиком принимает `planAssetMove` (lib/assetTransfer.ts): он знает про фон
+   * исходного кадра, про то, что тот же файл может быть прикреплён к нескольким кадрам,
+   * и про то, что первая картинка в пустом кадре становится фоном. Здесь — только
+   * применение к документу.
+   */
+  function moveAsset(assetId: string, fromId: string | null, toId: string) {
+    const list = (events?.toArray() as YMap[] | undefined) ?? []
+    const frames = transferFrames(list)
+    const asset = assets.find((a) => a.id === assetId)
+    const plan = planAssetMove(frames, assetId, fromId, toId, {
+      isImage: (asset?.mime ?? '').startsWith('image/'),
+    })
+    if ('error' in plan) {
+      setFilesNote(plan.error)
+      return
+    }
+    for (const patch of plan.patches) {
+      const map = list.find((m) => (m.get('id') as string) === patch.id)
+      if (!map) continue
+      map.set('assets', patch.assetIds)
+      if (patch.backgroundAssetId === null) {
+        map.delete('bg_asset')
+      } else if (typeof patch.backgroundAssetId === 'string') {
+        map.set('bg_kind', 'asset')
+        map.set('bg_asset', patch.backgroundAssetId)
+      }
+    }
+    setFilesNote(plan.notice)
+    setVersion((v) => v + 1)
+    onChanged()
   }
 
   function attach(assetId: string) {
@@ -1228,7 +1364,7 @@ export function EditorsPanel({
       )}
 
       {syncNote && <p className="muted ed-panel__note">{syncNote}</p>}
-      {uploadNote && <p className="ed-panel__note ed-panel__note--upload">{uploadNote}</p>}
+      {filesNote && <p className="ed-panel__note ed-panel__note--upload">{filesNote}</p>}
       {hintText && (
         <p
           className={[
@@ -1335,7 +1471,8 @@ export function EditorsPanel({
                 images={images}
                 assetUrls={assetUrls}
                 background={background}
-                onUpload={uploadAndAttach}
+                onUpload={(file) => uploadAndAttachMany([file])}
+                onUploadMany={uploadAndAttachMany}
                 onAttach={attach}
                 onDetach={detach}
                 onBackgroundChange={changeBackground}
@@ -1356,9 +1493,12 @@ export function EditorsPanel({
         assets={assets}
         usage={assetUsage ?? null}
         attached={usedAssetIds}
+        frames={frames}
         busyId={assetBusyId ?? null}
-        note={assetNote ?? null}
+        note={assetNote ?? filesNote ?? null}
         onDelete={(asset) => onDeleteAsset?.(asset)}
+        onUploadFiles={uploadProjectFiles}
+        onMove={moveAsset}
       />
 
       {/* Подпись переноса — в body: список прокручивается (`overflow`), и внутри

@@ -272,6 +272,44 @@
 .ed-files .ed-assets__name { max-width: 42ch; }
 .ed-files .ed-assets__detach:disabled { color: var(--fg-muted); opacity: 0.45; cursor: not-allowed; }
 
+/* Загрузка нескольких файлов сразу: та же «кнопка-обёртка», что у кадра, но в
+   шапке списка — место освобождают и пополняют из одного места. */
+.ed-files__upload { flex: 0 0 auto; margin-left: auto; }
+
+/* Где файл лежит сейчас и куда его перенести. Строка нужна обеим операциям:
+   без неё «перенести» непонятно — файл мог быть прикреплён к нескольким кадрам. */
+.ed-files__where {
+  font-size: 12px;
+  max-width: 28ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ed-assets__move {
+  font-size: 12px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-soft);
+  cursor: pointer;
+}
+.ed-assets__move:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.ed-assets__move:disabled { color: var(--fg-muted); opacity: 0.45; cursor: not-allowed; }
+/* Выбор кадра раскрывается под строкой файла во всю ширину карточки. */
+.ed-files__move {
+  flex: 1 0 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: flex-end;
+  padding-top: 8px;
+  margin-top: 2px;
+  border-top: 1px dashed var(--border);
+}
+.ed-files__move .ed-field { flex: 1 1 220px; }
+.ed-files__move select { width: 100%; min-height: 32px; }
+
 /* Вес вложений куска md: импорт подчиняется пределу проекта, и об отказе лучше
    узнать до перетаскивания, а не после него. */
 .ed-import__quota {
