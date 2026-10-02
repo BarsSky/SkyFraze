@@ -151,13 +151,22 @@ func (s *Service) Send(ctx context.Context, userID, projectID, conversationID uu
 		return nil, err
 	}
 	// Согласие — до всего остального: пока человек не разрешил отправку, ни вопрос,
-	// ни оглавление проекта никуда не уходят.
-	allowed, err := s.models.HasConsent(ctx, userID, provider)
+	// ни оглавление проекта никуда не уходят. Спрашиваем по конкретной МОДЕЛИ:
+	// облачная модель Ollama (`…:cloud`) считается на чужом сервере, хотя провайдер
+	// тот же, что у локальной, — и согласие для неё обязательно.
+	allowed, err := s.models.HasConsentFor(ctx, userID, provider, model)
 	if err != nil {
 		return nil, err
 	}
 	if !allowed {
-		return nil, fmt.Errorf("%w (%s)", ErrConsent, s.models.ProviderTitle(provider))
+		// В сообщении называем модель, а не только провайдера: у Ollama облачная
+		// модель требует согласия наравне с чужим сервисом, и «разрешите отправку
+		// провайдеру Ollama» звучало бы как разрешение говорить со своей машиной.
+		label := s.models.ProviderTitle(provider)
+		if ai.IsCloudModelRef(model) {
+			label = fmt.Sprintf("облачная модель %s (%s)", model, label)
+		}
+		return nil, fmt.Errorf("%w (%s)", ErrConsent, label)
 	}
 
 	conversation, err := s.conversation(ctx, userID, projectID, conversationID, modelRef, text)

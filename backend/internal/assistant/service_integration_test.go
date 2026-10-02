@@ -109,6 +109,10 @@ func newStub(t *testing.T, replies ...ai.Reply) *stubProvider {
 	mux.HandleFunc("/api/tags", func(w http.ResponseWriter, r *http.Request) {
 		writeStubJSON(w, map[string]any{"models": []map[string]any{
 			{"name": "stub-1", "model": "stub-1", "capabilities": []string{"tools"}},
+			// Облачная модель у того же «локального» провайдера: нужна, чтобы
+			// проверять согласие по МОДЕЛИ, а не по провайдеру.
+			{"name": "cloud-1:cloud", "model": "cloud-1:cloud",
+				"remote_host": "https://ollama.com:443", "capabilities": []string{"tools"}},
 		}})
 	})
 	mux.HandleFunc("/api/chat", func(w http.ResponseWriter, r *http.Request) {
@@ -496,6 +500,40 @@ func TestSendLocalModelNeedsNoConsent(t *testing.T) {
 	}
 	if turn.Answer != "Локально и без разрешения." {
 		t.Fatalf("ответ: %q", turn.Answer)
+	}
+}
+
+// Облачная модель у «локального» провайдера согласия ТРЕБУЕТ.
+//
+// У Ollama рядом с локальными живут облачные модели (`…:cloud`), которые считаются на
+// ollama.com. Провайдер один и тот же, поэтому решение о согласии обязано приниматься
+// по конкретной модели — иначе текст проекта ушёл бы наружу молча.
+func TestSendCloudModelRequiresConsent(t *testing.T) {
+	e := setup(t, ai.Reply{Content: "не должно случиться"})
+	ctx := context.Background()
+	owner := e.user(t, "owner@example.com")
+	p, err := e.proj.Create(ctx, owner, "План с облачной моделью", "")
+	if err != nil {
+		t.Fatalf("проект: %v", err)
+	}
+
+	_, err = e.asst.Send(ctx, owner, p.ID, uuid.Nil, "ollama:cloud-1:cloud", "Создай главу")
+	if !errors.Is(err, assistant.ErrConsent) {
+		t.Fatalf("облачная модель должна требовать согласия, получено %v", err)
+	}
+	if !strings.Contains(err.Error(), "облачная") {
+		t.Errorf("в отказе не сказано, что модель облачная: %v", err)
+	}
+	if e.stub.calls() != 0 {
+		t.Fatalf("до согласия ушло %d запросов к провайдеру, ожидалось 0", e.stub.calls())
+	}
+
+	// Согласие выдали — та же модель работает, а локальная по-прежнему не спрашивает.
+	if err := e.st.SetAIConsent(ctx, owner, "ollama"); err != nil {
+		t.Fatalf("consent: %v", err)
+	}
+	if _, err := e.asst.Send(ctx, owner, p.ID, uuid.Nil, "ollama:cloud-1:cloud", "Создай главу"); err != nil {
+		t.Fatalf("после согласия: %v", err)
 	}
 }
 

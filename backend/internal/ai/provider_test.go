@@ -205,11 +205,58 @@ func TestOllamaListsLocalModels(t *testing.T) {
 	if !models[0].Local || !models[0].Free || !models[0].Tools {
 		t.Errorf("локальная модель разобрана неверно: %+v", models[0])
 	}
+	if models[0].Cloud {
+		t.Errorf("локальная модель помечена облачной: %+v", models[0])
+	}
 	if models[0].Title != "qwen2.5:7b (7.6B)" {
 		t.Errorf("подпись модели: %q", models[0].Title)
 	}
 	if models[1].Tools {
 		t.Errorf("модель без tools помечена умеющей: %+v", models[1])
+	}
+}
+
+// Облачные модели Ollama (`…:cloud`, `remote_host`) — НЕ локальные.
+//
+// Это не придирка к подписи. Провайдер один и тот же, а текст проекта у облачной
+// модели уходит на ollama.com: если считать её локальной, чат отправил бы содержимое
+// проекта, не спросив согласия, — ровно то, от чего согласие и защищает.
+func TestOllamaCloudModelsAreNotLocal(t *testing.T) {
+	s := newStub(t, func(w http.ResponseWriter, _ *http.Request, _ *stub) {
+		_, _ = w.Write([]byte(`{"models":[
+			{"name":"qwen3.5:cloud","model":"qwen3.5:cloud","size":346,
+			 "remote_host":"https://ollama.com:443","capabilities":["tools"]},
+			{"name":"custom-remote:latest","model":"custom-remote:latest","size":400,
+			 "remote_host":"https://models.example.com","capabilities":["tools"]},
+			{"name":"qwen2.5:7b","model":"qwen2.5:7b","capabilities":["tools"]}
+		]}`))
+	})
+	client, _ := ai.NewClient(s.provider(ai.KindOllama, "ollama"), "", 5*time.Second)
+	models, err := client.ListModels(context.Background())
+	if err != nil {
+		t.Fatalf("список: %v", err)
+	}
+	if len(models) != 3 {
+		t.Fatalf("моделей %d, ожидалось 3", len(models))
+	}
+	if !models[0].Cloud || models[0].Local || models[0].Free {
+		t.Errorf("облачная модель по суффиксу разобрана неверно: %+v", models[0])
+	}
+	if !strings.Contains(models[0].Title, "ollama.com") {
+		t.Errorf("в подписи облачной модели нет хоста: %q", models[0].Title)
+	}
+	// Признак remote_host важнее суффикса имени: облачным бывает и сервер в локальной
+	// сети, названный как угодно.
+	if !models[1].Cloud || models[1].Local {
+		t.Errorf("модель с remote_host не помечена облачной: %+v", models[1])
+	}
+	if models[2].Cloud || !models[2].Local {
+		t.Errorf("локальная модель испорчена: %+v", models[2])
+	}
+	// Проверка по имени работает и без запроса к провайдеру: согласие спрашивается
+	// до него.
+	if !ai.IsCloudModelRef("glm-5.2:cloud") || ai.IsCloudModelRef("qwen2.5:7b") {
+		t.Errorf("признак облачной модели по имени работает неверно")
 	}
 }
 

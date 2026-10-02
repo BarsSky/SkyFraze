@@ -35,6 +35,7 @@ vi.mock('../../api/assistant', async () => {
     parseAIConfig: actual.parseAIConfig,
     parseAITurn: actual.parseAITurn,
     needsConsent: actual.needsConsent,
+    isCloudModelRef: actual.isCloudModelRef,
     changeLabel: actual.changeLabel,
     getAIConfig: mocks.config,
     listAIModels: mocks.models,
@@ -193,6 +194,27 @@ describe('AssistantPanel', () => {
     expect(await screen.findByText(/Сервер запросил согласие заново/)).toBeTruthy()
     // Вопрос не потерян: человек не должен набирать его заново.
     expect((screen.getByLabelText('Сообщение помощнику') as HTMLTextAreaElement).value).toBe('Создай главу')
+  })
+
+  it('облачную модель Ollama показывает предупреждением и спрашивает согласие', async () => {
+    mocks.config.mockResolvedValue(LOCAL)
+    mocks.models.mockResolvedValue([
+      { id: 'qwen2.5:7b', ref: 'ollama:qwen2.5:7b', provider: 'ollama', title: 'qwen2.5:7b', free: true, local: true, tools: true },
+      // Облачная модель того же провайдера: считается на ollama.com.
+      { id: 'glm-5.2:cloud', ref: 'ollama:glm-5.2:cloud', provider: 'ollama', title: 'glm-5.2:cloud', free: false, local: false, cloud: true, tools: true },
+    ])
+    render(<AssistantPanel projectId="p1" onProjectChanged={() => {}} onOpenEditors={() => {}} />)
+    open()
+
+    // По умолчанию выбрана локальная: ни предупреждения, ни согласия.
+    expect(await screen.findByText(/текст проекта не покидает сервер стенда/)).toBeTruthy()
+    expect(screen.queryByText(/Выбрана ОБЛАЧНАЯ модель/)).toBeNull()
+
+    fireEvent.change(screen.getByLabelText('Модель'), { target: { value: 'ollama:glm-5.2:cloud' } })
+
+    expect(await screen.findByText(/Выбрана ОБЛАЧНАЯ модель/)).toBeTruthy()
+    expect(screen.getByText(/уйдёт ОБЛАЧНОЙ модели/)).toBeTruthy()
+    expect((screen.getByLabelText('Сообщение помощнику') as HTMLTextAreaElement).disabled).toBe(true)
   })
 
   it('сохраняет ключ провайдера и не отправляет его куда-либо ещё', async () => {

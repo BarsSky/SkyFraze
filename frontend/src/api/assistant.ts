@@ -55,6 +55,12 @@ export interface AIModel {
   local: boolean
   /** Умеет ли модель вызывать инструменты. Без этого она глав не создаст. */
   tools: boolean
+  /**
+   * Модель считается на удалённом сервере, хотя провайдер «локальный»: облачные
+   * модели Ollama (`…:cloud`) считаются на ollama.com. Для текста проекта это ровно
+   * то же, что чужой сервис: нужно согласие.
+   */
+  cloud?: boolean
   contextKb?: number
 }
 
@@ -182,16 +188,31 @@ export async function sendAIMessage(
 }
 
 /**
- * Требуется ли согласие для этого провайдера.
+ * Облачная ли модель по её ссылке `provider:model`.
  *
- * Локальная модель согласия не требует: текст проекта не покидает машину. Требовать
- * «разрешите поговорить с собственной машиной» — значит приучать нажимать «согласен»
- * не читая, и настоящее согласие перестанет что-либо значить.
+ * Признак нужен ДО запроса к провайдеру: сервер отвечает `409 consent_required`, когда
+ * текст уйдёт наружу, но интерфейс должен показать это заранее — до того, как человек
+ * наберёт вопрос. Ollama помечает облачные модели суффиксом `:cloud`.
  */
-export function needsConsent(config: AIConfig | null, providerId: string): boolean {
+export function isCloudModelRef(ref: string): boolean {
+  return /:cloud$/i.test(ref.trim())
+}
+
+/**
+ * Требуется ли согласие для выбранной модели.
+ *
+ * Локальная модель согласия не требует: текст проекта не покидает машину. Но
+ * «локальный» — свойство МОДЕЛИ, а не провайдера: у Ollama рядом с локальными живут
+ * облачные (`…:cloud`), которые считаются на ollama.com, и для них согласие нужно так
+ * же, как для чужого сервиса. Требовать «разрешите поговорить с собственной машиной» —
+ * значит приучать нажимать «согласен» не читая, а пропускать облачную модель молча —
+ * отправлять текст проекта без согласия.
+ */
+export function needsConsent(config: AIConfig | null, providerId: string, modelRef = ''): boolean {
   if (!config || !providerId) return false
   const provider = config.providers.find((item) => item.id === providerId)
-  if (!provider || provider.local) return false
+  if (!provider) return false
+  if (provider.local && !isCloudModelRef(modelRef)) return false
   return !config.consents.includes(providerId)
 }
 
@@ -271,6 +292,7 @@ export function parseAIModels(raw: unknown): AIModel[] {
       title: asText(model?.title) || id,
       free: model?.free === true,
       local: model?.local === true,
+      cloud: model?.cloud === true || isCloudModelRef(asText(model?.ref) || id),
       // Поле необязательное: старый сервер его не присылает, и «не знаем» честнее
       // показать как «умеет» — отказ модели виден в чате.
       tools: model?.tools !== false,

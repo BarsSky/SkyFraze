@@ -71,11 +71,14 @@ func ProviderList(ollamaURL, compatURL string) []Provider {
 	if strings.TrimSpace(ollamaURL) != "" {
 		out = append(out, Provider{
 			ID:            "ollama",
-			Title:         "Локальная модель (Ollama)",
+			Title:         "Ollama",
 			Kind:          KindOllama,
 			BaseURL:       strings.TrimRight(strings.TrimSpace(ollamaURL), "/"),
 			FreeByDefault: true,
-			Note:          "работает без ключа и без интернета: текст проекта никуда не уходит",
+			// Локальность — свойство МОДЕЛИ, а не провайдера: у Ollama рядом с
+			// локальными бывают облачные (`…:cloud`, считаются на ollama.com).
+			// Поэтому в подписи обе возможности, а решает признак модели.
+			Note: "модели на своей машине работают без ключа; облачные («:cloud») считаются на ollama.com и требуют согласия",
 		})
 	}
 	if strings.TrimSpace(compatURL) != "" {
@@ -122,6 +125,20 @@ type Model struct {
 	Local     bool   `json:"local"`
 	Tools     bool   `json:"tools"`
 	ContextKB int    `json:"context_kb,omitempty"`
+	// Cloud — модель считается на удалённом сервере, хотя провайдер «локальный»
+	// (облачные модели Ollama: `…:cloud`, `remote_host`). Признак живёт у модели,
+	// а не у провайдера: у одного и того же Ollama локальные и облачные модели
+	// соседствуют, а для приватности это разные вещи — облачная отправляет текст
+	// проекта наружу и требует согласия человека.
+	Cloud bool `json:"cloud,omitempty"`
+}
+
+// IsCloudModelRef — облачная ли модель по её идентификатору.
+//
+// Нужна там, где списка моделей под рукой нет: согласие на отправку текста
+// спрашивается ДО запроса к провайдеру, по той модели, которую выбрал человек.
+func IsCloudModelRef(modelID string) bool {
+	return isCloudModel(modelID)
 }
 
 // ToolCall — вызов инструмента, который вернула модель.

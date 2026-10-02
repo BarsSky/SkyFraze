@@ -41,6 +41,10 @@ type ollamaTags struct {
 			ParameterSize string `json:"parameter_size"`
 		} `json:"details"`
 		Capabilities []string `json:"capabilities"`
+		// RemoteHost заполнен у ОБЛАЧНЫХ моделей: запрос уходит на ollama.com, а не
+		// считается на машине стенда. Для приватности это принципиально другая
+		// модель, и называть её локальной нельзя.
+		RemoteHost string `json:"remote_host"`
 	} `json:"models"`
 }
 
@@ -49,6 +53,11 @@ type ollamaTags struct {
 // Про инструменты (`tools`) Ollama сообщает списком возможностей; если список пуст
 // (старая версия), считаем, что инструменты есть — иначе половина моделей оказалась бы
 // «не умеет» без причины. Ошибку модели видно в чате, и это честнее.
+//
+// Локальность проверяем по каждой модели отдельно. У Ollama есть облачные модели
+// (`…:cloud`, в ответе `remote_host`): они выглядят как обычные, но считаются на
+// ollama.com, и текст проекта уходит наружу. Провайдер тут ни при чём — он один и тот
+// же, а модели разные, поэтому признак «локальная» живёт у модели.
 func (c *ollamaClient) ListModels(ctx context.Context) ([]Model, error) {
 	var out ollamaTags
 	if err := c.get(ctx, "/api/tags", &out); err != nil {
@@ -64,17 +73,45 @@ func (c *ollamaClient) ListModels(ctx context.Context) ([]Model, error) {
 		if m.Details.ParameterSize != "" {
 			title = fmt.Sprintf("%s (%s)", name, m.Details.ParameterSize)
 		}
+		remote := isCloudModel(name) || strings.TrimSpace(m.RemoteHost) != ""
+		if remote && m.RemoteHost != "" {
+			title = fmt.Sprintf("%s — облачная (%s)", title, hostOnly(m.RemoteHost))
+		}
 		models = append(models, Model{
 			ID:       name,
 			Ref:      c.provider.ID + ":" + name,
 			Provider: c.provider.ID,
 			Title:    title,
-			Free:     true,
-			Local:    true,
-			Tools:    supportsTools(m.Capabilities),
+			// Облачная модель бесплатной не бывает: за неё платит аккаунт Ollama,
+			// и человек должен видеть это до отправки текста.
+			Free:  !remote,
+			Local: !remote,
+			Cloud: remote,
+			Tools: supportsTools(m.Capabilities),
 		})
 	}
 	return models, nil
+}
+
+// isCloudModel — облачная модель по имени: Ollama помечает их суффиксом `:cloud`.
+//
+// Проверка по имени нужна не только для списка: согласие на отправку текста
+// спрашивается ДО запроса к провайдеру, когда списка моделей под рукой нет.
+func isCloudModel(name string) bool {
+	return strings.HasSuffix(strings.ToLower(strings.TrimSpace(name)), ":cloud")
+}
+
+// hostOnly — имя хоста без схемы и пути (для подписи «облачная (ollama.com)»).
+func hostOnly(raw string) string {
+	host := strings.TrimSpace(raw)
+	host = strings.TrimPrefix(strings.TrimPrefix(host, "https://"), "http://")
+	if idx := strings.IndexAny(host, "/:"); idx >= 0 {
+		host = host[:idx]
+	}
+	if host == "" {
+		return "удалённый сервер"
+	}
+	return host
 }
 
 // supportsTools — есть ли у модели инструменты по списку возможностей Ollama.

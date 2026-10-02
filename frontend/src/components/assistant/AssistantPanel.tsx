@@ -5,6 +5,7 @@ import {
   deleteAIKey,
   getAIConfig,
   getAIConversation,
+  isCloudModelRef,
   listAIModels,
   needsConsent,
   readAIError,
@@ -139,8 +140,15 @@ export function AssistantPanel({ projectId, onProjectChanged, onOpenEditors }: P
     const found = models.find((m) => m.ref === modelRef)
     return found ? found.title : modelRef
   }, [models, modelRef])
+  /** Выбранная модель считается на удалённом сервере (облачные модели Ollama). */
+  const modelIsCloud = useMemo(() => {
+    const found = models.find((m) => m.ref === modelRef)
+    return found ? found.cloud === true : isCloudModelRef(modelRef)
+  }, [models, modelRef])
 
-  const consentBlocked = needsConsent(config, providerId)
+  // Согласие — по выбранной МОДЕЛИ, а не по провайдеру: у Ollama рядом с локальными
+  // живут облачные, и они уходят наружу точно так же, как чужой сервис.
+  const consentBlocked = needsConsent(config, providerId, modelRef)
 
   const refreshConfig = useCallback(async () => {
     try {
@@ -329,7 +337,7 @@ export function AssistantPanel({ projectId, onProjectChanged, onOpenEditors }: P
                 {models.map((m) => (
                   <option key={m.ref || m.id} value={m.ref || `${m.provider}:${m.id}`}>
                     {m.title}
-                    {m.local ? ' · локальная' : m.free ? ' · бесплатная' : ''}
+                    {m.cloud ? ' · облачная' : m.local ? ' · локальная' : m.free ? ' · бесплатная' : ''}
                     {m.tools ? '' : ' · без инструментов'}
                   </option>
                 ))}
@@ -342,14 +350,16 @@ export function AssistantPanel({ projectId, onProjectChanged, onOpenEditors }: P
           </div>
 
           {provider != null && (
-            <p className="muted ai-panel__provider-note">
-              {provider.local
-                ? 'Локальная модель: текст проекта не покидает сервер стенда, ключ не нужен.'
-                : provider.standKey
-                  ? 'Модели доступны по ключу стенда — свой ключ не обязателен.'
-                  : provider.keyRequired
-                    ? 'Для этого провайдера нужен ключ: добавьте свой — он хранится на сервере зашифрованным.'
-                    : provider.note}
+            <p className={modelIsCloud ? 'ai-panel__warn' : 'muted ai-panel__provider-note'}>
+              {modelIsCloud
+                ? 'Выбрана ОБЛАЧНАЯ модель: она считается на удалённом сервере (ollama.com), и текст проекта уходит туда. Локальные модели того же Ollama считаются на машине стенда — выберите «локальная».'
+                : provider.local
+                  ? 'Локальная модель: текст проекта не покидает сервер стенда, ключ не нужен.'
+                  : provider.standKey
+                    ? 'Модели доступны по ключу стенда — свой ключ не обязателен.'
+                    : provider.keyRequired
+                      ? 'Для этого провайдера нужен ключ: добавьте свой — он хранится на сервере зашифрованным.'
+                      : provider.note}
             </p>
           )}
 
@@ -406,8 +416,9 @@ export function AssistantPanel({ projectId, onProjectChanged, onOpenEditors }: P
           {consentBlocked && (
             <div className="ai-panel__consent" data-consent-required>
               <p>
-                Чтобы продолжить, подтвердите: текст проекта (оглавление и прочитанные кадры)
-                уйдёт провайдеру «{provider?.title ?? providerId}».
+                {modelIsCloud
+                  ? `Чтобы продолжить, подтвердите: текст проекта (оглавление и прочитанные кадры) уйдёт ОБЛАЧНОЙ модели «${modelLabel}» — она считается на удалённом сервере, а не на машине стенда.`
+                  : `Чтобы продолжить, подтвердите: текст проекта (оглавление и прочитанные кадры) уйдёт провайдеру «${provider?.title ?? providerId}».`}
               </p>
               <button onClick={agree}>Согласен, продолжить</button>
             </div>

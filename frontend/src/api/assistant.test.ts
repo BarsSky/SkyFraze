@@ -16,6 +16,7 @@ import {
   changeLabel,
   deleteAIConsent,
   getAIConfig,
+  isCloudModelRef,
   listAIModels,
   needsConsent,
   parseAIConfig,
@@ -70,18 +71,36 @@ const config: AIConfig = {
 
 describe('needsConsent', () => {
   it('не спрашивает согласие у локальной модели', () => {
-    expect(needsConsent(config, 'ollama')).toBe(false)
+    expect(needsConsent(config, 'ollama', 'ollama:qwen2.5:7b')).toBe(false)
   })
 
   it('спрашивает согласие у внешнего провайдера и перестаёт после выдачи', () => {
-    expect(needsConsent(config, 'groq')).toBe(true)
-    expect(needsConsent({ ...config, consents: ['groq'] }, 'groq')).toBe(false)
+    expect(needsConsent(config, 'groq', 'groq:llama-3.1-8b')).toBe(true)
+    expect(needsConsent({ ...config, consents: ['groq'] }, 'groq', 'groq:llama-3.1-8b')).toBe(false)
+  })
+
+  it('спрашивает согласие у ОБЛАЧНОЙ модели локального провайдера', () => {
+    // Провайдер тот же Ollama, но модель считается на ollama.com: текст проекта
+    // уходит наружу, значит без согласия отправлять нельзя.
+    expect(needsConsent(config, 'ollama', 'ollama:qwen3.5:cloud')).toBe(true)
+    expect(
+      needsConsent({ ...config, consents: ['ollama'] }, 'ollama', 'ollama:qwen3.5:cloud'),
+    ).toBe(false)
   })
 
   it('молчит, если настройка ещё не пришла или провайдер неизвестен', () => {
-    expect(needsConsent(null, 'groq')).toBe(false)
-    expect(needsConsent(config, '')).toBe(false)
-    expect(needsConsent(config, 'nope')).toBe(false)
+    expect(needsConsent(null, 'groq', 'groq:x')).toBe(false)
+    expect(needsConsent(config, '', '')).toBe(false)
+    expect(needsConsent(config, 'nope', 'nope:x')).toBe(false)
+  })
+})
+
+describe('isCloudModelRef', () => {
+  it('узнаёт облачную модель по суффиксу, который ставит Ollama', () => {
+    expect(isCloudModelRef('ollama:glm-5.2:cloud')).toBe(true)
+    expect(isCloudModelRef('OLLAMA:GLM:CLOUD')).toBe(true)
+    expect(isCloudModelRef('ollama:qwen2.5:7b')).toBe(false)
+    expect(isCloudModelRef('')).toBe(false)
   })
 })
 
@@ -143,6 +162,17 @@ describe('parseAIModels', () => {
     expect(models[0].tools).toBe(false)
     expect(models[1].tools).toBe(true)
     expect(models[1].free).toBe(false)
+  })
+
+  it('облачность видна и без поля cloud: по имени модели', () => {
+    const models = parseAIModels({
+      models: [
+        { id: 'glm-5.2:cloud', ref: 'ollama:glm-5.2:cloud', provider: 'ollama', title: 'glm', local: true },
+        { id: 'qwen2.5:7b', ref: 'ollama:qwen2.5:7b', provider: 'ollama', title: 'qwen', local: true },
+      ],
+    })
+    expect(models[0].cloud).toBe(true)
+    expect(models[1].cloud).toBe(false)
   })
 })
 

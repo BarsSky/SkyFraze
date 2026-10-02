@@ -188,6 +188,10 @@ func (s *Service) DeleteKey(ctx context.Context, userID uuid.UUID, providerID st
 // Нужно согласию: отправка текста проекта ЛОКАЛЬНОЙ модели ничего никуда не отправляет,
 // и спрашивать разрешение на «поговорить с собственной машиной» было бы формальностью,
 // которая приучает нажимать «согласен» не читая.
+//
+// Осторожно: у Ollama, кроме локальных, бывают ОБЛАЧНЫЕ модели (`…:cloud`) — они
+// считаются на ollama.com, хотя провайдер тот же. Поэтому для решения о согласии этого
+// признака мало, см. HasConsentFor.
 func (s *Service) IsLocal(providerID string) bool {
 	provider, ok := s.providerByID(providerID)
 	return ok && provider.Kind == KindOllama
@@ -217,6 +221,26 @@ func (s *Service) HasConsent(ctx context.Context, userID uuid.UUID, providerID s
 	if s.IsLocal(providerID) {
 		return true, nil
 	}
+	return s.consentStored(ctx, userID, providerID)
+}
+
+// HasConsentFor — можно ли отправлять текст этой МОДЕЛИ.
+//
+// Отличие от HasConsent принципиальное, и вот почему. «Локальный» — свойство модели, а
+// не провайдера: у Ollama рядом с локальными живут облачные (`…:cloud`), которые
+// считаются на ollama.com. Если считать согласие по провайдеру, облачная модель
+// получила бы текст проекта без всякого вопроса — ровно то, от чего согласие и
+// защищает. Поэтому решение принимается по конкретной модели, а «локальность»
+// провайдера здесь только снимает вопрос для его собственных локальных моделей.
+func (s *Service) HasConsentFor(ctx context.Context, userID uuid.UUID, providerID, modelID string) (bool, error) {
+	if s.IsLocal(providerID) && !IsCloudModelRef(modelID) {
+		return true, nil
+	}
+	return s.consentStored(ctx, userID, providerID)
+}
+
+// consentStored — есть ли запись согласия (без «локальный — значит можно»).
+func (s *Service) consentStored(ctx context.Context, userID uuid.UUID, providerID string) (bool, error) {
 	consents, err := s.Consents(ctx, userID)
 	if err != nil {
 		return false, err
