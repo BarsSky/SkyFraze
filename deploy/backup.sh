@@ -39,6 +39,14 @@ BACKEND_SERVICE="${SKYFRAZE_BACKEND_SERVICE:-backend}"
 DB_USER="${SKYFRAZE_DB_USER:-skyfraze}"
 DB_NAME="${SKYFRAZE_DB_NAME:-skyfraze}"
 STORAGE_PATH="${SKYFRAZE_STORAGE_PATH:-/app/storage}"
+# Что задано в окружении — то главнее файла настроек (см. load_backup_env ниже).
+# Запоминаем ДО подстановки значений по умолчанию: иначе «заданным снаружи» выглядел бы
+# и сам дефолт, и файл не смог бы ничего изменить.
+ENV_BACKUP_DIR="${BACKUP_DIR:-}"
+ENV_BACKUP_KEEP="${BACKUP_KEEP:-}"
+ENV_BACKUP_RSYNC="${BACKUP_RSYNC:-}"
+ENV_BACKUP_RCLONE="${BACKUP_RCLONE:-}"
+
 BACKUP_DIR="${BACKUP_DIR:-$APP_DIR/backups}"
 # Сколько копий хранить на месте: чаще всего нужны последние дни, а не все сразу.
 BACKUP_KEEP="${BACKUP_KEEP:-7}"
@@ -47,6 +55,40 @@ BACKUP_RCLONE="${BACKUP_RCLONE:-}"
 
 log() { printf '%s %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$*"; }
 fail() { printf 'ошибка: %s\n' "$*" >&2; exit 1; }
+
+# Настройки стенда — отдельный файл $APP_DIR/backup.env (не в репозитории).
+#
+# Почему не .env. BACKUP_* — это переменные окружения скрипта, а .env читает только
+# docker compose: строка BACKUP_RSYNC, дописанная туда, не делала бы НИЧЕГО, и копии
+# молча оставались бы на той же машине (об этом же говорит отчёт «офсайт не настроен»,
+# но его видно только в журнале). Отдельный файл читает сам скрипт, поэтому и ручной
+# запуск, и запуск из-под таймера видят одни и те же настройки.
+#
+# Формат — KEY=VALUE, по строке на настройку, `#` — комментарий. Образец:
+# deploy/backup.env.example. Путь можно переопределить: SKYFRAZE_BACKUP_ENV=/etc/...
+load_backup_env() {
+  local file="${SKYFRAZE_BACKUP_ENV:-$APP_DIR/backup.env}"
+  [ -f "$file" ] || return 0
+  local line key val
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%$'\r'}" # файл могли сохранить на Windows: CRLF
+    line="${line#$'\xEF\xBB\xBF'}" # и BOM в первой строке
+    case "$line" in ''|'#'*) continue ;; esac
+    key="${line%%=*}"
+    val="${line#*=}"
+    val="${val%\"}"; val="${val#\"}"   # кавычки вокруг значения не обязательны,
+    val="${val%\'}"; val="${val#\'}"   # но если есть — снимаем
+    case "$key" in
+      BACKUP_DIR)    [ -n "$ENV_BACKUP_DIR" ]    || BACKUP_DIR="$val" ;;
+      BACKUP_KEEP)   [ -n "$ENV_BACKUP_KEEP" ]   || BACKUP_KEEP="$val" ;;
+      BACKUP_RSYNC)  [ -n "$ENV_BACKUP_RSYNC" ]  || BACKUP_RSYNC="$val" ;;
+      BACKUP_RCLONE) [ -n "$ENV_BACKUP_RCLONE" ] || BACKUP_RCLONE="$val" ;;
+      *) log "backup.env: не знаю настройку «$key» — ожидаются BACKUP_DIR, BACKUP_KEEP, BACKUP_RSYNC, BACKUP_RCLONE" ;;
+    esac
+  done < "$file"
+}
+
+load_backup_env
 
 compose() { docker compose -f "$COMPOSE_FILE" "$@"; }
 

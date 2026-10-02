@@ -603,7 +603,8 @@ ONLY_FUNCTIONAL=1 npx tsx ../.dsh/skills/ui-visual-audit/scripts/visual-audit.ts
 bash deploy/backup.sh                 # копия базы и вложений в backups/<дата>
 bash deploy/backup.sh --drill         # проверить, что копия восстанавливается
 sudo bash deploy/install-backup-units.sh   # ежедневный таймер (один раз, на хосте)
-# офсайт: BACKUP_RSYNC=user@host:/path или BACKUP_RCLONE=remote:path
+cp deploy/backup.env.example backup.env    # офсайт и хранение: BACKUP_RSYNC /
+                                           # BACKUP_RCLONE / BACKUP_KEEP
 ```
 
 Отчёт о размерах доступен тремя способами:

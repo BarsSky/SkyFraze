@@ -41,10 +41,21 @@ bash deploy/backup.sh                # копия в backups/<дата>
 | `BACKUP_RSYNC` | пусто | `user@host:/path` — копия уезжает по ssh (`rsync` на обоих концах) |
 | `BACKUP_RCLONE` | пусто | `remote:path` — копия уезжает через `rclone` (облако, S3, другой сервер) |
 
+**Куда их писать.** В отдельный файл стенда `backup.env` рядом с `.env`:
+
+```bash
+cp deploy/backup.env.example /home/skyadmin/skyfraze/backup.env
+# BACKUP_RSYNC=skyadmin@backup-host:/srv/backups/skyfraze
+```
+
+Его читает сам `deploy/backup.sh`, поэтому настройки одни и для ручного запуска, и для
+таймера. **Не `.env`**: `.env` читает только `docker compose`, и строка `BACKUP_RSYNC`,
+дописанная туда, не делала бы ничего — копии молча оставались бы на той же машине.
+Переменная, заданная в шелле, главнее файла: `BACKUP_KEEP=3 bash deploy/backup.sh`.
+
 **Офсайт — это и есть смысл копий.** Пока они лежат на той же машине, от потери машины
-они не спасают: `BACKUP_RSYNC`/`BACKUP_RCLONE` нужно задать. Проще всего добавить строку
-в `.env` (он не в репозитории) и указать её в юните — либо прописать в
-`deploy/skyfraze-backup.service` через `Environment=`, если так удобнее.
+они не спасают: `BACKUP_RSYNC`/`BACKUP_RCLONE` нужно задать. Скрипт каждый раз пишет в
+журнал, настроен офсайт или нет (`journalctl -u skyfraze-backup.service`).
 
 ## 3. Расписание
 
