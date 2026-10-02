@@ -44,6 +44,58 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Post("/ai/conversations", h.CreateConversation)
 	r.Get("/ai/conversations/{cid}", h.GetConversation)
 	r.Post("/ai/conversations/{cid}/messages", h.SendMessage)
+	// Роль и поведение агента: читает участник проекта, меняет только владелец.
+	r.Get("/ai/settings", h.GetSettings)
+	r.Put("/ai/settings", h.SaveSettings)
+}
+
+// GetSettings — GET .../ai/settings: имя агента, роль, указания и права спрашивающего.
+func (h *Handler) GetSettings(w http.ResponseWriter, r *http.Request) {
+	uid, pid, ok := h.scope(w, r)
+	if !ok {
+		return
+	}
+	settings, err := h.svc.ProjectSettings(r.Context(), uid, pid)
+	if err != nil {
+		h.fail(w, "get settings", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, settings)
+}
+
+// SaveSettings — PUT .../ai/settings: владелец задаёт роль и поведение агента.
+func (h *Handler) SaveSettings(w http.ResponseWriter, r *http.Request) {
+	uid, pid, ok := h.scope(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Role         string `json:"role"`
+		Instructions string `json:"instructions"`
+		Enabled      *bool  `json:"enabled"`
+	}
+	if err := decodeJSON(w, r, &body); err != nil {
+		return
+	}
+	// `enabled` необязателен: интерфейс сохраняет роль и указания, не трогая
+	// выключатель, — иначе сохранение формы молча включало бы выключенного агента.
+	enabled := true
+	if body.Enabled != nil {
+		enabled = *body.Enabled
+	} else {
+		current, err := h.svc.ProjectSettings(r.Context(), uid, pid)
+		if err != nil {
+			h.fail(w, "save settings", err)
+			return
+		}
+		enabled = current.Enabled
+	}
+	settings, err := h.svc.SaveProjectSettings(r.Context(), uid, pid, body.Role, body.Instructions, enabled)
+	if err != nil {
+		h.fail(w, "save settings", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, settings)
 }
 
 // ListConversations — GET .../ai/conversations: беседы этого человека в проекте.

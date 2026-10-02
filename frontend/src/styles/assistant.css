@@ -91,6 +91,22 @@
 .ai-about__title { margin: 0; font-size: 13px; font-weight: 600; }
 .ai-about ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
 
+/* Роль и поведение агента: он соавтор проекта, и его характер задаёт владелец. */
+.ai-agent {
+  display: grid;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+}
+.ai-agent textarea {
+  width: 100%;
+  min-height: 64px;
+  resize: vertical;
+  font-family: var(--sf-font-body);
+  font-size: 13px;
+}
+.ai-agent button { justify-self: start; }
+
 .ai-icon {
   display: inline-flex;
   align-items: center;

@@ -16,20 +16,68 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/skyfraze/backend/internal/ai"
 	"github.com/skyfraze/backend/internal/events"
 	"github.com/skyfraze/backend/internal/store"
 )
 
+// Persona — кем агент представлен в этом проекте: имя (одно и то же всегда), роль и
+// указания владельца. Пустая роль и пустые указания — тоже нормально: агент работает
+// по общим правилам, как соавтор без должностной инструкции.
+type Persona struct {
+	Name         string
+	RoleTitle    string
+	RoleHint     string
+	RoleRules    string
+	Instructions string
+}
+
+// personaOf собирает персону из настроек проекта.
+func personaOf(settings *store.ProjectAISettings) Persona {
+	persona := Persona{Name: ai.AgentName}
+	if settings == nil {
+		return persona
+	}
+	if role, ok := ai.AgentRoleByID(settings.Role); ok {
+		persona.RoleTitle = role.Title
+		persona.RoleHint = role.Hint
+		persona.RoleRules = role.Instructions
+	}
+	persona.Instructions = strings.TrimSpace(settings.Instructions)
+	return persona
+}
+
 // systemPrompt собирает начало запроса: кто ты и по каким правилам работаешь.
-func systemPrompt(project *store.Project, maxCalls int) string {
+func systemPrompt(project *store.Project, persona Persona, maxCalls int) string {
 	title := "без названия"
 	if project != nil && strings.TrimSpace(project.Title) != "" {
 		title = project.Title
 	}
-	return fmt.Sprintf(`Ты — помощник в проекте «%s» на платформе SkyFraze. Проект — это лента кадров
-(событий): главы верхнего уровня и вложенные в них под-события. Каждый кадр — заголовок
-и текст в Markdown.
+	name := persona.Name
+	if name == "" {
+		name = ai.AgentName
+	}
 
+	// Роль и указания владельца — отдельным блоком перед правилами: «летописец,
+	// следи за хронологией» и «соавтор-фантаст, придумывай детали мира» пишут
+	// по-разному, и без этого настройка роли ни на что не влияла бы.
+	var role strings.Builder
+	if persona.RoleTitle != "" {
+		fmt.Fprintf(&role, "\nТвоя роль в этом проекте — %s (%s).\n", persona.RoleTitle, persona.RoleHint)
+		if persona.RoleRules != "" {
+			fmt.Fprintf(&role, "%s\n", persona.RoleRules)
+		}
+	} else {
+		role.WriteString("\nРоль в этом проекте не задана — работай как внимательный соавтор.\n")
+	}
+	if persona.Instructions != "" {
+		fmt.Fprintf(&role, "\nУказания владельца проекта — выполняй их в первую очередь:\n%s\n", persona.Instructions)
+	}
+
+	return fmt.Sprintf(`Тебя зовут %s. Ты — соавтор проекта «%s» на платформе SkyFraze: правишь текст
+на тех же правах, что и остальные соавторы, и твои правки подписаны твоим именем.
+Проект — это лента кадров (событий): главы верхнего уровня и вложенные в них
+под-события. Каждый кадр — заголовок и текст в Markdown.%s
 Что ты умеешь:
 - смотреть дерево проекта инструментом list_events;
 - читать текст отдельного кадра инструментом read_event;
@@ -58,7 +106,7 @@ func systemPrompt(project *store.Project, maxCalls int) string {
 6. Когда кадры созданы, коротко скажи по-русски, что именно сделано. Если ничего
    создавать не нужно (например, тебя только спросили), просто ответь по существу.
 
-Отвечай по-русски, коротко и по делу.`, title, fence, fence, maxCalls)
+Отвечай по-русски, коротко и по делу.`, name, title, role.String(), fence, fence, maxCalls)
 }
 
 // fence — ограждение блока с текстовым вызовом. Отдельной константой, потому что

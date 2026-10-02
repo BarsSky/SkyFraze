@@ -53,16 +53,21 @@ func refusedCall(call ai.ToolCall, reason string) toolResult {
 // execute выполняет один вызов. Ошибки НЕ возвращаются наружу: почти все они —
 // про неверные аргументы, и модели нужно их увидеть, чтобы исправиться. Наружу уходит
 // только то, что ломает весь ответ (ошибка провайдера, отказ в правах).
-func (s *Service) execute(ctx context.Context, userID, projectID uuid.UUID, call ai.ToolCall) toolResult {
+//
+// actorID — от чьего имени создаётся кадр (агент: он автор правок), userID — чьими
+// правами (человек, нажавший «спросить»).
+func (s *Service) execute(
+	ctx context.Context, actorID, userID, projectID uuid.UUID, call ai.ToolCall,
+) toolResult {
 	switch call.Name {
 	case ToolListEvents:
 		return s.toolListEvents(ctx, projectID, call)
 	case ToolReadEvent:
 		return s.toolReadEvent(ctx, projectID, call)
 	case ToolCreateChapter:
-		return s.toolCreate(ctx, userID, projectID, call, false)
+		return s.toolCreate(ctx, actorID, userID, projectID, call, false)
 	case ToolCreateSub:
-		return s.toolCreate(ctx, userID, projectID, call, true)
+		return s.toolCreate(ctx, actorID, userID, projectID, call, true)
 	default:
 		return refusedCall(call, fmt.Sprintf("%v: %s", ErrUnknownTool, call.Name))
 	}
@@ -114,7 +119,7 @@ func (s *Service) toolReadEvent(ctx context.Context, projectID uuid.UUID, call a
 
 // toolCreate создаёт главу или под-событие.
 func (s *Service) toolCreate(
-	ctx context.Context, userID, projectID uuid.UUID, call ai.ToolCall, sub bool,
+	ctx context.Context, actorID, userID, projectID uuid.UUID, call ai.ToolCall, sub bool,
 ) toolResult {
 	args, err := ParseCreate(call.Arguments, s.limits)
 	if err != nil {
@@ -165,7 +170,7 @@ func (s *Service) toolCreate(
 		Events: []transfer.ParsedMarkdownEvent{event},
 		Stats:  transfer.MarkdownStats{Events: 1, Chars: len([]rune(args.Body))},
 	}
-	result, err := s.inserter.ImportMarkdownInto(ctx, userID, projectID, parsed, transfer.InsertPlace{
+	result, err := s.inserter.ImportMarkdownIntoAs(ctx, actorID, userID, projectID, parsed, transfer.InsertPlace{
 		ParentID: args.ParentID,
 		AfterID:  args.AfterID,
 	})

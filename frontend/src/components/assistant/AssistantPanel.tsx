@@ -4,11 +4,13 @@ import {
   deleteAIConsent,
   deleteAIKey,
   getAIConfig,
+  getAISettings,
   isCloudModelRef,
   listAIModels,
   needsConsent,
   readAIError,
   saveAIKey,
+  saveAISettings,
   sendAIMessage,
   setAIConsent,
   type AIConfig,
@@ -16,6 +18,7 @@ import {
   type AIMessage,
   type AIModel,
   type AIProviderInfo,
+  type AISettings,
 } from '../../api/assistant'
 import { serverErrorMessage } from '../../api/client'
 import { MarkdownBlock } from '../MarkdownBlock'
@@ -90,6 +93,14 @@ export function AssistantPanel({
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
   const [consentNeeded, setConsentNeeded] = useState(false)
+  const [agent, setAgent] = useState<AISettings | null>(null)
+  const [agentDraft, setAgentDraft] = useState<{ role: string; instructions: string; enabled: boolean }>({
+    role: '',
+    instructions: '',
+    enabled: true,
+  })
+  const [agentNote, setAgentNote] = useState<string | null>(null)
+  const [agentBusy, setAgentBusy] = useState(false)
   const listRef = useRef<HTMLDivElement | null>(null)
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
   /**
@@ -122,10 +133,24 @@ export function AssistantPanel({
       .catch(async (e) => {
         if (alive) setConfigError((await serverErrorMessage(e)) ?? 'Не удалось получить настройки помощника.')
       })
+    // Роль и поведение агента — свойство проекта: грузим вместе с настройкой.
+    getAISettings(projectId)
+      .then((loaded) => {
+        if (!alive) return
+        setAgent(loaded)
+        setAgentDraft({
+          role: loaded.role,
+          instructions: loaded.instructions,
+          enabled: loaded.enabled,
+        })
+      })
+      .catch(() => {
+        /* без настроек агента окно работает: имя покажем зашитое, роль — «не задана» */
+      })
     return () => {
       alive = false
     }
-  }, [open, config, configError])
+  }, [open, config, configError, projectId])
 
   // Модели спрашиваются у провайдера, поэтому только когда он выбран: иначе каждое
   // открытие окна дёргало бы чужие API.
@@ -282,6 +307,31 @@ export function AssistantPanel({
     setSendError(null)
   }, [])
 
+  /**
+   * Сохранить роль и поведение агента (владелец проекта).
+   *
+   * Роль — не украшение: она уходит в правила, по которым агент пишет, вместе с
+   * указаниями владельца. Поэтому после сохранения показываем, что именно уехало
+   * модели, а не просто «сохранено».
+   */
+  const saveAgent = useCallback(async () => {
+    setAgentBusy(true)
+    setAgentNote(null)
+    try {
+      const saved = await saveAISettings(projectId, agentDraft)
+      setAgent(saved)
+      setAgentNote(
+        saved.roleTitle
+          ? `Сохранено: роль «${saved.roleTitle}». Агент пишет с этими правилами.`
+          : 'Сохранено: роль не выбрана — агент работает как внимательный соавтор.',
+      )
+    } catch (e) {
+      setAgentNote((await serverErrorMessage(e)) ?? 'Не удалось сохранить роль агента.')
+    } finally {
+      setAgentBusy(false)
+    }
+  }, [projectId, agentDraft])
+
   const ask = useCallback(async () => {
     const question = text.trim()
     if (!question || sending) return
@@ -342,6 +392,8 @@ export function AssistantPanel({
   }, [sending, onThinkingChange])
 
   const hasAnswer = messages.some((m) => m.role === 'assistant')
+  /** Имя агента: зашито на сервере, в интерфейсе — как имя соавтора. */
+  const agentName = agent?.agentName || 'Агент'
 
   /**
    * Куда уходит текст проекта — одной строкой. Это главное, что человек должен знать о
@@ -354,8 +406,9 @@ export function AssistantPanel({
     <>
       <header className="ai-head">
         <div className="ai-head__title">
-          <span className="ai-head__name">ИИ-помощник</span>
+          <span className="ai-head__name">{agentName}</span>
           <span className="ai-head__model" title={modelRef || 'модель не выбрана'}>
+            {agent?.roleTitle ? `${agent.roleTitle} · ` : 'соавтор проекта · '}
             {modelLabel || 'модель не выбрана'}
           </span>
         </div>
@@ -503,6 +556,73 @@ export function AssistantPanel({
             Вернуться к переписке
           </button>
 
+          {/* Роль и поведение агента: он пишет текст проекта, поэтому у него есть
+              характер — и задаёт его владелец проекта, а не админ стенда. */}
+          <div className="ai-agent" data-assistant-agent>
+            <p className="ai-about__title">Роль и поведение агента</p>
+            <p className="ai-note">
+              {agentName} — соавтор проекта: его правки подписаны его именем, и он пишет по тем
+              правилам, которые вы зададите. {agent?.member ? 'Сейчас он в участниках проекта с правом правки.' : ''}
+            </p>
+
+            {agent == null ? (
+              <p className="ai-note">Настройки агента не загрузились — попробуйте открыть окно заново.</p>
+            ) : agent.canEdit ? (
+              <>
+                <label className="ai-field">
+                  <span>Роль</span>
+                  <select
+                    value={agentDraft.role}
+                    aria-label="Роль агента"
+                    onChange={(e) => setAgentDraft((d) => ({ ...d, role: e.target.value }))}
+                  >
+                    <option value="">без роли — внимательный соавтор</option>
+                    {agent.roles.map((role) => (
+                      <option key={role.id} value={role.id}>
+                        {role.title} — {role.hint}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="ai-field">
+                  <span>Указания владельца (уходят в каждый запрос)</span>
+                  <textarea
+                    value={agentDraft.instructions}
+                    rows={3}
+                    aria-label="Указания агенту"
+                    placeholder="Например: пиши сдержанно, без эпитетов; имена героев не менять; даты сверяй с главой 2"
+                    onChange={(e) => setAgentDraft((d) => ({ ...d, instructions: e.target.value }))}
+                  />
+                </label>
+
+                <label className="ai-consent-check">
+                  <input
+                    type="checkbox"
+                    checked={agentDraft.enabled}
+                    aria-label="Агент включён в этом проекте"
+                    onChange={(e) => setAgentDraft((d) => ({ ...d, enabled: e.target.checked }))}
+                  />
+                  <span>
+                    Агент работает в этом проекте. Снимите галочку, чтобы попросить его не трогать
+                    эту историю — не выключая помощника для всего стенда.
+                  </span>
+                </label>
+
+                <button onClick={saveAgent} disabled={agentBusy}>
+                  {agentBusy ? 'Сохраняю…' : 'Сохранить роль'}
+                </button>
+              </>
+            ) : (
+              <p className="ai-note">
+                Роль агента задаёт владелец проекта.{' '}
+                {agent.roleTitle ? `Сейчас: ${agent.roleTitle}.` : 'Сейчас роль не выбрана.'}
+                {agent.instructions ? ` Указания: ${agent.instructions}` : ''}
+              </p>
+            )}
+            {agentNote != null && <p className="ai-note">{agentNote}</p>}
+          </div>
+
           {/* Что помощник умеет и чем ограничен — прямо в настройке: вопрос «а что он
               может?» возникает именно здесь, а не в переписке. */}
           <div className="ai-about">
@@ -552,7 +672,7 @@ export function AssistantPanel({
                   message.role === 'user' ? 'ai-msg ai-msg--user' : 'ai-msg ai-msg--assistant'
                 }
               >
-                <span className="ai-msg__who">{message.role === 'user' ? 'Вы' : 'Помощник'}</span>
+                <span className="ai-msg__who">{message.role === 'user' ? 'Вы' : agentName}</span>
                 {message.role === 'user' ? (
                   <p className="ai-msg__text">{message.content}</p>
                 ) : (

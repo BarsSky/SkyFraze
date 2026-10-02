@@ -47,7 +47,14 @@ var (
 	ErrForbidden = errors.New("недостаточно прав для изменения проекта")
 	// ErrModelRequired — не выбрана модель (и модель по умолчанию не задана).
 	ErrModelRequired = errors.New("выберите модель: у помощника нет модели по умолчанию")
+	// ErrProjectDisabled — владелец выключил агента в этом проекте (настройки проекта,
+	// а не стенда: можно попросить помощника не трогать одну историю).
+	ErrProjectDisabled = errors.New("агент выключен в этом проекте — включить может владелец")
 )
+
+// maxInstructionsChars — предел на указания владельца: они уходят в каждый запрос к
+// модели, и простыня на десять тысяч знаков просто вытеснила бы контекст проекта.
+const maxInstructionsChars = 4000
 
 // Guard — проверка доступа к проекту (реализует projects.Service).
 //
@@ -58,6 +65,9 @@ var (
 type Guard interface {
 	RequireViewer(ctx context.Context, userID, projectID uuid.UUID) error
 	RequireEditor(ctx context.Context, userID, projectID uuid.UUID) error
+	// Role — роль человека в проекте: роль и поведение агента меняет только владелец
+	// (агент — участник проекта, и его характер — решение владельца, а не редактора).
+	Role(ctx context.Context, userID, projectID uuid.UUID) (store.Role, error)
 }
 
 // Inserter — вставка куска Markdown в живой проект (реализует transfer.Service).
@@ -67,6 +77,10 @@ type Guard interface {
 // в снапшот и в проекцию.
 type Inserter interface {
 	ImportMarkdownInto(ctx context.Context, userID, projectID uuid.UUID,
+		parsed *transfer.ParsedMarkdown, place transfer.InsertPlace) (transfer.ImportIntoResult, error)
+	// ImportMarkdownIntoAs — то же, но с отдельным автором правок: помощник пишет
+	// кадры сам, и в истории должен стоять ОН, а не человек, нажавший «спросить».
+	ImportMarkdownIntoAs(ctx context.Context, actorID, userID, projectID uuid.UUID,
 		parsed *transfer.ParsedMarkdown, place transfer.InsertPlace) (transfer.ImportIntoResult, error)
 }
 
@@ -101,6 +115,107 @@ func (s *Service) Limits() Limits { return s.limits }
 
 // Enabled — работает ли помощник.
 func (s *Service) Enabled() bool { return s != nil && s.models != nil && s.models.Enabled() }
+
+// Settings — роль и поведение агента в проекте: то, что видит и настраивает владелец.
+type Settings struct {
+	// AgentName/AgentID — имя и идентификатор агента: зашиты в коде, не настраиваются.
+	AgentName string    `json:"agent_name"`
+	AgentID   uuid.UUID `json:"agent_id"`
+	// Role — выбранная роль (пусто — «как внимательный соавтор»).
+	Role string `json:"role"`
+	// RoleTitle/RoleHint — как роль называется и что делает (для интерфейса).
+	RoleTitle string `json:"role_title"`
+	RoleHint  string `json:"role_hint"`
+	// Instructions — указания владельца, дописываются к правилам.
+	Instructions string `json:"instructions"`
+	// Enabled — выключен ли агент в этом проекте.
+	Enabled bool `json:"enabled"`
+	// CanEdit — можно ли менять настройки: только владелец проекта.
+	CanEdit bool `json:"can_edit"`
+	// Member — участвует ли агент в проекте как соавтор (строка в участниках).
+	Member bool `json:"member"`
+	// Roles — доступные роли (пресеты).
+	Roles []ai.AgentRole `json:"roles"`
+}
+
+// ProjectSettings читает настройки агента и права спрашивающего.
+func (s *Service) ProjectSettings(ctx context.Context, userID, projectID uuid.UUID) (*Settings, error) {
+	if err := s.RequireProject(ctx, userID, projectID, false); err != nil {
+		return nil, err
+	}
+	if s.guard == nil {
+		return nil, errors.New("помощник не настроен: нет доступа к проектам")
+	}
+	stored, err := s.store.AISettingsForProject(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	role, err := s.guard.Role(ctx, userID, projectID)
+	if err != nil {
+		return nil, err
+	}
+	_, memberErr := s.store.GetMembership(ctx, projectID, ai.AgentUserID)
+	out := &Settings{
+		AgentName:    ai.AgentName,
+		AgentID:      ai.AgentUserID,
+		Role:         stored.Role,
+		Instructions: stored.Instructions,
+		Enabled:      stored.Enabled,
+		CanEdit:      role == store.RoleOwner,
+		Member:       memberErr == nil,
+		Roles:        ai.AgentRolePresets,
+	}
+	if preset, ok := ai.AgentRoleByID(stored.Role); ok {
+		out.RoleTitle = preset.Title
+		out.RoleHint = preset.Hint
+	}
+	return out, nil
+}
+
+// SaveProjectSettings записывает роль и поведение агента. Менять может только владелец
+// проекта: агент — участник, и его характер — решение владельца, а не редактора.
+//
+// Заодно владелец «берёт агента в соавторы»: строка участия с ролью editor появляется
+// при первом сохранении настроек (и восстанавливается, если её убрали).
+func (s *Service) SaveProjectSettings(
+	ctx context.Context, userID, projectID uuid.UUID, role, instructions string, enabled bool,
+) (*Settings, error) {
+	if err := s.RequireProject(ctx, userID, projectID, true); err != nil {
+		return nil, err
+	}
+	if s.guard == nil {
+		return nil, errors.New("помощник не настроен: нет доступа к проектам")
+	}
+	actual, err := s.guard.Role(ctx, userID, projectID)
+	if err != nil {
+		return nil, err
+	}
+	if actual != store.RoleOwner {
+		return nil, ErrForbidden
+	}
+	role = strings.TrimSpace(role)
+	if role != "" {
+		if _, ok := ai.AgentRoleByID(role); !ok {
+			return nil, fmt.Errorf("неизвестная роль агента: %s", role)
+		}
+	}
+	instructions = strings.TrimSpace(instructions)
+	if len([]rune(instructions)) > maxInstructionsChars {
+		return nil, fmt.Errorf("указания длиннее %d символов — сократите", maxInstructionsChars)
+	}
+	if _, err := s.store.SaveAISettings(ctx, projectID, userID, role, instructions, enabled); err != nil {
+		return nil, err
+	}
+	// Агент — соавтор проекта: его правки должны быть видны в списке участников.
+	// Роль editor: он пишет текст, но не распоряжается проектом (не публикует, не
+	// удаляет, не приглашает) — те же права, что у соавтора-редактора.
+	if err := s.store.AddMembership(ctx, projectID, ai.AgentUserID, store.RoleEditor); err != nil {
+		return nil, err
+	}
+	s.logger.Info("ai: настройки агента сохранены",
+		"user", userID, "project", projectID, "role", role, "enabled", enabled)
+	return s.ProjectSettings(ctx, userID, projectID)
+}
 
 // RequireProject проверяет доступ к проекту: чтение — viewer+, запись — editor+.
 //
@@ -175,6 +290,16 @@ func (s *Service) Send(ctx context.Context, userID, projectID, conversationID uu
 		return nil, err
 	}
 
+	// Роль и поведение агента — настройка проекта: владелец мог попросить помощника
+	// не трогать эту историю, не выключая его для всего стенда.
+	settings, err := s.store.AISettingsForProject(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	if !settings.Enabled {
+		return nil, ErrProjectDisabled
+	}
+
 	provider, model, err := s.resolveModel(modelRef)
 	if err != nil {
 		return nil, err
@@ -228,13 +353,15 @@ func (s *Service) Send(ctx context.Context, userID, projectID, conversationID uu
 	messages := make([]ai.Message, 0, len(history)+3)
 	messages = append(messages, ai.Message{
 		Role: "system",
-		Content: systemPrompt(project, s.limits.MaxToolCalls) + "\n\n" +
+		Content: systemPrompt(project, personaOf(settings), s.limits.MaxToolCalls) + "\n\n" +
 			treeContext(list, s.limits.MaxEventsInPrompt),
 	})
 	messages = append(messages, history...)
 	messages = append(messages, ai.Message{Role: "user", Content: text})
 
-	turn, err := s.converse(ctx, userID, provider, model, conversation, messages)
+	// Кадры помощник создаёт САМ: автором правок становится агент, а не человек,
+	// который нажал «спросить» (права при этом проверяются по человеку).
+	turn, err := s.converse(ctx, ai.AgentUserID, userID, provider, model, conversation, messages)
 	if err != nil {
 		return nil, err
 	}
@@ -307,8 +434,12 @@ func (s *Service) history(ctx context.Context, conversationID uuid.UUID) ([]ai.M
 }
 
 // converse — цикл «спросили модель → выполнили инструменты → спросили снова».
+//
+// actorID — от чьего имени помощник правит проект (агент), userID — чьими правами он
+// это делает (человек, нажавший «спросить»). Две разные вещи: агент участник проекта,
+// но действует только там, где человек имеет право писать.
 func (s *Service) converse(
-	ctx context.Context, userID uuid.UUID, provider, model string,
+	ctx context.Context, actorID, userID uuid.UUID, provider, model string,
 	conversation *store.AIConversation, messages []ai.Message,
 ) (*Turn, error) {
 	turn := &Turn{
@@ -363,7 +494,7 @@ func (s *Service) converse(
 				continue
 			}
 			used++
-			results = append(results, s.execute(ctx, userID, conversation.ProjectID, call))
+			results = append(results, s.execute(ctx, actorID, userID, conversation.ProjectID, call))
 		}
 
 		payload := make([]toolPayload, 0, len(results))

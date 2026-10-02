@@ -18,6 +18,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/skyfraze/backend/internal/ai"
 	"github.com/skyfraze/backend/internal/platform"
 	"github.com/skyfraze/backend/migrations"
 )
@@ -68,6 +69,9 @@ var schemaSteps = []struct{ probe, file string }{
 	{`SELECT EXISTS (SELECT 1 FROM information_schema.tables
 	                  WHERE table_schema='public' AND table_name='ai_consents')`,
 		"0009_ai_consents.up.sql"},
+	{`SELECT EXISTS (SELECT 1 FROM information_schema.tables
+	                  WHERE table_schema='public' AND table_name='project_ai_settings')`,
+		"0010_ai_agent.up.sql"},
 }
 
 // Setup открывает отдельную БД для пакета (suffix), применяет миграции и
@@ -100,6 +104,25 @@ func Truncate(t *testing.T, pool *pgxpool.Pool, tables ...string) {
 	if _, err := pool.Exec(context.Background(),
 		`TRUNCATE `+strings.Join(tables, ", ")+` RESTART IDENTITY CASCADE`); err != nil {
 		t.Fatalf("truncate: %v", err)
+	}
+}
+
+// EnsureAIAgent возвращает на место системного пользователя ИИ-агента.
+//
+// В бою его создаёт миграция 0010, и он оттуда никуда не девается. В тестах таблицу
+// users чистят целиком, а на агента ссылаются created_by/updated_by событий и участие
+// в проекте: без строки вставка кадра падала бы на внешнем ключе — и падало бы не
+// утверждение теста, а то, что он проверяет. Поэтому после каждого Truncate с users
+// агента нужно вернуть.
+func EnsureAIAgent(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	_, err := pool.Exec(context.Background(),
+		`INSERT INTO users (id, email, username, password_hash, display_name, discoverable)
+		 VALUES ($1, $2, $3, '!', $4, false)
+		 ON CONFLICT (id) DO NOTHING`,
+		ai.AgentUserID, ai.AgentEmail, ai.AgentUsername, ai.AgentName)
+	if err != nil {
+		t.Fatalf("ensure ai agent: %v", err)
 	}
 }
 

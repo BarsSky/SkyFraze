@@ -203,10 +203,13 @@ func setup(t *testing.T, replies ...ai.Reply) *env {
 	t.Helper()
 	pool := testdb.Setup(t, "assistant")
 	testdb.Truncate(t, pool,
-		"ai_messages", "ai_conversations", "ai_consents", "ai_user_keys",
+		"ai_messages", "ai_conversations", "ai_consents", "ai_user_keys", "project_ai_settings",
 		"project_ratings", "project_views", "registration_requests", "app_settings",
 		"project_event_state", "sessions", "invitations", "event_assets", "assets",
 		"events", "team_memberships", "projects", "users")
+	// Агент — тоже пользователь: чистка users уносит и его строку, а на неё ссылаются
+	// created_by созданных им событий и участие в проекте.
+	testdb.EnsureAIAgent(t, pool)
 
 	obj, err := storage.NewLocal(t.TempDir())
 	if err != nil {
@@ -883,4 +886,125 @@ func assistantRouter(e *env) http.Handler {
 		h.Routes(r)
 	})
 	return r
+}
+
+// ============================ агент как соавтор ============================
+
+// Правки агента подписаны АГЕНТОМ, а не человеком, который нажал «спросить».
+//
+// В этом весь смысл отдельной записи агента в users: иначе в истории правок стоял бы
+// владелец проекта, который эту главу не писал, а помощник остался бы как бы ни при чём.
+func TestSendAttributesEditsToAgent(t *testing.T) {
+	e := setup(t,
+		ai.Reply{ToolCalls: []ai.ToolCall{createCall(assistant.ToolCreateChapter, map[string]any{
+			"title": "Пролог", "body_md": "текст",
+		})}},
+		ai.Reply{Content: "Готово."},
+	)
+	ctx := context.Background()
+	owner := e.user(t, "owner@example.com")
+	projectID, _, _ := e.seedProject(t, owner)
+
+	if _, err := e.asst.Send(ctx, owner, projectID, uuid.Nil, "stub:stub-1", "Добавь главу"); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	row, ok := e.event(t, projectID, "Пролог")
+	if !ok {
+		t.Fatalf("главы нет в таблице событий")
+	}
+	if row.CreatedBy == nil || *row.CreatedBy != ai.AgentUserID {
+		t.Fatalf("автор правки %v, ожидался агент %v", row.CreatedBy, ai.AgentUserID)
+	}
+	if row.UpdatedBy == nil || *row.UpdatedBy != ai.AgentUserID {
+		t.Fatalf("последний редактор %v, ожидался агент %v", row.UpdatedBy, ai.AgentUserID)
+	}
+}
+
+// Роль и указания владельца уходят модели, а агент становится участником проекта.
+func TestProjectSettingsRoleMembershipAndPrompt(t *testing.T) {
+	e := setup(t, ai.Reply{Content: "Хорошо."})
+	ctx := context.Background()
+	owner := e.user(t, "owner@example.com")
+	projectID, _, _ := e.seedProject(t, owner)
+
+	settings, err := e.asst.SaveProjectSettings(ctx, owner, projectID, "chronicler", "Пиши сдержанно.", true)
+	if err != nil {
+		t.Fatalf("сохранение настроек: %v", err)
+	}
+	if settings.RoleTitle != "Летописец" || !settings.CanEdit || !settings.Member {
+		t.Fatalf("настройки агента: %+v", settings)
+	}
+	if settings.AgentName != ai.AgentName || settings.AgentID != ai.AgentUserID {
+		t.Fatalf("имя агента потерялось: %+v", settings)
+	}
+
+	// Агент — соавтор: строка участия с правом писать, но не распоряжаться проектом.
+	membership, err := e.st.GetMembership(ctx, projectID, ai.AgentUserID)
+	if err != nil {
+		t.Fatalf("агент не стал участником: %v", err)
+	}
+	if membership.Role != store.RoleEditor {
+		t.Fatalf("роль агента в проекте %q, ожидалась editor", membership.Role)
+	}
+
+	// Указания и имя доехали до запроса к модели.
+	if _, err := e.asst.Send(ctx, owner, projectID, uuid.Nil, "stub:stub-1", "Что дальше?"); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	prompt := e.stub.firstRequest().Messages[0].Content
+	for _, want := range []string{ai.AgentName, "Летописец", "Пиши сдержанно."} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("в правилах для модели нет %q:\n%s", want, prompt)
+		}
+	}
+}
+
+// Роль и поведение агента меняет только владелец: это его проект и его решение.
+func TestProjectSettingsOwnerOnly(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	owner := e.user(t, "owner@example.com")
+	editor := e.user(t, "editor@example.com")
+	projectID, _, _ := e.seedProject(t, owner)
+	if err := e.st.SetAIConsent(ctx, editor, "stub"); err != nil {
+		t.Fatalf("consent: %v", err)
+	}
+	if err := e.st.AddMembership(ctx, projectID, editor, store.RoleEditor); err != nil {
+		t.Fatalf("membership: %v", err)
+	}
+
+	if _, err := e.asst.SaveProjectSettings(ctx, editor, projectID, "editor", "", true); !errors.Is(err, assistant.ErrForbidden) {
+		t.Fatalf("редактор не должен менять роль агента, получено %v", err)
+	}
+	// Читать настройки участник может — и видит, что менять их не вправе.
+	settings, err := e.asst.ProjectSettings(ctx, editor, projectID)
+	if err != nil {
+		t.Fatalf("чтение настроек: %v", err)
+	}
+	if settings.CanEdit {
+		t.Fatalf("редактору нельзя показывать право менять роль агента")
+	}
+	// Неизвестная роль — понятный отказ, а не «сохранили что попало».
+	if _, err := e.asst.SaveProjectSettings(ctx, owner, projectID, "придумать-всё", "", true); err == nil {
+		t.Fatalf("неизвестная роль должна отвергаться")
+	}
+}
+
+// Выключенный в проекте агент не пишет: ноль запросов к модели.
+func TestSendRefusesWhenAgentDisabledInProject(t *testing.T) {
+	e := setup(t, ai.Reply{Content: "не должно случиться"})
+	ctx := context.Background()
+	owner := e.user(t, "owner@example.com")
+	projectID, _, _ := e.seedProject(t, owner)
+
+	if _, err := e.asst.SaveProjectSettings(ctx, owner, projectID, "", "", false); err != nil {
+		t.Fatalf("выключение агента: %v", err)
+	}
+	_, err := e.asst.Send(ctx, owner, projectID, uuid.Nil, "stub:stub-1", "Создай главу")
+	if !errors.Is(err, assistant.ErrProjectDisabled) {
+		t.Fatalf("ожидался отказ «агент выключен в проекте», получено %v", err)
+	}
+	if e.stub.calls() != 0 {
+		t.Fatalf("выключенный агент всё-таки спросил модель")
+	}
 }

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import type { AIConfig, AIModel, AITurn } from '../../api/assistant'
+import type { AIConfig, AIModel, AISettings, AITurn } from '../../api/assistant'
 import { AssistantPanel } from './AssistantPanel'
 
 /**
@@ -27,6 +27,8 @@ const mocks = vi.hoisted(() => ({
   saveKey: vi.fn(),
   deleteKey: vi.fn(),
   error: vi.fn(),
+  settings: vi.fn(),
+  saveSettings: vi.fn(),
 }))
 
 vi.mock('../../api/assistant', async () => {
@@ -35,10 +37,13 @@ vi.mock('../../api/assistant', async () => {
     // Разбор и правила оставляем настоящими: панель должна ходить через них.
     parseAIConfig: actual.parseAIConfig,
     parseAITurn: actual.parseAITurn,
+    parseAISettings: actual.parseAISettings,
     needsConsent: actual.needsConsent,
     isCloudModelRef: actual.isCloudModelRef,
     changeLabel: actual.changeLabel,
     getAIConfig: mocks.config,
+    getAISettings: mocks.settings,
+    saveAISettings: mocks.saveSettings,
     listAIModels: mocks.models,
     sendAIMessage: mocks.send,
     setAIConsent: mocks.consent,
@@ -106,6 +111,23 @@ const TURN: AITurn = {
   message: { id: 'm2', role: 'assistant', content: 'Создал главу «Пролог».', createdAt: '' },
 }
 
+/** Агент проекта: имя зашито на сервере, роль и указания задаёт владелец. */
+const AGENT: AISettings = {
+  agentName: 'Нестор',
+  agentId: '00000000-0000-0000-0000-0000000000a1',
+  role: '',
+  roleTitle: '',
+  roleHint: '',
+  instructions: '',
+  enabled: true,
+  canEdit: true,
+  member: false,
+  roles: [
+    { id: 'chronicler', title: 'Летописец', hint: 'выстраивает хронологию' },
+    { id: 'editor', title: 'Редактор', hint: 'правит формулировки' },
+  ],
+}
+
 /** Панель всегда живёт внутри окна: по умолчанию считаем его открытым. */
 function renderPanel(props: Partial<Parameters<typeof AssistantPanel>[0]> = {}) {
   const all = {
@@ -130,6 +152,8 @@ beforeEach(() => {
   mocks.models.mockResolvedValue(MODELS)
   mocks.consent.mockResolvedValue(undefined)
   mocks.saveKey.mockResolvedValue(undefined)
+  mocks.settings.mockResolvedValue(AGENT)
+  mocks.saveSettings.mockResolvedValue({ ...AGENT, role: 'chronicler', roleTitle: 'Летописец' })
 })
 
 afterEach(() => cleanup())
@@ -295,5 +319,54 @@ describe('AssistantPanel', () => {
 
     fireEvent.keyDown(input, { key: 'Enter' })
     await waitFor(() => expect(mocks.send).toHaveBeenCalledTimes(1))
+  })
+
+  it('называет агента по имени в шапке и в подписи ответов', async () => {
+    mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
+    mocks.send.mockResolvedValue(TURN)
+    renderPanel()
+
+    expect(await screen.findByText('Нестор')).toBeTruthy()
+    const input = (await screen.findByLabelText('Сообщение помощнику')) as HTMLTextAreaElement
+    await waitFor(() => expect(input.disabled).toBe(false))
+    fireEvent.change(input, { target: { value: 'Привет' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Спросить' }))
+
+    // Ответ подписан именем агента, а не словом «Помощник».
+    await waitFor(() => expect(screen.getAllByText('Нестор').length).toBeGreaterThan(1))
+    expect(screen.queryByText('Помощник')).toBeNull()
+  })
+
+  it('владелец задаёт роль и указания агента', async () => {
+    mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
+    renderPanel()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Настройка помощника' }))
+    const role = await screen.findByLabelText('Роль агента')
+    fireEvent.change(role, { target: { value: 'chronicler' } })
+    fireEvent.change(screen.getByLabelText('Указания агенту'), {
+      target: { value: 'Пиши сдержанно.' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Сохранить роль' }))
+
+    await waitFor(() =>
+      expect(mocks.saveSettings).toHaveBeenCalledWith('p1', {
+        role: 'chronicler',
+        instructions: 'Пиши сдержанно.',
+        enabled: true,
+      }),
+    )
+    expect(await screen.findByText(/роль «Летописец»/)).toBeTruthy()
+  })
+
+  it('редактору роль агента показывают, но менять не дают', async () => {
+    mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
+    mocks.settings.mockResolvedValue({ ...AGENT, canEdit: false, roleTitle: 'Летописец' })
+    renderPanel()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Настройка помощника' }))
+    expect(await screen.findByText(/Роль агента задаёт владелец проекта/)).toBeTruthy()
+    expect(screen.queryByLabelText('Роль агента')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Сохранить роль' })).toBeNull()
   })
 })

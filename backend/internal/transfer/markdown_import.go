@@ -1779,6 +1779,20 @@ func createdEvents(parsed *ParsedMarkdown, seeds []yjs.EventSeed) []CreatedEvent
 func (s *Service) ImportMarkdownInto(
 	ctx context.Context, userID, projectID uuid.UUID, parsed *ParsedMarkdown, place InsertPlace,
 ) (ImportIntoResult, error) {
+	// Обычный импорт: автор правок — тот же человек, который их и запросил.
+	return s.ImportMarkdownIntoAs(ctx, userID, userID, projectID, parsed, place)
+}
+
+// ImportMarkdownIntoAs — то же, но с отдельным АВТОРОМ правок.
+//
+// Зачем разделять «кто просил» и «кто автор». ИИ-помощник создаёт кадры по просьбе
+// человека, но пишет их сам: если записать автором владельца, в истории правок
+// появится человек, который эту главу не писал, а помощник останется как бы ни при
+// чём. Поэтому права проверяются по `userID` (человек, нажавший «спросить»), а
+// created_by/updated_by, снапшот и рассылка в комнате — по `actorID` (агент).
+func (s *Service) ImportMarkdownIntoAs(
+	ctx context.Context, actorID, userID, projectID uuid.UUID, parsed *ParsedMarkdown, place InsertPlace,
+) (ImportIntoResult, error) {
 	if parsed == nil || len(parsed.Events) == 0 {
 		return ImportIntoResult{}, ErrMarkdownEmpty
 	}
@@ -1825,7 +1839,7 @@ func (s *Service) ImportMarkdownInto(
 	// Живая комната — главный путь: в ней документ, который редакторы видят сейчас.
 	// Глубину она проверяет сама, по своему документу (он может быть свежее базы).
 	if s.live != nil {
-		outcome, err := s.live.InsertLive(ctx, projectID, userID, seeds, place.yPlace())
+		outcome, err := s.live.InsertLive(ctx, projectID, actorID, seeds, place.yPlace())
 		if err != nil {
 			return ImportIntoResult{}, err
 		}
@@ -1889,7 +1903,7 @@ func (s *Service) ImportMarkdownInto(
 		return ImportIntoResult{}, err
 	}
 
-	if _, err := s.store.SaveProjectEventStateServer(ctx, projectID, userID, doc.EncodeState()); err != nil {
+	if _, err := s.store.SaveProjectEventStateServer(ctx, projectID, actorID, doc.EncodeState()); err != nil {
 		// Снапшот не записался — вставки нет нигде: повтор запроса безопасен.
 		return ImportIntoResult{}, err
 	}
@@ -1898,7 +1912,7 @@ func (s *Service) ImportMarkdownInto(
 	// Её сбой вставку не отменяет (снапшот уже записан), поэтому это
 	// предупреждение, а не ошибка: иначе человек повторил бы импорт и задвоил кусок.
 	result := ImportIntoResult{Events: len(seeds), Created: created}
-	if err := s.projectDocument(ctx, projectID, userID, doc); err != nil {
+	if err := s.projectDocument(ctx, projectID, actorID, doc); err != nil {
 		result.Warning = fmt.Sprintf(
 			"кусок вставлен в проект, но таблица событий не перестроена (%v) — она обновится при следующем сохранении", err)
 	}

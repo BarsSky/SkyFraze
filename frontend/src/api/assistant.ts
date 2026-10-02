@@ -103,6 +103,81 @@ export interface AITurn {
   message: AIMessage
 }
 
+/** Одна роль агента, из которой выбирает владелец. */
+export interface AIRole {
+  id: string
+  title: string
+  hint: string
+}
+
+/**
+ * Агент в проекте: имя (зашито в коде, не настраивается), роль и указания владельца.
+ *
+ * Агент правит текст проекта, поэтому он участник на правах соавтора: имя стоит под
+ * его правками, а роль и поведение задаёт владелец проекта — в одной истории нужен
+ * строгий летописец, в другой соавтор-фантаст.
+ */
+export interface AISettings {
+  agentName: string
+  agentId: string
+  role: string
+  roleTitle: string
+  roleHint: string
+  instructions: string
+  /** Владелец может попросить агента не трогать эту историю. */
+  enabled: boolean
+  /** Менять роль и поведение может только владелец. */
+  canEdit: boolean
+  /** Участвует ли агент в проекте как соавтор. */
+  member: boolean
+  roles: AIRole[]
+}
+
+/** Роль и поведение агента в проекте. */
+export async function getAISettings(projectId: string): Promise<AISettings> {
+  const raw = await http
+    .get(`projects/${encodeURIComponent(projectId)}/ai/settings`)
+    .json<unknown>()
+  return parseAISettings(raw)
+}
+
+/** Сохранить роль и поведение агента (владелец проекта). */
+export async function saveAISettings(
+  projectId: string,
+  patch: { role: string; instructions: string; enabled: boolean },
+): Promise<AISettings> {
+  const raw = await http
+    .put(`projects/${encodeURIComponent(projectId)}/ai/settings`, { json: patch })
+    .json<unknown>()
+  return parseAISettings(raw)
+}
+
+/** Разбор настроек агента: сервер — внешний источник, поля проверяем. */
+export function parseAISettings(raw: unknown): AISettings {
+  const record = asRecord(raw)
+  return {
+    agentName: asText(record?.agent_name) || 'Агент',
+    agentId: asText(record?.agent_id),
+    role: asText(record?.role),
+    roleTitle: asText(record?.role_title),
+    roleHint: asText(record?.role_hint),
+    instructions: asText(record?.instructions),
+    enabled: record?.enabled !== false,
+    canEdit: record?.can_edit === true,
+    member: record?.member === true,
+    roles: Array.isArray(record?.roles)
+      ? record.roles
+          .map((item) => {
+            const role = asRecord(item)
+            const id = asText(role?.id)
+            if (!id) return null
+            return { id, title: asText(role?.title) || id, hint: asText(role?.hint) }
+          })
+          .filter((item): item is AIRole => item !== null)
+      : [],
+  }
+}
+
 /** Настройка помощника: провайдеры, их готовность и выданные согласия. */
 export async function getAIConfig(): Promise<AIConfig> {
   const raw = await http.get('ai/config').json<unknown>()

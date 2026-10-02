@@ -240,3 +240,48 @@ func (s *Store) AIConsents(ctx context.Context, userID uuid.UUID) ([]string, err
 	}
 	return out, rows.Err()
 }
+
+// ========================== Агент в проекте ==========================
+
+// ProjectAISettings — роль и указания агента в конкретном проекте.
+//
+// Почему на проект, а не глобально: поведение помощника — свойство истории. В одной
+// нужен строгий летописец с хронологией, в другой — соавтор-фантаст; решает владелец
+// проекта, а не админ стенда.
+type ProjectAISettings struct {
+	ProjectID    uuid.UUID  `db:"project_id" json:"project_id"`
+	Role         string     `db:"role" json:"role"`
+	Instructions string     `db:"instructions" json:"instructions"`
+	Enabled      bool       `db:"enabled" json:"enabled"`
+	UpdatedAt    time.Time  `db:"updated_at" json:"updated_at"`
+	UpdatedBy    *uuid.UUID `db:"updated_by" json:"updated_by,omitempty"`
+}
+
+// AISettingsForProject читает настройки агента. Нет строки — умолчания проекта:
+// роль не выбрана, указаний нет, агент включён (он появился вместе с проектом).
+func (s *Store) AISettingsForProject(ctx context.Context, projectID uuid.UUID) (*ProjectAISettings, error) {
+	settings, err := qOne[ProjectAISettings](ctx, s.Pool,
+		`SELECT project_id, role, instructions, enabled, updated_at, updated_by
+		   FROM project_ai_settings WHERE project_id=$1`, projectID)
+	if errors.Is(err, ErrNotFound) {
+		return &ProjectAISettings{ProjectID: projectID, Enabled: true}, nil
+	}
+	return settings, err
+}
+
+// SaveAISettings записывает роль и указания агента.
+func (s *Store) SaveAISettings(
+	ctx context.Context, projectID, by uuid.UUID, role, instructions string, enabled bool,
+) (*ProjectAISettings, error) {
+	return qOne[ProjectAISettings](ctx, s.Pool,
+		`INSERT INTO project_ai_settings (project_id, role, instructions, enabled, updated_by)
+		 VALUES ($1, $2, $3, $4, $5)
+		 ON CONFLICT (project_id) DO UPDATE
+		    SET role = EXCLUDED.role,
+		        instructions = EXCLUDED.instructions,
+		        enabled = EXCLUDED.enabled,
+		        updated_at = now(),
+		        updated_by = EXCLUDED.updated_by
+		 RETURNING project_id, role, instructions, enabled, updated_at, updated_by`,
+		projectID, role, instructions, enabled, by)
+}
