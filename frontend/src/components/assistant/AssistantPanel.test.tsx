@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import type { AIConfig, AIModel, AISettings, AITurn } from '../../api/assistant'
+import type { AIConfig, AIEndpoint, AIModel, AISettings, AITurn } from '../../api/assistant'
 import { AssistantPanel } from './AssistantPanel'
 
 /**
@@ -29,6 +29,9 @@ const mocks = vi.hoisted(() => ({
   error: vi.fn(),
   settings: vi.fn(),
   saveSettings: vi.fn(),
+  endpoints: vi.fn(),
+  addEndpoint: vi.fn(),
+  deleteEndpoint: vi.fn(),
 }))
 
 vi.mock('../../api/assistant', async () => {
@@ -52,6 +55,9 @@ vi.mock('../../api/assistant', async () => {
     deleteAIKey: mocks.deleteKey,
     readAIError: mocks.error,
     getAIConversation: vi.fn(),
+    listAIEndpoints: mocks.endpoints,
+    addAIEndpoint: mocks.addEndpoint,
+    deleteAIEndpoint: mocks.deleteEndpoint,
   }
 })
 
@@ -76,6 +82,7 @@ const LOCAL: AIConfig = {
       hasKey: true,
       standKey: false,
       keyless: false,
+      own: false,
       keyRequired: false,
     },
   ],
@@ -95,6 +102,7 @@ const REMOTE: AIConfig = {
       hasKey: true,
       standKey: false,
       keyless: false,
+      own: false,
       keyRequired: false,
     },
   ],
@@ -173,6 +181,9 @@ beforeEach(() => {
   mocks.saveKey.mockResolvedValue(undefined)
   mocks.settings.mockResolvedValue(AGENT)
   mocks.saveSettings.mockResolvedValue({ ...AGENT, role: 'chronicler', roleTitle: 'Летописец' })
+  mocks.endpoints.mockResolvedValue([])
+  mocks.addEndpoint.mockResolvedValue(null)
+  mocks.deleteEndpoint.mockResolvedValue(undefined)
 })
 
 afterEach(() => cleanup())
@@ -595,6 +606,138 @@ describe('AssistantPanel', () => {
     expect(screen.queryByLabelText('Ключ провайдера')).toBeNull()
   })
 
+  it('свой сервер моделей добавляется с адресом и сразу становится выбранным', async () => {
+    const added: AIEndpoint = {
+      id: 'e1',
+      title: 'Моя машина',
+      url: 'http://192.168.1.10:8080/v1',
+      local: true,
+      hasKey: false,
+      providerId: 'own:e1',
+    }
+    // Настройка читается дважды: при открытии и после добавления — во второй раз в ней
+    // уже есть провайдер нового сервера.
+    mocks.config
+      .mockResolvedValueOnce({ ...REMOTE, consents: ['groq'] })
+      .mockResolvedValue({
+        ...REMOTE,
+        consents: ['groq'],
+        providers: [
+          ...REMOTE.providers,
+          {
+            id: 'own:e1',
+            title: 'Моя машина',
+            note: 'свой сервер моделей',
+            local: true,
+            freeByDefault: true,
+            hasKey: false,
+            standKey: false,
+            keyless: true,
+            own: true,
+            keyRequired: false,
+          },
+        ],
+      })
+    mocks.endpoints.mockResolvedValueOnce([]).mockResolvedValue([added])
+    mocks.addEndpoint.mockResolvedValue(added)
+    renderPanel()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Настройка помощника' }))
+    expect(await screen.findByText('Свои серверы моделей')).toBeTruthy()
+    expect(await screen.findByText('Своих серверов пока нет.')).toBeTruthy()
+
+    // Пустая форма не уходит на сервер: без названия сервер неотличим в списке моделей.
+    fireEvent.click(screen.getByRole('button', { name: 'Добавить сервер' }))
+    expect(await screen.findByText(/Назовите сервер/)).toBeTruthy()
+    expect(mocks.addEndpoint).not.toHaveBeenCalled()
+
+    fireEvent.change(screen.getByLabelText('Название своего сервера'), {
+      target: { value: 'Моя машина' },
+    })
+    fireEvent.change(screen.getByLabelText('Адрес своего сервера'), {
+      target: { value: 'http://192.168.1.10:8080/v1' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Добавить сервер' }))
+
+    await waitFor(() =>
+      expect(mocks.addEndpoint).toHaveBeenCalledWith({
+        title: 'Моя машина',
+        url: 'http://192.168.1.10:8080/v1',
+        key: '',
+        local: true,
+      }),
+    )
+    // Человек добавил сервер, чтобы им пользоваться: он должен быть выбран, а не просто
+    // появиться в списке.
+    await waitFor(() =>
+      expect((screen.getByLabelText('Провайдер') as HTMLSelectElement).value).toBe('own:e1'),
+    )
+    expect(await screen.findByText(/Сервер «Моя машина» добавлен/)).toBeTruthy()
+  })
+
+  it('свой сервер можно удалить, и выбор возвращается на доступного провайдера', async () => {
+    const added: AIEndpoint = {
+      id: 'e1',
+      title: 'Моя машина',
+      url: 'http://192.168.1.10:8080/v1',
+      local: true,
+      hasKey: false,
+      providerId: 'own:e1',
+    }
+    mocks.config
+      .mockResolvedValueOnce({
+        ...REMOTE,
+        consents: ['groq'],
+        providers: [
+          {
+            id: 'own:e1',
+            title: 'Моя машина',
+            note: 'свой сервер моделей',
+            local: true,
+            freeByDefault: true,
+            hasKey: false,
+            standKey: false,
+            keyless: true,
+            own: true,
+            keyRequired: false,
+          },
+          ...REMOTE.providers,
+        ],
+      })
+      .mockResolvedValue({ ...REMOTE, consents: ['groq'] })
+    mocks.endpoints.mockResolvedValueOnce([added]).mockResolvedValue([])
+    renderPanel()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Настройка помощника' }))
+    await waitFor(() =>
+      expect((screen.getByLabelText('Провайдер') as HTMLSelectElement).value).toBe('own:e1'),
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Удалить сервер Моя машина' }))
+    await waitFor(() => expect(mocks.deleteEndpoint).toHaveBeenCalledWith('e1'))
+    // Выбор не должен остаться на исчезнувшем сервере: это пустой список моделей без
+    // объяснения причины.
+    await waitFor(() =>
+      expect((screen.getByLabelText('Провайдер') as HTMLSelectElement).value).toBe('groq'),
+    )
+    expect(await screen.findByText(/Сервер «Моя машина» удалён/)).toBeTruthy()
+  })
+
+  it('без AI_SECRET_KEY адрес ввести можно, а ключ — нет', async () => {
+    mocks.config.mockResolvedValue({ ...REMOTE, keysReady: false, consents: ['groq'] })
+    renderPanel()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Настройка помощника' }))
+    expect(await screen.findByText('Свои серверы моделей')).toBeTruthy()
+    // Свой сервер без ключа (llama.cpp) — основной случай, и он должен работать даже
+    // там, где хранение ключей не настроено.
+    expect((screen.getByLabelText('Адрес своего сервера') as HTMLInputElement).disabled).toBe(false)
+    expect((screen.getByLabelText('Ключ своего сервера') as HTMLInputElement).disabled).toBe(true)
+    expect((screen.getByRole('button', { name: 'Добавить сервер' }) as HTMLButtonElement).disabled).toBe(
+      false,
+    )
+  })
+
   it('Enter отправляет вопрос, Shift+Enter оставляет перенос строки', async () => {
     mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
     mocks.stream.mockResolvedValue(TURN)
@@ -609,6 +752,65 @@ describe('AssistantPanel', () => {
 
     fireEvent.keyDown(input, { key: 'Enter' })
     await waitFor(() => expect(mocks.stream).toHaveBeenCalledTimes(1))
+  })
+
+  it('у своего сервера не предлагает вводить ключ отдельно: он задан вместе с адресом', async () => {
+    // Свой сервер с ключом: в списке провайдеров он уже готов (hasKey, не keyRequired),
+    // и формы «ключ провайдера» быть не должно — хранить его там негде, сервер отказал бы.
+    mocks.config.mockResolvedValue({
+      ...REMOTE,
+      consents: ['own:e1'],
+      providers: [
+        {
+          id: 'own:e1',
+          title: 'Моя машина',
+          note: 'свой сервер моделей',
+          local: false,
+          freeByDefault: true,
+          hasKey: true,
+          standKey: false,
+          keyless: false,
+          own: true,
+          keyRequired: false,
+        },
+      ],
+    })
+    mocks.models.mockResolvedValue([{ ...MODELS[0], provider: 'own:e1', ref: 'own:e1:model' }])
+    renderPanel()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Настройка помощника' }))
+    expect(await screen.findByText(/Ключ этого сервера хранится вместе с адресом/)).toBeTruthy()
+    expect(screen.queryByLabelText('Ключ провайдера')).toBeNull()
+    // Свой сервер не «нужен ключ»: он готов, и отправлять с него уже можно.
+    expect(screen.queryByText(/нужен ключ: добавьте свой/)).toBeNull()
+    // И согласие у него спрашивают: он не в своей сети, текст уходит наружу.
+    expect(await screen.findByText(/помощник спросит согласие/)).toBeTruthy()
+  })
+
+  it('у своего сервера без ключа пишет, что менять нечего', async () => {
+    mocks.config.mockResolvedValue({
+      ...REMOTE,
+      consents: ['own:e1'],
+      providers: [
+        {
+          id: 'own:e1',
+          title: 'llama.cpp дома',
+          note: 'свой сервер моделей',
+          local: true,
+          freeByDefault: true,
+          hasKey: true,
+          standKey: false,
+          keyless: true,
+          own: true,
+          keyRequired: false,
+        },
+      ],
+    })
+    renderPanel()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Настройка помощника' }))
+    expect(await screen.findByText(/Ключ этому серверу не нужен/)).toBeTruthy()
+    expect(await screen.findByText(/llama.cpp дома — свой сервер/)).toBeTruthy()
   })
 
   it('называет агента по имени в шапке и в подписи ответов', async () => {

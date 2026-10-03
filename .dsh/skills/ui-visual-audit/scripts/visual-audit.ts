@@ -992,7 +992,11 @@ async function functional(browser: Browser, errors: string[]) {
   for (const [label, file] of [['малый', small], ['2.5 МБ', big]] as const) {
     const before = (await page.evaluate(`document.querySelectorAll('.ed-assets__item').length`)) as number
     const chooserPromise = page.waitForEvent('filechooser', { timeout: 6000 }).catch(() => null)
-    await page.locator('.ed-upload').click()
+    // Кнопок «загрузить» на экране редакторов две: у кадра (EventEditor) и в панели файлов
+    // проекта (ProjectFiles, тоже класс `ed-upload`). Привязываем файл к КАДРУ — считаем
+    // ниже `.ed-assets__item`, то есть вложения кадра, и клик по второй кнопке ничего бы
+    // туда не добавил. Без уточнения Playwright отказывается кликать: два совпадения.
+    await page.locator('.ed-upload:not(.ed-files__upload)').click()
     const chooser = await chooserPromise
     if (!chooser) {
       add({ severity: 'error', area: 'functional', screen: 'editors', viewport: V, check: `загрузка файла (${label})`, detail: 'диалог выбора файла не открылся', where: 'EventEditor: control .ed-upload' })

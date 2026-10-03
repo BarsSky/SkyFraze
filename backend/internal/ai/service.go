@@ -171,6 +171,10 @@ type ProviderInfo struct {
 	StandKey bool   `json:"stand_key"`
 	// Keyless — ключ не нужен вовсе (свой сервер моделей).
 	Keyless bool `json:"keyless"`
+	// Own — это свой сервер ЭТОГО человека (`own:<uuid>`), а не провайдер стенда. Ключ
+	// такого сервера живёт вместе с адресом, поэтому интерфейс не предлагает вводить его
+	// отдельно: отдельного места для него нет.
+	Own bool `json:"own"`
 	// KeyRequired — без ключа провайдер работать не будет.
 	KeyRequired bool `json:"key_required"`
 }
@@ -184,17 +188,20 @@ func (s *Service) Providers(ctx context.Context, userID uuid.UUID) ([]ProviderIn
 	if err != nil {
 		return nil, err
 	}
-	out := make([]ProviderInfo, 0, len(s.providers))
-	for _, p := range s.providers {
+	out := make([]ProviderInfo, 0, len(s.providers)+1)
+	for _, p := range s.providersFor(ctx, userID) {
 		stand := s.standKey(p) != ""
-		// Провайдер без ключа (свой сервер) готов сразу: ключа у него нет и не нужно.
-		ready := p.Kind == KindOllama || p.Keyless || stand
+		// Готовым провайдер делает одно из трёх: ключ не нужен (свой сервер в своей сети
+		// или Ollama), ключ уже лежит в самом провайдере (`KeyInline` — свой сервер
+		// человека с ключом в записи) либо его даёт стенд.
+		ready := p.Kind == KindOllama || p.Keyless || p.KeyInline || stand
 		hasKey := ready || mine[p.ID]
 		out = append(out, ProviderInfo{
 			ID: p.ID, Title: p.Title, Note: p.Note,
-			Local: s.IsLocal(p.ID), Free: p.FreeByDefault,
+			Local: p.Local || p.Kind == KindOllama, Free: p.FreeByDefault,
 			HasKey: hasKey, StandKey: stand,
 			Keyless:     p.Keyless,
+			Own:         IsOwnProvider(p.ID),
 			KeyRequired: !ready && !mine[p.ID],
 		})
 	}
@@ -230,9 +237,12 @@ func (s *Service) SetKey(ctx context.Context, userID uuid.UUID, providerID, key 
 	if key == "" {
 		return errors.New("пустой ключ")
 	}
-	provider, ok := s.providerByID(providerID)
+	provider, ok := s.providerFor(ctx, userID, providerID)
 	if !ok {
 		return fmt.Errorf("неизвестный провайдер: %s", providerID)
+	}
+	if IsOwnProvider(provider.ID) {
+		return errors.New("ключ своего сервера задаётся вместе с адресом: удалите сервер и добавьте заново")
 	}
 	if provider.Kind == KindOllama {
 		return errors.New("локальной модели ключ не нужен")
@@ -275,6 +285,13 @@ func (s *Service) IsLocal(providerID string) bool {
 	return ok && (provider.Local || provider.Kind == KindOllama)
 }
 
+// isLocalFor — то же, но с учётом своих серверов человека: у них признак локальности
+// задал сам человек, и от него зависит, спрашивать ли согласие на отправку текста.
+func (s *Service) isLocalFor(ctx context.Context, userID uuid.UUID, providerID string) bool {
+	provider, ok := s.providerFor(ctx, userID, providerID)
+	return ok && (provider.Local || provider.Kind == KindOllama)
+}
+
 // Consents — провайдеры, на отправку которым пользователь согласился (и которые ещё
 // существуют на стенде: список провайдеров может измениться после перенастройки).
 func (s *Service) Consents(ctx context.Context, userID uuid.UUID) ([]string, error) {
@@ -285,18 +302,35 @@ func (s *Service) Consents(ctx context.Context, userID uuid.UUID) ([]string, err
 	if err != nil {
 		return nil, err
 	}
+	// Список провайдеров читаем ОДИН раз: свои серверы человека лежат в базе, и
+	// спрашивать их на каждое согласие значило бы сделать запрос на каждую запись.
+	known := s.providersFor(ctx, userID)
 	out := make([]string, 0, len(stored))
 	for _, id := range stored {
-		if _, ok := s.providerByID(id); ok {
+		// Ищем провайдера ВМЕСТЕ со своими серверами человека: согласие на чужой сервер
+		// (`own:<uuid>`) — такое же согласие, и выбросить его из списка значило бы
+		// показывать галочку снятой, а отправку — всегда отклонять.
+		if providerIn(known, id) {
 			out = append(out, id)
 		}
 	}
 	return out, nil
 }
 
+// providerIn — есть ли провайдер с таким идентификатором в готовом списке.
+func providerIn(list []Provider, id string) bool {
+	wanted := strings.ToLower(strings.TrimSpace(id))
+	for _, p := range list {
+		if strings.ToLower(p.ID) == wanted {
+			return true
+		}
+	}
+	return false
+}
+
 // HasConsent — можно ли отправлять текст этому провайдеру. Локальный — всегда можно.
 func (s *Service) HasConsent(ctx context.Context, userID uuid.UUID, providerID string) (bool, error) {
-	if s.IsLocal(providerID) {
+	if s.isLocalFor(ctx, userID, providerID) {
 		return true, nil
 	}
 	return s.consentStored(ctx, userID, providerID)
@@ -311,7 +345,7 @@ func (s *Service) HasConsent(ctx context.Context, userID uuid.UUID, providerID s
 // защищает. Поэтому решение принимается по конкретной модели, а «локальность»
 // провайдера здесь только снимает вопрос для его собственных локальных моделей.
 func (s *Service) HasConsentFor(ctx context.Context, userID uuid.UUID, providerID, modelID string) (bool, error) {
-	if s.IsLocal(providerID) && !IsCloudModelRef(modelID) {
+	if s.isLocalFor(ctx, userID, providerID) && !IsCloudModelRef(modelID) {
 		return true, nil
 	}
 	return s.consentStored(ctx, userID, providerID)
@@ -334,7 +368,7 @@ func (s *Service) consentStored(ctx context.Context, userID uuid.UUID, providerI
 
 // SetConsent — человек согласился отправлять текст проекта этому провайдеру.
 func (s *Service) SetConsent(ctx context.Context, userID uuid.UUID, providerID string) error {
-	provider, ok := s.providerByID(providerID)
+	provider, ok := s.providerFor(ctx, userID, providerID)
 	if !ok {
 		return fmt.Errorf("неизвестный провайдер: %s", providerID)
 	}
@@ -350,9 +384,15 @@ func (s *Service) DeleteConsent(ctx context.Context, userID uuid.UUID, providerI
 	return s.store.DeleteAIConsent(ctx, userID, providerID)
 }
 
-// ProviderTitle — человеческое имя провайдера (для сообщений об ошибке).
-func (s *Service) ProviderTitle(providerID string) string {
-	if provider, ok := s.providerByID(providerID); ok {
+// ProviderTitleFor — человеческое имя провайдера (для сообщений об ошибке), включая свои
+// серверы человека: в тексте должно стоять название, которое он сам задал («llama.cpp
+// дома»), а не `own:<uuid>`.
+//
+// Варианта «без пользователя» здесь намеренно нет: он показывал бы человеку внутренний
+// идентификатор его же сервера, и вернуть его обратно в код — значит снова получить
+// сообщение, по которому непонятно, о чём речь.
+func (s *Service) ProviderTitleFor(ctx context.Context, userID uuid.UUID, providerID string) string {
+	if provider, ok := s.providerFor(ctx, userID, providerID); ok {
 		return provider.Title
 	}
 	return providerID
@@ -398,7 +438,7 @@ func (s *Service) Models(ctx context.Context, userID uuid.UUID, providerID strin
 	if !s.Enabled() {
 		return nil, errors.New("ИИ-помощник выключен на этом стенде")
 	}
-	provider, ok := s.providerByID(providerID)
+	provider, ok := s.providerFor(ctx, userID, providerID)
 	if !ok {
 		return nil, fmt.Errorf("неизвестный провайдер: %s", providerID)
 	}
@@ -414,7 +454,7 @@ func (s *Service) Chat(ctx context.Context, userID uuid.UUID, providerID string,
 	if !s.Enabled() {
 		return Reply{}, errors.New("ИИ-помощник выключен на этом стенде")
 	}
-	provider, ok := s.providerByID(providerID)
+	provider, ok := s.providerFor(ctx, userID, providerID)
 	if !ok {
 		return Reply{}, fmt.Errorf("неизвестный провайдер: %s", providerID)
 	}
@@ -440,7 +480,7 @@ func (s *Service) StreamChat(
 	if !s.Enabled() {
 		return Reply{}, errors.New("ИИ-помощник выключен на этом стенде")
 	}
-	provider, ok := s.providerByID(providerID)
+	provider, ok := s.providerFor(ctx, userID, providerID)
 	if !ok {
 		return Reply{}, fmt.Errorf("неизвестный провайдер: %s", providerID)
 	}
@@ -468,6 +508,26 @@ func (s *Service) StreamChat(
 
 // clientFor выбирает ключ: свой → ключ стенда → ошибка «нужен ключ».
 func (s *Service) clientFor(ctx context.Context, userID uuid.UUID, provider Provider) (Client, error) {
+	// Свой сервер человека: ключ лежит в его записи (а не в ключах провайдеров), и
+	// ключа стенда у него быть не может — это его сервер, а не сервер развёртывания.
+	if IsOwnProvider(provider.ID) {
+		endpoint, err := s.ownEndpoint(ctx, userID, provider.ID)
+		if err != nil {
+			return nil, err
+		}
+		if len(endpoint.KeyCiphertext) == 0 {
+			return NewClient(provider, "", httpTimeout(s.cfg.TimeoutSeconds))
+		}
+		if s.cipher == nil {
+			return nil, ErrNoCipher
+		}
+		plain, err := s.cipher.Decrypt(endpoint.KeyCiphertext)
+		if err != nil {
+			return nil, errors.New("ключ своего сервера не читается — добавьте сервер заново")
+		}
+		return NewClient(provider, plain, httpTimeout(s.cfg.TimeoutSeconds))
+	}
+
 	key := ""
 	if s.KeysReady() {
 		ciphertext, err := s.store.AIKeyCiphertext(ctx, userID, provider.ID)

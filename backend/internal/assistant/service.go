@@ -528,7 +528,7 @@ func (s *Service) SendStreamImages(
 		// В сообщении называем модель, а не только провайдера: у Ollama облачная
 		// модель требует согласия наравне с чужим сервисом, и «разрешите отправку
 		// провайдеру Ollama» звучало бы как разрешение говорить со своей машиной.
-		label := s.models.ProviderTitle(provider)
+		label := s.models.ProviderTitleFor(ctx, userID, provider)
 		if ai.IsCloudModelRef(model) {
 			label = fmt.Sprintf("облачная модель %s (%s)", model, label)
 		}

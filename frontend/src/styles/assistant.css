@@ -107,6 +107,43 @@
 }
 .ai-agent button { justify-self: start; }
 
+/* Свои серверы моделей: адрес задаёт человек, а не админ стенда. */
+.ai-endpoints {
+  display: grid;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+}
+.ai-endpoints button { justify-self: start; }
+.ai-endpoints__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.ai-endpoints__item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 10px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--chip-bg);
+}
+.ai-endpoints__title { font-size: 13px; font-weight: 600; }
+/* Адрес бывает длинным: переносим, а не растягиваем окно. */
+.ai-endpoints__url {
+  grid-column: 1;
+  font-family: var(--sf-font-mono, monospace);
+  font-size: 12px;
+  color: var(--fg-soft);
+  overflow-wrap: anywhere;
+}
+.ai-endpoints__item .ai-note { grid-column: 1; }
+.ai-endpoints__item button { grid-row: 1 / span 3; grid-column: 2; align-self: center; }
+
 .ai-icon {
   display: inline-flex;
   align-items: center;

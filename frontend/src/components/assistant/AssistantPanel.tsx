@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  addAIEndpoint,
   changeLabel,
   deleteAIConsent,
+  deleteAIEndpoint,
   deleteAIKey,
   getAIConfig,
   getAISettings,
   isCloudModelRef,
+  listAIEndpoints,
   listAIModels,
   needsConsent,
   readAIError,
@@ -15,6 +18,7 @@ import {
   setAIConsent,
   type AIConfig,
   type AIChange,
+  type AIEndpoint,
   type AISuggestion,
   type AIMessage,
   type AIModel,
@@ -92,6 +96,21 @@ export function AssistantPanel({
   const [keyDraft, setKeyDraft] = useState('')
   const [keyNote, setKeyNote] = useState<string | null>(null)
   const [keyBusy, setKeyBusy] = useState(false)
+  /**
+   * Свои серверы моделей: адрес задаёт сам человек.
+   *
+   * Без этого списка подключиться со своим llama.cpp было нельзя: провайдеров на стенде
+   * ровно столько, сколько прописал админ, а поля для адреса не существовало нигде.
+   */
+  const [endpoints, setEndpoints] = useState<AIEndpoint[] | null>(null)
+  const [endpointDraft, setEndpointDraft] = useState({
+    title: '',
+    url: '',
+    key: '',
+    local: true,
+  })
+  const [endpointNote, setEndpointNote] = useState<string | null>(null)
+  const [endpointBusy, setEndpointBusy] = useState(false)
   const [conversationId, setConversationId] = useState('new')
   const [messages, setMessages] = useState<AIMessage[]>([])
   const [changes, setChanges] = useState<AIChange[]>([])
@@ -190,6 +209,24 @@ export function AssistantPanel({
       alive = false
     }
   }, [open, config, configError, projectId])
+
+  // Свои серверы грузим вместе с настройкой: их список нужен и для формы, и для
+  // объяснения «почему в списке провайдеров нет вашего сервера».
+  useEffect(() => {
+    if (!open || config?.enabled !== true || endpoints !== null) return
+    let alive = true
+    listAIEndpoints()
+      .then((list) => {
+        if (alive) setEndpoints(list)
+      })
+      .catch(() => {
+        // Сбой чтения не должен показывать «серверов нет»: это разные вещи. Оставляем
+        // `null` — блок честно скажет, что список не загрузился.
+      })
+    return () => {
+      alive = false
+    }
+  }, [open, config?.enabled, endpoints])
 
   // Модели спрашиваются у провайдера, поэтому только когда он выбран: иначе каждое
   // открытие окна дёргало бы чужие API.
@@ -349,6 +386,94 @@ export function AssistantPanel({
       setKeyBusy(false)
     }
   }, [providerId, refreshConfig])
+
+  /**
+   * Добавить свой сервер моделей.
+   *
+   * После сохранения перечитываем настройку и СРАЗУ выбираем новый сервер: человек
+   * добавил его, чтобы им пользоваться, а не чтобы найти его в списке.
+   */
+  const saveEndpoint = useCallback(async () => {
+    const title = endpointDraft.title.trim()
+    const url = endpointDraft.url.trim()
+    if (title === '') {
+      setEndpointNote('Назовите сервер — так его будет видно в списке моделей.')
+      return
+    }
+    if (url === '') {
+      setEndpointNote('Укажите адрес, например http://192.168.1.10:8080/v1')
+      return
+    }
+    setEndpointBusy(true)
+    setEndpointNote(null)
+    try {
+      const added = await addAIEndpoint({
+        title,
+        url,
+        key: endpointDraft.key.trim(),
+        local: endpointDraft.local,
+      })
+      setEndpointDraft({ title: '', url: '', key: '', local: true })
+      setEndpoints(await listAIEndpoints())
+      const fresh = await getAIConfig()
+      setConfig(fresh)
+      // Выбираем добавленный сервер сразу: его добавили, чтобы им пользоваться.
+      const freshProvider = added === null ? '' : added.providerId
+      if (freshProvider !== '') {
+        setProviderId(freshProvider)
+        setKeyNote(null)
+      }
+      if (added === null) {
+        // Запись, скорее всего, создана — не разобрали только ответ. Не выдаём это за
+        // ошибку добавления: человеку нужно перечитать список, а не добавлять заново.
+        setEndpointNote('Сервер добавлен, но ответ сервера не разобран — обновите окно.')
+      } else if (added.hasKey) {
+        setEndpointNote(
+          `Сервер «${added.title}» добавлен. Ключ хранится на сервере зашифрованным.`,
+        )
+      } else {
+        setEndpointNote(
+          `Сервер «${added.title}» добавлен: он появился в списке провайдеров выше.`,
+        )
+      }
+    } catch (e) {
+      setEndpointNote((await serverErrorMessage(e)) ?? 'Не удалось добавить сервер.')
+    } finally {
+      setEndpointBusy(false)
+    }
+  }, [endpointDraft])
+
+  /**
+   * Убрать свой сервер.
+   *
+   * Если убран именно выбранный провайдер, возвращаем выбор на первого доступного:
+   * оставить выбор на исчезнувшем сервере значило бы показать пустой список моделей
+   * без объяснения.
+   */
+  const removeEndpoint = useCallback(
+    async (endpoint: AIEndpoint) => {
+      setEndpointBusy(true)
+      setEndpointNote(null)
+      try {
+        await deleteAIEndpoint(endpoint.id)
+        const list = await listAIEndpoints()
+        setEndpoints(list)
+        const fresh = await getAIConfig()
+        setConfig(fresh)
+        if (providerId === endpoint.providerId) {
+          const first =
+            fresh.providers.find((p) => p.hasKey || p.local) ?? fresh.providers[0] ?? null
+          setProviderId(first ? first.id : '')
+        }
+        setEndpointNote(`Сервер «${endpoint.title}» удалён.`)
+      } catch (e) {
+        setEndpointNote((await serverErrorMessage(e)) ?? 'Не удалось удалить сервер.')
+      } finally {
+        setEndpointBusy(false)
+      }
+    },
+    [providerId],
+  )
 
   const startNewConversation = useCallback(() => {
     setConversationId('new')
@@ -637,7 +762,15 @@ export function AssistantPanel({
               {config.providers.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.title}
-                  {p.keyless ? ' — без ключа' : p.local ? ' — локальная' : p.hasKey ? '' : ' — нужен ключ'}
+                  {p.own
+                    ? ' — свой сервер'
+                    : p.keyless
+                      ? ' — без ключа'
+                      : p.local
+                        ? ' — локальная'
+                        : p.hasKey
+                          ? ''
+                          : ' — нужен ключ'}
                 </option>
               ))}
             </select>
@@ -665,21 +798,32 @@ export function AssistantPanel({
             <p className={modelIsCloud ? 'ai-warn' : 'ai-note'}>
               {modelIsCloud
                 ? 'Выбрана ОБЛАЧНАЯ модель: она считается на удалённом сервере (ollama.com), и текст проекта уходит туда. Локальные модели того же Ollama считаются на машине стенда — выберите «локальная».'
-                : provider.local
-                  ? provider.keyless
-                    ? 'Свой сервер моделей: считает на вашей машине (или в вашей сети), ключ не нужен и текст проекта никуда не уходит.'
-                    : 'Локальная модель: текст проекта не покидает сервер стенда, ключ не нужен.'
-                  : provider.standKey
-                    ? 'Модели доступны по ключу стенда — свой ключ не обязателен.'
-                    : provider.keyRequired
-                      ? 'Для этого провайдера нужен ключ: добавьте свой — он хранится на сервере зашифрованным.'
+                : provider.own
+                  ? provider.local
+                    ? `Свой сервер «${provider.title}»: считает на вашей машине (или в вашей сети), текст проекта никуда не уходит.${
+                        provider.keyless ? ' Ключ не нужен.' : ' Ключ задан вместе с адресом сервера.'
+                      }`
+                    : `Свой сервер «${provider.title}», но он не в вашей сети: текст проекта уходит наружу — помощник спросит согласие.${
+                        provider.keyless ? '' : ' Ключ задан вместе с адресом сервера.'
+                      }`
+                  : provider.local
+                    ? provider.keyless
+                      ? 'Свой сервер моделей: считает на вашей машине (или в вашей сети), ключ не нужен и текст проекта никуда не уходит.'
+                      : 'Локальная модель: текст проекта не покидает сервер стенда, ключ не нужен.'
+                    : provider.standKey
+                      ? 'Модели доступны по ключу стенда — свой ключ не обязателен.'
+                      : provider.keyRequired
+                        ? 'Для этого провайдера нужен ключ: добавьте свой — он хранится на сервере зашифрованным.'
                       : provider.note}
             </p>
           )}
 
           {modelsNote != null && <p className="ai-note">{modelsNote}</p>}
 
-          {provider != null && !provider.local && (
+          {/* Ключ своего сервера задаётся вместе с адресом: отдельного места для него
+              нет, поэтому форму не показываем — иначе она предлагала бы ввести то, что
+              уже введено, и заканчивалась бы отказом сервера. */}
+          {provider != null && !provider.local && !provider.own && (
             <div className="ai-key">
               <input
                 type="password"
@@ -698,6 +842,14 @@ export function AssistantPanel({
                 </button>
               )}
             </div>
+          )}
+
+          {provider != null && provider.own && (
+            <p className="ai-note" data-assistant-own-key>
+              {provider.keyless
+                ? 'Ключ этому серверу не нужен. Если он начнёт его требовать — удалите сервер ниже и добавьте заново вместе с ключом.'
+                : 'Ключ этого сервера хранится вместе с адресом. Чтобы заменить — удалите сервер ниже и добавьте заново.'}
+            </p>
           )}
 
           {!config.keysReady && (
@@ -725,6 +877,111 @@ export function AssistantPanel({
               </span>
             </label>
           )}
+
+          {/* Свои серверы моделей. Провайдеров на стенде ровно столько, сколько прописал
+              админ: если у человека llama.cpp на своей машине, без этого блока ему
+              подключиться нечем — поля для адреса нет больше нигде. */}
+          <div className="ai-endpoints" data-assistant-endpoints>
+            <p className="ai-about__title">Свои серверы моделей</p>
+            <p className="ai-note">
+              Свой сервер (llama.cpp, vLLM, LM Studio, Ollama на вашей машине) добавляется
+              сюда и появляется в списке провайдеров выше. Адрес указывается{' '}
+              <strong>такой, каким его видит сервер стенда</strong>, а не ваш браузер:{' '}
+              <code>http://localhost:8080/v1</code> сработает, только если сервер моделей
+              запущен на самой машине стенда, иначе пишите адрес в сети.
+            </p>
+
+            {endpoints === null ? (
+              <p className="ai-note">Список своих серверов не загрузился — откройте окно заново.</p>
+            ) : endpoints.length === 0 ? (
+              <p className="ai-note" data-assistant-endpoints-empty>
+                Своих серверов пока нет.
+              </p>
+            ) : (
+              <ul className="ai-endpoints__list" data-assistant-endpoints-list>
+                {endpoints.map((endpoint) => (
+                  <li key={endpoint.id} className="ai-endpoints__item">
+                    <span className="ai-endpoints__title">{endpoint.title}</span>
+                    <span className="ai-endpoints__url" title={endpoint.url}>
+                      {endpoint.url}
+                    </span>
+                    <span className="ai-note">
+                      {endpoint.local ? 'в своей сети, согласие не нужно' : 'наружу, нужен ключ и согласие'}
+                      {endpoint.hasKey ? ' · ключ задан' : ' · без ключа'}
+                    </span>
+                    <button
+                      className="secondary"
+                      onClick={() => void removeEndpoint(endpoint)}
+                      disabled={endpointBusy}
+                      aria-label={`Удалить сервер ${endpoint.title}`}
+                    >
+                      Удалить
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            <label className="ai-field">
+              <span>Название</span>
+              <input
+                type="text"
+                value={endpointDraft.title}
+                aria-label="Название своего сервера"
+                placeholder="Например: моя машина, llama.cpp"
+                onChange={(e) => setEndpointDraft((d) => ({ ...d, title: e.target.value }))}
+              />
+            </label>
+
+            <label className="ai-field">
+              <span>Адрес OpenAI-совместимого API</span>
+              <input
+                type="text"
+                value={endpointDraft.url}
+                aria-label="Адрес своего сервера"
+                placeholder="http://192.168.1.10:8080/v1"
+                onChange={(e) => setEndpointDraft((d) => ({ ...d, url: e.target.value }))}
+              />
+            </label>
+
+            <label className="ai-field">
+              <span>Ключ (необязательно)</span>
+              <input
+                type="password"
+                value={endpointDraft.key}
+                aria-label="Ключ своего сервера"
+                placeholder="оставьте пустым, если сервер не спрашивает ключ"
+                disabled={!config.keysReady}
+                onChange={(e) => setEndpointDraft((d) => ({ ...d, key: e.target.value }))}
+              />
+            </label>
+
+            <label className="ai-consent-check">
+              <input
+                type="checkbox"
+                checked={endpointDraft.local}
+                aria-label="Сервер считает на моей машине"
+                onChange={(e) => setEndpointDraft((d) => ({ ...d, local: e.target.checked }))}
+              />
+              <span>
+                Считает на моей машине или в моей сети. Согласие тогда не спрашивается: текст
+                проекта никуда не уходит. Снимите галочку, если это чужой сервер в интернете —
+                без согласия помощник такому серверу текст не отправит.
+              </span>
+            </label>
+
+            {!config.keysReady && (
+              <p className="ai-note">
+                Без <code>AI_SECRET_KEY</code> на стенде ключ сохранить некуда: сервер без
+                ключа добавить можно, с ключом — нет.
+              </p>
+            )}
+
+            <button onClick={() => void saveEndpoint()} disabled={endpointBusy}>
+              {endpointBusy ? 'Сохраняю…' : 'Добавить сервер'}
+            </button>
+            {endpointNote != null && <p className="ai-note">{endpointNote}</p>}
+          </div>
 
           <button className="secondary ai-body__back" onClick={() => setView('chat')}>
             Вернуться к переписке

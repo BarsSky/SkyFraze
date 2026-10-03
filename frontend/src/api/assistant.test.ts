@@ -13,13 +13,17 @@ const mocks = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), del: vi.fn() }))
 vi.mock('./client', () => ({ http: { get: mocks.get, post: mocks.post, delete: mocks.del } }))
 
 import {
+  addAIEndpoint,
   changeLabel,
   deleteAIConsent,
+  deleteAIEndpoint,
   getAIConfig,
   isCloudModelRef,
+  listAIEndpoints,
   listAIModels,
   needsConsent,
   parseAIConfig,
+  parseAIEndpoints,
   parseAIModels,
   parseSSEBuffer,
   parseAITurn,
@@ -58,6 +62,7 @@ const config: AIConfig = {
       hasKey: true,
       standKey: false,
       keyless: false,
+      own: false,
       keyRequired: false,
     },
     {
@@ -69,6 +74,7 @@ const config: AIConfig = {
       hasKey: false,
       standKey: false,
       keyless: false,
+      own: false,
       keyRequired: true,
     },
   ],
@@ -264,6 +270,65 @@ describe('запросы', () => {
       timeout: 300000,
     })
     expect(turn.answer).toBe('готово')
+  })
+
+  it('свои серверы читаются, добавляются и удаляются по своим адресам', async () => {
+    mocks.get.mockReturnValueOnce(reply({ endpoints: [] }))
+    await listAIEndpoints()
+    expect(mocks.get).toHaveBeenCalledWith('ai/endpoints')
+
+    mocks.post.mockReturnValueOnce(reply({ id: 'e1', title: 'Моя машина', url: 'http://h:8080/v1' }))
+    await addAIEndpoint({ title: 'Моя машина', url: 'http://h:8080/v1', key: '', local: true })
+    expect(mocks.post).toHaveBeenCalledWith('ai/endpoints', {
+      // Ключ уходит всегда (пустая строка — «без ключа»), чтобы сервер не гадал,
+      // чем считать отсутствие поля: «не прислали» и «стёрли» — разные вещи.
+      json: { title: 'Моя машина', url: 'http://h:8080/v1', key: '', local: true },
+      timeout: 30000,
+    })
+
+    mocks.del.mockReturnValueOnce(reply({}))
+    await deleteAIEndpoint('e1')
+    expect(mocks.del).toHaveBeenCalledWith('ai/endpoints/e1')
+  })
+})
+
+describe('parseAIEndpoints', () => {
+  it('читает свои серверы и терпит отсутствующие поля', () => {
+    const list = parseAIEndpoints({
+      endpoints: [
+        {
+          id: 'e1',
+          title: 'Моя машина',
+          url: 'http://192.168.1.10:8080/v1',
+          local: true,
+          has_key: false,
+          provider_id: 'own:e1',
+        },
+        // Запись без id бесполезна: её нельзя ни выбрать, ни удалить.
+        { title: 'обрывок' },
+        { id: 'e2', url: 'http://remote/v1' },
+      ],
+    })
+    expect(list).toHaveLength(2)
+    expect(list[0]).toEqual({
+      id: 'e1',
+      title: 'Моя машина',
+      url: 'http://192.168.1.10:8080/v1',
+      local: true,
+      hasKey: false,
+      providerId: 'own:e1',
+    })
+    // Пустое название подменяем адресом: подпись «без имени» ничего не говорит.
+    expect(list[1].title).toBe('http://remote/v1')
+    // Неизвестный флаг — «не локальный»: обещать приватность там, где её не подтвердили,
+    // опаснее, чем лишний раз спросить согласие.
+    expect(list[1].local).toBe(false)
+  })
+
+  it('на пустом и битом ответе даёт пустой список, а не падение', () => {
+    expect(parseAIEndpoints(null)).toEqual([])
+    expect(parseAIEndpoints({ endpoints: 'нет' })).toEqual([])
+    expect(parseAIEndpoints({})).toEqual([])
   })
 })
 

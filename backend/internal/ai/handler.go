@@ -19,6 +19,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/google/uuid"
+
 	"github.com/skyfraze/backend/internal/auth"
 	"github.com/skyfraze/backend/internal/store"
 )
@@ -41,6 +43,81 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Delete("/keys/{provider}", h.DeleteKey)
 	r.Post("/consent", h.SetConsent)
 	r.Delete("/consent/{provider}", h.DeleteConsent)
+	// Свои серверы моделей: адрес задаёт человек, а не окружение стенда.
+	r.Get("/endpoints", h.ListEndpoints)
+	r.Post("/endpoints", h.AddEndpoint)
+	r.Delete("/endpoints/{id}", h.DeleteEndpoint)
+}
+
+// ListEndpoints — GET /api/ai/endpoints: свои серверы этого человека.
+func (h *Handler) ListEndpoints(w http.ResponseWriter, r *http.Request) {
+	uid, err := auth.UserIDFromCtx(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	list, err := h.svc.Endpoints(r.Context(), uid)
+	if err != nil {
+		h.writeAIError(w, "ai endpoints", err)
+		return
+	}
+	if list == nil {
+		list = []Endpoint{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"endpoints": list})
+}
+
+// AddEndpoint — POST /api/ai/endpoints: добавить свой сервер моделей.
+//
+// Тело: {title, url, key?, local}. Ответ — запись с идентификатором провайдера
+// (`own:<uuid>`), под которым сервер появится в списке выбора модели.
+func (h *Handler) AddEndpoint(w http.ResponseWriter, r *http.Request) {
+	uid, err := auth.UserIDFromCtx(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var body struct {
+		Title string `json:"title"`
+		URL   string `json:"url"`
+		Key   string `json:"key"`
+		// Local — считает на машине человека (или в своей сети): согласие не нужно.
+		// Отсутствие поля означает «да»: свой сервер по умолчанию свой.
+		Local *bool `json:"local"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "не разобрал запрос")
+		return
+	}
+	local := true
+	if body.Local != nil {
+		local = *body.Local
+	}
+	endpoint, err := h.svc.AddEndpoint(r.Context(), uid, body.Title, body.URL, body.Key, local)
+	if err != nil {
+		h.writeAIError(w, "ai add endpoint", err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, endpoint)
+}
+
+// DeleteEndpoint — DELETE /api/ai/endpoints/{id}: убрать свой сервер.
+func (h *Handler) DeleteEndpoint(w http.ResponseWriter, r *http.Request) {
+	uid, err := auth.UserIDFromCtx(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid endpoint id")
+		return
+	}
+	if err := h.svc.DeleteEndpoint(r.Context(), uid, id); err != nil {
+		h.writeAIError(w, "ai delete endpoint", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 type providerDTO struct {

@@ -32,6 +32,13 @@ export interface AIProviderInfo {
   standKey: boolean
   /** Ключ не нужен вовсе: свой сервер моделей (llama.cpp, vLLM) в своей сети. */
   keyless: boolean
+  /**
+   * Это свой сервер ЭТОГО человека (`own:<uuid>`), а не провайдер стенда.
+   *
+   * Важно для интерфейса: ключ такого сервера задаётся вместе с адресом, отдельного места
+   * для него нет — форму «введите ключ провайдера» показывать ему нельзя.
+   */
+  own: boolean
   /** Без ключа провайдер не заработает — интерфейс предложит его добавить. */
   keyRequired: boolean
 }
@@ -325,6 +332,86 @@ export async function setAIConsent(provider: string): Promise<void> {
 
 export async function deleteAIConsent(provider: string): Promise<void> {
   await http.delete(`ai/consent/${encodeURIComponent(provider)}`)
+}
+
+/**
+ * Свой сервер моделей: адрес, который задал сам человек.
+ *
+ * Нужен потому, что адрес сервера задавал только админ стенда (`AI_OLLAMA_URL`,
+ * `AI_OPENAI_COMPAT_URL`). Человек с llama.cpp на своей машине видел список провайдеров,
+ * в котором его сервера нет, и поля для адреса тоже не было — подключиться он не мог.
+ *
+ * `url` — адрес, как его видит СЕРВЕР стенда, а не браузер: `http://localhost:8080/v1`
+ * сработает, только если сервер моделей запущен на самой машине стенда.
+ */
+export interface AIEndpoint {
+  id: string
+  title: string
+  url: string
+  /** Сервер в своей сети: текст проекта никуда не уходит, согласие не нужно. */
+  local: boolean
+  /** Ключ задан. Сам ключ сервер не отдаёт — даже свой. */
+  hasKey: boolean
+  /** Идентификатор провайдера в списке моделей: `own:<uuid>`. */
+  providerId: string
+}
+
+/** Свои серверы моделей этого человека. */
+export async function listAIEndpoints(): Promise<AIEndpoint[]> {
+  const raw = await http.get('ai/endpoints').json<unknown>()
+  return parseAIEndpoints(raw)
+}
+
+/**
+ * Добавляет свой сервер.
+ *
+ * Ключ необязателен: llama.cpp и vLLM обычно работают без него. Если ключ всё же нужен,
+ * а на стенде не настроено шифрование (`AI_SECRET_KEY`), сервер откажет — хранить ключ
+ * открытым текстом нельзя.
+ */
+export async function addAIEndpoint(input: {
+  title: string
+  url: string
+  key?: string
+  local: boolean
+}): Promise<AIEndpoint | null> {
+  const raw = await http
+    .post('ai/endpoints', {
+      json: { title: input.title, url: input.url, key: input.key ?? '', local: input.local },
+      timeout: 30000,
+    })
+    .json<unknown>()
+  return parseAIEndpoint(raw)
+}
+
+export async function deleteAIEndpoint(id: string): Promise<void> {
+  await http.delete(`ai/endpoints/${encodeURIComponent(id)}`)
+}
+
+/** Разбор `GET /api/ai/endpoints`. */
+export function parseAIEndpoints(raw: unknown): AIEndpoint[] {
+  const record = asRecord(raw)
+  if (!Array.isArray(record?.endpoints)) return []
+  const out: AIEndpoint[] = []
+  for (const item of record.endpoints) {
+    const endpoint = parseAIEndpoint(item)
+    if (endpoint !== null) out.push(endpoint)
+  }
+  return out
+}
+
+export function parseAIEndpoint(raw: unknown): AIEndpoint | null {
+  const record = asRecord(raw)
+  const id = asText(record?.id)
+  if (!id) return null
+  return {
+    id,
+    title: asText(record?.title) || asText(record?.url) || id,
+    url: asText(record?.url),
+    local: record?.local === true,
+    hasKey: record?.has_key === true,
+    providerId: asText(record?.provider_id),
+  }
 }
 
 export async function listAIConversations(projectId: string): Promise<AIConversation[]> {
@@ -630,6 +717,7 @@ function parseProvider(raw: unknown): AIProviderInfo | null {
     hasKey: record?.has_key === true,
     standKey: record?.stand_key === true,
     keyless: record?.keyless === true,
+    own: record?.own === true,
     keyRequired: record?.key_required === true,
   }
 }
