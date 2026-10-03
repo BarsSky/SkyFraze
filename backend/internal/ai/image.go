@@ -86,6 +86,11 @@ type ImageGenerator interface {
 	Generate(ctx context.Context, req ImageRequest) (ImageResult, error)
 }
 
+// imageLoadPath — эндпоинт «подними модель» у балансеров, которые держат модели
+// выгруженными (llama-swap и подобные). У обычного Automatic1111 его нет, и это нормально:
+// тогда мы просто вернём исходную ошибку генерации.
+const imageLoadPath = "/api/image/models/load"
+
 // imageConfig — настройки генератора из окружения.
 type imageConfig struct {
 	URL            string
@@ -93,6 +98,8 @@ type imageConfig struct {
 	Steps          int
 	Model          string
 	Negative       string
+	// AutoLoad — поднимать выгруженную модель самим (см. loadModel).
+	AutoLoad bool
 }
 
 // imageCache — помним доступность и список моделей: без этого каждое открытие окна
@@ -120,6 +127,7 @@ func (s *Service) ImageGenerator() (ImageGenerator, bool) {
 			Steps:          s.cfg.ImageSteps,
 			Model:          s.cfg.ImageModel,
 			Negative:       s.cfg.ImageNegative,
+			AutoLoad:       s.cfg.ImageAutoLoad,
 		},
 	}, true
 }
@@ -240,6 +248,31 @@ func (c *a1111Client) Models(ctx context.Context) ([]string, error) {
 }
 
 func (c *a1111Client) Generate(ctx context.Context, req ImageRequest) (ImageResult, error) {
+	result, err := c.generateOnce(ctx, req)
+	// Баллансер (llama-swap-подобные стеки) держит модели выгруженными и на запрос без
+	// загруженной модели отвечает 503 с подсказкой «reload». Просить картинку у
+	// выгруженного сервера бессмысленно, поэтому один раз пробуем загрузить модель сами
+	// — иначе человек видел бы «генератор не отвечает» там, где нужно всего лишь
+	// поднять модель. Если сервер такого эндпоинта не знает (обычный A1111), получим
+	// 404 и вернём ИСХОДНУЮ ошибку, ничего не потеряв.
+	if err != nil && c.cfg.AutoLoad && c.cfg.Model != "" && errors.Is(err, ErrImageUnavailable) &&
+		strings.Contains(err.Error(), "image_model_error") {
+		if loadErr := c.loadModel(ctx); loadErr == nil {
+			return c.generateOnce(ctx, req)
+		}
+	}
+	return result, err
+}
+
+// loadModel просит сервер поднять модель. Эндпоинт не из A1111: он есть у
+// балансеров-«переключателей» (у них модели лежат на диске и грузятся по требованию).
+func (c *a1111Client) loadModel(ctx context.Context) error {
+	body := map[string]any{"name": c.cfg.Model}
+	var out json.RawMessage
+	return c.post(ctx, imageLoadPath, body, &out)
+}
+
+func (c *a1111Client) generateOnce(ctx context.Context, req ImageRequest) (ImageResult, error) {
 	steps := req.Steps
 	if steps <= 0 {
 		steps = c.cfg.Steps

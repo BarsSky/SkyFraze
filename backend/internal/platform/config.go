@@ -118,6 +118,10 @@ type Config struct {
 	AIImageSteps int `envconfig:"AI_IMAGE_STEPS" default:"0"`
 	// AIImageModel — чекпойнт по умолчанию (пусто — тот, что выбран на сервере).
 	AIImageModel string `envconfig:"AI_IMAGE_MODEL" default:""`
+	// AIImageAutoLoad — поднимать выгруженную модель самим (POST /api/image/models/load).
+	// По умолчанию да: балансеры, которые держат модели на диске, иначе отвечают
+	// «модель не загружена» на первый запрос, и это выглядит как неработающая генерация.
+	AIImageAutoLoad bool `envconfig:"AI_IMAGE_AUTOLOAD" default:"true"`
 	// AIImageNegative — негативный промпт стенда: то, чего на иллюстрациях быть не должно.
 	AIImageNegative string `envconfig:"AI_IMAGE_NEGATIVE" default:""`
 }

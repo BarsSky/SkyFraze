@@ -219,6 +219,83 @@ func TestImageGenerateWithoutPicture(t *testing.T) {
 	}
 }
 
+// Баллансер держит модель выгруженной и на первый запрос отвечает 503 «модель не
+// загружена» с подсказкой поднять её. Клиент должен поднять модель сам и повторить — иначе
+// человек видел бы «генератор не отвечает» там, где нужно всего лишь загрузить модель.
+func TestImageAutoLoadsUnloadedModel(t *testing.T) {
+	var loads int
+	var generations int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/sdapi/v1/sd-models":
+			_ = json.NewEncoder(w).Encode([]map[string]any{{"model_name": "sd15-q4"}})
+		case imageLoadPathForTest:
+			loads++
+			_, _ = w.Write([]byte(`{"model":"sd15-q4","status":"loading"}`))
+		case "/sdapi/v1/txt2img":
+			generations++
+			if loads == 0 {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_, _ = w.Write([]byte(`{"error":{"code":"image_model_error","message":"image model \"\" failed to load"}}`))
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"images": []string{base64.StdEncoding.EncodeToString(tinyPNGBytes)},
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	svc := ai.New(nil, ai.Config{
+		Enabled: true, ImageURL: server.URL, ImageTimeoutSeconds: 5,
+		ImageModel: "sd15-q4", ImageAutoLoad: true,
+	}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	gen, _ := svc.ImageGenerator()
+
+	result, err := gen.Generate(context.Background(), ai.ImageRequest{Prompt: "маяк"})
+	if err != nil {
+		t.Fatalf("после подъёма модели генерация должна пройти: %v", err)
+	}
+	if len(result.Data) == 0 {
+		t.Error("картинка пустая")
+	}
+	if loads != 1 || generations != 2 {
+		t.Errorf("подъёмов модели: %d, попыток генерации: %d (ожидалось 1 и 2)", loads, generations)
+	}
+}
+
+// Без включённого подъёма модели клиент не лезет в чужие эндпоинты: обычный A1111 такого
+// пути не знает, и «угадывать» за него не наше дело.
+func TestImageWithoutAutoLoadReportsOriginalError(t *testing.T) {
+	var loads int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == imageLoadPathForTest {
+			loads++
+			return
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"error":{"code":"image_model_error"}}`))
+	}))
+	t.Cleanup(server.Close)
+
+	svc := ai.New(nil, ai.Config{
+		Enabled: true, ImageURL: server.URL, ImageTimeoutSeconds: 5, ImageModel: "sd15-q4",
+	}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	gen, _ := svc.ImageGenerator()
+	if _, err := gen.Generate(context.Background(), ai.ImageRequest{Prompt: "маяк"}); err == nil {
+		t.Fatal("без автоподъёма ошибка должна вернуться как есть")
+	}
+	if loads != 0 {
+		t.Errorf("клиент не должен звать эндпоинт подъёма: %d раз", loads)
+	}
+}
+
+// imageLoadPathForTest повторяет путь, который использует клиент: тест не должен
+// «знать» его иначе, чем код.
+const imageLoadPathForTest = "/api/image/models/load"
+
 func TestImageStatusIsCached(t *testing.T) {
 	// Проверка доступности кэшируется: иначе каждое открытие окна помощника ждало бы
 	// ответа выключенного генератора (таймаут — секунды).

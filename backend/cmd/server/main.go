@@ -186,6 +186,7 @@ func main() {
 		ImageTimeoutSeconds: cfg.AIImageTimeoutSeconds,
 		ImageSteps:          cfg.AIImageSteps,
 		ImageModel:          cfg.AIImageModel,
+		ImageAutoLoad:       cfg.AIImageAutoLoad,
 		ImageNegative:       cfg.AIImageNegative,
 	}, map[string]string{
 		"GROQ_API_KEY":       os.Getenv("GROQ_API_KEY"),
