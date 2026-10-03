@@ -103,6 +103,23 @@ type Config struct {
 	// триста раз подряд, — это его счёт. Для локальной модели предел смысла не имеет,
 	// поэтому по умолчанию 0, а в интерфейсе расход видно всегда.
 	AITokensPerDay int `envconfig:"AI_TOKENS_PER_DAY" default:"0"`
+
+	// --- генерация изображений (A1111-совместимый сервер) ---
+	//
+	// AIImageURL — адрес сервера генерации (Automatic1111, Forge, SD.Next): у них общий
+	// простой HTTP-API. Пусто — генерации нет, и помощник честно скажет об этом, а не
+	// пообещает картинку. Генерация — отдельный сервис со своим железом, поэтому адрес
+	// задаётся отдельно от адресов текстовых моделей.
+	AIImageURL string `envconfig:"AI_IMAGE_URL" default:""`
+	// AIImageTimeoutSeconds — предел на одну генерацию. По умолчанию 180: на слабой
+	// видеокарте иллюстрация 1024×576 рисуется десятки секунд, а не секунды.
+	AIImageTimeoutSeconds int `envconfig:"AI_IMAGE_TIMEOUT_SECONDS" default:"180"`
+	// AIImageSteps — сколько шагов диффузии заказывать (0 — значение по умолчанию 28).
+	AIImageSteps int `envconfig:"AI_IMAGE_STEPS" default:"0"`
+	// AIImageModel — чекпойнт по умолчанию (пусто — тот, что выбран на сервере).
+	AIImageModel string `envconfig:"AI_IMAGE_MODEL" default:""`
+	// AIImageNegative — негативный промпт стенда: то, чего на иллюстрациях быть не должно.
+	AIImageNegative string `envconfig:"AI_IMAGE_NEGATIVE" default:""`
 }
 
 // AdminEmailList — ADMIN_EMAILS как список (нормализованный, без пустых).

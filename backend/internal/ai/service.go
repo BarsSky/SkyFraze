@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -43,6 +44,20 @@ type Config struct {
 	// показывает расход, а не удивляет счётом в конце месяца. По умолчанию 0:
 	// локальная модель бесплатна, и запрет «на всякий случай» только мешал бы.
 	TokensPerDay int
+
+	// --- генерация изображений (docs/ai-assistant.md, фаза 5) ---
+	//
+	// ImageURL — адрес A1111-совместимого сервера генерации (пусто — генерации нет).
+	// Генерация картинок — отдельный сервис со своим железом; адрес задаёт админ.
+	ImageURL string
+	// ImageTimeoutSeconds — предел на одну генерацию: на слабой видеокарте это минуты.
+	ImageTimeoutSeconds int
+	// ImageSteps — сколько шагов диффузии по умолчанию (0 — значение по умолчанию).
+	ImageSteps int
+	// ImageModel — чекпойнт по умолчанию (пусто — выбранный на сервере генерации).
+	ImageModel string
+	// ImageNegative — негативный промпт стенда: то, чего на иллюстрациях быть не должно.
+	ImageNegative string
 }
 
 // Service — доступные модели и ключи пользователей.
@@ -55,6 +70,12 @@ type Service struct {
 	// envKeys — ключи стенда (провайдер → ключ). Пусто у большинства стендов: ключи
 	// стенда нужны только если админ решил платить за всех.
 	envKeys map[string]string
+	// imageMu защищает кэш доступности генератора изображений (см. image.go).
+	imageMu        sync.Mutex
+	imageCheckedAt time.Time
+	imageOK        bool
+	imageNote      string
+	imageModels    []string
 }
 
 // New собирает сервис. Ошибки конфигурации не валят сервер: ИИ — необязательная

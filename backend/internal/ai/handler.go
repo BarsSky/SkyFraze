@@ -81,15 +81,21 @@ func (h *Handler) Config(w http.ResponseWriter, r *http.Request) {
 		h.logger.Warn("ai: не удалось посчитать расход токенов", "err", err)
 		spent = 0
 	}
+	// Генерация картинок: доступна ли она СЕЙЧАС. Без этого интерфейс обещал бы
+	// иллюстрации, которых не будет (генератор не настроен или выключен).
+	imageAvailable, imageNote := h.svc.ImageStatus(r.Context())
 	writeJSON(w, http.StatusOK, map[string]any{
-		"enabled":        h.svc.Enabled(),
-		"keys_ready":     h.svc.KeysReady(),
-		"default_model":  h.svc.DefaultModel(),
-		"max_tool_calls": h.svc.MaxToolCalls(),
-		"tokens_today":   spent,
-		"token_limit":    h.svc.TokensPerDay(),
-		"providers":      providers,
-		"consents":       nonNil(consents),
+		"enabled":         h.svc.Enabled(),
+		"keys_ready":      h.svc.KeysReady(),
+		"default_model":   h.svc.DefaultModel(),
+		"max_tool_calls":  h.svc.MaxToolCalls(),
+		"tokens_today":    spent,
+		"token_limit":     h.svc.TokensPerDay(),
+		"image_available": imageAvailable,
+		"image_note":      imageNote,
+		"image_models":    nonNilStrings(h.svc.ImageModels(r.Context())),
+		"providers":       providers,
+		"consents":        nonNil(consents),
 	})
 }
 
@@ -219,6 +225,15 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(body)
+}
+
+// nonNilStrings отдаёт пустой список вместо null: интерфейсу проще, когда «нет» — это
+// пустой массив, а не отсутствие поля.
+func nonNilStrings(values []string) []string {
+	if values == nil {
+		return []string{}
+	}
+	return values
 }
 
 func writeErr(w http.ResponseWriter, status int, msg string) {

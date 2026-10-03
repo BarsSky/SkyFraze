@@ -181,6 +181,12 @@ func main() {
 		MaxToolCalls:      cfg.AIMaxToolCalls,
 		TimeoutSeconds:    cfg.AITimeoutSeconds,
 		TokensPerDay:      cfg.AITokensPerDay,
+		// Генерация изображений — отдельный сервис со своим железом (A1111-совместимый).
+		ImageURL:            cfg.AIImageURL,
+		ImageTimeoutSeconds: cfg.AIImageTimeoutSeconds,
+		ImageSteps:          cfg.AIImageSteps,
+		ImageModel:          cfg.AIImageModel,
+		ImageNegative:       cfg.AIImageNegative,
 	}, map[string]string{
 		"GROQ_API_KEY":       os.Getenv("GROQ_API_KEY"),
 		"OPENROUTER_API_KEY": os.Getenv("OPENROUTER_API_KEY"),
