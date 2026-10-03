@@ -70,6 +70,14 @@ services:
       AI_MAX_TOOL_CALLS: ${AI_MAX_TOOL_CALLS:-10}
       AI_TIMEOUT_SECONDS: ${AI_TIMEOUT_SECONDS:-120}
       AI_TOKENS_PER_DAY: ${AI_TOKENS_PER_DAY:-0}
+      # Генерация изображений: A1111-совместимый сервер (Automatic1111, Forge, SD.Next).
+      # Пусто — генерации нет, и помощник честно скажет об этом.
+      AI_IMAGE_URL: ${AI_IMAGE_URL:-}
+      AI_IMAGE_MODEL: ${AI_IMAGE_MODEL:-}
+      AI_IMAGE_TIMEOUT_SECONDS: ${AI_IMAGE_TIMEOUT_SECONDS:-180}
+      AI_IMAGE_STEPS: ${AI_IMAGE_STEPS:-0}
+      AI_IMAGE_NEGATIVE: ${AI_IMAGE_NEGATIVE:-}
+      AI_IMAGE_AUTOLOAD: ${AI_IMAGE_AUTOLOAD:-true}
       GROQ_API_KEY: ${GROQ_API_KEY:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
