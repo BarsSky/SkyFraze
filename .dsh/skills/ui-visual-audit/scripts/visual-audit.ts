@@ -577,6 +577,31 @@ async function visualScreens(browser: Browser, errors: string[], slug: string | 
       await shot(page, name)
       applyProbe(await probe(page), 'projects', vp.tag, name)
 
+      // Пункт меню, скрытый стилями, человек воспринимает как отсутствующую
+      // возможность, а не как экономию места: на телефоне так пропадали «Мои проекты»
+      // (в меню оставались все разделы, кроме главного). Проверяем на каждом вьюпорте,
+      // что все ссылки навигации для вошедшего видны и имеют размер для нажатия.
+      const hiddenNav = (await page.evaluate(`(() => {
+        const out = []
+        document.querySelectorAll('.auth-links a').forEach((a) => {
+          const cs = getComputedStyle(a)
+          const r = a.getBoundingClientRect()
+          if (cs.display === 'none' || cs.visibility === 'hidden' || r.width < 1 || r.height < 1) {
+            out.push((a.textContent || '').trim())
+          }
+        })
+        return out
+      })()`)) as string[]
+      if (hiddenNav.length > 0) {
+        add({
+          severity: 'error', area: 'visual', screen: 'projects', viewport: vp.tag,
+          check: 'пункт меню скрыт стилями',
+          detail: `не видно: ${hiddenNav.join(', ')}`,
+          where: 'frontend/src/styles/tokens.css — медиазапросы шапки',
+          shot: name,
+        })
+      }
+
       // соавторы: поиск людей по нику, специализации, доступ к закрытым проектам
       await page.goto(`${BASE}/coauthors`)
       await page.waitForSelector('[data-profile]', { timeout: 20000 }).catch(() => null)
