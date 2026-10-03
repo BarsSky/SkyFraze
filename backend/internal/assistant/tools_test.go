@@ -240,10 +240,12 @@ func TestParseTextToolCallsLooseJSONNeedsKnownTool(t *testing.T) {
 
 // Описания инструментов — часть контракта с моделью: у каждого должна быть схема
 // параметров, иначе провайдер отклонит запрос целиком.
+// Набор зависит от возможностей: проверяем полный вариант («текст и картинки»), а
+// урезанные — отдельным тестом ниже.
 func TestToolDefsAreWellFormed(t *testing.T) {
-	defs := ToolDefs()
-	if len(defs) != 4 {
-		t.Fatalf("инструментов %d, ожидалось 4", len(defs))
+	defs := ToolDefs(Capabilities{Text: true, Images: true})
+	if len(defs) != 5 {
+		t.Fatalf("инструментов %d, ожидалось 5", len(defs))
 	}
 	seen := map[string]bool{}
 	for _, def := range defs {

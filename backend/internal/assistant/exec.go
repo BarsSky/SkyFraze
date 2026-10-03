@@ -23,6 +23,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -57,7 +58,7 @@ func refusedCall(call ai.ToolCall, reason string) toolResult {
 // actorID — от чьего имени создаётся кадр (агент: он автор правок), userID — чьими
 // правами (человек, нажавший «спросить»).
 func (s *Service) execute(
-	ctx context.Context, actorID, userID, projectID uuid.UUID, call ai.ToolCall,
+	ctx context.Context, actorID, userID, projectID uuid.UUID, call ai.ToolCall, caps Capabilities,
 ) toolResult {
 	switch call.Name {
 	case ToolListEvents:
@@ -68,9 +69,154 @@ func (s *Service) execute(
 		return s.toolCreate(ctx, actorID, userID, projectID, call, false)
 	case ToolCreateSub:
 		return s.toolCreate(ctx, actorID, userID, projectID, call, true)
+	case ToolGenerateImage:
+		return s.toolGenerateImage(ctx, actorID, userID, projectID, call, caps)
 	default:
 		return refusedCall(call, fmt.Sprintf("%v: %s", ErrUnknownTool, call.Name))
 	}
+}
+
+// toolGenerateImage рисует иллюстрацию к кадру и привязывает её к нему.
+//
+// Порядок здесь неслучаен: сначала картинка, потом привязка. Файл, который никто не
+// привязал, — это просто файл в проекте (его видно в списке вложений, и ничего не
+// сломано), а привязка к несуществующему файлу показывала бы пустое место в кадре.
+//
+// Промпт собирает СЕРВЕР: стиль проекта и негативный промпт стенда дописываются к тому,
+// что попросила модель. Иначе каждая иллюстрация была бы в своей манере, а модель
+// изобретала бы стиль заново на каждый запрос.
+func (s *Service) toolGenerateImage(
+	ctx context.Context, actorID, userID, projectID uuid.UUID, call ai.ToolCall, caps Capabilities,
+) toolResult {
+	if !caps.Images || !ImageToolAvailable {
+		return refusedCall(call, "генерация иллюстраций недоступна: "+caps.ImageNote)
+	}
+	if s.assets == nil {
+		return refusedCall(call, "генерация иллюстраций недоступна: сервер не настроен на сохранение файлов")
+	}
+	args, err := ParseGenerate(call.Arguments, s.limits)
+	if err != nil {
+		return refusedCall(call, err.Error())
+	}
+
+	// Кадр должен существовать в ЭТОМ проекте: рисовать «в никуда» нельзя, а проверять
+	// существование по документу модель не может — она видит только то, что ей отдали.
+	event, ok := s.findEvent(ctx, projectID, args.EventID)
+	if !ok {
+		return refusedCall(call, "кадр не найден в этом проекте: возьми event_id из list_events")
+	}
+
+	generator, ok := s.models.ImageGenerator()
+	if !ok {
+		return refusedCall(call, "генератор изображений не настроен на стенде")
+	}
+	prompt := args.Prompt
+	if style := strings.TrimSpace(caps.ImageStyle); style != "" {
+		prompt = fmt.Sprintf("%s. Стиль: %s", prompt, style)
+	}
+	// Контекст кадра помогает иллюстрации соответствовать тексту: модель картинок не
+	// видит ни проект, ни главу.
+	prompt = fmt.Sprintf("%s. Иллюстрация к кадру «%s».", prompt, event.Title)
+
+	result, err := generator.Generate(ctx, ai.ImageRequest{
+		Prompt:   prompt,
+		Negative: s.models.DefaultImageNegative(),
+		Steps:    s.models.DefaultImageSteps(),
+	})
+	if err != nil {
+		// Ошибка генератора — не ошибка конвейера: модель должна увидеть причину и
+		// сказать о ней человеку, а не повторять вызов наугад.
+		return refusedCall(call, "не удалось нарисовать: "+err.Error())
+	}
+
+	filename := fmt.Sprintf("иллюстрация-%s%s", shortID(args.EventID), extensionFor(result.MediaType))
+	// Агент — соавтор проекта, и файл должен быть подписан ИМ, а не человеком, который
+	// нажал «спросить». Строку участия обычно создаёт сохранение настроек агента, но
+	// владелец мог их ни разу не открывать, а хранилище пускает только участников
+	// проекта. Поэтому участие обеспечиваем здесь — тем же правом, что и настройки:
+	// редактор (пишет текст, но не распоряжается проектом).
+	if err := s.store.AddMembership(ctx, projectID, ai.AgentUserID, store.RoleEditor); err != nil {
+		s.logger.Warn("ai: не удалось закрепить агента в проекте", "project", projectID, "err", err)
+	}
+	asset, err := s.assets.StoreGenerated(ctx, actorID, projectID, filename, result.MediaType, result.Data)
+	if err != nil {
+		return refusedCall(call, "картинка нарисована, но не сохранилась в проект: "+err.Error())
+	}
+
+	warning, err := s.inserter.AttachAssetToEvent(ctx, actorID, userID, projectID,
+		args.EventID.String(), asset.ID.String(), args.AsBackground)
+	if err != nil {
+		return refusedCall(call, "картинка сохранена, но не привязалась к кадру: "+err.Error())
+	}
+	if warning != "" {
+		s.logger.Warn("ai: иллюстрация привязана с предупреждением", "project", projectID, "err", warning)
+	}
+
+	report := Call{
+		Name: call.Name, OK: true,
+		Detail: fmt.Sprintf("нарисовал иллюстрацию к кадру «%s» (%s)", event.Title, humanSize(len(result.Data))),
+	}
+	return toolResult{
+		call:   call,
+		report: report,
+		payload: map[string]any{
+			"ok":       true,
+			"event_id": args.EventID.String(),
+			"asset_id": asset.ID.String(),
+			"filename": asset.Filename,
+			"warning":  warning,
+		},
+		change: &Change{
+			Action: ChangeImageCreated,
+			ID:     event.ID,
+			Title:  event.Title,
+		},
+	}
+}
+
+// findEvent ищет кадр в проекции проекта.
+func (s *Service) findEvent(ctx context.Context, projectID, eventID uuid.UUID) (store.Event, bool) {
+	list, err := s.store.ListEvents(ctx, projectID)
+	if err != nil {
+		return store.Event{}, false
+	}
+	for _, event := range list {
+		if event.ID == eventID {
+			return event, true
+		}
+	}
+	return store.Event{}, false
+}
+
+// shortID — первые 8 символов идентификатора: имя файла должно быть узнаваемым, а не
+// тридцать шесть знаков дефисов.
+func shortID(id uuid.UUID) string {
+	raw := id.String()
+	if len(raw) < 8 {
+		return raw
+	}
+	return raw[:8]
+}
+
+// extensionFor — расширение по формату картинки: сервер генератора может отдавать и PNG,
+// и JPEG, и имя файла должно этому соответствовать.
+func extensionFor(mediaType string) string {
+	switch mediaType {
+	case "image/jpeg":
+		return ".jpg"
+	case "image/webp":
+		return ".webp"
+	default:
+		return ".png"
+	}
+}
+
+// humanSize — размер человеческими словами (в подписи для человека).
+func humanSize(bytes int) string {
+	if bytes < 1024 {
+		return fmt.Sprintf("%d Б", bytes)
+	}
+	return fmt.Sprintf("%.1f МБ", float64(bytes)/(1024*1024))
 }
 
 // toolListEvents отдаёт дерево проекта.

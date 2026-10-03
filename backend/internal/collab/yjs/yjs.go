@@ -147,6 +147,100 @@ func (d *Doc) Events() []Event {
 	return out
 }
 
+// AttachOutcome — исход привязки вложения в живом документе.
+//
+// Отдельной структурой, а не набором ошибок: «кадр не найден» и «комната ещё грузится» —
+// не сбои, а состояния, на которые вызывающий отвечает по-разному (первое — отказом
+// человеку, второе — повтором).
+type AttachOutcome struct {
+	// Handled — документ обновлён (или кадр не найден, но комната своё дело сделала).
+	Handled bool
+	// Found — кадр с таким идентификатором в документе есть.
+	Found bool
+	// RoomLoading — документ комнаты ещё читается из базы.
+	RoomLoading bool
+	// Warning — привязка сделана, но серверная копия не обновилась.
+	Warning string
+}
+
+// AttachAsset привязывает вложение к существующему кадру.
+//
+// Тем же способом, что и в браузере: список вложений лежит в `assets` (lib0-Any массив),
+// а выбранный фон — в `bg_kind: asset` + `bg_asset`. Иначе говоря, сервер пишет ровно то,
+// что писала бы вкладка редактора; поэтому привязка не «особый случай» документа, а
+// обычная его правка.
+//
+// `asBackground` заодно делает картинку фоном кадра: у иллюстрации это ожидаемое
+// поведение (человек просил «нарисуй к главе»), но выбор остаётся за вызывающим.
+//
+// Возвращает false, если кадра с таким идентификатором в документе нет: привязывать
+// вложение к несуществующему кадру нельзя — ссылка осталась бы висеть.
+func (d *Doc) AttachAsset(eventID, assetID string, asBackground bool) (bool, error) {
+	if eventID == "" || assetID == "" {
+		return false, errors.New("нужны идентификаторы кадра и вложения")
+	}
+	events := ygo.NewArray(d.inner, EventsRoot)
+	var target *ygo.Map
+	events.Range(func(_ uint64, value any) bool {
+		item, ok := value.(*ygo.Map)
+		if !ok {
+			return true
+		}
+		if stringField(item, "id") == eventID {
+			target = item
+			return false
+		}
+		return true
+	})
+	if target == nil {
+		return false, nil
+	}
+
+	txn := d.inner.WriteTxn()
+	defer txn.Commit()
+
+	// Список вложений: добавляем, только если его там ещё нет. Повторный вызов (модель
+	// попросила дважды, человек нажал ещё раз) не должен плодить дубликаты — вкладка
+	// показывает список как есть, и «две одинаковые картинки» выглядели бы ошибкой.
+	list := assetList(target.Get("assets"))
+	found := false
+	for _, id := range list {
+		if id == assetID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		list = append(list, assetID)
+		anyList := make([]any, 0, len(list))
+		for _, id := range list {
+			anyList = append(anyList, id)
+		}
+		target.Set(txn, "assets", anyList)
+	}
+	if asBackground {
+		target.Set(txn, "bg_kind", "asset")
+		target.Set(txn, "bg_asset", assetID)
+	}
+	return true, nil
+}
+
+// assetList читает список вложений события как строки: в документе он лежит массивом
+// lib0-Any, и элементы приходят как any.
+func assetList(raw any) []string {
+	list, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(list))
+	for _, item := range list {
+		if id, ok := item.(string); ok && id != "" {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
 // AssetUsage — сколько кадров ссылаются на вложение: держат его в списке
 // вложений (`assets`) или выбрали фоном кадра (`bg_asset` при `bg_kind: asset`).
 //

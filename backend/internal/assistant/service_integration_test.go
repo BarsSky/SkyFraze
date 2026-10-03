@@ -51,6 +51,10 @@ const stubKeyEnv = "STUB_API_KEY"
 
 // ============================ заглушка провайдера ============================
 
+// imageURLForTests — адрес заглушки генератора изображений для текущего теста.
+// Пусто — генерации нет: так проверяется и честное «картинки недоступны».
+var imageURLForTests string
+
 // stubProvider — «провайдер модели» на localhost: отвечает заранее заготовленными
 // ответами и записывает, что у него спросили. Никакой сети в тестах нет.
 type stubProvider struct {
@@ -359,6 +363,8 @@ func setup(t *testing.T, replies ...ai.Reply) *env {
 	models := ai.New(st, ai.Config{
 		Enabled: true, SecretKey: strings.Repeat("ab", 32),
 		DefaultModel: "stub:stub-1", TimeoutSeconds: 10,
+		// Генератор изображений — только если тест его подставил (см. image_tool_integration_test.go).
+		ImageURL: imageURLForTests, ImageTimeoutSeconds: 10, ImageModel: "stub-sd", ImageAutoLoad: true,
 	}, map[string]string{stubKeyEnv: "stub-stand-key"}, testLogger())
 	models.UseProviders([]ai.Provider{
 		{
@@ -372,6 +378,8 @@ func setup(t *testing.T, replies ...ai.Reply) *env {
 	})
 
 	asst := assistant.New(st, models, proj, transferSvc, 10, testLogger())
+	// Иллюстрации помощника ложатся вложениями проекта — как в бою (см. main.go).
+	asst.UseAssets(assetsSvc)
 	return &env{st: st, proj: proj, models: models, asst: asst, stub: stub}
 }
 

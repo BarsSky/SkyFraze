@@ -40,6 +40,7 @@ const (
 	ToolReadEvent     = "read_event"
 	ToolCreateChapter = "create_chapter"
 	ToolCreateSub     = "create_sub_event"
+	ToolGenerateImage = "generate_image"
 )
 
 // ErrUnknownTool — модель попросила инструмент, которого нет. Это не падение сервера:
@@ -47,8 +48,12 @@ const (
 var ErrUnknownTool = errors.New("неизвестный инструмент")
 
 // ToolDefs — описания инструментов для запроса к модели.
-func ToolDefs() []ai.ToolDef {
-	return []ai.ToolDef{
+//
+// Набор зависит от возможностей (`caps`): инструмента, которого агент сейчас не может
+// выполнить, в списке НЕТ. Так модель физически не может пообещать нарисовать картинку,
+// когда генератора нет, — обещание, которое нельзя выполнить, хуже отказа.
+func ToolDefs(caps Capabilities) []ai.ToolDef {
+	defs := []ai.ToolDef{
 		{
 			Name: ToolListEvents,
 			Description: "Показать дерево событий проекта: идентификатор, уровень, заголовок и дату каждого кадра. " +
@@ -70,38 +75,108 @@ func ToolDefs() []ai.ToolDef {
 				"required": []string{"id"},
 			},
 		},
-		{
-			Name: ToolCreateChapter,
-			Description: "Создать главу верхнего уровня (новый кадр истории) с описанием в Markdown. " +
-				"Если не указать after_id, глава встанет в конец.",
-			Parameters: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"title":    map[string]any{"type": "string", "description": "Заголовок главы, одна строка"},
-					"body_md":  map[string]any{"type": "string", "description": "Текст главы в Markdown"},
-					"date":     map[string]any{"type": "string", "description": "Дата кадра в виде ГГГГ-ММ-ДД (необязательно)"},
-					"after_id": map[string]any{"type": "string", "description": "Идентификатор события, ПОСЛЕ которого поставить главу (необязательно)"},
-				},
-				"required": []string{"title"},
-			},
-		},
-		{
-			Name: ToolCreateSub,
-			Description: "Создать под-событие внутри существующей главы (вложенный кадр) с описанием в Markdown. " +
-				"Нужен идентификатор родителя из list_events.",
-			Parameters: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"parent_id": map[string]any{"type": "string", "description": "Идентификатор главы, внутри которой создать кадр"},
-					"title":     map[string]any{"type": "string", "description": "Заголовок кадра, одна строка"},
-					"body_md":   map[string]any{"type": "string", "description": "Текст кадра в Markdown"},
-					"date":      map[string]any{"type": "string", "description": "Дата кадра в виде ГГГГ-ММ-ДД (необязательно)"},
-					"after_id":  map[string]any{"type": "string", "description": "Идентификатор соседа, ПОСЛЕ которого поставить кадр (необязательно)"},
-				},
-				"required": []string{"parent_id", "title"},
-			},
-		},
 	}
+
+	// Текстовые инструменты — только если текстом можно заниматься (режим «только
+	// картинки» их исключает).
+	if caps.Text {
+		defs = append(defs,
+			ai.ToolDef{
+				Name: ToolCreateChapter,
+				Description: "Создать главу верхнего уровня (новый кадр истории) с описанием в Markdown. " +
+					"Если не указать after_id, глава встанет в конец.",
+				Parameters: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"title":    map[string]any{"type": "string", "description": "Заголовок главы, одна строка"},
+						"body_md":  map[string]any{"type": "string", "description": "Текст главы в Markdown"},
+						"date":     map[string]any{"type": "string", "description": "Дата кадра в виде ГГГГ-ММ-ДД (необязательно)"},
+						"after_id": map[string]any{"type": "string", "description": "Идентификатор события, ПОСЛЕ которого поставить главу (необязательно)"},
+					},
+					"required": []string{"title"},
+				},
+			},
+			ai.ToolDef{
+				Name: ToolCreateSub,
+				Description: "Создать под-событие внутри существующей главы (вложенный кадр) с описанием в Markdown. " +
+					"Нужен идентификатор родителя из list_events.",
+				Parameters: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"parent_id": map[string]any{"type": "string", "description": "Идентификатор главы, внутри которой создать кадр"},
+						"title":     map[string]any{"type": "string", "description": "Заголовок кадра, одна строка"},
+						"body_md":   map[string]any{"type": "string", "description": "Текст кадра в Markdown"},
+						"date":      map[string]any{"type": "string", "description": "Дата кадра в виде ГГГГ-ММ-ДД (необязательно)"},
+						"after_id":  map[string]any{"type": "string", "description": "Идентификатор соседа, ПОСЛЕ которого поставить кадр (необязательно)"},
+					},
+					"required": []string{"parent_id", "title"},
+				},
+			},
+		)
+	}
+
+	// Инструмент иллюстраций — только если картинки доступны: иначе модель не должна
+	// даже знать, что «так можно», иначе она пообещает то, чего сервер не сделает.
+	if caps.Images && ImageToolAvailable {
+		defs = append(defs, ai.ToolDef{
+			Name: ToolGenerateImage,
+			Description: "Нарисовать иллюстрацию к существующему кадру и привязать её к нему. " +
+				"Сначала посмотри дерево (list_events), чтобы взять идентификатор кадра; " +
+				"в prompt опиши, что должно быть на картинке (стиль проекта сервер добавит сам).",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"event_id": map[string]any{"type": "string", "description": "Идентификатор кадра из list_events, к которому рисуем"},
+					"prompt":   map[string]any{"type": "string", "description": "Что нарисовать: сцена, свет, настроение. Без стиля — его добавит сервер"},
+					"as_background": map[string]any{
+						"type":        "boolean",
+						"description": "Сделать картинку фоном кадра (по умолчанию да: иллюстрация к главе — это её фон)",
+					},
+				},
+				"required": []string{"event_id", "prompt"},
+			},
+		})
+	}
+	return defs
+}
+
+// GenerateArgs — разобранные аргументы генерации иллюстрации.
+type GenerateArgs struct {
+	// EventID — к какому кадру привязать картинку.
+	EventID uuid.UUID
+	// Prompt — что нарисовать (стиль проекта дописывает сервер).
+	Prompt string
+	// AsBackground — сделать картинку фоном кадра (по умолчанию да).
+	AsBackground bool
+}
+
+// ParseGenerate разбирает аргументы генерации. Проверки те же, что у создания кадра:
+// лучше вернуть модели понятную ошибку, чем нарисовать картинку не к тому кадру.
+func ParseGenerate(args map[string]any, limits Limits) (GenerateArgs, error) {
+	out := GenerateArgs{AsBackground: true}
+	rawID := argString(args, "event_id")
+	if rawID == "" {
+		return out, errors.New("не задан event_id — скажи, к какому кадру рисовать (возьми из list_events)")
+	}
+	eventID, err := uuid.Parse(rawID)
+	if err != nil {
+		return out, errors.New("event_id не похож на идентификатор — возьми его из list_events")
+	}
+	out.EventID = eventID
+
+	out.Prompt = strings.TrimSpace(argString(args, "prompt"))
+	if out.Prompt == "" {
+		return out, errors.New("не задан prompt — опиши, что должно быть на картинке")
+	}
+	if len([]rune(out.Prompt)) > limits.MaxImagePromptChars {
+		return out, TooLongError{Field: "prompt", Limit: limits.MaxImagePromptChars}
+	}
+	if value, ok := args["as_background"]; ok {
+		if flag, isBool := value.(bool); isBool {
+			out.AsBackground = flag
+		}
+	}
+	return out, nil
 }
 
 // CreateArgs — разобранные и проверенные аргументы создания кадра.
@@ -135,7 +210,7 @@ func (e TooLongError) Error() string {
 // разрешил владелец проекта (режим) и что вообще реализовано. Пока инструмента нет,
 // режимы «картинки» и «оба» честно недоступны — и интерфейс, и правила говорят об этом
 // одинаково, а не обещают картинку, которой не будет.
-const ImageToolAvailable = false
+const ImageToolAvailable = true
 
 // Limits — пределы на то, что модель может прислать и сделать за одно сообщение.
 type Limits struct {
@@ -151,6 +226,9 @@ type Limits struct {
 	MaxEventsInPrompt int
 	// MaxHistory — сколько сообщений беседы отправлять модели.
 	MaxHistory int
+	// MaxImagePromptChars — предел на промпт иллюстрации: он уходит в генератор, и
+	// простыня на десять тысяч знаков там ничего не улучшит.
+	MaxImagePromptChars int
 }
 
 // DefaultLimits — пределы по умолчанию. Значения подобраны так, чтобы помощник был
@@ -161,12 +239,13 @@ func DefaultLimits(maxToolCalls int) Limits {
 		maxToolCalls = 10
 	}
 	return Limits{
-		MaxToolCalls:      maxToolCalls,
-		MaxRounds:         3,
-		MaxTitleChars:     200,
-		MaxBodyChars:      20000,
-		MaxEventsInPrompt: 200,
-		MaxHistory:        20,
+		MaxToolCalls:        maxToolCalls,
+		MaxRounds:           3,
+		MaxTitleChars:       200,
+		MaxBodyChars:        20000,
+		MaxEventsInPrompt:   200,
+		MaxHistory:          20,
+		MaxImagePromptChars: 2000,
 	}
 }
 

@@ -245,11 +245,35 @@ func TestImportMarkdownInto_BeforeEvent(t *testing.T) {
 // а не в снапшот базы, что «комнаты нет» возвращает работу вызывающему и что
 // исходы комнаты (не влез по глубине, документ ещё грузится, серверная копия
 // отстала) превращаются в понятные ответы, а не в 500.
+// stubLive — заглушка «живой комнаты» для тестов transfer.
+//
+// Реализует оба метода LiveDoc: вставку куска и привязку вложения. Настоящий хаб
+// проверяется своими тестами (collab); здесь важно, что transfer выбирает живой путь и
+// правильно переводит его исход.
 type stubLive struct {
 	outcome yjs.InsertOutcome
 	calls   int
 	seeds   []yjs.EventSeed
 	place   yjs.InsertPlace
+	// Привязка вложения: что ответила «комната» (кадр найден? предупреждение?).
+	attached     bool
+	attachFound  bool
+	attachWarn   string
+	attachEvent  string
+	attachAsset  string
+	attachBgFlag bool
+}
+
+func (s *stubLive) AttachAssetLive(
+	_ context.Context, _ uuid.UUID, _ uuid.UUID, eventID, assetID string, asBackground bool,
+) (yjs.AttachOutcome, error) {
+	s.calls++
+	s.attached = true
+	s.attachEvent, s.attachAsset, s.attachBgFlag = eventID, assetID, asBackground
+	if !s.attachFound {
+		return yjs.AttachOutcome{Handled: true}, nil
+	}
+	return yjs.AttachOutcome{Handled: true, Found: true, Warning: s.attachWarn}, nil
 }
 
 func (s *stubLive) InsertLive(

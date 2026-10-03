@@ -201,6 +201,9 @@ func main() {
 	// создаёт кадры ТЕМ ЖЕ путём, что импорт Markdown «в место» (transfer), поэтому
 	// открытые вкладки видят созданное сразу, а не после перезагрузки.
 	assistantSvc := assistant.New(st, aiSvc, projSvc, transferSvc, cfg.AIMaxToolCalls, logger)
+	// Иллюстрации помощника ложатся вложениями проекта: тот же путь загрузки, что у
+	// файлов из интерфейса (квота, пережатие в WebP, дедупликация).
+	assistantSvc.UseAssets(assetsSvc)
 	assistantH := assistant.NewHandler(assistantSvc, logger)
 
 	collabHub := collab.NewHub(logger, cfg.JWTSecret, evSvc, cfg.CORSOrigins)

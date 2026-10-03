@@ -744,6 +744,8 @@ export function changeLabel(change: AIChange): string {
       return `создана глава «${change.title}»`
     case 'created_sub_event':
       return `создано под-событие «${change.title}»`
+    case 'image_created':
+      return `нарисована иллюстрация к кадру «${change.title}»`
     default:
       return change.title ? `изменение: «${change.title}»` : 'изменение проекта'
   }

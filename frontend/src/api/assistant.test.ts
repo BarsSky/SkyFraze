@@ -118,6 +118,11 @@ describe('changeLabel', () => {
     expect(changeLabel({ action: 'created_sub_event', id: '2', title: 'Мир' })).toBe(
       'создано под-событие «Мир»',
     )
+    // Иллюстрация — отдельное изменение: человек должен видеть, что появилась картинка,
+    // а не только текст.
+    expect(changeLabel({ action: 'image_created', id: '4', title: 'Пролог' })).toBe(
+      'нарисована иллюстрация к кадру «Пролог»',
+    )
     expect(changeLabel({ action: 'unknown', id: '3', title: 'Что-то' })).toBe(
       'изменение: «Что-то»',
     )

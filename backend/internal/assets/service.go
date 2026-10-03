@@ -148,6 +148,25 @@ type UploadOpts struct {
 	Reader      io.Reader
 }
 
+// StoreGenerated сохраняет готовые байты картинки (например, сгенерированную
+// иллюстрацию) как вложение проекта.
+//
+// Отдельным методом, а не вызовом Upload из помощника: помощнику не нужно знать ни про
+// multipart, ни про размеры — он отдаёт имя, тип и байты. Дальше это обычный путь
+// загрузки: проверка квоты, пережатие, дедупликация. Если картинка с таким же
+// содержимым в проекте уже есть, вернётся существующее вложение — второго файла не
+// появится.
+func (s *Service) StoreGenerated(
+	ctx context.Context, actorID, projectID uuid.UUID, filename, contentType string, data []byte,
+) (*store.Asset, error) {
+	return s.Upload(ctx, actorID, projectID, UploadOpts{
+		Filename:    filename,
+		ContentType: contentType,
+		Size:        int64(len(data)),
+		Reader:      bytes.NewReader(data),
+	})
+}
+
 // Upload — загружает файл, сохраняет метаданные.
 //
 // Растровые картинки (jpeg/png) пережимаются в WebP: страница показывает их

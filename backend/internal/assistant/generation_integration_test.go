@@ -44,7 +44,7 @@ func TestProjectSettingsExposeGenerationAndCapabilities(t *testing.T) {
 	if settings.Capabilities.Images {
 		t.Error("картинки не могут быть доступны без инструмента генерации")
 	}
-	if !strings.Contains(settings.Capabilities.ImageNote, "не умеет") {
+	if !strings.Contains(settings.Capabilities.ImageNote, "не настроен") {
 		t.Errorf("причина недоступности картинок: %q", settings.Capabilities.ImageNote)
 	}
 	// Режимы для интерфейса: недоступные тоже видны, но с причиной.
@@ -59,9 +59,9 @@ func TestProjectSettingsExposeGenerationAndCapabilities(t *testing.T) {
 		t.Error("режимы «как получится» и «только текст» должны быть доступны")
 	}
 	if byID[store.GenerationImages].Available || byID[store.GenerationBoth].Available {
-		t.Error("режимы с картинками недоступны, пока нет инструмента генерации")
+		t.Error("режимы с картинками недоступны, пока генератор не настроен")
 	}
-	if !strings.Contains(byID[store.GenerationImages].Hint, "недоступно") {
+	if !strings.Contains(byID[store.GenerationImages].Hint, "недоступно") && !strings.Contains(byID[store.GenerationImages].Hint, "не настроен") {
 		t.Errorf("у недоступного режима должна быть причина: %q", byID[store.GenerationImages].Hint)
 	}
 }

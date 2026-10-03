@@ -91,6 +91,23 @@ type Inserter interface {
 	// кадры сам, и в истории должен стоять ОН, а не человек, нажавший «спросить».
 	ImportMarkdownIntoAs(ctx context.Context, actorID, userID, projectID uuid.UUID,
 		parsed *transfer.ParsedMarkdown, place transfer.InsertPlace) (transfer.ImportIntoResult, error)
+	// AttachAssetToEvent — привязать вложение к существующему кадру (иллюстрация).
+	// Тот же путь записи в документ, что у импорта, и по той же причине: правка мимо
+	// комнаты была бы затёрта ближайшим сохранением.
+	AttachAssetToEvent(ctx context.Context, actorID, userID, projectID uuid.UUID,
+		eventID, assetID string, asBackground bool) (string, error)
+}
+
+// AssetStore — сохранение сгенерированной картинки в проект (реализует assets.Service).
+//
+// Отдельным интерфейсом, а не зависимостью на пакет assets: помощнику от хранилища нужен
+// один метод, и подменять его в тестах должно быть так же просто, как всё остальное.
+type AssetStore interface {
+	// StoreGenerated кладёт готовые байты в проект и возвращает вложение: имя, тип и
+	// данные задаёт вызывающий, дальше — обычный путь загрузки (квота, пережатие,
+	// дедупликация).
+	StoreGenerated(ctx context.Context, actorID, projectID uuid.UUID,
+		filename, contentType string, data []byte) (*store.Asset, error)
 }
 
 // Service — беседы с моделью внутри проекта.
@@ -101,6 +118,9 @@ type Service struct {
 	guard    Guard
 	logger   *slog.Logger
 	limits   Limits
+	// assets — куда класть сгенерированные картинки. Необязателен: без него помощник
+	// работает как раньше, а инструмент иллюстраций просто не предлагается.
+	assets AssetStore
 }
 
 // New собирает сервис. Отсутствие вставки или прав не валит сервер: помощник —
@@ -118,6 +138,10 @@ func New(st *store.Store, models *ai.Service, guard Guard, inserter Inserter, ma
 
 // SetLimits заменяет пределы (тесты: не ждать трёх раундов там, где хватит одного).
 func (s *Service) SetLimits(l Limits) { s.limits = l }
+
+// UseAssets подключает хранилище файлов: без него инструмент иллюстраций не предлагается
+// (картинку некуда положить), и это честнее, чем нарисовать её в никуда.
+func (s *Service) UseAssets(store AssetStore) { s.assets = store }
 
 // Limits — действующие пределы (интерфейс показывает их в подсказке).
 func (s *Service) Limits() Limits { return s.limits }
@@ -180,7 +204,7 @@ func (s *Service) capabilities(ctx context.Context, settings *store.ProjectAISet
 		// Текст доступен всегда, кроме режима «только картинки»: там владелец прямо
 		// попросил не трогать текст.
 		Text:       mode != store.GenerationImages,
-		Images:     imagesWanted && available && ImageToolAvailable,
+		Images:     imagesWanted && available && ImageToolAvailable && s.assets != nil,
 		Generation: mode,
 		ImageNote:  imageNote(mode, available, note),
 	}
@@ -392,10 +416,13 @@ type Call struct {
 	Error  string `json:"error,omitempty"`
 }
 
+// ChangeImageCreated — к кадру нарисована и привязана иллюстрация.
+const ChangeImageCreated = "image_created"
+
 // Change — изменение в проекте, которое сделал помощник. Отдельным блоком, а не
 // строкой в тексте ответа: человек должен видеть, что изменилось, и уметь открыть кадр.
 type Change struct {
-	Action string     `json:"action"` // created_chapter | created_sub_event
+	Action string     `json:"action"` // created_chapter | created_sub_event | image_created
 	ID     uuid.UUID  `json:"id"`
 	Title  string     `json:"title"`
 	Parent *uuid.UUID `json:"parent_id,omitempty"`
@@ -577,7 +604,7 @@ func (s *Service) SendStreamImages(
 
 	// Кадры помощник создаёт САМ: автором правок становится агент, а не человек,
 	// который нажал «спросить» (права при этом проверяются по человеку).
-	turn, err := s.converse(ctx, ai.AgentUserID, userID, provider, model, conversation, messages, emit)
+	turn, err := s.converse(ctx, ai.AgentUserID, userID, provider, model, conversation, messages, caps, emit)
 	if err != nil {
 		return nil, err
 	}
@@ -682,7 +709,7 @@ func (s *Service) history(ctx context.Context, conversationID uuid.UUID) ([]ai.M
 // а вызовы инструментов — событиями сразу после выполнения.
 func (s *Service) converse(
 	ctx context.Context, actorID, userID uuid.UUID, provider, model string,
-	conversation *store.AIConversation, messages []ai.Message, emit Emitter,
+	conversation *store.AIConversation, messages []ai.Message, caps Capabilities, emit Emitter,
 ) (*Turn, error) {
 	turn := &Turn{
 		ConversationID: conversation.ID,
@@ -740,7 +767,7 @@ func (s *Service) converse(
 		reply, partial, err := ask(ai.Request{
 			Model:       model,
 			Messages:    messages,
-			Tools:       ToolDefs(),
+			Tools:       ToolDefs(caps),
 			Temperature: 0.4,
 		})
 		if err != nil {
@@ -781,7 +808,7 @@ func (s *Service) converse(
 				continue
 			}
 			used++
-			results = append(results, s.execute(ctx, actorID, userID, conversation.ProjectID, call))
+			results = append(results, s.execute(ctx, actorID, userID, conversation.ProjectID, call, caps))
 		}
 
 		payload := make([]toolPayload, 0, len(results))

@@ -1722,6 +1722,10 @@ func (s *Service) QuotaBytes() int64 {
 // является (кусок не влез по глубине; документ комнаты ещё грузится).
 type LiveDoc interface {
 	InsertLive(ctx context.Context, projectID, by uuid.UUID, seeds []yjs.EventSeed, place yjs.InsertPlace) (yjs.InsertOutcome, error)
+	// AttachAssetLive — привязать вложение к существующему кадру. Отдельный метод, а не
+	// «вставка с одним полем»: привязка меняет уже существующее событие, и исход у неё
+	// свой (кадр может не найтись).
+	AttachAssetLive(ctx context.Context, projectID, by uuid.UUID, eventID, assetID string, asBackground bool) (yjs.AttachOutcome, error)
 }
 
 // UseLiveDoc подключает живые комнаты. Без него импорт «в место» работает только

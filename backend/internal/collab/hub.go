@@ -331,6 +331,80 @@ func (h *Hub) InsertLive(
 	return outcome, nil
 }
 
+// AttachAssetLive привязывает вложение к существующему кадру в живом документе.
+//
+// Устроено как InsertLive и по той же причине: источник правды проекта — документ
+// комнаты, и правка мимо него была бы затёрта ближайшим сохранением, а открытые вкладки
+// не увидели бы картинку. Отличие одно: вставка добавляет события, а привязка меняет
+// поле у существующего — значит, нужен поиск кадра и честный ответ «не нашли».
+//
+// Исход (yjs.AttachOutcome):
+//   - Handled + Found — документ обновлён и апдейт разослан;
+//   - Handled без Found — кадра с таким идентификатором в документе нет: привязывать
+//     некуда, ссылка на вложение висела бы в пустоте;
+//   - RoomLoading — документ комнаты ещё читается из базы: повторите запрос;
+//   - ничего не выставлено — живой комнаты нет, снапшот пишет вызывающий.
+func (h *Hub) AttachAssetLive(
+	ctx context.Context, projectID, by uuid.UUID, eventID, assetID string, asBackground bool,
+) (yjs.AttachOutcome, error) {
+	h.mu.RLock()
+	room := h.rooms[projectID]
+	h.mu.RUnlock()
+	if room == nil {
+		return yjs.AttachOutcome{}, nil
+	}
+
+	room.docMu.Lock()
+	// Тот же случай, что у вставки: комната могла появиться только что и ещё читать
+	// документ из базы. Писать в снапшот в этот момент нельзя — комната загрузит
+	// доимпортное состояние и затрёт привязку своим ближайшим сохранением.
+	deadline := time.Now().Add(roomLoadWait)
+	for room.doc == nil && room.loading && time.Now().Before(deadline) {
+		room.docMu.Unlock()
+		time.Sleep(roomLoadPoll)
+		room.docMu.Lock()
+	}
+	if room.doc == nil {
+		loading := room.loading
+		room.docMu.Unlock()
+		if loading {
+			return yjs.AttachOutcome{RoomLoading: true}, nil
+		}
+		return yjs.AttachOutcome{}, nil
+	}
+
+	before := room.doc.StateVector()
+	found, err := room.doc.AttachAsset(eventID, assetID, asBackground)
+	if err != nil {
+		room.docMu.Unlock()
+		return yjs.AttachOutcome{}, err
+	}
+	if !found {
+		room.docMu.Unlock()
+		return yjs.AttachOutcome{Handled: true}, nil
+	}
+	update, diffErr := room.doc.Diff(before)
+	room.dirty = true
+	room.lastBy = by
+	room.docMu.Unlock()
+	if diffErr != nil {
+		return yjs.AttachOutcome{}, diffErr
+	}
+
+	// Апдейт уходит всем, включая инициатора: его вкладка — такая же клиентка комнаты,
+	// и картинку она должна увидеть без перезагрузки страницы.
+	room.broadcast(nil, update)
+	h.logger.Info("collab: asset attached in live doc",
+		"project", projectID, "user", by, "event", eventID, "asset", assetID, "background", asBackground)
+
+	outcome := yjs.AttachOutcome{Handled: true, Found: true}
+	if err := room.persistFromAnyClient(ctx, h.ev, h.logger); err != nil {
+		outcome.Warning = "картинка привязана в открытых вкладках, но серверная копия не обновилась: " +
+			err.Error() + " — сервер повторит сохранение сам"
+	}
+	return outcome, nil
+}
+
 // AssetUsage — сколько кадров проекта ссылаются на файл (см. yjs.Doc.AssetUsage).
 //
 // Нужно удалению вложения: пока на файл смотрят кадры, удалять его нельзя — в
