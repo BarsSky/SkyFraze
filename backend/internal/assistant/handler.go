@@ -75,6 +75,8 @@ func (h *Handler) SaveSettings(w http.ResponseWriter, r *http.Request) {
 		Role         string `json:"role"`
 		Instructions string `json:"instructions"`
 		Enabled      *bool  `json:"enabled"`
+		Generation   string `json:"generation"`
+		ImageStyle   string `json:"image_style"`
 	}
 	if err := decodeJSON(w, r, &body); err != nil {
 		return
@@ -92,7 +94,8 @@ func (h *Handler) SaveSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		enabled = current.Enabled
 	}
-	settings, err := h.svc.SaveProjectSettings(r.Context(), uid, pid, body.Role, body.Instructions, enabled)
+	settings, err := h.svc.SaveProjectSettings(r.Context(), uid, pid, body.Role, body.Instructions,
+		enabled, body.Generation, body.ImageStyle)
 	if err != nil {
 		h.fail(w, "save settings", err)
 		return
@@ -315,6 +318,10 @@ func (h *Handler) fail(w http.ResponseWriter, op string, err error) {
 			"token_budget": true,
 			"token_limit":  h.svc.models.TokensPerDay(),
 		})
+	case errors.Is(err, ErrImagesUnavailable):
+		// Владелец выбрал режим с картинками, а генерации нет: это не ошибка запроса,
+		// а состояние стенда — интерфейс покажет причину и предложит другой режим.
+		writeErr(w, http.StatusConflict, err.Error())
 	case errors.Is(err, ErrForbidden):
 		writeErr(w, http.StatusForbidden, err.Error())
 	case errors.Is(err, ErrModelRequired):

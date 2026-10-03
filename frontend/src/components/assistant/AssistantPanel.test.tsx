@@ -128,6 +128,23 @@ const AGENT: AISettings = {
     { id: 'chronicler', title: 'Летописец', hint: 'выстраивает хронологию' },
     { id: 'editor', title: 'Редактор', hint: 'правит формулировки' },
   ],
+  generation: 'auto',
+  imageStyle: '',
+  capabilities: {
+    text: true,
+    images: false,
+    generation: 'auto',
+    imageNote: 'генератор изображений не настроен (AI_IMAGE_URL)',
+    imageStyle: '',
+  },
+  generations: [
+    { id: 'auto', title: 'Как получится', hint: 'оба, если генератор доступен', available: true },
+    { id: 'text', title: 'Только текст', hint: 'агент пишет и не рисует', available: true },
+    { id: 'images', title: 'Только картинки', hint: 'пока недоступно', available: false },
+    { id: 'both', title: 'Текст и картинки', hint: 'пока недоступно', available: false },
+  ],
+  imageAvailable: false,
+  imageNote: 'генератор изображений не настроен (AI_IMAGE_URL)',
 }
 
 /** Панель всегда живёт внутри окна: по умолчанию считаем его открытым. */
@@ -599,9 +616,46 @@ describe('AssistantPanel', () => {
         role: 'chronicler',
         instructions: 'Пиши сдержанно.',
         enabled: true,
+        generation: 'auto',
+        imageStyle: '',
       }),
     )
     expect(await screen.findByText(/роль «Летописец»/)).toBeTruthy()
+  })
+
+  it('показывает режим генерации, причину недоступности и стиль иллюстраций', async () => {
+    mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
+    renderPanel()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Настройка помощника' }))
+    const mode = (await screen.findByLabelText('Режим генерации')) as HTMLSelectElement
+    expect(mode.value).toBe('auto')
+
+    // Режимы с картинками видны, но недоступны — и рядом написана причина, а не
+    // загадочное «недоступно».
+    const both = screen.getByRole('option', { name: /Текст и картинки/ }) as HTMLOptionElement
+    expect(both.disabled).toBe(true)
+    expect(document.querySelector('[data-assistant-generation-hint]')?.textContent).toMatch(
+      /недоступн/i,
+    )
+    expect(document.querySelector('[data-assistant-images-unavailable]')?.textContent).toMatch(
+      /не настроен/,
+    )
+
+    // Стиль сохраняется вместе с ролью: он пригодится, когда генератор появится.
+    fireEvent.change(screen.getByLabelText('Стиль иллюстраций'), {
+      target: { value: 'акварель, тёплый свет' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Сохранить роль' }))
+    await waitFor(() =>
+      expect(mocks.saveSettings).toHaveBeenCalledWith('p1', {
+        role: '',
+        instructions: '',
+        enabled: true,
+        generation: 'auto',
+        imageStyle: 'акварель, тёплый свет',
+      }),
+    )
   })
 
   it('редактору роль агента показывают, но менять не дают', async () => {

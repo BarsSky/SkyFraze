@@ -52,11 +52,18 @@ var (
 	ErrProjectDisabled = errors.New("агент выключен в этом проекте — включить может владелец")
 	// ErrTokenBudget — на стенде задан предел расхода на сутки, и человек его выбрал.
 	ErrTokenBudget = errors.New("исчерпан предел расхода токенов на сутки")
+	// ErrImagesUnavailable — в проекте выбран режим с картинками, но генерация
+	// изображений на стенде невозможна (не настроена, не отвечает или ещё не сделана).
+	ErrImagesUnavailable = errors.New("генерация изображений недоступна")
 )
 
 // maxInstructionsChars — предел на указания владельца: они уходят в каждый запрос к
 // модели, и простыня на десять тысяч знаков просто вытеснила бы контекст проекта.
 const maxInstructionsChars = 4000
+
+// maxImageStyleChars — предел на стиль иллюстраций: он дописывается в каждый промпт
+// генератора, а промпт уходит в модель картинок целиком.
+const maxImageStyleChars = 400
 
 // Guard — проверка доступа к проекту (реализует projects.Service).
 //
@@ -138,6 +145,98 @@ type Settings struct {
 	Member bool `json:"member"`
 	// Roles — доступные роли (пресеты).
 	Roles []ai.AgentRole `json:"roles"`
+	// Generation — режим генерации в проекте (auto|text|images|both).
+	Generation string `json:"generation"`
+	// ImageStyle — стиль иллюстраций словами.
+	ImageStyle string `json:"image_style"`
+	// Capabilities — что агент умеет СЕЙЧАС (стенд + разрешение владельца + реализация).
+	Capabilities Capabilities `json:"capabilities"`
+	// Generations — какие режимы можно выбрать и почему нельзя остальные.
+	Generations []GenerationOption `json:"generations"`
+	// ImageAvailable/ImageNote — состояние генератора на стенде (для строки «что умеет»).
+	ImageAvailable bool   `json:"image_available"`
+	ImageNote      string `json:"image_note"`
+}
+
+// GenerationOption — один режим генерации для интерфейса.
+type GenerationOption struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
+	Hint  string `json:"hint"`
+	// Available — можно ли выбрать его сейчас (генератор доступен И инструмент есть).
+	Available bool `json:"available"`
+}
+
+// capabilities считает, что агенту доступно в проекте.
+func (s *Service) capabilities(ctx context.Context, settings *store.ProjectAISettings) Capabilities {
+	mode := store.GenerationAuto
+	if settings != nil && settings.Generation != "" {
+		mode = settings.Generation
+	}
+	available, note := s.models.ImageStatus(ctx)
+	imagesWanted := mode == store.GenerationAuto || mode == store.GenerationImages ||
+		mode == store.GenerationBoth
+	cap := Capabilities{
+		// Текст доступен всегда, кроме режима «только картинки»: там владелец прямо
+		// попросил не трогать текст.
+		Text:       mode != store.GenerationImages,
+		Images:     imagesWanted && available && ImageToolAvailable,
+		Generation: mode,
+		ImageNote:  imageNote(mode, available, note),
+	}
+	if settings != nil {
+		cap.ImageStyle = strings.TrimSpace(settings.ImageStyle)
+	}
+	return cap
+}
+
+// imageNote объясняет, почему картинок нет или как они работают. Причина всегда одна из
+// трёх (не реализовано / генератор недоступен / запрещено владельцем), и человеку — а
+// через правила и модели — нужно знать, какая именно.
+func imageNote(mode string, available bool, standNote string) string {
+	switch {
+	case !ImageToolAvailable:
+		return "эта версия помощника ещё не умеет генерировать иллюстрации"
+	case mode == store.GenerationText:
+		return "владелец проекта выбрал режим «только текст»"
+	case !available:
+		return standNote
+	default:
+		return standNote
+	}
+}
+
+// generationOptions — режимы для интерфейса: недоступные тоже показываем, но с причиной
+// (владелец должен видеть, что режим есть, а не искать его).
+func (s *Service) generationOptions(ctx context.Context) []GenerationOption {
+	available, note := s.models.ImageStatus(ctx)
+	imagesPossible := available && ImageToolAvailable
+	imageHint := note
+	if !ImageToolAvailable {
+		imageHint = "пока недоступно: " + note
+	}
+	return []GenerationOption{
+		{
+			ID: store.GenerationAuto, Available: true,
+			Title: "Как получится",
+			Hint:  "оба, если генератор картинок доступен, иначе только текст",
+		},
+		{
+			ID: store.GenerationText, Available: true,
+			Title: "Только текст",
+			Hint:  "агент пишет главы и под-события и не рисует",
+		},
+		{
+			ID: store.GenerationImages, Available: imagesPossible,
+			Title: "Только картинки",
+			Hint:  "иллюстрации без правки текста — " + imageHint,
+		},
+		{
+			ID: store.GenerationBoth, Available: imagesPossible,
+			Title: "Текст и картинки",
+			Hint:  "агент и пишет, и рисует — " + imageHint,
+		},
+	}
 }
 
 // ProjectSettings читает настройки агента и права спрашивающего.
@@ -157,15 +256,23 @@ func (s *Service) ProjectSettings(ctx context.Context, userID, projectID uuid.UU
 		return nil, err
 	}
 	_, memberErr := s.store.GetMembership(ctx, projectID, ai.AgentUserID)
+	caps := s.capabilities(ctx, stored)
+	imageAvailable, imageNote := s.models.ImageStatus(ctx)
 	out := &Settings{
-		AgentName:    ai.AgentName,
-		AgentID:      ai.AgentUserID,
-		Role:         stored.Role,
-		Instructions: stored.Instructions,
-		Enabled:      stored.Enabled,
-		CanEdit:      role == store.RoleOwner,
-		Member:       memberErr == nil,
-		Roles:        ai.AgentRolePresets,
+		AgentName:      ai.AgentName,
+		AgentID:        ai.AgentUserID,
+		Role:           stored.Role,
+		Instructions:   stored.Instructions,
+		Enabled:        stored.Enabled,
+		CanEdit:        role == store.RoleOwner,
+		Member:         memberErr == nil,
+		Roles:          ai.AgentRolePresets,
+		Generation:     caps.Generation,
+		ImageStyle:     stored.ImageStyle,
+		Capabilities:   caps,
+		Generations:    s.generationOptions(ctx),
+		ImageAvailable: imageAvailable,
+		ImageNote:      imageNote,
 	}
 	if preset, ok := ai.AgentRoleByID(stored.Role); ok {
 		out.RoleTitle = preset.Title
@@ -181,6 +288,7 @@ func (s *Service) ProjectSettings(ctx context.Context, userID, projectID uuid.UU
 // при первом сохранении настроек (и восстанавливается, если её убрали).
 func (s *Service) SaveProjectSettings(
 	ctx context.Context, userID, projectID uuid.UUID, role, instructions string, enabled bool,
+	generation, imageStyle string,
 ) (*Settings, error) {
 	if err := s.RequireProject(ctx, userID, projectID, true); err != nil {
 		return nil, err
@@ -205,7 +313,37 @@ func (s *Service) SaveProjectSettings(
 	if len([]rune(instructions)) > maxInstructionsChars {
 		return nil, fmt.Errorf("указания длиннее %d символов — сократите", maxInstructionsChars)
 	}
-	if _, err := s.store.SaveAISettings(ctx, projectID, userID, role, instructions, enabled); err != nil {
+	generation = strings.TrimSpace(generation)
+	if !store.ValidGeneration(generation) {
+		return nil, fmt.Errorf("неизвестный режим генерации: %s", generation)
+	}
+	if generation == "" {
+		// «Не менять»: берём то, что уже выбрано (интерфейс может сохранять форму, не
+		// трогая режим — как он делает с выключателем агента).
+		current, err := s.store.AISettingsForProject(ctx, projectID)
+		if err != nil {
+			return nil, err
+		}
+		generation = current.Generation
+		if generation == "" {
+			generation = store.GenerationAuto
+		}
+	}
+	// Режим, требующий генератора, не принимаем, если генерация картинок невозможна:
+	// иначе владелец выбрал бы «только картинки» и получил агента, который ничего не
+	// делает, без объяснения причины.
+	if generation == store.GenerationImages || generation == store.GenerationBoth {
+		available, note := s.models.ImageStatus(ctx)
+		if !available || !ImageToolAvailable {
+			return nil, fmt.Errorf("%w: %s", ErrImagesUnavailable, note)
+		}
+	}
+	imageStyle = strings.TrimSpace(imageStyle)
+	if len([]rune(imageStyle)) > maxImageStyleChars {
+		return nil, fmt.Errorf("стиль иллюстраций длиннее %d символов — сократите", maxImageStyleChars)
+	}
+	if _, err := s.store.SaveAISettings(ctx, projectID, userID, role, instructions, enabled,
+		generation, imageStyle); err != nil {
 		return nil, err
 	}
 	// Агент — соавтор проекта: его правки должны быть видны в списке участников.
@@ -334,6 +472,15 @@ func (s *Service) SendStreamImages(
 	if !settings.Enabled {
 		return nil, ErrProjectDisabled
 	}
+	// Возможности: что умеет стенд, что разрешил владелец и что реализовано. Без них
+	// модель обещала бы то, чего нет, а интерфейс не мог бы объяснить отказ.
+	caps := s.capabilities(ctx, settings)
+	if !caps.Text && !caps.Images {
+		// Владелец выбрал режим «только картинки», а генерации нет: звать модель
+		// незачем — она всё равно ничего не сможет сделать, и человек получил бы
+		// пустой ответ вместо причины.
+		return nil, fmt.Errorf("%w: %s", ErrImagesUnavailable, caps.ImageNote)
+	}
 
 	provider, model, err := s.resolveModel(modelRef)
 	if err != nil {
@@ -420,7 +567,7 @@ func (s *Service) SendStreamImages(
 	messages := make([]ai.Message, 0, len(history)+3)
 	messages = append(messages, ai.Message{
 		Role: "system",
-		Content: systemPrompt(project, personaOf(settings), s.limits.MaxToolCalls) + "\n\n" +
+		Content: systemPrompt(project, personaOf(settings), s.limits.MaxToolCalls, caps) + "\n\n" +
 			treeContext(list, s.limits.MaxEventsInPrompt),
 	})
 	messages = append(messages, history...)

@@ -116,10 +116,18 @@ export function AssistantPanel({
   const [sendError, setSendError] = useState<string | null>(null)
   const [consentNeeded, setConsentNeeded] = useState(false)
   const [agent, setAgent] = useState<AISettings | null>(null)
-  const [agentDraft, setAgentDraft] = useState<{ role: string; instructions: string; enabled: boolean }>({
+  const [agentDraft, setAgentDraft] = useState<{
+    role: string
+    instructions: string
+    enabled: boolean
+    generation: string
+    imageStyle: string
+  }>({
     role: '',
     instructions: '',
     enabled: true,
+    generation: 'auto',
+    imageStyle: '',
   })
   const [agentNote, setAgentNote] = useState<string | null>(null)
   const [agentBusy, setAgentBusy] = useState(false)
@@ -168,6 +176,8 @@ export function AssistantPanel({
           role: loaded.role,
           instructions: loaded.instructions,
           enabled: loaded.enabled,
+          generation: loaded.generation,
+          imageStyle: loaded.imageStyle,
         })
       })
       .catch(() => {
@@ -746,6 +756,38 @@ export function AssistantPanel({
                 </label>
 
                 <label className="ai-field">
+                  <span>Что агент делает в этом проекте</span>
+                  <select
+                    value={agentDraft.generation}
+                    aria-label="Режим генерации"
+                    onChange={(e) => setAgentDraft((d) => ({ ...d, generation: e.target.value }))}
+                  >
+                    {agent.generations.map((option) => (
+                      <option key={option.id} value={option.id} disabled={!option.available}>
+                        {option.title}
+                        {option.available ? '' : ' — недоступно'}
+                      </option>
+                    ))}
+                  </select>
+                  {/* Причину недоступного режима показываем словами: «недоступно» без
+                      объяснения — это загадка, а не интерфейс. */}
+                  <span className="ai-note" data-assistant-generation-hint>
+                    {generationHint(agent)}
+                  </span>
+                </label>
+
+                <label className="ai-field">
+                  <span>Стиль иллюстраций (дописывается в каждый запрос генератора)</span>
+                  <input
+                    type="text"
+                    value={agentDraft.imageStyle}
+                    aria-label="Стиль иллюстраций"
+                    placeholder="Например: акварель, тёплый свет, без текста на картинке"
+                    onChange={(e) => setAgentDraft((d) => ({ ...d, imageStyle: e.target.value }))}
+                  />
+                </label>
+
+                <label className="ai-field">
                   <span>Указания владельца (уходят в каждый запрос)</span>
                   <textarea
                     value={agentDraft.instructions}
@@ -791,6 +833,15 @@ export function AssistantPanel({
               <li>создавать главы верхнего уровня и под-события с текстом в Markdown;</li>
               <li>смотреть дерево проекта и читать отдельный кадр перед тем, как дописать;</li>
               <li>ставить дату кадра (вид ГГГГ-ММ-ДД).</li>
+              {/* Картинки — только если они действительно доступны. Обещать их в
+                  списке «что умеет» при выключенном генераторе нельзя. */}
+              {agent?.capabilities.images ? (
+                <li>рисовать иллюстрации к кадрам в заданном стиле.</li>
+              ) : (
+                <li className="ai-note" data-assistant-images-unavailable>
+                  картинки: недоступны — {agent?.capabilities.imageNote || agent?.imageNote}
+                </li>
+              )}
             </ul>
             <p className="ai-note">
               Чего не делает: не удаляет, не переписывает существующие кадры и не перемещает их —
@@ -1083,4 +1134,19 @@ function CloseIcon() {
  */
 function isAbort(error: unknown): boolean {
   return (error as { name?: string } | null)?.name === 'AbortError'
+}
+
+/**
+ * Что показать под выбором режима: подсказку выбранного или причину недоступности.
+ *
+ * Владелец должен понимать, ПОЧЕМУ режима нет, а не догадываться: «недоступно» без
+ * причины — это загадка.
+ */
+function generationHint(agent: AISettings): string {
+  const selected = agent.generations.find((option) => option.id === agent.generation)
+  if (selected && !selected.available) return selected.hint
+  if (!agent.capabilities.images && agent.capabilities.imageNote) {
+    return `Сейчас: ${selected?.hint ?? ''} Картинки недоступны — ${agent.capabilities.imageNote}.`
+  }
+  return selected?.hint ?? ''
 }

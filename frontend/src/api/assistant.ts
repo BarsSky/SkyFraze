@@ -134,8 +134,33 @@ export interface AIRole {
   hint: string
 }
 
+/** Один режим генерации, который владелец может выбрать. */
+export interface AIGenerationOption {
+  id: string
+  title: string
+  hint: string
+  /** Можно ли выбрать его сейчас: генератор доступен И инструмент реализован. */
+  available: boolean
+}
+
 /**
- * Агент в проекте: имя (зашито в коде, не настраивается), роль и указания владельца.
+ * Что агент умеет СЕЙЧАС в этом проекте.
+ *
+ * Складывается из трёх независимых вещей: что умеет стенд, что разрешил владелец и что
+ * реализовано в этой версии. Интерфейс обязан показывать итог этих трёх, а не обещать
+ * картинку, которой не будет.
+ */
+export interface AICapabilities {
+  text: boolean
+  images: boolean
+  generation: string
+  imageNote: string
+  imageStyle: string
+}
+
+/**
+ * Агент в проекте: имя (зашито в коде, не настраивается), роль, указания владельца и
+ * режим генерации.
  *
  * Агент правит текст проекта, поэтому он участник на правах соавтора: имя стоит под
  * его правками, а роль и поведение задаёт владелец проекта — в одной истории нужен
@@ -155,6 +180,16 @@ export interface AISettings {
   /** Участвует ли агент в проекте как соавтор. */
   member: boolean
   roles: AIRole[]
+  /** Режим генерации в проекте: auto | text | images | both. */
+  generation: string
+  /** Стиль иллюстраций словами (дописывается в каждый промпт генератора). */
+  imageStyle: string
+  capabilities: AICapabilities
+  /** Какие режимы можно выбрать и почему нельзя остальные. */
+  generations: AIGenerationOption[]
+  /** Доступен ли генератор изображений на стенде и что об этом сказать. */
+  imageAvailable: boolean
+  imageNote: string
 }
 
 /** Роль и поведение агента в проекте. */
@@ -165,13 +200,21 @@ export async function getAISettings(projectId: string): Promise<AISettings> {
   return parseAISettings(raw)
 }
 
-/** Сохранить роль и поведение агента (владелец проекта). */
+/** Сохранить роль, указания и режим генерации (владелец проекта). */
 export async function saveAISettings(
   projectId: string,
-  patch: { role: string; instructions: string; enabled: boolean },
+  patch: { role: string; instructions: string; enabled: boolean; generation: string; imageStyle: string },
 ): Promise<AISettings> {
   const raw = await http
-    .put(`projects/${encodeURIComponent(projectId)}/ai/settings`, { json: patch })
+    .put(`projects/${encodeURIComponent(projectId)}/ai/settings`, {
+      json: {
+        role: patch.role,
+        instructions: patch.instructions,
+        enabled: patch.enabled,
+        generation: patch.generation,
+        image_style: patch.imageStyle,
+      },
+    })
     .json<unknown>()
   return parseAISettings(raw)
 }
@@ -179,6 +222,7 @@ export async function saveAISettings(
 /** Разбор настроек агента: сервер — внешний источник, поля проверяем. */
 export function parseAISettings(raw: unknown): AISettings {
   const record = asRecord(raw)
+  const capabilities = asRecord(record?.capabilities)
   return {
     agentName: asText(record?.agent_name) || 'Агент',
     agentId: asText(record?.agent_id),
@@ -199,6 +243,32 @@ export function parseAISettings(raw: unknown): AISettings {
           })
           .filter((item): item is AIRole => item !== null)
       : [],
+    generation: asText(record?.generation) || 'auto',
+    imageStyle: asText(record?.image_style),
+    capabilities: {
+      text: capabilities?.text !== false,
+      images: capabilities?.images === true,
+      generation: asText(capabilities?.generation) || asText(record?.generation) || 'auto',
+      imageNote: asText(capabilities?.image_note),
+      imageStyle: asText(capabilities?.image_style) || asText(record?.image_style),
+    },
+    generations: Array.isArray(record?.generations)
+      ? record.generations
+          .map((item) => {
+            const option = asRecord(item)
+            const id = asText(option?.id)
+            if (!id) return null
+            return {
+              id,
+              title: asText(option?.title) || id,
+              hint: asText(option?.hint),
+              available: option?.available === true,
+            }
+          })
+          .filter((item): item is AIGenerationOption => item !== null)
+      : [],
+    imageAvailable: record?.image_available === true,
+    imageNote: asText(record?.image_note),
   }
 }
 

@@ -1058,7 +1058,7 @@ func TestProjectSettingsRoleMembershipAndPrompt(t *testing.T) {
 	owner := e.user(t, "owner@example.com")
 	projectID, _, _ := e.seedProject(t, owner)
 
-	settings, err := e.asst.SaveProjectSettings(ctx, owner, projectID, "chronicler", "Пиши сдержанно.", true)
+	settings, err := e.asst.SaveProjectSettings(ctx, owner, projectID, "chronicler", "Пиши сдержанно.", true, store.GenerationAuto, "")
 	if err != nil {
 		t.Fatalf("сохранение настроек: %v", err)
 	}
@@ -1104,7 +1104,7 @@ func TestProjectSettingsOwnerOnly(t *testing.T) {
 		t.Fatalf("membership: %v", err)
 	}
 
-	if _, err := e.asst.SaveProjectSettings(ctx, editor, projectID, "editor", "", true); !errors.Is(err, assistant.ErrForbidden) {
+	if _, err := e.asst.SaveProjectSettings(ctx, editor, projectID, "editor", "", true, store.GenerationAuto, ""); !errors.Is(err, assistant.ErrForbidden) {
 		t.Fatalf("редактор не должен менять роль агента, получено %v", err)
 	}
 	// Читать настройки участник может — и видит, что менять их не вправе.
@@ -1116,7 +1116,7 @@ func TestProjectSettingsOwnerOnly(t *testing.T) {
 		t.Fatalf("редактору нельзя показывать право менять роль агента")
 	}
 	// Неизвестная роль — понятный отказ, а не «сохранили что попало».
-	if _, err := e.asst.SaveProjectSettings(ctx, owner, projectID, "придумать-всё", "", true); err == nil {
+	if _, err := e.asst.SaveProjectSettings(ctx, owner, projectID, "придумать-всё", "", true, store.GenerationAuto, ""); err == nil {
 		t.Fatalf("неизвестная роль должна отвергаться")
 	}
 }
@@ -1128,7 +1128,7 @@ func TestSendRefusesWhenAgentDisabledInProject(t *testing.T) {
 	owner := e.user(t, "owner@example.com")
 	projectID, _, _ := e.seedProject(t, owner)
 
-	if _, err := e.asst.SaveProjectSettings(ctx, owner, projectID, "", "", false); err != nil {
+	if _, err := e.asst.SaveProjectSettings(ctx, owner, projectID, "", "", false, store.GenerationAuto, ""); err != nil {
 		t.Fatalf("выключение агента: %v", err)
 	}
 	_, err := e.asst.Send(ctx, owner, projectID, uuid.Nil, "stub:stub-1", "Создай главу")
