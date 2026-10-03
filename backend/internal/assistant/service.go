@@ -439,6 +439,9 @@ type Turn struct {
 	// Stopped — ответ оборван человеком (кнопка «стоп»). В истории уже лежит то,
 	// что модель успела сказать, и интерфейс по этому признаку говорит «остановлено».
 	Stopped bool `json:"stopped,omitempty"`
+	// Suggestions — что можно сделать дальше: считает сервер по состоянию проекта и
+	// возможностям (см. suggestions.go). Пусто — предлагать нечего.
+	Suggestions []Suggestion `json:"suggestions,omitempty"`
 }
 
 // Send отправляет вопрос модели и выполняет то, что она попросила.
@@ -608,6 +611,9 @@ func (s *Service) SendStreamImages(
 	if err != nil {
 		return nil, err
 	}
+	// Предложения следующих шагов — по состоянию проекта ПОСЛЕ ответа: агент мог только
+	// что создать главу, и предлагать сделанное было бы издевательством.
+	turn.Suggestions = s.suggestionsFor(context.WithoutCancel(ctx), projectID, caps)
 	// Отметка «свежая» — тем же контекстом без отмены: если человек нажал «стоп»,
 	// беседа всё равно должна обновиться (ответ-то в ней уже есть).
 	if err := s.store.TouchAIConversation(context.WithoutCancel(ctx), conversation.ID, modelRef); err != nil {

@@ -95,6 +95,22 @@ export interface AIChange {
   parentId?: string | null
 }
 
+/**
+ * Следующий шаг, который предлагает сервер.
+ *
+ * Считается по состоянию проекта и возможностям агента, а не придумывается моделью:
+ * предложение обязано быть выполнимым («нарисуй иллюстрацию» бессмысленно без
+ * генератора, «разбей главу» — если разбивать нечего).
+ */
+export interface AISuggestion {
+  id: string
+  label: string
+  /** Готовый текст вопроса: подставляется в поле ввода. */
+  prompt: string
+  /** text — правка текста, image — иллюстрация. */
+  kind: string
+}
+
 export interface AIMessage {
   id: string
   role: string
@@ -125,6 +141,8 @@ export interface AITurn {
   calls: AICall[]
   changes: AIChange[]
   message: AIMessage
+  /** Что можно сделать дальше: считает сервер по состоянию проекта, а не модель. */
+  suggestions?: AISuggestion[]
 }
 
 /** Одна роль агента, из которой выбирает владелец. */
@@ -664,6 +682,22 @@ export function parseAITurn(raw: unknown): AITurn {
       content: asText(record?.answer),
       createdAt: '',
     },
+    suggestions: Array.isArray(record?.suggestions)
+      ? record.suggestions
+          .map((item) => {
+            const suggestion = asRecord(item)
+            const id = asText(suggestion?.id)
+            const prompt = asText(suggestion?.prompt)
+            if (!id || !prompt) return null
+            return {
+              id,
+              label: asText(suggestion?.label) || id,
+              prompt,
+              kind: asText(suggestion?.kind) || 'text',
+            }
+          })
+          .filter((item): item is AISuggestion => item !== null)
+      : [],
   }
 }
 

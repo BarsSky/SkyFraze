@@ -15,6 +15,7 @@ import {
   setAIConsent,
   type AIConfig,
   type AIChange,
+  type AISuggestion,
   type AIMessage,
   type AIModel,
   type AIProviderInfo,
@@ -94,6 +95,8 @@ export function AssistantPanel({
   const [conversationId, setConversationId] = useState('new')
   const [messages, setMessages] = useState<AIMessage[]>([])
   const [changes, setChanges] = useState<AIChange[]>([])
+  /** Что сервер предлагает сделать дальше (считается по состоянию проекта). */
+  const [suggestions, setSuggestions] = useState<AISuggestion[]>([])
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
   /**
@@ -444,6 +447,7 @@ export function AssistantPanel({
         turn.message,
       ])
       setChanges(turn.changes)
+      setSuggestions(turn.suggestions ?? [])
       // Счётчик расхода обновляем локально: расход пришёл вместе с ответом, и лишний
       // запрос к серверу ради одной цифры не нужен.
       const spentNow = (turn.message.tokensIn ?? 0) + (turn.message.tokensOut ?? 0)
@@ -942,6 +946,28 @@ export function AssistantPanel({
               <button className="secondary" onClick={onOpenEditors}>
                 Посмотреть в дереве
               </button>
+            </div>
+          )}
+
+          {/* Что дальше — предложения сервера. Нажатие ПОДСТАВЛЯЕТ текст в поле ввода
+              (как подсказки в пустом чате): человек видит, что уйдёт модели, и может
+              поправить формулировку до отправки. */}
+          {suggestions.length > 0 && !sending && (
+            <div className="ai-hints ai-hints--next" data-assistant-suggestions>
+              {suggestions.map((suggestion) => (
+                <button
+                  key={suggestion.id}
+                  type="button"
+                  className="ai-hint"
+                  data-suggestion-kind={suggestion.kind}
+                  onClick={() => {
+                    setText(suggestion.prompt)
+                    inputRef.current?.focus()
+                  }}
+                >
+                  {suggestion.label}
+                </button>
+              ))}
             </div>
           )}
 

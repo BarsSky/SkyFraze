@@ -432,6 +432,34 @@ describe('AssistantPanel', () => {
     expect(document.querySelector('[data-assistant-attach]')).toBeNull()
   })
 
+  it('показывает предложения сервера и подставляет выбранное в поле ввода', async () => {
+    mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
+    mocks.stream.mockResolvedValue({
+      ...TURN,
+      suggestions: [
+        { id: 'set-dates', label: 'Проставь даты', prompt: 'Проставь даты кадрам.', kind: 'text' },
+        {
+          id: 'illustrate-chapter',
+          label: 'Нарисуй иллюстрацию к «Пролог»',
+          prompt: 'Нарисуй иллюстрацию к главе «Пролог».',
+          kind: 'image',
+        },
+      ],
+    })
+    renderPanel()
+
+    const input = (await screen.findByLabelText('Сообщение помощнику')) as HTMLTextAreaElement
+    await waitFor(() => expect(input.disabled).toBe(false))
+    fireEvent.change(input, { target: { value: 'Что дальше?' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Спросить' }))
+
+    // Предложение подставляет текст, а не отправляет его само: человек видит, что уйдёт
+    // модели (и сколько это будет стоить), до отправки.
+    const chip = await screen.findByRole('button', { name: 'Нарисуй иллюстрацию к «Пролог»' })
+    fireEvent.click(chip)
+    expect(input.value).toBe('Нарисуй иллюстрацию к главе «Пролог».')
+  })
+
   it('«стоп» обрывает ответ и оставляет сказанное с пометкой', async () => {
     mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
     mocks.stream.mockImplementation(

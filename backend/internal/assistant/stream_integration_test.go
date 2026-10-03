@@ -273,6 +273,11 @@ func TestStreamMessageHTTPContract(t *testing.T) {
 			if event.Turn == nil || event.Turn.Answer != "Ответ по кускам." {
 				t.Errorf("итог: %+v", event.Turn)
 			}
+			// Предложения следующих шагов едут вместе с итогом: интерфейсу не нужно
+			// отдельным запросом спрашивать, что делать дальше.
+			if event.Turn != nil && len(event.Turn.Suggestions) == 0 {
+				t.Error("в итоге нет предложений следующих шагов")
+			}
 		}
 	}
 	if text.String() != "Ответ по кускам." {

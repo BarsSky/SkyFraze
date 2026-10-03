@@ -110,6 +110,22 @@ describe('isCloudModelRef', () => {
   })
 })
 
+describe('parseAITurn: предложения следующих шагов', () => {
+  it('читает предложения сервера и не падает без них', () => {
+    const withSuggestions = parseAITurn({
+      answer: 'Готово.',
+      suggestions: [
+        { id: 'set-dates', label: 'Проставь даты', prompt: 'Проставь даты кадрам.', kind: 'text' },
+        { id: '', label: 'мусор', prompt: 'без идентификатора' },
+      ],
+    })
+    expect(withSuggestions.suggestions).toEqual([
+      { id: 'set-dates', label: 'Проставь даты', prompt: 'Проставь даты кадрам.', kind: 'text' },
+    ])
+    // Старый сервер поля не присылает — это пустой список, а не падение разметки.
+    expect(parseAITurn({ answer: 'Готово.' }).suggestions).toEqual([])
+  })
+})
 describe('changeLabel', () => {
   it('называет созданное по данным сервера, а не по тексту модели', () => {
     expect(changeLabel({ action: 'created_chapter', id: '1', title: 'Пролог' })).toBe(
