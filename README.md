@@ -358,6 +358,13 @@ cd frontend && DEPLOY_URL=http://192.168.13.66 npx tsx tests/deployed-smoke.ts
 cd frontend && REMOTE_URL=http://192.168.13.66 TEMP_EMAIL=you@example.com npx tsx tests/remote-mobile-check.ts
 ```
 
+**HTTPS-сценарий локально** (`deploy/tls-proxy/Caddyfile`): тот же `remote-mobile-check.ts`
+против `https://fraza.localtest.me:8443`. Нужен потому, что на `localhost` браузер считает
+контекст доверенным и не блокирует `ws://` со страницы `http(s)://localhost` — дефект
+«realtime молчит, потому что страница по HTTPS» там просто не воспроизводится. Команды
+запуска — в комментариях внутри `Caddyfile` (`tls internal`, WebSocket без доработок,
+`docker network connect skyfraze_skyfraze-net sf-tls`).
+
 ### Обновление стенда из GitHub
 
 Раздел **«Обновление»** в `/admin` показывает текущую версию и последний релиз репозитория,
