@@ -395,6 +395,12 @@ func main() {
 		// /export не перехватывает /export.md (проверено тестом дерева маршрутов).
 		r.Get("/export.md", transferH.ExportMarkdown)
 
+		// Книга файлом: EPUB для читалки и DOCX для редактора. Отдельные сегменты
+		// (`/export/epub`), а не параметр формата: браузер скачивает файл по ссылке, и
+		// имя файла в заголовке зависит от формата.
+		r.Get("/export/epub", transferH.ExportEPUB)
+		r.Get("/export/docx", transferH.ExportDOCX)
+
 		// Импорт куска в существующий проект: разобранный набор md вставляется в
 		// выбранное место дерева (`parent_id` / `after_id` в форме). Отдельно от
 		// /api/projects/import/markdown, который создаёт НОВЫЙ проект.

@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { listProjects, createProject, deleteProject, type Project } from '../api/projects'
 import { setPublication } from '../api/feed'
 import { exportProject, importProject } from '../api/transfer'
-import { exportStoryMarkdown } from '../api/storyFiles'
+import { exportStoryBook, exportStoryMarkdown } from '../api/storyFiles'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { ImportFolderModal } from '../components/ImportFolderModal'
 import { projectWeight } from '../lib/projectWeight'
@@ -101,6 +101,27 @@ export function ProjectsPage() {
         assets
           ? `Скачан «${name}»: текст, главы по файлам и картинки — папка для чтения и правок`
           : `Скачан «${name}» — вся история одной лентой`,
+      )
+    } catch (e) {
+      setError(e)
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  /**
+   * Книга файлом: EPUB для читалки, DOCX для правки. Отдельно от Markdown — это не
+   * «текст проекта», а собранная книга: главы, оглавление, иллюстрации.
+   */
+  async function onDownloadBook(p: Project, format: 'epub' | 'docx') {
+    setBusyId(p.id)
+    setError(null)
+    try {
+      const name = await exportStoryBook(p.id, format, p.title)
+      setNote(
+        format === 'epub'
+          ? `Скачан «${name}» — книга для читалки: главы, оглавление и иллюстрации`
+          : `Скачан «${name}» — документ для правки в Word или LibreOffice`,
       )
     } catch (e) {
       setError(e)
@@ -339,6 +360,39 @@ export function ProjectsPage() {
                     >
                       <b>.md + картинки</b>
                       <span className="muted">zip: story.md, главы по файлам и assets/</span>
+                    </button>
+                  </div>
+                </details>
+                {/* Книга файлом: EPUB читают, DOCX правят. Отдельное меню, а не пункты
+                    в Markdown: это разные задачи — «перенести текст» и «получить книгу». */}
+                <details className="dl-menu">
+                  <summary className="dl-menu__toggle" title="Скачать книгу: EPUB для читалки или DOCX для правки">
+                    Книга
+                  </summary>
+                  <div className="dl-menu__panel">
+                    <button
+                      type="button"
+                      className="dl-menu__item"
+                      disabled={busyId === p.id}
+                      onClick={(e) => {
+                        closeMenu(e)
+                        void onDownloadBook(p, 'epub')
+                      }}
+                    >
+                      <b>Скачать .epub</b>
+                      <span className="muted">книга с оглавлением и иллюстрациями — для читалки</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="dl-menu__item"
+                      disabled={busyId === p.id}
+                      onClick={(e) => {
+                        closeMenu(e)
+                        void onDownloadBook(p, 'docx')
+                      }}
+                    >
+                      <b>Скачать .docx</b>
+                      <span className="muted">документ Word — для правки и редактора</span>
                     </button>
                   </div>
                 </details>

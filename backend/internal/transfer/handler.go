@@ -2,11 +2,14 @@ package transfer
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -21,6 +24,64 @@ type Handler struct {
 
 func NewHandler(svc *Service, logger *slog.Logger) *Handler {
 	return &Handler{svc: svc, logger: logger}
+}
+
+// ExportEPUB — GET /api/projects/{id}/export/epub: книга в формате EPUB 3.
+//
+// В память, как и ZIP: имя файла зависит от заголовка проекта, а после WriteHeader менять
+// заголовки нельзя — иначе сбой посреди сборки отдал бы битый файл с кодом 200.
+func (h *Handler) ExportEPUB(w http.ResponseWriter, r *http.Request) {
+	h.exportBook(w, r, epubFileMime, ".epub", h.svc.ExportEPUB)
+}
+
+// ExportDOCX — GET /api/projects/{id}/export/docx: документ Word.
+func (h *Handler) ExportDOCX(w http.ResponseWriter, r *http.Request) {
+	h.exportBook(w, r, docxFileMime, ".docx", h.svc.ExportDOCX)
+}
+
+// exportBook — общая часть выгрузки книги: права, ошибки и заголовки ответа одни и те же,
+// отличаются только формат и сборщик.
+func (h *Handler) exportBook(
+	w http.ResponseWriter, r *http.Request, contentType, extension string,
+	build func(context.Context, uuid.UUID, uuid.UUID, io.Writer) (*MarkdownInfo, error),
+) {
+	uid, err := auth.UserIDFromCtx(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	pid, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid project id")
+		return
+	}
+
+	var buf bytes.Buffer
+	info, err := build(r.Context(), uid, pid, &buf)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrForbidden):
+			writeErr(w, http.StatusForbidden, "forbidden")
+		case errors.Is(err, ErrNotFound):
+			writeErr(w, http.StatusNotFound, "not found")
+		default:
+			h.logger.Error("export book", "err", err, "project", pid, "format", extension)
+			writeErr(w, http.StatusInternalServerError, "export failed")
+		}
+		return
+	}
+
+	filename := info.Filename
+	if !strings.HasSuffix(filename, extension) {
+		filename = strings.TrimSuffix(filename, ".md") + extension
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+filename+"\"")
+	w.Header().Set("Content-Length", strconv.Itoa(buf.Len()))
+	w.Header().Set("X-Skyfraze-Export-Events", strconv.Itoa(info.Events))
+	w.Header().Set("X-Skyfraze-Export-Assets", strconv.Itoa(info.Assets))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(buf.Bytes())
 }
 
 // Export — GET /api/projects/{id}/export: отдаёт ZIP-архив проекта.

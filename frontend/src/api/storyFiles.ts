@@ -98,6 +98,27 @@ export async function exportStoryMarkdown(
   return name
 }
 
+/**
+ * Скачивает книгу проекта: `epub` — для читалки, `docx` — для правки в Word/LibreOffice.
+ *
+ * Имя файла берём из заголовка ответа (сервер собирает его из названия проекта), а если
+ * заголовка нет — из названия проекта, чтобы скачанное не называлось «download».
+ */
+export async function exportStoryBook(
+  projectId: string,
+  format: 'epub' | 'docx',
+  projectTitle: string | undefined,
+): Promise<string> {
+  const res = await http.get(`projects/${encodeURIComponent(projectId)}/export/${format}`, {
+    // Книга с картинками может быть тяжёлой — даём время, как у архива переноса.
+    timeout: 300000,
+  })
+  const blob = await res.blob()
+  const fromHeader = parseFilename(res.headers.get('Content-Disposition'))
+  const name = fromHeader || `${slugifyFilename(projectTitle ?? 'project')}.${format}`
+  saveBlob(blob, name)
+  return name
+}
 /** Предпросмотр: сервер разбирает файлы и ничего не записывает. */
 export async function previewMarkdownImport(
   source: MarkdownImportSource | null | undefined,

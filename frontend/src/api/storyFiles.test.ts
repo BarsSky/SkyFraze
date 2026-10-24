@@ -15,6 +15,7 @@ vi.mock('./client', () => ({ http: { get: mocks.get, post: mocks.post } }))
 
 import {
   buildMarkdownImportForm,
+  exportStoryBook,
   exportStoryMarkdown,
   importMarkdownFolder,
   importMarkdownInto,
@@ -319,6 +320,45 @@ describe('exportStoryMarkdown', () => {
 
     expect(name).toBe('Планета.md.zip')
     expect(mocks.get.mock.calls[0][1].searchParams).toEqual({ assets: '1' })
+    click.mockRestore()
+  })
+})
+
+describe('exportStoryBook', () => {
+  beforeEach(() => {
+    mocks.get.mockReset()
+    createObjectURL.mockClear()
+    revokeObjectURL.mockClear()
+  })
+
+  it('качает EPUB по своему адресу и берёт имя из заголовка', async () => {
+    mocks.get.mockReturnValue({
+      blob: async () => new Blob(['PK']),
+      headers: new Headers({
+        'Content-Disposition': "attachment; filename*=UTF-8''%D0%9F%D0%BB%D0%B0%D0%BD%D0%B5%D1%82%D0%B0.epub",
+      }),
+    })
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+
+    const name = await exportStoryBook('p 1', 'epub', 'Планета')
+
+    expect(name).toBe('Планета.epub')
+    expect(mocks.get.mock.calls[0][0]).toBe('projects/p%201/export/epub')
+    expect(click).toHaveBeenCalledTimes(1)
+    click.mockRestore()
+  })
+
+  it('DOCX без заголовка ответа называет файл по проекту, а не «download»', async () => {
+    mocks.get.mockReturnValue({
+      blob: async () => new Blob(['PK']),
+      headers: new Headers(),
+    })
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+
+    const name = await exportStoryBook('p1', 'docx', 'Планета — АнуВаар')
+
+    expect(name).toBe('Планета-АнуВаар.docx')
+    expect(mocks.get.mock.calls[0][0]).toBe('projects/p1/export/docx')
     click.mockRestore()
   })
 })
