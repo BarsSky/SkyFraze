@@ -318,12 +318,48 @@ func (h *Hub) SetEventTextLive(
 }
 
 // DeleteEventLive удаляет кадр из живого документа.
+//
+// Возвращает снимок удалённого кадра: он уходит в сторону вызывающего, чтобы удаление
+// можно было отменить (ai_changes.frame). Снимок пустой, если комнаты нет или кадра в ней
+// уже нет — вызывающий в этом случае идёт своим путём.
 func (h *Hub) DeleteEventLive(
 	ctx context.Context, projectID, by uuid.UUID, eventID string,
-) (yjs.EditOutcome, error) {
-	return h.editLive(ctx, projectID, by, "event deleted", func(doc *yjs.Doc) (bool, error) {
-		return doc.DeleteEvent(eventID)
-	})
+) (*yjs.RemovedEvent, yjs.EditOutcome, error) {
+	var removed *yjs.RemovedEvent
+	outcome, err := h.editLive(ctx, projectID, by, "event deleted",
+		func(doc *yjs.Doc) (bool, error) {
+			gone, delErr := doc.DeleteEvent(eventID)
+			if delErr != nil {
+				return false, delErr
+			}
+			removed = gone
+			return gone != nil, nil
+		})
+	if err != nil {
+		return nil, outcome, err
+	}
+	return removed, outcome, nil
+}
+
+// ReviveEventLive возвращает удалённый кадр в живой документ (отмена удаления).
+func (h *Hub) ReviveEventLive(
+	ctx context.Context, projectID, by uuid.UUID, removed yjs.RemovedEvent,
+) (yjs.ReviveResult, yjs.EditOutcome, error) {
+	var revived yjs.ReviveResult
+	outcome, err := h.editLive(ctx, projectID, by, "event revived",
+		func(doc *yjs.Doc) (bool, error) {
+			result, reviveErr := doc.ReviveEvent(removed)
+			if reviveErr != nil {
+				return false, reviveErr
+			}
+			revived = result
+			// Inserted=false — «кадр уже есть»: правки нет, апдейт не нужен.
+			return result.Inserted, nil
+		})
+	if err != nil {
+		return revived, outcome, err
+	}
+	return revived, outcome, nil
 }
 
 // LiveState — текущее состояние документа комнаты (пусто, если комнаты нет или её

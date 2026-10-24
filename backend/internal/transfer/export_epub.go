@@ -54,6 +54,9 @@ type epubImage struct {
 	Path      string
 	MediaType string
 	Asset     store.Asset
+	// Cover — обложка книги: первая картинка в порядке чтения. Читалки показывают её в
+	// библиотеке, и без этого свойства EPUB выглядит безымянным прямоугольником.
+	Cover bool
 }
 
 // ExportEPUB собирает книгу и пишет её в w.
@@ -76,7 +79,12 @@ func (s *Service) ExportEPUB(
 			}
 			path := "images/" + fmt.Sprintf("%02d", st.AssetNumber[a.ID]) + "." + mimeExtension(a.Mime)
 			imagePath[a.ID] = path
-			images = append(images, epubImage{Path: path, MediaType: a.Mime, Asset: a})
+			images = append(images, epubImage{
+				Path: path, MediaType: a.Mime, Asset: a,
+				// Обложка — первая картинка книги: у проекта это обычно иллюстрация первой
+				// главы. Отдельного поля «обложка» пока нет (см. docs/import-export.md).
+				Cover: len(images) == 0,
+			})
 		}
 	}
 
@@ -305,8 +313,14 @@ func epubOPF(
 			i+1, chapter.File)
 	}
 	for i, image := range images {
-		fmt.Fprintf(&b, "    <item id=\"i%d\" href=\"%s\" media-type=\"%s\"/>\n",
-			i+1, image.Path, escapeXML(image.MediaType))
+		// `cover-image` говорит читалке, что это обложка: без свойства книга в
+		// библиотеке показывается серым прямоугольником с названием.
+		properties := ""
+		if image.Cover {
+			properties = ` properties="cover-image"`
+		}
+		fmt.Fprintf(&b, "    <item id=\"i%d\" href=\"%s\" media-type=\"%s\"%s/>\n",
+			i+1, image.Path, escapeXML(image.MediaType), properties)
 	}
 	b.WriteString("  </manifest>\n  <spine>\n")
 	for i := range chapters {

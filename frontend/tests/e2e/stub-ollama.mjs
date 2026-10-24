@@ -103,44 +103,66 @@ const server = createServer((req, res) => {
       const wantsUpdate =
         typeof lastUser?.content === 'string' &&
         lastUser.content.toLowerCase().includes('перепиши')
+      // Просьба удалить кадр — вторая ветка того же сценария: удаление тоже
+      // предлагается, а не делается, и его можно вернуть (снимок кадра).
+      const wantsDelete =
+        typeof lastUser?.content === 'string' &&
+        lastUser.content.toLowerCase().includes('удали')
       const systemText = messages.find((message) => message.role === 'system')?.content ?? ''
-      const eventID = wantsUpdate ? firstEventID(systemText) : null
+      const eventID = wantsUpdate || wantsDelete ? firstEventID(systemText) : null
       const answer = hasImage
         ? { content: 'Вижу картинку: на ней маяк.', toolCalls: [] }
-        : wantsUpdate
+        : wantsDelete
           ? toolDone || !eventID
-            ? { content: 'Предлагаю переписать кадр — примените правку, если согласны.', toolCalls: [] }
+            ? { content: 'Предлагаю удалить кадр — подтвердите, если согласны.', toolCalls: [] }
             : {
                 content: '',
                 toolCalls: [
                   {
                     function: {
-                      name: 'update_event_text',
+                      name: 'delete_event',
                       arguments: {
                         id: eventID,
-                        body_md: 'Переписанный текст кадра.',
-                        reason: 'проверка e2e: правка по подтверждению',
+                        reason: 'проверка e2e: удаление по подтверждению',
                       },
                     },
                   },
                 ],
               }
-          : toolDone
-            ? { content: 'Создал главу «Пролог».', toolCalls: [] }
-            : {
-                content: '',
-                toolCalls: [
-                  {
-                    function: {
-                      name: 'create_chapter',
-                      arguments: {
-                        title: 'Пролог',
-                        body_md: '## Начало\n\nТак **начинается** история.',
+          : wantsUpdate
+            ? toolDone || !eventID
+              ? { content: 'Предлагаю переписать кадр — примените правку, если согласны.', toolCalls: [] }
+              : {
+                  content: '',
+                  toolCalls: [
+                    {
+                      function: {
+                        name: 'update_event_text',
+                        arguments: {
+                          id: eventID,
+                          body_md: 'Переписанный текст кадра.',
+                          reason: 'проверка e2e: правка по подтверждению',
+                        },
                       },
                     },
-                  },
-                ],
-              }
+                  ],
+                }
+            : toolDone
+              ? { content: 'Создал главу «Пролог».', toolCalls: [] }
+              : {
+                  content: '',
+                  toolCalls: [
+                    {
+                      function: {
+                        name: 'create_chapter',
+                        arguments: {
+                          title: 'Пролог',
+                          body_md: '## Начало\n\nТак **начинается** история.',
+                        },
+                      },
+                    },
+                  ],
+                }
 
       if (!body?.stream) {
         send({

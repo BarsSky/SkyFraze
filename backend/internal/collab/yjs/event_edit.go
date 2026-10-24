@@ -91,17 +91,23 @@ func (d *Doc) SetEventText(eventID string, title, body *string) (bool, error) {
 	return true, nil
 }
 
-// DeleteEvent удаляет кадр из документа.
+// DeleteEvent удаляет кадр из документа и возвращает его снимок.
+//
+// Снимок — не «приятное дополнение»: без него удаление необратимо, а сервер его уже
+// обещает кнопкой «Вернуть» (ai_changes.frame, миграция 0017). Поэтому удаление и чтение
+// снимка — одна операция: сначала прочитать карту, потом удалить её, иначе между двумя
+// вызовами кадр успел бы измениться и вернулся бы не тем, чем был.
 //
 // Удаляется только сам кадр. Детей у него быть не должно — это проверяет вызывающий по
 // проекции: «что делать с детьми» — решение уровня сервиса (сейчас: отказать и
 // попросить решить), а не документа.
-func (d *Doc) DeleteEvent(eventID string) (bool, error) {
+func (d *Doc) DeleteEvent(eventID string) (*RemovedEvent, error) {
 	if strings.TrimSpace(eventID) == "" {
-		return false, errors.New("нужен идентификатор кадра")
+		return nil, errors.New("нужен идентификатор кадра")
 	}
 	events := ygo.NewArray(d.inner, EventsRoot)
 	index := -1
+	var removed RemovedEvent
 	events.Range(func(idx uint64, value any) bool {
 		item, ok := value.(*ygo.Map)
 		if !ok {
@@ -109,18 +115,19 @@ func (d *Doc) DeleteEvent(eventID string) (bool, error) {
 		}
 		if stringField(item, "id") == eventID {
 			index = int(idx)
+			removed = RemovedEvent{EventFull: fieldsOf(item), Index: int(idx)}
 			return false
 		}
 		return true
 	})
 	if index < 0 {
-		return false, nil
+		return nil, nil
 	}
 
 	txn := d.inner.WriteTxn()
 	defer txn.Commit()
 	events.Delete(txn, uint64(index), 1)
-	return true, nil
+	return &removed, nil
 }
 
 // eventMap находит карту кадра в корневом массиве.

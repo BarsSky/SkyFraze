@@ -575,6 +575,14 @@ func (s *Store) replaceEventTree(
 
 	// Проверка ревизии — в той же транзакции, что и запись: иначе между проверкой
 	// и заменой успел бы пройти чужой снапшот, и мы всё равно затерли бы его дерево.
+	//
+	// Но ревизия — не самоцель. Клиент присылает проекцию с базой, которую видел при
+	// загрузке, и её мог обогнать НЕ чужой человек, а само сохранение снапшота живой
+	// комнаты (оно поднимает ревизию каждые несколько секунд). В этом случае проекция
+	// обычно совпадает с уже записанной построчно — заменять нечего, и отвечать 409
+	// значит гонять клиент по кругу «конфликт → перечитай → повтори» (в аудите это
+	// выглядело как 409 в консоли на каждом открытии проекта). Поэтому при расхождении
+	// ревизий сначала сравниваем содержимое: одинаковая проекция — не конфликт.
 	if base != nil {
 		revision := int64(0)
 		err := tx.QueryRow(ctx,
@@ -586,7 +594,16 @@ func (s *Store) replaceEventTree(
 			return err
 		}
 		if revision != *base {
-			return ErrRevisionConflict
+			same, err := s.sameProjection(ctx, tx, projectID, nodes)
+			if err != nil {
+				return err
+			}
+			if !same {
+				return ErrRevisionConflict
+			}
+			// Совпадает построчно: писать нечего, и это не «конфликт». Возвращаем успех —
+			// клиент не будет перечитывать состояние и повторять ту же проекцию.
+			return nil
 		}
 	}
 
@@ -653,6 +670,61 @@ func (s *Store) replaceEventTree(
 	}
 
 	return tx.Commit(ctx)
+}
+
+// sameProjection — совпадает ли присланная проекция с уже записанной построчно.
+//
+// Сравниваем только то, что клиент вообще присылает (id, родитель, позиция, уровень,
+// заголовок, текст) и дату — только если она в payload'е авторитетна (`EventDateSet`):
+// иначе проекция клиента, который даты не видел, считалась бы «другой» и получала 409
+// на пустом месте. Порядок — по идентификаторам, а не по позициям: позиции могут
+// совпадать, а строки прийти в разном порядке.
+func (s *Store) sameProjection(
+	ctx context.Context, tx querier, projectID uuid.UUID, nodes []Event,
+) (bool, error) {
+	rows, err := tx.Query(ctx, `SELECT `+eventColumns+` FROM events WHERE project_id=$1`, projectID)
+	if err != nil {
+		return false, err
+	}
+	existing, err := pgx.CollectRows(rows, pgx.RowToStructByNameLax[Event])
+	if err != nil {
+		return false, err
+	}
+	if len(existing) != len(nodes) {
+		return false, nil
+	}
+	byID := make(map[uuid.UUID]Event, len(existing))
+	for _, e := range existing {
+		byID[e.ID] = e
+	}
+	for _, n := range nodes {
+		cur, ok := byID[n.ID]
+		if !ok {
+			return false, nil
+		}
+		if cur.Title != n.Title || cur.Body != n.Body || cur.Position != n.Position ||
+			cur.Depth != n.Depth || !sameParent(cur.ParentID, n.ParentID) {
+			return false, nil
+		}
+		if n.EventDateSet {
+			if cur.EventDate == nil || n.EventDate == nil {
+				if !(cur.EventDate == nil && n.EventDate == nil) {
+					return false, nil
+				}
+			} else if !cur.EventDate.Equal(*n.EventDate) {
+				return false, nil
+			}
+		}
+	}
+	return true, nil
+}
+
+// sameParent — совпадают ли родители (nil и nil — совпадают).
+func sameParent(a, b *uuid.UUID) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
 }
 
 // InsertEventTree вставляет дерево событий НОВОГО проекта одной транзакцией.

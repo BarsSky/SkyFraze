@@ -1730,8 +1730,11 @@ type LiveDoc interface {
 	// Исход тот же, что у привязки: кадр мог не найтись, а комната — ещё грузиться.
 	SetEventTextLive(ctx context.Context, projectID, by uuid.UUID, eventID string, title, body *string) (yjs.EditOutcome, error)
 	// DeleteEventLive — удалить кадр. Детей проверяет вызывающий: правило «что делать с
-	// под-событиями» — решение уровня сервиса, а не документа.
-	DeleteEventLive(ctx context.Context, projectID, by uuid.UUID, eventID string) (yjs.EditOutcome, error)
+	// под-событиями» — решение уровня сервиса, а не документа. Снимок удалённого кадра
+	// возвращается вызывающему: без него удаление необратимо.
+	DeleteEventLive(ctx context.Context, projectID, by uuid.UUID, eventID string) (*yjs.RemovedEvent, yjs.EditOutcome, error)
+	// ReviveEventLive — вернуть удалённый кадр на прежнее место (отмена удаления).
+	ReviveEventLive(ctx context.Context, projectID, by uuid.UUID, removed yjs.RemovedEvent) (yjs.ReviveResult, yjs.EditOutcome, error)
 }
 
 // UseLiveDoc подключает живые комнаты. Без него импорт «в место» работает только

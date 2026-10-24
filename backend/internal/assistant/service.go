@@ -31,6 +31,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/skyfraze/backend/internal/ai"
+	"github.com/skyfraze/backend/internal/collab/yjs"
 	"github.com/skyfraze/backend/internal/events"
 	"github.com/skyfraze/backend/internal/projects"
 	"github.com/skyfraze/backend/internal/store"
@@ -118,7 +119,12 @@ type AssetStore interface {
 type EventEditor interface {
 	UpdateEventText(ctx context.Context, actorID, userID, projectID uuid.UUID,
 		eventID string, title, body *string) (string, error)
-	DeleteEvent(ctx context.Context, actorID, userID, projectID uuid.UUID, eventID string) (string, error)
+	// DeleteEvent возвращает снимок удалённого кадра: без него «Вернуть» у удаления
+	// было бы обещанием без средства.
+	DeleteEvent(ctx context.Context, actorID, userID, projectID uuid.UUID,
+		eventID string) (string, *yjs.RemovedEvent, error)
+	ReviveEvent(ctx context.Context, actorID, userID, projectID uuid.UUID,
+		removed yjs.RemovedEvent) (string, yjs.ReviveResult, error)
 }
 
 // Service — беседы с моделью внутри проекта.

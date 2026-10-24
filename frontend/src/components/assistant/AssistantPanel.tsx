@@ -123,7 +123,7 @@ export function AssistantPanel({
    * агент предлагал правку» не означало «предложение пропало».
    */
   const [proposals, setProposals] = useState<AIProposal[]>([])
-  /** Применённые в этой сессии: у перезаписи есть «Вернуть», у удаления — нет. */
+  /** Применённые в этой сессии: и у перезаписи, и у удаления есть «Вернуть». */
   const [appliedProposals, setAppliedProposals] = useState<AIProposal[]>([])
   const [proposalNote, setProposalNote] = useState<string | null>(null)
   /** Какую правку сейчас применяем — чтобы не применить две по двойному клику. */
@@ -517,8 +517,9 @@ export function AssistantPanel({
    * Применить предложенную правку.
    *
    * Правку в документ пишет сервер — окно не правит текст само. После применения
-   * предложение уходит из «ждут решения» в «применены»: у перезаписи там есть «Вернуть»,
-   * у удаления — нет (кадр уже убран, и восстанавливать его пришлось бы вставкой).
+   * предложение уходит из «ждут решения» в «применены», и там у обоих видов есть
+   * «Вернуть»: у перезаписи это прежний текст, у удаления — снимок кадра, который сервер
+   * сохранил в момент удаления.
    */
   const applyProposal = useCallback(
     async (proposal: AIProposal) => {
@@ -553,7 +554,12 @@ export function AssistantPanel({
         const result = await revertAIProposal(projectId, proposal.id)
         setAppliedProposals((list) => list.filter((item) => item.id !== proposal.id))
         setProposals((list) => [...list, result.proposal ?? proposal])
-        setProposalNote(result.warning || 'Вернул прежний текст.')
+        setProposalNote(
+          result.warning ||
+            (proposal.kind === 'delete_event'
+              ? 'Кадр вернулся на прежнее место.'
+              : 'Вернул прежний текст.'),
+        )
         onProjectChanged()
       } catch (e) {
         setProposalNote((await serverErrorMessage(e)) ?? 'Не удалось вернуть прежний текст.')
@@ -1366,30 +1372,29 @@ export function AssistantPanel({
             </div>
           )}
 
-          {/* Применённые: текст уже новый, но «Вернуть» ещё месяц-два имеет смысл — пока
-              человек не закрыл окно. Для удаления возврата нет, и кнопки тоже. */}
+          {/* Применённые: правка уже в документе, но «Вернуть» ещё имеет смысл — пока
+              человек не закрыл окно. У удаления это возврат кадра по снимку, который
+              сервер сохранил в момент удаления (ai_changes.frame). */}
           {appliedProposals.length > 0 && (
             <div className="ai-proposals ai-proposals--applied" data-assistant-applied>
               <strong>Правки применены</strong>
               <ul>
                 {appliedProposals.map((proposal) => (
-                  <li key={proposal.id} className="ai-proposals__item">
+                  <li key={proposal.id} className="ai-proposals__item" data-proposal-id={proposal.id}>
                     <span className="ai-proposals__title">
                       {proposal.kind === 'delete_event'
                         ? `Удалён кадр «${proposal.eventTitle}»`
                         : `Переписан кадр «${proposal.eventTitle}»`}
                     </span>
-                    {proposal.kind !== 'delete_event' && (
-                      <span className="ai-proposals__actions">
-                        <button
-                          className="secondary"
-                          onClick={() => void revertProposal(proposal)}
-                          disabled={proposalBusy !== null}
-                        >
-                          Вернуть прежний текст
-                        </button>
-                      </span>
-                    )}
+                    <span className="ai-proposals__actions">
+                      <button
+                        className="secondary"
+                        onClick={() => void revertProposal(proposal)}
+                        disabled={proposalBusy !== null}
+                      >
+                        {proposal.kind === 'delete_event' ? 'Вернуть кадр' : 'Вернуть прежний текст'}
+                      </button>
+                    </span>
                   </li>
                 ))}
               </ul>

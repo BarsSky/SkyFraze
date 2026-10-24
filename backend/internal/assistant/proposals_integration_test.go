@@ -291,12 +291,16 @@ func TestProposalRefusedWhenFrameChanged(t *testing.T) {
 	}
 }
 
-// Удаление кадра без детей применяется, кадр исчезает из проекции и документа.
+// Удаление кадра без детей применяется, кадр исчезает из проекции и документа,
+// а «Вернуть» возвращает его на место.
 func TestProposalDeleteEventApplies(t *testing.T) {
 	e := setup(t)
 	ctx := context.Background()
 	owner := e.user(t, "owner@example.com")
-	projectID, _, child := e.seedProject(t, owner)
+	projectID, chapter, child := e.seedProject(t, owner)
+	// Снимок проекта до удаления: без документа проверять «кадр вернулся в документ»
+	// было бы не на чем.
+	e.seedSnapshot(t, projectID, owner)
 	id := newProposal(t, e, projectID, owner, child, store.AIChangeDeleteEvent, "", "")
 
 	if _, _, err := e.asst.ApplyProposal(ctx, owner, owner, projectID, id); err != nil {
@@ -310,9 +314,65 @@ func TestProposalDeleteEventApplies(t *testing.T) {
 			t.Fatal("кадр остался в документе")
 		}
 	}
-	// Удаление не отменяется: «Вернуть» — не про него, и обещать это кнопкой нельзя.
-	if _, _, err := e.asst.RevertProposal(ctx, owner, owner, projectID, id); err == nil {
-		t.Fatal("возврат удаления должен быть отвергнут")
+	// Снимок кадра сохранён вместе с удалением — иначе отменять было бы нечем.
+	change, err := e.st.AIChangeByID(ctx, projectID, id)
+	if err != nil {
+		t.Fatalf("предложение: %v", err)
+	}
+	if len(change.Frame) == 0 {
+		t.Fatal("снимок удалённого кадра не сохранён: возврат невозможен")
+	}
+
+	// Удаление отменяется: кадр возвращается с прежним id, родителем и текстом.
+	if _, _, err := e.asst.RevertProposal(ctx, owner, owner, projectID, id); err != nil {
+		t.Fatalf("возврат удаления: %v", err)
+	}
+	back, ok := e.eventByID(t, projectID, child)
+	if !ok {
+		t.Fatal("кадр не вернулся в проекцию")
+	}
+	if back.ParentID == nil || *back.ParentID != chapter {
+		t.Errorf("кадр вернулся не к своему родителю: %v", back.ParentID)
+	}
+	if back.Title != "Под-событие" || back.Body != "текст" {
+		t.Errorf("содержимое вернувшегося кадра: %q / %q", back.Title, back.Body)
+	}
+	found := false
+	for _, event := range e.docEvents(t, projectID) {
+		if event.ID == child.String() {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("кадр не вернулся в документ")
+	}
+	// И предложение снова ждёт решения: удалить кадр можно ещё раз.
+	pending, err := e.asst.PendingProposals(ctx, owner, projectID)
+	if err != nil {
+		t.Fatalf("ожидающие: %v", err)
+	}
+	if len(pending) != 1 || pending[0].ID != id {
+		t.Fatalf("после возврата предложение должно снова ждать решения: %+v", pending)
+	}
+}
+
+// Удаление устаревает, если кадр правили после предложения: удалять уже не тот кадр.
+func TestProposalDeleteEventRefusedWhenFrameChanged(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	owner := e.user(t, "owner@example.com")
+	projectID, _, child := e.seedProject(t, owner)
+	id := newProposal(t, e, projectID, owner, child, store.AIChangeDeleteEvent, "", "")
+
+	if err := e.st.UpdateEventContent(ctx, projectID, child, "Под-событие", "дописал после предложения", nil, owner); err != nil {
+		t.Fatalf("правка кадра: %v", err)
+	}
+
+	if _, _, err := e.asst.ApplyProposal(ctx, owner, owner, projectID, id); !errors.Is(err, assistant.ErrProposalStale) {
+		t.Fatalf("устаревшее удаление должно быть отвергнуто, получено %v", err)
+	}
+	if _, ok := e.eventByID(t, projectID, child); !ok {
+		t.Fatal("кадр удалён, хотя правку человека не подтверждали")
 	}
 }
 

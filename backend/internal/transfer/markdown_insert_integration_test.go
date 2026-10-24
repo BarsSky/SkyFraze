@@ -271,6 +271,8 @@ type stubLive struct {
 	deleteFound bool
 	deleteWarn  string
 	deleteEvent string
+	// Возврат удалённого кадра: что вернула «комната».
+	revived yjs.RemovedEvent
 }
 
 // SetEventTextLive — заглушка правки текста (см. LiveDoc).
@@ -288,13 +290,23 @@ func (s *stubLive) SetEventTextLive(
 // DeleteEventLive — заглушка удаления кадра (см. LiveDoc).
 func (s *stubLive) DeleteEventLive(
 	_ context.Context, _ uuid.UUID, _ uuid.UUID, eventID string,
-) (yjs.EditOutcome, error) {
+) (*yjs.RemovedEvent, yjs.EditOutcome, error) {
 	s.calls++
 	s.deleteEvent = eventID
 	if !s.deleteFound {
-		return yjs.EditOutcome{Handled: true}, nil
+		return nil, yjs.EditOutcome{Handled: true}, nil
 	}
-	return yjs.EditOutcome{Handled: true, Found: true, Warning: s.deleteWarn}, nil
+	gone := &yjs.RemovedEvent{EventFull: yjs.EventFull{ID: eventID, Title: "удалённый"}}
+	return gone, yjs.EditOutcome{Handled: true, Found: true, Warning: s.deleteWarn}, nil
+}
+
+// ReviveEventLive — заглушка возврата удалённого кадра (см. LiveDoc).
+func (s *stubLive) ReviveEventLive(
+	_ context.Context, _ uuid.UUID, _ uuid.UUID, removed yjs.RemovedEvent,
+) (yjs.ReviveResult, yjs.EditOutcome, error) {
+	s.calls++
+	s.revived = removed
+	return yjs.ReviveResult{Inserted: true}, yjs.EditOutcome{Handled: true, Found: true}, nil
 }
 
 func (s *stubLive) AttachAssetLive(

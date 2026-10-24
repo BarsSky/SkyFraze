@@ -29,6 +29,7 @@ package yjs
 import (
 	"errors"
 	"sort"
+	"strings"
 
 	ygo "github.com/Deln0r/ygo"
 )
@@ -41,20 +42,44 @@ import (
 // из них: «пропал тон фона» или «сбросилась дата создания» — тихая потеря данных, которую
 // заметят уже после того, как старые версии уйдут по удержанию.
 type EventFull struct {
-	ID        string
-	ParentID  string
-	Title     string
-	Body      string
-	EventDate string
-	Assets    []string
+	ID        string `json:"id"`
+	ParentID  string `json:"parent_id"`
+	Title     string `json:"title"`
+	Body      string `json:"body"`
+	EventDate string `json:"event_date"`
+	Assets    []string `json:"assets"`
 	// BackgroundKind — inherit | tone | asset (как у BackgroundKind в интерфейсе).
-	BackgroundKind string
+	BackgroundKind string `json:"bg_kind"`
 	// BackgroundAsset — id вложения, выбранного фоном (при kind=asset).
-	BackgroundAsset string
+	BackgroundAsset string `json:"bg_asset"`
 	// BackgroundTone — тон фона (при kind=tone).
-	BackgroundTone string
+	BackgroundTone string `json:"bg_tone"`
 	// CreatedAt — когда кадр создан (строка, как её пишет клиент).
-	CreatedAt string
+	CreatedAt string `json:"created_at"`
+}
+
+// RemovedEvent — кадр, который был удалён, вместе с местом, где он стоял.
+//
+// Зачем отдельный тип, а не «EventFull + index». Снимок удалённого кадра уходит в базу
+// (ai_changes.frame, миграция 0017) и живёт там до недели, поэтому он должен быть
+// самодостаточным: без позиции возврат ставил бы кадр в конец, а «вернулось не туда» —
+// это уже не отмена.
+type RemovedEvent struct {
+	EventFull
+	// Index — позиция кадра в массиве документа до удаления.
+	Index int `json:"index"`
+}
+
+// ReviveResult — что получилось при возврате удалённого кадра.
+type ReviveResult struct {
+	// Inserted — кадр действительно вставлен (false: он уже есть в документе).
+	Inserted bool
+	// Orphan — родителя в документе нет, кадр вернулся главой верхнего уровня. Так
+	// бывает, если родителя удалили уже после предложения: вернуть кадр «в никуда»
+	// нельзя — проекция не примет ссылку на несуществующего родителя.
+	Orphan bool
+	// Index — куда кадр встал.
+	Index int
 }
 
 // EventsFull читает кадры документа целиком — в порядке массива.
@@ -351,4 +376,51 @@ func sameAssets(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// ReviveEvent возвращает удалённый кадр на место — отмена удаления.
+//
+// Это частный случай Restore, вынесенный отдельно по двум причинам:
+//
+//   - Restore приводит документ к версии целиком и попутно удаляет то, чего в версии нет.
+//     Возвращать один кадр такой ценой нельзя: «вернуть кадр» не должно уносить чужие
+//     правки, сделанные после удаления;
+//   - позиция известна из снимка (RemovedEvent.Index), и её достаточно — перестраивать
+//     порядок всего дерева ради одной вставки не нужно.
+//
+// Кадр вставляется НОВОЙ картой с прежним значением поля `id`: идентичность кадра в
+// проекте — это строка `id`, а не внутренний идентификатор Yjs-объекта (на этом же
+// свойстве стоит весь Restore). История правок прежней карты при этом не возвращается —
+// в проекции от неё остаются только поля, и это честно: «вернули кадр», а не «отмотали
+// историю».
+func (d *Doc) ReviveEvent(removed RemovedEvent) (ReviveResult, error) {
+	var out ReviveResult
+	if strings.TrimSpace(removed.ID) == "" {
+		return out, errors.New("нужен идентификатор кадра")
+	}
+
+	// Всё, что требует блокировки документа, — до транзакции (как в Restore).
+	events := ygo.NewArray(d.inner, EventsRoot)
+	current := d.EventsFull()
+	known := make(map[string]bool, len(current))
+	for _, event := range current {
+		known[event.ID] = true
+	}
+	if known[removed.ID] {
+		// Кадр уже вернули (или создали заново с тем же id): второй раз вставлять его
+		// нельзя — в документе оказались бы два кадра с одним идентификатором.
+		return out, nil
+	}
+	if removed.ParentID != "" && !known[removed.ParentID] {
+		removed.ParentID = ""
+		out.Orphan = true
+	}
+
+	txn := d.inner.WriteTxn()
+	defer txn.Commit()
+	index := clampIndex(removed.Index, events.Len())
+	writeEventFields(txn, events.InsertMap(txn, index), removed.EventFull)
+	out.Inserted = true
+	out.Index = int(index)
+	return out, nil
 }

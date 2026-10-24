@@ -785,7 +785,7 @@ describe('AssistantPanel', () => {
     expect(screen.queryByText('Предложенные правки')).toBeNull()
   })
 
-  it('применённую правку можно вернуть, а удаление — нет', async () => {
+  it('применённую перезапись можно вернуть прежним текстом', async () => {
     const update: AIProposal = {
       id: 'p1',
       kind: 'update_text',
@@ -809,6 +809,35 @@ describe('AssistantPanel', () => {
     await waitFor(() => expect(mocks.revertProposal).toHaveBeenCalledWith('p1', 'p1'))
     // Вернувшееся предложение снова ждёт решения.
     expect(await screen.findByText('Предложенные правки')).toBeTruthy()
+  })
+
+  it('удалённый агентом кадр можно вернуть', async () => {
+    const removal: AIProposal = {
+      id: 'p1',
+      kind: 'delete_event',
+      status: 'pending',
+      eventId: 'e1',
+      eventTitle: 'Лишний кадр',
+      oldTitle: 'Лишний кадр',
+      oldBody: 'текст',
+      newTitle: '',
+      newBody: '',
+    }
+    const applied: AIProposal = { ...removal, status: 'applied' }
+    mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
+    mocks.proposals.mockResolvedValue([removal])
+    mocks.applyProposal.mockResolvedValue({ proposal: applied, warning: '' })
+    mocks.revertProposal.mockResolvedValue({ proposal: removal, warning: '' })
+    renderPanel()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Применить' }))
+    await waitFor(() => expect(mocks.applyProposal).toHaveBeenCalledTimes(1))
+    expect(await screen.findByText(/Удалён кадр «Лишний кадр»/)).toBeTruthy()
+    // У удаления тоже есть отмена: кадр возвращается по снимку, который сохранил сервер.
+    fireEvent.click(await screen.findByRole('button', { name: 'Вернуть кадр' }))
+    await waitFor(() => expect(mocks.revertProposal).toHaveBeenCalledWith('p1', 'p1'))
+    expect(await screen.findByText('Кадр вернулся на прежнее место.')).toBeTruthy()
+    expect(await screen.findByText(/Удалить кадр «Лишний кадр»/)).toBeTruthy()
   })
 
   it('отклонённое предложение не меняет проект', async () => {

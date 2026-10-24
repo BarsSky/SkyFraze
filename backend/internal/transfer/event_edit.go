@@ -16,6 +16,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -123,72 +124,147 @@ func (s *Service) UpdateEventText(
 	return "", nil
 }
 
-// DeleteEvent удаляет кадр проекта.
+// DeleteEvent удаляет кадр проекта и возвращает его снимок.
 //
 // Детей у кадра быть не должно: удалить главу вместе с под-событиями — это одно нажатие,
 // которое уносит больше, чем человек видит на экране. Поэтому отказ с объяснением, а не
 // молчаливое удаление поддерева.
+//
+// Снимок возвращается наружу, а не пишется здесь: «что делать со снимком» — решение того,
+// кто удаляет (сейчас — предложение помощника, ai_changes.frame). Документ же обязан
+// отдать его вместе с удалением, иначе отменить удаление будет нечем.
 func (s *Service) DeleteEvent(
 	ctx context.Context, actorID, userID, projectID uuid.UUID, eventID string,
-) (string, error) {
+) (string, *yjs.RemovedEvent, error) {
 	if err := s.proj.RequireEditor(ctx, userID, projectID); err != nil {
 		if errors.Is(err, projects.ErrForbidden) {
-			return "", ErrForbidden
+			return "", nil, ErrForbidden
 		}
-		return "", err
+		return "", nil, err
 	}
 
 	// Детей проверяем по проекции: она отстаёт от документа не больше чем на период
 	// сохранения комнаты (5 с), а удаление — осознанное действие человека, не гонка.
 	id, err := uuid.Parse(eventID)
 	if err != nil {
-		return "", ErrEventNotFound
+		return "", nil, ErrEventNotFound
 	}
 	rows, err := s.store.ListEvents(ctx, projectID)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	for _, row := range rows {
 		if row.ParentID != nil && *row.ParentID == id {
-			return "", ErrEventHasChildren
+			return "", nil, ErrEventHasChildren
 		}
 	}
 
 	if s.live != nil {
-		outcome, err := s.live.DeleteEventLive(ctx, projectID, actorID, eventID)
+		gone, outcome, err := s.live.DeleteEventLive(ctx, projectID, actorID, eventID)
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
 		switch {
 		case outcome.RoomLoading:
-			return "", ErrMarkdownBusy
+			return "", nil, ErrMarkdownBusy
 		case outcome.Handled && !outcome.Found:
-			return "", ErrEventNotFound
+			return "", nil, ErrEventNotFound
 		case outcome.Handled:
-			return outcome.Warning, nil
+			return outcome.Warning, gone, nil
 		}
 	}
 
 	doc, err := s.serverDocument(ctx, projectID)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
-	found, err := doc.DeleteEvent(eventID)
+	gone, err := doc.DeleteEvent(eventID)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
-	if !found {
-		return "", ErrEventNotFound
+	if gone == nil {
+		return "", nil, ErrEventNotFound
 	}
 	if _, err := s.store.SaveProjectEventStateServer(ctx, projectID, actorID, doc.EncodeState()); err != nil {
-		return "", err
+		return "", nil, err
 	}
 	if err := s.projectDocument(ctx, projectID, actorID, doc); err != nil {
 		return fmt.Sprintf("кадр удалён, но таблица событий не перестроена (%v) — "+
-			"она обновится при следующем сохранении", err), nil
+			"она обновится при следующем сохранении", err), gone, nil
 	}
-	return "", nil
+	return "", gone, nil
 }
+
+// ReviveEvent возвращает удалённый кадр на прежнее место — отмена удаления.
+//
+// Обратная операция к DeleteEvent, и по той же причине живёт здесь: возврат кадра — это
+// обычная правка документа, а не второй путь записи в базу. Вставка идёт снимком
+// (yjs.RemovedEvent): идентификатор, родитель, порядок, дата, вложения, фон и created_at
+// восстанавливаются как были — иначе «вернуть» значило бы «создать похожий кадр».
+func (s *Service) ReviveEvent(
+	ctx context.Context, actorID, userID, projectID uuid.UUID, removed yjs.RemovedEvent,
+) (string, yjs.ReviveResult, error) {
+	var result yjs.ReviveResult
+	if err := s.proj.RequireEditor(ctx, userID, projectID); err != nil {
+		if errors.Is(err, projects.ErrForbidden) {
+			return "", result, ErrForbidden
+		}
+		return "", result, err
+	}
+	if strings.TrimSpace(removed.ID) == "" {
+		return "", result, ErrEventNotFound
+	}
+
+	if s.live != nil {
+		revived, outcome, err := s.live.ReviveEventLive(ctx, projectID, actorID, removed)
+		if err != nil {
+			return "", revived, err
+		}
+		switch {
+		case outcome.RoomLoading:
+			return "", revived, ErrMarkdownBusy
+		case outcome.Handled && !outcome.Found:
+			// Кадр уже есть: возвращать нечего. Это не ошибка человека, но и не успех —
+			// говорим словами, чтобы он не искал «куда же он вернулся».
+			return "", revived, ErrEventExists
+		case outcome.Handled:
+			if revived.Orphan {
+				return orphanWarning, revived, nil
+			}
+			return outcome.Warning, revived, nil
+		}
+	}
+
+	doc, err := s.serverDocument(ctx, projectID)
+	if err != nil {
+		return "", result, err
+	}
+	revived, err := doc.ReviveEvent(removed)
+	if err != nil {
+		return "", revived, err
+	}
+	if !revived.Inserted {
+		return "", revived, ErrEventExists
+	}
+	if _, err := s.store.SaveProjectEventStateServer(ctx, projectID, actorID, doc.EncodeState()); err != nil {
+		return "", revived, err
+	}
+	if err := s.projectDocument(ctx, projectID, actorID, doc); err != nil {
+		return fmt.Sprintf("кадр возвращён, но таблица событий не перестроена (%v) — "+
+			"она обновится при следующем сохранении", err), revived, nil
+	}
+	if revived.Orphan {
+		return orphanWarning, revived, nil
+	}
+	return "", revived, nil
+}
+
+// ErrEventExists — кадр с таким идентификатором уже есть в документе.
+var ErrEventExists = errors.New("кадр уже существует")
+
+// orphanWarning — честный текст для случая «родителя удалили, кадр вернулся наверх».
+const orphanWarning = "кадр вернулся главой верхнего уровня: его родителя к этому моменту " +
+	"уже удалили — поставьте кадр в нужное место в дереве"
 
 // ErrEventHasChildren — у кадра есть под-события: удалять вместе с ними нельзя.
 var ErrEventHasChildren = errors.New("у кадра есть под-события")

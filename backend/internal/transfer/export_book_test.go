@@ -141,7 +141,8 @@ func TestExportEPUB(t *testing.T) {
 		t.Errorf("нет якорей кадров в главе: %s", page)
 	}
 
-	// 6. Картинка кадра попала в архив, а OPF на неё ссылается.
+	// 6. Картинка кадра попала в архив, а OPF на неё ссылается — и она же обложка:
+	// без свойства cover-image читалка показывает серый прямоугольник.
 	images := 0
 	for name := range files {
 		if strings.HasPrefix(name, "OEBPS/images/") {
@@ -150,6 +151,9 @@ func TestExportEPUB(t *testing.T) {
 	}
 	if images != 1 {
 		t.Errorf("картинок в книге: %d, ожидалась 1", images)
+	}
+	if !strings.Contains(opf, `properties="cover-image"`) {
+		t.Errorf("обложка не помечена в манифесте: %s", opf)
 	}
 	if !strings.Contains(page, `src="../images/01.png"`) {
 		t.Errorf("картинка не вставлена в главу: %s", page)

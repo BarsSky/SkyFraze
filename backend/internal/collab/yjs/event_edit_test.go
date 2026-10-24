@@ -85,9 +85,15 @@ func TestDocDeleteEvent(t *testing.T) {
 		t.Fatalf("документ: %v", err)
 	}
 
-	found, err := doc.DeleteEvent(child)
-	if err != nil || !found {
-		t.Fatalf("удаление: found=%v err=%v", found, err)
+	gone, err := doc.DeleteEvent(child)
+	if err != nil || gone == nil {
+		t.Fatalf("удаление: gone=%v err=%v", gone, err)
+	}
+	// Снимок — часть удаления, а не отдельный запрос: в нём должны быть все поля кадра,
+	// иначе «Вернуть» вернёт кадр-пустышку.
+	if gone.ID != child || gone.Title != "Под-событие" || gone.Body != "вложенный" ||
+		gone.ParentID != chapter || gone.Index != 1 {
+		t.Errorf("снимок удалённого кадра: %+v", gone)
 	}
 	if _, ok := doc.EventByID(child); ok {
 		t.Fatal("кадр остался в документе")
@@ -99,10 +105,102 @@ func TestDocDeleteEvent(t *testing.T) {
 		t.Errorf("кадров в документе: %d, ожидался 1", count)
 	}
 
-	// Повторное удаление — found=false, а не ошибка: так вызывающий отличает «уже нет»
+	// Повторное удаление — снимка нет, а не ошибка: так вызывающий отличает «уже нет»
 	// от «сломалось».
-	if found, err := doc.DeleteEvent(child); found || err != nil {
-		t.Errorf("повторное удаление: found=%v err=%v", found, err)
+	if gone, err := doc.DeleteEvent(child); gone != nil || err != nil {
+		t.Errorf("повторное удаление: gone=%v err=%v", gone, err)
+	}
+}
+
+// Возврат удалённого кадра: на прежнее место, с полями и с прежним id.
+func TestDocReviveEvent(t *testing.T) {
+	first, second, third := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	doc := yjs.NewDoc()
+	if err := doc.InsertEvents(0, []yjs.EventSeed{
+		{ID: first, Title: "Первая", Body: "раз"},
+		{ID: second, Title: "Вторая", Body: "два"},
+		{ID: third, Title: "Третья", Body: "три"},
+	}); err != nil {
+		t.Fatalf("документ: %v", err)
+	}
+	gone, err := doc.DeleteEvent(second)
+	if err != nil || gone == nil {
+		t.Fatalf("удаление: gone=%v err=%v", gone, err)
+	}
+
+	// Пока кадра не было, документ менялся: вернуть кадр нужно, не ломая это.
+	newTitle := "Третья (правлено)"
+	if _, err := doc.SetEventText(third, &newTitle, nil); err != nil {
+		t.Fatalf("правка соседа: %v", err)
+	}
+
+	result, err := doc.ReviveEvent(*gone)
+	if err != nil {
+		t.Fatalf("возврат: %v", err)
+	}
+	if !result.Inserted || result.Orphan || result.Index != 1 {
+		t.Fatalf("возврат: %+v", result)
+	}
+	order := make([]string, 0, 3)
+	for _, event := range doc.EventsFull() {
+		order = append(order, event.ID)
+	}
+	if want := []string{first, second, third}; len(order) != 3 ||
+		order[0] != want[0] || order[1] != want[1] || order[2] != want[2] {
+		t.Errorf("порядок после возврата: %v", order)
+	}
+	back, ok := doc.EventByID(second)
+	if !ok {
+		t.Fatal("кадр не вернулся")
+	}
+	if back.Title != "Вторая" || back.Body != "два" {
+		t.Errorf("содержимое вернувшегося кадра: %+v", back)
+	}
+	if other, _ := doc.EventByID(third); other.Title != newTitle {
+		t.Errorf("правка соседа потерялась: %q", other.Title)
+	}
+
+	// Повторный возврат — не вторая копия кадра: оба с одним id сломали бы все выборки.
+	if again, err := doc.ReviveEvent(*gone); err != nil || again.Inserted {
+		t.Errorf("повторный возврат: result=%+v err=%v", again, err)
+	}
+	if count := doc.EventCount(); count != 3 {
+		t.Errorf("кадров после повторного возврата: %d, ожидалось 3", count)
+	}
+}
+
+// Возврат кадра, родителя которого уже удалили: кадр возвращается главой верхнего
+// уровня, а не ссылкой на несуществующего родителя.
+func TestDocReviveEventWithoutParent(t *testing.T) {
+	parent, child := uuid.NewString(), uuid.NewString()
+	doc := yjs.NewDoc()
+	if err := doc.InsertEvents(0, []yjs.EventSeed{
+		{ID: parent, Title: "Глава", Body: "текст"},
+		{ID: child, ParentID: parent, Title: "Под-событие", Body: "вложенный"},
+	}); err != nil {
+		t.Fatalf("документ: %v", err)
+	}
+	gone, err := doc.DeleteEvent(child)
+	if err != nil || gone == nil {
+		t.Fatalf("удаление: gone=%v err=%v", gone, err)
+	}
+	if _, err := doc.DeleteEvent(parent); err != nil {
+		t.Fatalf("удаление родителя: %v", err)
+	}
+
+	result, err := doc.ReviveEvent(*gone)
+	if err != nil {
+		t.Fatalf("возврат: %v", err)
+	}
+	if !result.Inserted || !result.Orphan {
+		t.Fatalf("возврат без родителя: %+v", result)
+	}
+	back, ok := doc.EventByID(child)
+	if !ok {
+		t.Fatal("кадр не вернулся")
+	}
+	if back.ParentID != "" {
+		t.Errorf("вернувшийся кадр ссылается на удалённого родителя: %q", back.ParentID)
 	}
 }
 

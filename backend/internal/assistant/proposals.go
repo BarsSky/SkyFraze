@@ -18,12 +18,14 @@ package assistant
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/google/uuid"
 
+	"github.com/skyfraze/backend/internal/collab/yjs"
 	"github.com/skyfraze/backend/internal/store"
 	"github.com/skyfraze/backend/internal/transfer"
 )
@@ -141,6 +143,13 @@ func (s *Service) applyProposal(
 			_ = s.store.SetAIChangeStatus(ctx, change.ID, from, store.AIChangeSuperseded)
 			return nil, "", err
 		}
+	} else if !revert {
+		// Удаление тоже требует «кадр не изменился»: если человек правил текст после
+		// предложения, удалять уже не тот кадр, который обсуждали с помощником.
+		if err := s.requireUnchanged(ctx, projectID, change.EventID, change.OldTitle, change.OldBody); err != nil {
+			_ = s.store.SetAIChangeStatus(ctx, change.ID, from, store.AIChangeSuperseded)
+			return nil, "", err
+		}
 	}
 
 	if change.Kind == store.AIChangeUpdateText {
@@ -157,19 +166,69 @@ func (s *Service) applyProposal(
 	}
 
 	if revert {
-		// Удаление вернуть нельзя: кадр уже убран из документа, и восстанавливать его
-		// пришлось бы вставкой с прежним идентификатором и местом — это другая
-		// возможность, и обещать её кнопкой «Вернуть» было бы обманом.
-		return nil, "", errors.New("удаление отменить нельзя: кадр нужно создать заново")
+		return s.reviveDeleted(ctx, actorID, userID, projectID, change)
 	}
-	// Детей проверяем до применения: удалить главу вместе с под-событиями — одно
-	// нажатие, которое уносит больше, чем видно на экране.
-	warning, err := s.editor.DeleteEvent(ctx, actorID, userID, projectID, change.EventID.String())
+	// Детей проверяет редактор (ErrEventHasChildren): удалить главу вместе с
+	// под-событиями — одно нажатие, которое уносит больше, чем видно на экране.
+	warning, gone, err := s.editor.DeleteEvent(ctx, actorID, userID, projectID, change.EventID.String())
 	if err != nil {
 		return nil, "", editErrorText(err)
 	}
+	// Снимок сохраняем сразу после удаления и обязательно ДО перевода предложения в
+	// applied: если запись не удалась, «Вернуть» будет нечем — и об этом честно
+	// сказано в журнале, вместо тихой потери отмены.
+	if gone != nil {
+		raw, marshalErr := json.Marshal(gone)
+		if marshalErr == nil {
+			if saveErr := s.store.SetAIChangeFrame(ctx, change.ID, raw); saveErr != nil {
+				s.logger.Warn("ai: не удалось сохранить снимок удалённого кадра — вернуть его не получится",
+					"change", change.ID, "event", change.EventID, "err", saveErr)
+			} else {
+				change.Frame = raw
+			}
+		}
+	}
 	return change, warning, nil
 }
+
+// reviveDeleted возвращает кадр, удалённый по подтверждённому предложению.
+//
+// Здесь «Вернуть» — не восстановление текста в существующем кадре (его нет), а вставка
+// кадра обратно в документ по снимку (ai_changes.frame, миграция 0017): прежний
+// идентификатор, родитель, место в дереве, дата, вложения, фон и created_at.
+func (s *Service) reviveDeleted(
+	ctx context.Context, actorID, userID, projectID uuid.UUID, change *store.AIChange,
+) (*store.AIChange, string, error) {
+	if len(change.Frame) == 0 {
+		// Предложения, применённые до миграции 0017, снимка не имеют. Врать «нельзя» без
+		// причины нельзя тоже: причина есть, и она — в тексте отказа.
+		return nil, "", errNoFrameSnapshot
+	}
+	var removed yjs.RemovedEvent
+	if err := json.Unmarshal(change.Frame, &removed); err != nil {
+		return nil, "", fmt.Errorf("снимок кадра повреждён: %w", err)
+	}
+	if removed.ID == "" {
+		removed.ID = change.EventID.String()
+	}
+	// Заголовок и текст берём из Old*: это то, что видел человек, когда соглашался на
+	// удаление. В снимке они тоже есть, но Old* — источник правды предложения.
+	removed.Title = change.OldTitle
+	removed.Body = change.OldBody
+
+	warning, result, err := s.editor.ReviveEvent(ctx, actorID, userID, projectID, removed)
+	if err != nil {
+		return nil, "", editErrorText(err)
+	}
+	s.logger.Info("ai: удалённый кадр возвращён",
+		"project", projectID, "user", userID, "event", change.EventID,
+		"change", change.ID, "orphan", result.Orphan)
+	return change, warning, nil
+}
+
+// errNoFrameSnapshot — у предложения нет снимка удалённого кадра.
+var errNoFrameSnapshot = errors.New("у этого удаления нет снимка кадра: вернуть его " +
+	"можно только из истории версий проекта")
 
 // ApplyProposal применяет предложение: правка уходит в документ, предложение — в applied.
 func (s *Service) ApplyProposal(
@@ -255,6 +314,8 @@ func editErrorText(err error) error {
 	switch {
 	case errors.Is(err, transfer.ErrEventNotFound):
 		return errors.New("кадр не найден: возможно, его уже удалили")
+	case errors.Is(err, transfer.ErrEventExists):
+		return errors.New("кадр с таким идентификатором уже есть в проекте: возвращать нечего")
 	case errors.Is(err, transfer.ErrEventHasChildren):
 		return errors.New("у кадра есть под-события: сначала решите, что с ними (удалять главу вместе с детьми нельзя)")
 	case errors.Is(err, transfer.ErrMarkdownBusy):

@@ -164,8 +164,9 @@ export interface AITurn {
  * Предложенная агентом правка кадра.
  *
  * `kind`: `update_text` — переписать заголовок и/или текст, `delete_event` — удалить кадр.
- * `old*` — снимок ДО: по нему показывается «было» и работает «Вернуть» (для удаления
- * возврата нет — кадр уже убран из документа).
+ * `old*` — снимок ДО: по нему показывается «было» и работает «Вернуть» (для перезаписи —
+ * прежний текст, для удаления — возврат кадра по снимку, который сервер сохранил в момент
+ * удаления; у предложений, применённых до этой возможности, снимка нет).
  */
 export interface AIProposal {
   id: string
@@ -445,7 +446,7 @@ export async function applyAIProposal(
   return { proposal: parseProposal(record?.proposal), warning: asText(record?.warning) }
 }
 
-/** Вернуть прежний текст кадра (только для перезаписи). */
+/** Вернуть применённую правку: прежний текст кадра или удалённый кадр. */
 export async function revertAIProposal(
   projectId: string,
   proposalId: string,

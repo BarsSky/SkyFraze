@@ -11,6 +11,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -40,25 +41,31 @@ const (
 //
 // Old* — снимок кадра на момент предложения. Он нужен трижды: показать «было»,
 // проверить, что кадр не изменился, и вернуть прежний текст кнопкой «Вернуть».
+//
+// Frame — снимок удалённого кадра (только у kind=delete_event, миграция 0017). Появляется
+// он не вместе с предложением, а в момент применения: снимок берётся из документа той же
+// операцией, что удаляет кадр, — иначе между «запомнили» и «удалили» кадр успел бы
+// измениться, и «Вернуть» вернуло бы не то, что удалили.
 type AIChange struct {
-	ID             uuid.UUID  `db:"id" json:"id"`
-	ProjectID      uuid.UUID  `db:"project_id" json:"project_id"`
-	ConversationID *uuid.UUID `db:"conversation_id" json:"conversation_id"`
-	UserID         uuid.UUID  `db:"user_id" json:"user_id"`
-	Kind           string     `db:"kind" json:"kind"`
-	EventID        uuid.UUID  `db:"event_id" json:"event_id"`
-	EventTitle     string     `db:"event_title" json:"event_title"`
-	OldTitle       string     `db:"old_title" json:"old_title"`
-	OldBody        string     `db:"old_body" json:"old_body"`
-	NewTitle       string     `db:"new_title" json:"new_title"`
-	NewBody        string     `db:"new_body" json:"new_body"`
-	Status         string     `db:"status" json:"status"`
-	CreatedAt      time.Time  `db:"created_at" json:"created_at"`
-	AppliedAt      *time.Time `db:"applied_at" json:"applied_at"`
+	ID             uuid.UUID       `db:"id" json:"id"`
+	ProjectID      uuid.UUID       `db:"project_id" json:"project_id"`
+	ConversationID *uuid.UUID      `db:"conversation_id" json:"conversation_id"`
+	UserID         uuid.UUID       `db:"user_id" json:"user_id"`
+	Kind           string          `db:"kind" json:"kind"`
+	EventID        uuid.UUID       `db:"event_id" json:"event_id"`
+	EventTitle     string          `db:"event_title" json:"event_title"`
+	OldTitle       string          `db:"old_title" json:"old_title"`
+	OldBody        string          `db:"old_body" json:"old_body"`
+	NewTitle       string          `db:"new_title" json:"new_title"`
+	NewBody        string          `db:"new_body" json:"new_body"`
+	Status         string          `db:"status" json:"status"`
+	CreatedAt      time.Time       `db:"created_at" json:"created_at"`
+	AppliedAt      *time.Time      `db:"applied_at" json:"applied_at"`
+	Frame          json.RawMessage `db:"frame" json:"-"`
 }
 
 const aiChangeColumns = `id, project_id, conversation_id, user_id, kind, event_id, event_title,
-	old_title, old_body, new_title, new_body, status, created_at, applied_at`
+	old_title, old_body, new_title, new_body, status, created_at, applied_at, frame`
 
 // CreateAIChange сохраняет предложение.
 func (s *Store) CreateAIChange(ctx context.Context, c AIChange) (*AIChange, error) {
@@ -125,6 +132,22 @@ func (s *Store) SetAIChangeStatus(ctx context.Context, id uuid.UUID, from, to st
 		return ErrNotFound
 	}
 	return nil
+}
+
+// SetAIChangeFrame сохраняет снимок удалённого кадра.
+//
+// Отдельным запросом, а не полем в CreateAIChange: снимка в момент предложения ещё нет —
+// он берётся из документа тогда, когда человек подтвердил удаление. Запись идёт после
+// удаления, поэтому ошибка здесь — не повод считать удаление неудачным: кадр уже убран,
+// и врать человеку «не получилось» было бы хуже, чем потерять возможность отмены
+// (вызывающий пишет об этом в журнал).
+func (s *Store) SetAIChangeFrame(ctx context.Context, id uuid.UUID, frame json.RawMessage) error {
+	if len(frame) == 0 {
+		return nil
+	}
+	_, err := s.Pool.Exec(ctx,
+		`UPDATE ai_changes SET frame=$2::jsonb WHERE id=$1`, id, string(frame))
+	return err
 }
 
 // ExpireAIChangesForKey выбрасывает ожидающие предложения по кадру.

@@ -76,6 +76,68 @@ test('агент предлагает правку, а применяет её �
 })
 
 /**
+ * Удаление кадра агентом — и его отмена.
+ *
+ * Отдельный сценарий, потому что удаление устроено иначе, чем перезапись: кадра после
+ * применения физически нет ни в документе, ни в дереве, и «Вернуть» возвращает его
+ * вставкой по снимку с прежним идентификатором и местом. Интеграционные тесты проверяют
+ * это на уровне сервиса; здесь важно, что человек видит исчезновение кадра, кнопку
+ * «Вернуть кадр» и возвращение строки в дерево — без перезагрузки страницы.
+ */
+test('удалённый агентом кадр можно вернуть', async ({ page }) => {
+  test.skip(!(await signIn(page)), 'учётной записи e2e нет и регистрация закрыта')
+
+  const title = `Удаление ${Date.now()}`
+  await page.getByRole('button', { name: '+ Новый проект' }).click()
+  await page.getByPlaceholder('Название').fill(title)
+  await page.getByRole('button', { name: 'Создать' }).click()
+  await page.getByRole('link', { name: title }).click()
+  await expect(page).toHaveURL(/\/projects\/[0-9a-f-]+$/)
+
+  await page.locator('[data-assistant-fab]').click()
+  const panel = page.locator('[data-assistant-panel]')
+  await expect(panel).toBeVisible()
+  if (await panel.getByText('Помощник выключен на этом стенде').isVisible().catch(() => false)) {
+    test.skip(true, 'помощник выключен на стенде')
+  }
+  const input = panel.getByLabel('Сообщение помощнику')
+  await expect(input).toBeEnabled({ timeout: 15_000 })
+  await input.fill('Добавь главу «Пролог» с описанием начала истории')
+  await panel.getByRole('button', { name: 'Спросить' }).click()
+  await expect(panel.getByText('Создал главу «Пролог».')).toBeVisible({ timeout: 90_000 })
+  const chapterRow = page.locator('.ed-row--chapter', { hasText: 'Пролог' }).first()
+  await expect(chapterRow).toBeVisible({ timeout: 45_000 })
+
+  // 1. Агент удаление ПРЕДЛАГАЕТ: кадр на месте, дерево прежнее.
+  await input.fill('Удали главу «Пролог», она лишняя')
+  await panel.getByRole('button', { name: 'Спросить' }).click()
+  const proposals = panel.locator('[data-assistant-proposals]')
+  await expect(proposals).toBeVisible({ timeout: 90_000 })
+  await expect(proposals).toContainText('Удалить кадр «Пролог»')
+  await expect(chapterRow).toBeVisible()
+
+  // 2. Применяем — кадр исчезает из дерева.
+  await proposals.getByRole('button', { name: 'Применить' }).click()
+  const applied = panel.locator('[data-assistant-applied]')
+  await expect(applied).toBeVisible({ timeout: 30_000 })
+  await expect(applied).toContainText('Удалён кадр «Пролог»')
+  await expect(page.locator('.ed-row--chapter', { hasText: 'Пролог' })).toHaveCount(0, {
+    timeout: 30_000,
+  })
+
+  // 3. «Вернуть кадр» возвращает его — с прежним заголовком и на прежнее место.
+  await applied.getByRole('button', { name: 'Вернуть кадр' }).click()
+  await expect(panel.locator('[data-assistant-proposals]')).toBeVisible({ timeout: 30_000 })
+  await expect(panel.locator('[data-assistant-proposal-note]')).toContainText(
+    'Кадр вернулся на прежнее место.',
+    { timeout: 30_000 },
+  )
+  await expect(page.locator('.ed-row--chapter', { hasText: 'Пролог' }).first()).toBeVisible({
+    timeout: 30_000,
+  })
+})
+
+/**
  * Отклонение предложения ничего не меняет в проекте.
  *
  * Отдельный сценарий, потому что «отклонить» — это не «применить и передумать»: сервер

@@ -17,6 +17,7 @@ package store_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -43,6 +44,44 @@ func setupStore(t *testing.T) (*store.Store, uuid.UUID) {
 		t.Fatalf("проект: %v", err)
 	}
 	return st, project.ID
+}
+
+// Идентичная проекция с устаревшей базой — не конфликт.
+//
+// История дефекта: клиент присылает проекцию с ревизией, которую видел при загрузке, а её
+// обгоняет не чужой человек, а сохранение снапшота живой комнаты (раз в несколько секунд).
+// Построчно проекция при этом та же, и раньше сервер отвечал 409 — клиент перечитывал
+// состояние и повторял ту же проекцию (в аудите это 409 в консоли на каждом открытии).
+func TestReplaceEventTreeIdenticalPayloadIsNotConflict(t *testing.T) {
+	st, projectID := setupStore(t)
+	ctx := context.Background()
+
+	chapter := uuid.New()
+	nodes := []store.Event{
+		{ID: chapter, ProjectID: projectID, Position: 0, Depth: 0, Title: "Глава", Body: "текст"},
+	}
+	if err := st.ReplaceEventTree(ctx, projectID, uuid.Nil, nodes); err != nil {
+		t.Fatalf("первая проекция: %v", err)
+	}
+	// Две записи снапшота поднимают ревизию до 2 — так её обгоняет живая комната.
+	for i := 0; i < 2; i++ {
+		if _, err := st.SaveProjectEventStateServer(ctx, projectID, uuid.Nil, []byte("state")); err != nil {
+			t.Fatalf("снапшот: %v", err)
+		}
+	}
+
+	// Клиент присылает ту же проекцию с базой 1 — раньше это был 409.
+	if err := st.ReplaceEventTreeChecked(ctx, projectID, uuid.Nil, nodes, 1); err != nil {
+		t.Fatalf("идентичная проекция: %v", err)
+	}
+	// А вот изменившаяся проекция с той же устаревшей базой — по-прежнему конфликт:
+	// иначе клиент с неполным деревом снёс бы чужие строки.
+	changed := []store.Event{
+		{ID: chapter, ProjectID: projectID, Position: 0, Depth: 0, Title: "Глава", Body: "другой текст"},
+	}
+	if err := st.ReplaceEventTreeChecked(ctx, projectID, uuid.Nil, changed, 1); !errors.Is(err, store.ErrRevisionConflict) {
+		t.Fatalf("изменившаяся проекция должна быть отвергнута, получено %v", err)
+	}
 }
 
 // Проекция с неизвестным автором не падает на внешнем ключе и пишет NULL.
