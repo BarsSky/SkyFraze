@@ -60,14 +60,32 @@ cp deploy/backup.env.example /home/skyadmin/skyfraze/backup.env
 ## 3. Расписание
 
 ```bash
-sudo bash deploy/install-backup-units.sh      # один раз, на хосте
+# Системные юниты (нужен root — обычный путь на своём сервере):
+sudo bash deploy/install-backup-units.sh
 systemctl list-timers skyfraze-backup.timer   # когда следующий запуск
 sudo systemctl start skyfraze-backup.service  # копия прямо сейчас
 journalctl -u skyfraze-backup.service -n 50   # что было в последнем запуске
+
+# Пользовательские юниты (root не нужен) — когда sudo просит пароль или его нет:
+bash deploy/install-backup-units.sh --user
+systemctl --user list-timers skyfraze-backup.timer
+systemctl --user start skyfraze-backup.service
+journalctl --user -u skyfraze-backup.service -n 50
 ```
 
+Системный режим — предпочтительный: юнит живёт независимо от входов в систему, его видно
+в общем списке таймеров машины, и им управляет root. Режим `--user` существует потому, что
+«нет sudo» не должно означать «нет копий»: скрипт ставит те же два юнита в
+`~/.config/systemd/user`, сам включает `loginctl enable-linger` (иначе таймер умирает с
+выходом из системы — на сервере, куда заходят по ssh, копий почти не было бы) и добавляет
+в юнит ожидание Docker (`Persistent=true` запускает пропущенную копию сразу после загрузки,
+когда dockerd может быть ещё не готов). Ограничения режима `--user`: юнита не видно в
+системном `systemctl list-timers`, и `--drill` по расписанию не запускается — проверку
+восстановления всё равно делают руками.
+
 Юнит идёт от владельца каталога (не от root): `docker compose` читает `.env`, а копии
-пишутся рядом с проектом, и root'овые каталоги потом не удалить при ротации. Таймер —
+пишутся рядом с проектом, и root'овые каталоги потом не удалить при ротации. Владелец
+должен быть в группе `docker` — иначе он не запускал бы `docker compose` вручную. Таймер —
 `03:30` плюс случайный разброс до 10 минут, `Persistent=true`: если машина была
 выключена, копия снимется при первом включении, а не пропустится до следующих суток.
 

@@ -625,9 +625,15 @@ ONLY_FUNCTIONAL=1 npx tsx ../.dsh/skills/ui-visual-audit/scripts/visual-audit.ts
 bash deploy/backup.sh                 # копия базы и вложений в backups/<дата>
 bash deploy/backup.sh --drill         # проверить, что копия восстанавливается
 sudo bash deploy/install-backup-units.sh   # ежедневный таймер (один раз, на хосте)
+bash deploy/install-backup-units.sh --user # то же без root (если sudo просит пароль)
 cp deploy/backup.env.example backup.env    # офсайт и хранение: BACKUP_RSYNC /
                                            # BACKUP_RCLONE / BACKUP_KEEP
 ```
+
+**Без офсайта копии не спасают от потери машины:** `BACKUP_RSYNC` или `BACKUP_RCLONE`
+нужно задать, иначе копии лежат на том же диске, что и данные (скрипт каждый раз пишет об
+этом в журнал). Таймер без настроенного офсайта всё равно полезен — он закрывает
+«удалил не тот проект» и порчу базы, но не отказ диска.
 
 Отчёт о размерах доступен тремя способами:
 
