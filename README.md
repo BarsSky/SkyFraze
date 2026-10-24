@@ -559,6 +559,27 @@ cd frontend && npm run e2e
 # Прогнать те же сценарии против уже поднятого стенда, не поднимая свой vite:
 cd frontend && E2E_BASE_URL=http://localhost:5173 E2E_NO_SERVER=1 npx playwright test
 
+
+**Что проверяет e2e и где взять базу для него.** Двенадцать сценариев: регистрация первого
+администратора, вход, защищённые страницы, загрузка файлов, прокрутка, помощник (создание
+главы и картинка), **правки агента по подтверждению** (предложение → применение → возврат и
+отклонение), **история версий** (сохранить, предпросмотр, восстановление) и **книга**
+(скачивание EPUB/DOCX с проверкой байтов). Локально нужна пустая база и backend на `:8181`:
+
+```bash
+docker exec skyfraze-postgres psql -U skyfraze -d postgres -c "create database skyfraze_e2e"
+cd backend && go build -o /tmp/skyfraze-e2e ./cmd/server
+DATABASE_URL=postgres://skyfraze:skyfraze_dev@localhost:5432/skyfraze_e2e?sslmode=disable \
+JWT_SECRET=e2e-secret STORAGE_DIR=/tmp/skyfraze-e2e-storage LISTEN=:8181 \
+CORS_ORIGINS=http://localhost:5173 AI_ENABLED=true AI_OLLAMA_URL=http://127.0.0.1:11490 \
+  /tmp/skyfraze-e2e &                       # + заглушка: node frontend/tests/e2e/stub-ollama.mjs
+cd frontend && CI=1 npx playwright test    # CI=1 обязателен, см. ниже
+```
+
+**Ловушка локального запуска:** `docker compose` публикует фронтенд на `5173`, а Playwright
+поднимает свой vite с `reuseExistingServer: !CI`. Без `CI=1` сценарии молча пойдут в
+докер-фронтенд — то есть на рабочий стенд: тесты «пройдут», а данные запишутся в чужую базу
+(и помощник будет отвечать не заглушкой). `CI=1` заставляет Playwright поднять свой сервер.
 # Дальше — живые сценарии-инструменты: у них вписаны адрес и учётные записи
 # конкретного стенда, поэтому в CI они не гоняются (там только `npm run e2e`).
 
