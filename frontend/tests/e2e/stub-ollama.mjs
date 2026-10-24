@@ -41,6 +41,18 @@ function chunkText(text) {
   return pieces
 }
 
+/**
+ * Первый идентификатор кадра из системного сообщения.
+ *
+ * Сервер печатает дерево проекта списком `id | уровень | заголовок | дата`, и настоящая
+ * модель берёт идентификатор оттуда. Заглушка делает то же самое: сценарий не должен
+ * знать идентификаторы заранее (их выдают при создании кадра).
+ */
+function firstEventID(systemText) {
+  const match = systemText.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)
+  return match ? match[0] : null
+}
+
 const server = createServer((req, res) => {
   const send = (body) => {
     res.writeHead(200, { 'Content-Type': 'application/json' })
@@ -75,25 +87,60 @@ const server = createServer((req, res) => {
       const hasImage = messages.some(
         (message) => Array.isArray(message?.images) && message.images.length > 0,
       )
-      const toolDone = messages.some((message) => message.role === 'tool')
+      // «Инструмент уже выполнен» считаем ТОЛЬКО в пределах текущего хода: в переписке
+      // остались результаты прошлых вопросов, и по ним второй вопрос получал бы ответ
+      // словами вместо нового вызова (на этом и споткнулся сценарий правки).
+      const lastUserIndex = messages.map((message) => message.role).lastIndexOf('user')
+      const toolDone = messages
+        .slice(lastUserIndex + 1)
+        .some((message) => message.role === 'tool')
+      // Просьба переписать существующий кадр — отдельная ветка для сценария «правки по
+      // подтверждению»: модель должна ПРЕДЛОЖИТЬ правку (update_event_text), а не
+      // применить её. Идентификатор кадра берём из системного сообщения — там сервер
+      // печатает дерево проекта (`id | уровень | заголовок | дата`), и модель в бою
+      // берёт его оттуда же.
+      const lastUser = lastUserIndex >= 0 ? messages[lastUserIndex] : undefined
+      const wantsUpdate =
+        typeof lastUser?.content === 'string' &&
+        lastUser.content.toLowerCase().includes('перепиши')
+      const systemText = messages.find((message) => message.role === 'system')?.content ?? ''
+      const eventID = wantsUpdate ? firstEventID(systemText) : null
       const answer = hasImage
         ? { content: 'Вижу картинку: на ней маяк.', toolCalls: [] }
-        : toolDone
-          ? { content: 'Создал главу «Пролог».', toolCalls: [] }
-          : {
-              content: '',
-              toolCalls: [
-                {
-                  function: {
-                    name: 'create_chapter',
-                    arguments: {
-                      title: 'Пролог',
-                      body_md: '## Начало\n\nТак **начинается** история.',
+        : wantsUpdate
+          ? toolDone || !eventID
+            ? { content: 'Предлагаю переписать кадр — примените правку, если согласны.', toolCalls: [] }
+            : {
+                content: '',
+                toolCalls: [
+                  {
+                    function: {
+                      name: 'update_event_text',
+                      arguments: {
+                        id: eventID,
+                        body_md: 'Переписанный текст кадра.',
+                        reason: 'проверка e2e: правка по подтверждению',
+                      },
                     },
                   },
-                },
-              ],
-            }
+                ],
+              }
+          : toolDone
+            ? { content: 'Создал главу «Пролог».', toolCalls: [] }
+            : {
+                content: '',
+                toolCalls: [
+                  {
+                    function: {
+                      name: 'create_chapter',
+                      arguments: {
+                        title: 'Пролог',
+                        body_md: '## Начало\n\nТак **начинается** история.',
+                      },
+                    },
+                  },
+                ],
+              }
 
       if (!body?.stream) {
         send({

@@ -139,6 +139,16 @@ func (s *Service) ProjectTreeServer(ctx context.Context, projectID, by uuid.UUID
 	if err != nil {
 		return err
 	}
+	// Автора может не быть: проекцию пишет и живая комната, когда документ мигрировал
+	// (появились title_text/body_text) ДО первой правки человека — тогда `by` нулевой.
+	// Подставлять нулевой UUID в created_by/updated_by нельзя: на `events_updated_by_fkey`
+	// это внешний ключ на users, и вся проекция падала с «violates foreign key constraint»
+	// (поймано e2e: дерево оставалось устаревшим до следующей правки). Пустой автор — это
+	// NULL: «кто именно — неизвестно», а не «пользователь 00000000».
+	var author *uuid.UUID
+	if by != uuid.Nil {
+		author = &by
+	}
 	rows := make([]store.Event, 0, len(normalized))
 	for _, n := range normalized {
 		rows = append(rows, store.Event{
@@ -153,8 +163,8 @@ func (s *Service) ProjectTreeServer(ctx context.Context, projectID, by uuid.UUID
 			// Даты из документа приходят всегда строкой «YYYY-MM-DD» или пустой —
 			// значит поле авторитетно, и пустое значение здесь очищает дату.
 			EventDateSet: true,
-			CreatedBy:    &by,
-			UpdatedBy:    &by,
+			CreatedBy:    author,
+			UpdatedBy:    author,
 		})
 	}
 	return s.store.ReplaceEventTree(ctx, projectID, by, rows)

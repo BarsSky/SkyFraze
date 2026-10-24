@@ -611,7 +611,7 @@ func (s *Store) replaceEventTree(
 			if e.ParentID != nil && !keep[*e.ParentID] {
 				if _, err := tx.Exec(ctx,
 					`UPDATE events SET parent_id=NULL, depth=0, updated_by=$3 WHERE project_id=$1 AND id=$2`,
-					projectID, e.ID, by); err != nil {
+					projectID, e.ID, authorOrNil(by)); err != nil {
 					return err
 				}
 			}
@@ -641,7 +641,7 @@ func (s *Store) replaceEventTree(
 			        updated_at=now()
 			  WHERE events.project_id = EXCLUDED.project_id
 			  RETURNING id`,
-			n.ID, projectID, n.ParentID, n.Position, n.Depth, n.Title, n.Body, n.EventDate, by,
+			n.ID, projectID, n.ParentID, n.Position, n.Depth, n.Title, n.Body, n.EventDate, authorOrNil(by),
 			n.EventDateSet).Scan(&id)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -679,7 +679,7 @@ func (s *Store) InsertEventTree(ctx context.Context, projectID, by uuid.UUID, no
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO events (id, project_id, parent_id, position, depth, title, body, event_date, created_by, updated_by)
 			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9)`,
-			n.ID, projectID, n.ParentID, n.Position, n.Depth, n.Title, n.Body, n.EventDate, by); err != nil {
+			n.ID, projectID, n.ParentID, n.Position, n.Depth, n.Title, n.Body, n.EventDate, authorOrNil(by)); err != nil {
 			return err
 		}
 	}
@@ -714,6 +714,20 @@ func (s *Store) GetProjectEventState(ctx context.Context, projectID uuid.UUID) (
 // baseRevision — ревизия, которую клиент видел последней (0 = снапшота ещё нет).
 // Если фактическая ревизия другая — ErrRevisionConflict: клиент должен
 // перечитать состояние и повторить (CRDT-merge не теряет правки).
+// authorOrNil превращает «автора нет» в NULL.
+//
+// Зачем. Колонки created_by/updated_by у событий и снапшота ссылаются на users, и записать
+// туда нулевой UUID нельзя — Postgres откажет по внешнему ключу. А «автора нет» бывает
+// штатно: живая комната сохраняет документ после СВОЕЙ миграции текста, до первой правки
+// человека (тогда по комнате ещё не было ни одного applyUpdate). Раньше это давало
+// «violates foreign key constraint» на проекции и «проект не найден» на снапшоте — то есть
+// устаревшее дерево и повторяющиеся попытки сохранить одно и то же (поймано e2e).
+func authorOrNil(by uuid.UUID) *uuid.UUID {
+	if by == uuid.Nil {
+		return nil
+	}
+	return &by
+}
 func (s *Store) SaveProjectEventState(
 	ctx context.Context, projectID, by uuid.UUID, state []byte, baseRevision int64,
 ) (int64, error) {
@@ -728,7 +742,7 @@ func (s *Store) SaveProjectEventState(
 		        updated_at=now()
 		  WHERE project_event_state.revision = $4
 		 RETURNING revision`,
-		projectID, state, by, baseRevision).Scan(&revision)
+		projectID, state, authorOrNil(by), baseRevision).Scan(&revision)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return 0, ErrRevisionConflict
@@ -768,7 +782,7 @@ func (s *Store) SaveProjectEventStateServer(
 		        updated_by=EXCLUDED.updated_by,
 		        updated_at=now()
 		 RETURNING revision`,
-		projectID, state, by).Scan(&revision)
+		projectID, state, authorOrNil(by)).Scan(&revision)
 	if err != nil {
 		// Проект могли удалить, пока комната жила: это не ошибка сервера.
 		var pgErr *pgconn.PgError

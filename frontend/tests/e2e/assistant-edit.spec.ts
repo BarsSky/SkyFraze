@@ -1,0 +1,124 @@
+import { test, expect } from '@playwright/test'
+import { signIn } from './support'
+
+/**
+ * Правка существующего кадра по подтверждению — целиком через браузер.
+ *
+ * Что проверяем и почему это нужно отдельным сценарием. Интеграционные тесты Go
+ * доказывают, что проект не меняется до подтверждения, а применение доезжает до
+ * документа. Но они не проверяют, что человек ВИДИТ предложение, что кнопка
+ * «Применить» действительно его применяет и что новый текст появляется в редакторе
+ * без перезагрузки. Это разные вещи: сервер мог сработать, а блок остаться пустым
+ * (так и было с версиями — сервер отдавал `revision`, а клиент ждал `version`).
+ *
+ * Провайдер — заглушка `stub-ollama.mjs`. На просьбу со словом «перепиши» она отдаёт
+ * вызов `update_event_text` для первого кадра из дерева в системном сообщении — ровно
+ * так, как это сделала бы настоящая модель.
+ */
+test.setTimeout(180_000)
+
+test('агент предлагает правку, а применяет её человек', async ({ page }) => {
+  test.skip(!(await signIn(page)), 'учётной записи e2e нет и регистрация закрыта')
+
+  const title = `Правка ${Date.now()}`
+  await page.getByRole('button', { name: '+ Новый проект' }).click()
+  await page.getByPlaceholder('Название').fill(title)
+  await page.getByRole('button', { name: 'Создать' }).click()
+  await page.getByRole('link', { name: title }).click()
+  await expect(page).toHaveURL(/\/projects\/[0-9a-f-]+$/)
+
+  // 1. Сначала нужен кадр: без него предлагать переписать нечего.
+  const fab = page.locator('[data-assistant-fab]')
+  await fab.click()
+  const panel = page.locator('[data-assistant-panel]')
+  await expect(panel).toBeVisible()
+  if (await panel.getByText('Помощник выключен на этом стенде').isVisible().catch(() => false)) {
+    test.skip(true, 'помощник выключен на стенде')
+  }
+  const input = panel.getByLabel('Сообщение помощнику')
+  await expect(input).toBeEnabled({ timeout: 15_000 })
+  await input.fill('Добавь главу «Пролог» с описанием начала истории')
+  await panel.getByRole('button', { name: 'Спросить' }).click()
+  await expect(panel.getByText('Создал главу «Пролог».')).toBeVisible({ timeout: 90_000 })
+  await expect(page.locator('.ed-row--chapter', { hasText: 'Пролог' }).first()).toBeVisible({
+    timeout: 30_000,
+  })
+
+  // 2. Просим переписать — агент должен ПРЕДЛОЖИТЬ, а не сделать.
+  await input.fill('Перепиши главу короче')
+  await panel.getByRole('button', { name: 'Спросить' }).click()
+
+  const proposals = panel.locator('[data-assistant-proposals]')
+  await expect(proposals).toBeVisible({ timeout: 90_000 })
+  await expect(proposals).toContainText('Переписать кадр «Пролог»')
+  // Главное: это предложение, а не изменение. Блока «Изменения в проекте» быть не должно.
+  await expect(panel.locator('[data-assistant-changes]')).toHaveCount(0)
+  // И текст в кадре пока прежний.
+  await expect(page.getByText('Так начинается история.').first()).toBeAttached()
+
+  // 3. Применяем — теперь проект меняется.
+  await proposals.getByRole('button', { name: 'Применить' }).click()
+  await expect(panel.locator('[data-assistant-applied]')).toBeVisible({ timeout: 30_000 })
+  await expect(panel.locator('[data-assistant-applied]')).toContainText('Переписан кадр «Пролог»')
+  await expect(panel.locator('[data-assistant-proposal-note]')).toContainText('Текст изменён')
+
+  // 4. Правка доехала до документа: новый текст виден в проекте без перезагрузки,
+  //    а старый исчез.
+  await expect(page.getByText('Переписанный текст кадра.').first()).toBeAttached({
+    timeout: 30_000,
+  })
+  await expect(page.getByText('Так начинается история.')).toHaveCount(0)
+
+  // 5. «Вернуть» возвращает прежний текст — и это тоже видно в проекте.
+  await panel.locator('[data-assistant-applied]').getByRole('button', { name: 'Вернуть прежний текст' }).click()
+  await expect(panel.locator('[data-assistant-proposals]')).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByText('Так начинается история.').first()).toBeAttached({ timeout: 30_000 })
+})
+
+/**
+ * Отклонение предложения ничего не меняет в проекте.
+ *
+ * Отдельный сценарий, потому что «отклонить» — это не «применить и передумать»: сервер
+ * вообще не трогает документ, и текст должен остаться прежним.
+ */
+test('отклонённое предложение не меняет текст кадра', async ({ page }) => {
+  test.skip(!(await signIn(page)), 'учётной записи e2e нет и регистрация закрыта')
+
+  const title = `Отклонение ${Date.now()}`
+  await page.getByRole('button', { name: '+ Новый проект' }).click()
+  await page.getByPlaceholder('Название').fill(title)
+  await page.getByRole('button', { name: 'Создать' }).click()
+  await page.getByRole('link', { name: title }).click()
+
+  await page.locator('[data-assistant-fab]').click()
+  const panel = page.locator('[data-assistant-panel]')
+  await expect(panel).toBeVisible()
+  if (await panel.getByText('Помощник выключен на этом стенде').isVisible().catch(() => false)) {
+    test.skip(true, 'помощник выключен на стенде')
+  }
+  const input = panel.getByLabel('Сообщение помощнику')
+  await expect(input).toBeEnabled({ timeout: 15_000 })
+  await input.fill('Добавь главу «Пролог» с описанием начала истории')
+  await panel.getByRole('button', { name: 'Спросить' }).click()
+  await expect(panel.getByText('Создал главу «Пролог».')).toBeVisible({ timeout: 90_000 })
+  // Строку дерева ждём ДО проверок текста: редактор рисует кадр не мгновенно, а
+  // проверка текста без этой опоры падала на медленном раннере.
+  await expect(page.locator('.ed-row--chapter', { hasText: 'Пролог' }).first()).toBeVisible({
+    timeout: 45_000,
+  })
+
+  await input.fill('Перепиши главу короче')
+  await panel.getByRole('button', { name: 'Спросить' }).click()
+  const proposals = panel.locator('[data-assistant-proposals]')
+  await expect(proposals).toBeVisible({ timeout: 90_000 })
+
+  await proposals.getByRole('button', { name: 'Отклонить' }).click()
+  await expect(panel.locator('[data-assistant-proposal-note]')).toContainText('проект не изменился', {
+    timeout: 30_000,
+  })
+  await expect(panel.locator('[data-assistant-proposals]')).toHaveCount(0)
+  // Текст кадра прежний.
+  await expect(page.getByText('Так начинается история.').first()).toBeAttached({
+    timeout: 30_000,
+  })
+})
