@@ -73,12 +73,23 @@
      вертикальный свайп прокруткой списка: перенос пальцем начинается за ручку
      или горизонтальным движением (см. EditorsPanel). */
   position: relative; touch-action: pan-y;
+  /* Сниппет поиска встаёт второй строкой внутри той же кнопки (см. .ed-row__snippet),
+     поэтому строке разрешено переноситься. Иначе он сжимал бы название и мешал
+     бейджам — ровно то, чего не хватало фильтру по одному названию. */
+  flex-wrap: wrap;
 }
 .ed-row:hover { border-color: var(--fg-muted); }
 .ed-row--sub { background: transparent; }
 .ed-row--active { border-color: var(--accent); }
 .ed-row__mark { color: var(--fg-muted); flex: 0 0 auto; font-variant-numeric: tabular-nums; }
 .ed-row__name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Сниппет занимает всю ширину под названием: он длиннее названия и обрезается
+   многоточием, а не переносится — список остаётся списком, а не потоком текста. */
+.ed-row__snippet {
+  flex: 1 0 100%; order: 10;
+  color: var(--fg-muted); font-size: 12px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .ed-row__badge {
   flex: 0 0 auto; color: var(--fg-muted); font-size: 12px;
   border: 1px solid var(--border); border-radius: 999px; padding: 0 6px;

@@ -2,6 +2,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import * as Y from 'yjs'
 import { yAddEvent, yEventParentId } from '../../collab/yprovider'
+import { ensureText } from '../../collab/text'
 import { EditorsPanel } from './EditorsPanel'
 
 /**
@@ -237,5 +238,68 @@ describe('EditorsPanel — перетаскивание событий', () => {
     // Ручка захвата — не текст для скринридера, а только цель для пальца.
     expect(row.querySelector('.ed-row__grip')?.getAttribute('aria-hidden')).toBe('true')
     expect(rowList().length).toBe(3)
+  })
+})
+
+/** Дописать текст кадра: панель читает его из Y.Text (`body_text`). */
+function withBody(map: Y.Map<unknown>, body: string) {
+  const text = ensureText(map, 'body')
+  text.insert(0, body)
+}
+
+const searchBox = () => screen.getByLabelText('Поиск по проекту')
+const snippetOf = (title: string) =>
+  rowEl(title)?.querySelector('[data-ed-snippet]')?.textContent ?? null
+
+describe('EditorsPanel — поиск по тексту проекта', () => {
+  it('находит кадр по тексту, а не только по названию', () => {
+    const { events, chapter1, chapter2 } = makeEvents()
+    withBody(chapter1, 'Так начинается история на станции «Маяк».')
+    withBody(chapter2, 'Здесь про ветер и песок.')
+    show(events)
+
+    // До поиска видны все три строки.
+    expect(rowList()).toHaveLength(3)
+    fireEvent.change(searchBox(), { target: { value: 'маяк' } })
+
+    // Нашлась только глава, в тексте которой есть это слово.
+    expect(rowList()).toEqual([{ title: 'Глава 1', depth: 0 }])
+    expect(snippetOf('Глава 1')).toContain('Маяк')
+    expect(screen.getByText('найдено 1 из 3')).toBeTruthy()
+  })
+
+  it('попадание в название показывается без сниппета', () => {
+    const { events, chapter1 } = makeEvents()
+    withBody(chapter1, 'Текст без искомого слова.')
+    show(events)
+
+    fireEvent.change(searchBox(), { target: { value: 'Глава 2' } })
+
+    expect(rowList()).toEqual([{ title: 'Глава 2', depth: 0 }])
+    // Сниппет — про попадание в текст; у названия его нет, строка не удлиняется.
+    expect(snippetOf('Глава 2')).toBeNull()
+  })
+
+  it('очистка запроса возвращает весь список', () => {
+    const { events, chapter1 } = makeEvents()
+    withBody(chapter1, 'Так начинается история на станции «Маяк».')
+    show(events)
+
+    fireEvent.change(searchBox(), { target: { value: 'маяк' } })
+    expect(rowList()).toHaveLength(1)
+    fireEvent.change(searchBox(), { target: { value: '' } })
+    expect(rowList()).toHaveLength(3)
+    expect(screen.getByText('событий: 3')).toBeTruthy()
+  })
+
+  it('пустой результат честно говорит, что ничего не найдено', () => {
+    const { events } = makeEvents()
+    show(events)
+
+    fireEvent.change(searchBox(), { target: { value: 'нет-такого-слова' } })
+
+    expect(rowList()).toHaveLength(0)
+    expect(screen.getByText('Ничего не найдено.')).toBeTruthy()
+    expect(screen.getByText('найдено 0 из 3')).toBeTruthy()
   })
 })

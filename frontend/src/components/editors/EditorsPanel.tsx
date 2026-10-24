@@ -3,7 +3,8 @@ import { createPortal } from 'react-dom'
 import { buildEventTree, DEFAULT_MAX_DEPTH, type EventLike, type EventTreeNode } from '../../collab/eventTree'
 import { checkMove, type DropPlace, type MoveReject } from '../../collab/reorder'
 import { editingPeers, typingLabel, type PeerState } from '../../collab/awareness'
-import { titleString } from '../../collab/text'
+import { textString, titleString } from '../../collab/text'
+import { isSearchQuery, searchProject } from '../../lib/projectSearch'
 import {
   previewMarkdownImport,
   readImportErrorMessage,
@@ -87,6 +88,11 @@ interface NavRow {
   number: string
   depth: number
   title: string
+  /**
+   * Текст кадра — только для поиска. В списке он не рисуется целиком: строке хватает
+   * названия, а текст виден в редакторе справа.
+   */
+  body: string
   childCount: number
   isChapter: boolean
 }
@@ -456,6 +462,14 @@ export function EditorsPanel({
       title: titleString(m),
     })).filter((e) => e.id.length > 0)
 
+    // Текст кадров читается отдельным проходом и только для поиска: тянуть `body` в
+    // дерево незачем (по нему не строятся связи), а список всё равно обходится целиком.
+    const bodies = new Map<string, string>()
+    for (const map of events.toArray() as YMap[]) {
+      const id = (map.get('id') as string | undefined) ?? ''
+      if (id) bodies.set(id, textString(map, 'body'))
+    }
+
     // Номер считаем обходом дерева: «01», «01.2», «01.2.1» — как в кадрах
     // таймлайна, чтобы в подписи переноса число совпадало с видимым номером.
     const out: NavRow[] = []
@@ -466,6 +480,7 @@ export function EditorsPanel({
         number,
         depth: node.depth,
         title: node.item.title || 'Без названия',
+        body: bodies.get(node.item.id) ?? '',
         childCount: node.children.length,
         isChapter: node.depth === 0,
       })
@@ -523,11 +538,34 @@ export function EditorsPanel({
       )
     : null
 
+  /**
+   * Что показать в списке при введённом запросе.
+   *
+   * Ищем и по названию, и по тексту (lib/projectSearch): раньше фильтр знал только
+   * название, и «найди, где я писал про маяк» не работало — приходилось помнить, в какой
+   * это главе. Для попаданий в текст рядом со строкой показывается сниппет: по названию
+   * кадра не всегда понятно, почему он в результатах.
+   */
+  const hits = useMemo(() => searchProject(rows, filter), [rows, filter])
   const visibleRows = useMemo(() => {
-    const q = filter.trim().toLowerCase()
-    if (!q) return rows
-    return rows.filter((r) => r.title.toLowerCase().includes(q))
-  }, [rows, filter])
+    if (!isSearchQuery(filter)) return rows
+    const byId = new Map(rows.map((row) => [row.id, row]))
+    const out: NavRow[] = []
+    for (const hit of hits) {
+      const row = byId.get(hit.id)
+      if (row) out.push(row)
+    }
+    return out
+  }, [rows, hits, filter])
+  // Сниппет показываем только у попаданий в текст: у попадания в название он повторяет
+  // начало кадра и только удлиняет строку.
+  const snippets = useMemo(() => {
+    const out = new Map<string, string>()
+    for (const hit of hits) {
+      if (!hit.inTitle && hit.snippet) out.set(hit.id, hit.snippet)
+    }
+    return out
+  }, [hits])
 
   const selectedRow = rows.find((r) => r.id === selectedId)
   const attachedIds = ((selectedMap?.get('assets') as string[] | undefined) ?? []).filter(Boolean)
@@ -1270,12 +1308,15 @@ export function EditorsPanel({
           <input
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            placeholder="Фильтр по названию…"
-            aria-label="Фильтр событий"
+            placeholder="Поиск по названию и тексту…"
+            aria-label="Поиск по проекту"
             className="ed-filter"
+            data-ed-search
           />
           <span className="muted ed-panel__count">
-            {filter ? `${visibleRows.length} из ${rows.length}` : `событий: ${rows.length}`}
+            {isSearchQuery(filter)
+              ? `найдено ${visibleRows.length} из ${rows.length}`
+              : `событий: ${rows.length}`}
           </span>
         </div>
       </div>
@@ -1423,6 +1464,14 @@ export function EditorsPanel({
                 <span className="ed-row__grip" aria-hidden="true">⠿</span>
                 <span className="ed-row__mark">{row.isChapter ? '#' : '└'}</span>
                 <span className="ed-row__name">{row.title}</span>
+                {/* Сниппет — только у попаданий в ТЕКСТ: по названию не всегда видно,
+                    почему кадр в результатах поиска. Строкой ниже, а не вместо названия:
+                    название остаётся ориентиром в дереве. */}
+                {snippets.has(row.id) && (
+                  <span className="ed-row__snippet" data-ed-snippet>
+                    {snippets.get(row.id)}
+                  </span>
+                )}
                 {/* Отметки соседей — до бейджа под-событий: имя строки обрезается
                     многоточием, и «кто здесь» не должно уезжать за край первым. */}
                 {editors.length > 0 && (
