@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -40,10 +42,29 @@ type MoveInput struct {
 type Service struct {
 	store *store.Store
 	proj  *projects.Service
+	// logger — только для некритичных путей (история версий): «версия не сохранилась»
+	// не должна ломать сохранение проекта, но и молчать об этом нельзя.
+	logger *slog.Logger
+	// revisions — как часто снимать версии и сколько их держать (см. revisions.go).
+	revisions RevisionPolicy
+	// liveRestore — живая комната для восстановления версии (может быть nil).
+	liveRestore LiveRestore
 }
 
 func New(s *store.Store, proj *projects.Service) *Service {
-	return &Service{store: s, proj: proj}
+	return &Service{
+		store:     s,
+		proj:      proj,
+		logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+		revisions: DefaultRevisionPolicy(),
+	}
+}
+
+// UseLogger подключает журнал сервиса.
+func (s *Service) UseLogger(logger *slog.Logger) {
+	if logger != nil {
+		s.logger = logger
+	}
 }
 
 // GetYjsState — последний CRDT-снапшот проекта и его ревизия (чтение: viewer+).

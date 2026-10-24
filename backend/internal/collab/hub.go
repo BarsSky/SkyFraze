@@ -326,6 +326,46 @@ func (h *Hub) DeleteEventLive(
 	})
 }
 
+// LiveState — текущее состояние документа комнаты (пусто, если комнаты нет или её
+// документ ещё не загружен).
+//
+// Нужно истории версий: «Сохранить версию» должно снимать то, что видят редакторы
+// сейчас, а не прошлый снапшот базы — иначе версия отставала бы на период сохранения
+// комнаты (а при активной работе это заметно).
+func (h *Hub) LiveState(_ context.Context, projectID uuid.UUID) []byte {
+	h.mu.RLock()
+	room := h.rooms[projectID]
+	h.mu.RUnlock()
+	if room == nil {
+		return nil
+	}
+	return room.state()
+}
+
+// RestoreLive приводит документ живой комнаты к состоянию версии.
+//
+// Второй результат — «комната сделала работу»: false означает «комнаты нет», и тогда
+// вызывающий правит снапшот базы сам (как у вставки и привязки вложения).
+func (h *Hub) RestoreLive(
+	ctx context.Context, projectID, by uuid.UUID, target []yjs.EventFull,
+) (yjs.RestoreResult, bool, error) {
+	var result yjs.RestoreResult
+	outcome, err := h.editLive(ctx, projectID, by, "restored from revision",
+		func(doc *yjs.Doc) (bool, error) {
+			restored, err := doc.Restore(target)
+			result = restored
+			if err != nil {
+				return false, err
+			}
+			// found=false — «менять нечего»: апдейт не нужен, но работу комната сделала.
+			return restored.Changed(), nil
+		})
+	if err != nil {
+		return result, false, err
+	}
+	return result, outcome.Handled, nil
+}
+
 // InsertLive вставляет события в документ ЖИВОЙ комнаты и рассылает апдейт.
 //
 // Handled=false означает «комнаты нет»: тогда вызывающий пишет снапшот в базу
@@ -855,6 +895,10 @@ func (r *Room) persistFromAnyClient(ctx context.Context, ev *events.Service, log
 			r.docMu.Unlock()
 			logger.Warn("collab: snapshot save failed", "project", r.projectID, "err", err)
 			saveErr = fmt.Errorf("снапшот не сохранился (%v)", err)
+		} else {
+			// История версий: снапшот уже закодирован, второе кодирование того же
+			// документа было бы лишней работой. Троттлинг и удержание — в events.
+			ev.MaybeSaveRevision(ctx, r.projectID, by, state)
 		}
 	}
 

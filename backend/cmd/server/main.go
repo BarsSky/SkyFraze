@@ -141,6 +141,14 @@ func main() {
 	go sweeper.Run(ctx)
 
 	evSvc := events.New(st, projSvc)
+	evSvc.UseLogger(logger)
+	// История версий: как часто снимать автоснимки и сколько их держать. Значения из
+	// окружения, чтобы на стенде можно было подстроить без пересборки.
+	evSvc.UseRevisionPolicy(events.RevisionPolicy{
+		Interval: time.Duration(cfg.VersionsIntervalMinutes) * time.Minute,
+		Keep:     cfg.VersionsKeep,
+		MaxBytes: int64(cfg.VersionsMaxMB) << 20,
+	})
 	evH := events.NewHandler(evSvc, logger)
 
 	teamsSvc := teams.New(st, projSvc)
@@ -221,6 +229,9 @@ func main() {
 	// редактирует, источник правды — он, и запись только в снапшот базы затёрлась
 	// бы ближайшим сохранением комнаты.
 	transferSvc.UseLiveDoc(collabHub)
+	// Восстановление версии тоже идёт через живую комнату: правка должна доехать до
+	// открытых вкладок обычным апдейтом, а не ждать перезагрузки.
+	evSvc.UseLiveRestore(collabHub)
 
 	// --- router ---
 	r := chi.NewRouter()
@@ -359,6 +370,10 @@ func main() {
 
 		// Публикация: владелец включает/выключает показ истории в ленте.
 		r.Post("/publication", feedH.Publish)
+
+		// История версий проекта: список, предпросмотр, ручная версия и восстановление.
+		// Читают viewer+, меняют editor+ (проверяется в events.Service).
+		evH.MountVersions(r)
 
 		r.Post("/assets", assetsH.Upload(authSvc))
 		r.Get("/assets", assetsH.List(authSvc))

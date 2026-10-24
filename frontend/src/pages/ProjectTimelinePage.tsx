@@ -4,6 +4,7 @@ import { TimelineStage, type AssetLookup } from '../components/timeline/Timeline
 import { ProjectLoading } from '../components/timeline/ProjectLoading'
 import { EditorsPanel } from '../components/editors/EditorsPanel'
 import { AssistantDock } from '../components/assistant/AssistantDock'
+import { VersionsModal } from '../components/versions/VersionsModal'
 import { PresenceBar } from '../components/collab/PresenceBar'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { useCollab, yAddEvent, type YMap } from '../collab/yprovider'
@@ -45,6 +46,8 @@ export function ProjectTimelinePage() {
   const [attempt, setAttempt] = useState(0)
   /** Открыто ли плавающее окно помощника: кнопка «ИИ-помощник» в шапке стадии тоже его открывает. */
   const [assistantOpen, setAssistantOpen] = useState(false)
+  /** Открыто окно истории версий: версии нужны редко, поэтому по кнопке. */
+  const [versionsOpen, setVersionsOpen] = useState(false)
 
   const collab = useCollab(projectId)
   const events = collab?.events
@@ -393,9 +396,21 @@ export function ProjectTimelinePage() {
                 <button className="secondary" onClick={openEditors}>
                   Редакторы
                 </button>
+                <button className="secondary" onClick={() => setVersionsOpen(true)} data-versions-open>
+                  Версии
+                </button>
               </>
             ) : undefined
           }
+        />
+      )}
+
+      {versionsOpen && (
+        <VersionsModal
+          projectId={projectId}
+          canEdit={showEditors}
+          onClose={() => setVersionsOpen(false)}
+          onRestored={assistantChanged}
         />
       )}
 

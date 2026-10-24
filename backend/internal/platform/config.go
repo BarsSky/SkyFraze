@@ -104,6 +104,18 @@ type Config struct {
 	// поэтому по умолчанию 0, а в интерфейсе расход видно всегда.
 	AITokensPerDay int `envconfig:"AI_TOKENS_PER_DAY" default:"0"`
 
+	// --- история версий проекта ---
+
+	// VersionsIntervalMinutes — как часто сервер снимает автоснимок версии проекта.
+	// Пять минут — компромисс: чаще не нужно (человек не пишет быстрее, чем успевает
+	// захотеть «верни как было»), реже теряется смысл «часа назад».
+	VersionsIntervalMinutes int `envconfig:"VERSIONS_INTERVAL_MINUTES" default:"5"`
+	// VersionsKeep — сколько версий держать на проект (0 — без предела по количеству).
+	VersionsKeep int `envconfig:"VERSIONS_KEEP" default:"100"`
+	// VersionsMaxMB — предел суммы снапшотов версий на проект, МиБ (0 — без предела).
+	// Снапшот большого проекта — сотни килобайт, и без предела история съела бы диск.
+	VersionsMaxMB int `envconfig:"VERSIONS_MAX_MB" default:"32"`
+
 	// --- генерация изображений (A1111-совместимый сервер) ---
 	//
 	// AIImageURL — адрес сервера генерации (Automatic1111, Forge, SD.Next): у них общий
