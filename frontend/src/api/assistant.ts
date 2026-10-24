@@ -150,6 +150,34 @@ export interface AITurn {
   message: AIMessage
   /** Что можно сделать дальше: считает сервер по состоянию проекта, а не модель. */
   suggestions?: AISuggestion[]
+  /**
+   * Правки существующих кадров, которые агент ПРЕДЛОЖИЛ, но не сделал.
+   *
+   * Отдельно от `changes`, потому что это разные факты: `changes` — проект уже изменился,
+   * предложение — ещё нет. Человек применяет его кнопкой, и до нажатия текст в проекте
+   * прежний.
+   */
+  proposals?: AIProposal[]
+}
+
+/**
+ * Предложенная агентом правка кадра.
+ *
+ * `kind`: `update_text` — переписать заголовок и/или текст, `delete_event` — удалить кадр.
+ * `old*` — снимок ДО: по нему показывается «было» и работает «Вернуть» (для удаления
+ * возврата нет — кадр уже убран из документа).
+ */
+export interface AIProposal {
+  id: string
+  kind: string
+  /** `pending` — ждёт решения, `applied` — применена и ещё может быть возвращена. */
+  status: string
+  eventId: string
+  eventTitle: string
+  oldTitle: string
+  oldBody: string
+  newTitle: string
+  newBody: string
 }
 
 /** Одна роль агента, из которой выбирает владелец. */
@@ -388,6 +416,57 @@ export async function deleteAIEndpoint(id: string): Promise<void> {
   await http.delete(`ai/endpoints/${encodeURIComponent(id)}`)
 }
 
+/**
+ * Предложения правок, которые ждут решения.
+ *
+ * Спрашиваем при открытии окна, а не только из ответа модели: предложение живёт на
+ * сервере, и «я закрыл вкладку, пока агент предлагал правку» не должно означать
+ * «предложение пропало».
+ */
+export async function listAIProposals(projectId: string): Promise<AIProposal[]> {
+  const raw = await http
+    .get(`projects/${encodeURIComponent(projectId)}/ai/proposals`)
+    .json<unknown>()
+  return parseProposals(raw)
+}
+
+/** Применить предложенную правку. Правку в документ пишет сервер. */
+export async function applyAIProposal(
+  projectId: string,
+  proposalId: string,
+): Promise<{ proposal: AIProposal | null; warning: string }> {
+  const raw = await http
+    .post(
+      `projects/${encodeURIComponent(projectId)}/ai/proposals/${encodeURIComponent(proposalId)}/apply`,
+      { timeout: 30000 },
+    )
+    .json<unknown>()
+  const record = asRecord(raw)
+  return { proposal: parseProposal(record?.proposal), warning: asText(record?.warning) }
+}
+
+/** Вернуть прежний текст кадра (только для перезаписи). */
+export async function revertAIProposal(
+  projectId: string,
+  proposalId: string,
+): Promise<{ proposal: AIProposal | null; warning: string }> {
+  const raw = await http
+    .post(
+      `projects/${encodeURIComponent(projectId)}/ai/proposals/${encodeURIComponent(proposalId)}/revert`,
+      { timeout: 30000 },
+    )
+    .json<unknown>()
+  const record = asRecord(raw)
+  return { proposal: parseProposal(record?.proposal), warning: asText(record?.warning) }
+}
+
+/** Отказаться от предложения: проект не меняется. */
+export async function discardAIProposal(projectId: string, proposalId: string): Promise<void> {
+  await http.post(
+    `projects/${encodeURIComponent(projectId)}/ai/proposals/${encodeURIComponent(proposalId)}/discard`,
+  )
+}
+
 /** Разбор `GET /api/ai/endpoints`. */
 export function parseAIEndpoints(raw: unknown): AIEndpoint[] {
   const record = asRecord(raw)
@@ -476,6 +555,8 @@ export interface AIStreamEvent {
   text?: string
   call?: AICall
   change?: AIChange
+  /** Пришло предложение правки (тип события `proposal`): проект ещё НЕ изменён. */
+  proposal?: AIProposal
   turn?: AITurn
   error?: string
 }
@@ -486,6 +567,8 @@ export interface AIStreamHandlers {
   onDelta?: (text: string) => void
   onCall?: (call: AICall) => void
   onChange?: (change: AIChange) => void
+  /** Пришло предложение правки: показать его человеку (проект ещё не изменён). */
+  onProposal?: (proposal: AIProposal) => void
 }
 
 /** Необязательная часть вопроса: картинки, обработчики событий и «стоп». */
@@ -541,6 +624,7 @@ function parseStreamEvent(payload: string): AIStreamEvent {
     text: asText(record?.text) || undefined,
     call: parseCall(record?.call) ?? undefined,
     change: parseChange(record?.change) ?? undefined,
+    proposal: parseProposal(record?.proposal) ?? undefined,
     turn: record?.turn != null ? parseAITurn(record.turn) : undefined,
     error: asText(record?.error) || undefined,
   }
@@ -589,6 +673,10 @@ export async function streamAIMessage(
         return null
       case 'change':
         if (event.change) handlers.onChange?.(event.change)
+        return null
+      case 'proposal':
+        // Предложение — не изменение: проект ещё прежний, и человек должен решить сам.
+        if (event.proposal) handlers.onProposal?.(event.proposal)
         return null
       case 'done':
         return event.turn ?? null
@@ -786,7 +874,43 @@ export function parseAITurn(raw: unknown): AITurn {
           })
           .filter((item): item is AISuggestion => item !== null)
       : [],
+    proposals: Array.isArray(record?.proposals)
+      ? record.proposals
+          .map(parseProposal)
+          .filter((item): item is AIProposal => item !== null)
+      : [],
   }
+}
+
+/** Разбор одного предложения правки. */
+export function parseProposal(raw: unknown): AIProposal | null {
+  const record = asRecord(raw)
+  const id = asText(record?.id)
+  const eventId = asText(record?.event_id)
+  if (!id || !eventId) return null
+  return {
+    id,
+    kind: asText(record?.kind) || 'update_text',
+    status: asText(record?.status) || 'pending',
+    eventId,
+    eventTitle: asText(record?.event_title),
+    oldTitle: asText(record?.old_title),
+    oldBody: asText(record?.old_body),
+    newTitle: asText(record?.new_title),
+    newBody: asText(record?.new_body),
+  }
+}
+
+/** Разбор `GET /api/projects/{id}/ai/proposals`. */
+export function parseProposals(raw: unknown): AIProposal[] {
+  const record = asRecord(raw)
+  if (!Array.isArray(record?.proposals)) return []
+  const out: AIProposal[] = []
+  for (const item of record.proposals) {
+    const proposal = parseProposal(item)
+    if (proposal !== null) out.push(proposal)
+  }
+  return out
 }
 
 function parseCall(raw: unknown): AICall | null {

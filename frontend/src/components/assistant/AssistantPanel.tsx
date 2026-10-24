@@ -1,17 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   addAIEndpoint,
+  applyAIProposal,
   changeLabel,
   deleteAIConsent,
   deleteAIEndpoint,
   deleteAIKey,
+  discardAIProposal,
   getAIConfig,
   getAISettings,
   isCloudModelRef,
   listAIEndpoints,
   listAIModels,
+  listAIProposals,
   needsConsent,
   readAIError,
+  revertAIProposal,
   saveAIKey,
   saveAISettings,
   streamAIMessage,
@@ -19,6 +23,7 @@ import {
   type AIConfig,
   type AIChange,
   type AIEndpoint,
+  type AIProposal,
   type AISuggestion,
   type AIMessage,
   type AIModel,
@@ -111,6 +116,18 @@ export function AssistantPanel({
   })
   const [endpointNote, setEndpointNote] = useState<string | null>(null)
   const [endpointBusy, setEndpointBusy] = useState(false)
+  /**
+   * Предложенные агентом правки существующих кадров.
+   *
+   * Живут на сервере, а не в окне: загружаем при открытии, чтобы «я закрыл вкладку, пока
+   * агент предлагал правку» не означало «предложение пропало».
+   */
+  const [proposals, setProposals] = useState<AIProposal[]>([])
+  /** Применённые в этой сессии: у перезаписи есть «Вернуть», у удаления — нет. */
+  const [appliedProposals, setAppliedProposals] = useState<AIProposal[]>([])
+  const [proposalNote, setProposalNote] = useState<string | null>(null)
+  /** Какую правку сейчас применяем — чтобы не применить две по двойному клику. */
+  const [proposalBusy, setProposalBusy] = useState<string | null>(null)
   const [conversationId, setConversationId] = useState('new')
   const [messages, setMessages] = useState<AIMessage[]>([])
   const [changes, setChanges] = useState<AIChange[]>([])
@@ -227,6 +244,27 @@ export function AssistantPanel({
       alive = false
     }
   }, [open, config?.enabled, endpoints])
+
+  // Предложения правок живут на сервере: загружаем их при открытии окна, чтобы
+  // «закрыл вкладку, пока агент предлагал правку» не означало «предложение пропало».
+  useEffect(() => {
+    if (!open || config?.enabled !== true) return
+    let alive = true
+    listAIProposals(projectId)
+      .then((list) => {
+        if (!alive) return
+        // Сервер отдаёт и ожидающие, и применённые за последнюю неделю: у вторых есть
+        // «Вернуть», и это не должно пропадать при перезагрузке страницы.
+        setProposals(list.filter((item) => item.status !== 'applied'))
+        setAppliedProposals(list.filter((item) => item.status === 'applied'))
+      })
+      .catch(() => {
+        // Не показать список — не то же самое, что «предложений нет»: молчим, а не врём.
+      })
+    return () => {
+      alive = false
+    }
+  }, [open, config?.enabled, projectId])
 
   // Модели спрашиваются у провайдера, поэтому только когда он выбран: иначе каждое
   // открытие окна дёргало бы чужие API.
@@ -475,6 +513,74 @@ export function AssistantPanel({
     [providerId],
   )
 
+  /**
+   * Применить предложенную правку.
+   *
+   * Правку в документ пишет сервер — окно не правит текст само. После применения
+   * предложение уходит из «ждут решения» в «применены»: у перезаписи там есть «Вернуть»,
+   * у удаления — нет (кадр уже убран, и восстанавливать его пришлось бы вставкой).
+   */
+  const applyProposal = useCallback(
+    async (proposal: AIProposal) => {
+      setProposalBusy(proposal.id)
+      setProposalNote(null)
+      try {
+        const result = await applyAIProposal(projectId, proposal.id)
+        setProposals((list) => list.filter((item) => item.id !== proposal.id))
+        setAppliedProposals((list) => [...list, result.proposal ?? proposal])
+        setProposalNote(
+          result.warning ||
+            (proposal.kind === 'delete_event'
+              ? 'Кадр удалён.'
+              : 'Текст изменён — правка уже у всех, у кого проект открыт.'),
+        )
+        // Дерево и лента на странице должны увидеть правку без перезагрузки.
+        onProjectChanged()
+      } catch (e) {
+        setProposalNote((await serverErrorMessage(e)) ?? 'Не удалось применить правку.')
+      } finally {
+        setProposalBusy(null)
+      }
+    },
+    [projectId, onProjectChanged],
+  )
+
+  const revertProposal = useCallback(
+    async (proposal: AIProposal) => {
+      setProposalBusy(proposal.id)
+      setProposalNote(null)
+      try {
+        const result = await revertAIProposal(projectId, proposal.id)
+        setAppliedProposals((list) => list.filter((item) => item.id !== proposal.id))
+        setProposals((list) => [...list, result.proposal ?? proposal])
+        setProposalNote(result.warning || 'Вернул прежний текст.')
+        onProjectChanged()
+      } catch (e) {
+        setProposalNote((await serverErrorMessage(e)) ?? 'Не удалось вернуть прежний текст.')
+      } finally {
+        setProposalBusy(null)
+      }
+    },
+    [projectId, onProjectChanged],
+  )
+
+  const discardProposal = useCallback(
+    async (proposal: AIProposal) => {
+      setProposalBusy(proposal.id)
+      setProposalNote(null)
+      try {
+        await discardAIProposal(projectId, proposal.id)
+        setProposals((list) => list.filter((item) => item.id !== proposal.id))
+        setProposalNote('Предложение отклонено — проект не изменился.')
+      } catch (e) {
+        setProposalNote((await serverErrorMessage(e)) ?? 'Не удалось отклонить предложение.')
+      } finally {
+        setProposalBusy(null)
+      }
+    },
+    [projectId],
+  )
+
   const startNewConversation = useCallback(() => {
     setConversationId('new')
     setMessages([])
@@ -562,6 +668,12 @@ export function AssistantPanel({
           },
           onCall: (call) => setLiveCalls((current) => [...current, call.detail || call.name]),
           onChange: (change) => setChanges((current) => [...current, change]),
+          // Предложение показываем сразу, как только оно пришло: пока идёт ответ, оно уже
+          // существует на сервере, и человек может применить его, не дожидаясь конца.
+          onProposal: (proposal) =>
+            setProposals((current) =>
+              current.some((item) => item.id === proposal.id) ? current : [...current, proposal],
+            ),
         },
         signal: controller.signal,
       })
@@ -573,6 +685,15 @@ export function AssistantPanel({
       ])
       setChanges(turn.changes)
       setSuggestions(turn.suggestions ?? [])
+      // Предложения из итога — на случай, если потоковое событие не доехало (обрыв
+      // соединения ровно между вызовом инструмента и его событием).
+      if (turn.proposals !== undefined && turn.proposals.length > 0) {
+        const fromTurn = turn.proposals
+        setProposals((current) => {
+          const known = new Set(current.map((item) => item.id))
+          return [...current, ...fromTurn.filter((item) => !known.has(item.id))]
+        })
+      }
       // Счётчик расхода обновляем локально: расход пришёл вместе с ответом, и лишний
       // запрос к серверу ради одной цифры не нужен.
       const spentNow = (turn.message.tokensIn ?? 0) + (turn.message.tokensOut ?? 0)
@@ -1206,6 +1327,84 @@ export function AssistantPanel({
             </div>
           )}
 
+          {/* Предложенные правки существующих кадров. Отдельный блок и отдельные кнопки:
+              проект ещё НЕ изменился, и «применить» — решение человека, а не агента. */}
+          {proposals.length > 0 && (
+            <div className="ai-proposals" data-assistant-proposals>
+              <strong>Предложенные правки</strong>
+              <ul>
+                {proposals.map((proposal) => (
+                  <li key={proposal.id} className="ai-proposals__item" data-proposal-id={proposal.id}>
+                    <span className="ai-proposals__title">
+                      {proposal.kind === 'delete_event'
+                        ? `Удалить кадр «${proposal.eventTitle}»`
+                        : `Переписать кадр «${proposal.eventTitle}»`}
+                    </span>
+                    {proposal.kind !== 'delete_event' && (
+                      <span className="ai-proposals__diff">
+                        {diffSummary(proposal)}
+                      </span>
+                    )}
+                    <span className="ai-proposals__actions">
+                      <button
+                        onClick={() => void applyProposal(proposal)}
+                        disabled={proposalBusy !== null}
+                      >
+                        {proposalBusy === proposal.id ? 'Применяю…' : 'Применить'}
+                      </button>
+                      <button
+                        className="secondary"
+                        onClick={() => void discardProposal(proposal)}
+                        disabled={proposalBusy !== null}
+                      >
+                        Отклонить
+                      </button>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Применённые: текст уже новый, но «Вернуть» ещё месяц-два имеет смысл — пока
+              человек не закрыл окно. Для удаления возврата нет, и кнопки тоже. */}
+          {appliedProposals.length > 0 && (
+            <div className="ai-proposals ai-proposals--applied" data-assistant-applied>
+              <strong>Правки применены</strong>
+              <ul>
+                {appliedProposals.map((proposal) => (
+                  <li key={proposal.id} className="ai-proposals__item">
+                    <span className="ai-proposals__title">
+                      {proposal.kind === 'delete_event'
+                        ? `Удалён кадр «${proposal.eventTitle}»`
+                        : `Переписан кадр «${proposal.eventTitle}»`}
+                    </span>
+                    {proposal.kind !== 'delete_event' && (
+                      <span className="ai-proposals__actions">
+                        <button
+                          className="secondary"
+                          onClick={() => void revertProposal(proposal)}
+                          disabled={proposalBusy !== null}
+                        >
+                          Вернуть прежний текст
+                        </button>
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Итог последнего действия с правкой — ОТДЕЛЬНО от блоков: после отклонения
+              или применения предложение исчезает, а «проект не изменился» / «текст
+              изменён» человек должен успеть прочитать. */}
+          {proposalNote != null && (
+            <p className="ai-note ai-note--padded" data-assistant-proposal-note>
+              {proposalNote}
+            </p>
+          )}
+
           {/* Что дальше — предложения сервера. Нажатие ПОДСТАВЛЯЕТ текст в поле ввода
               (как подсказки в пустом чате): человек видит, что уйдёт модели, и может
               поправить формулировку до отправки. */}
@@ -1359,6 +1558,33 @@ export function AssistantPanel({
       )}
     </>
   )
+}
+
+/**
+ * Коротко, что изменится: «заголовок: было → станет» и первая строка текста.
+ *
+ * Полный diff здесь был бы не нужен: человек решает «применять или нет», а не читает
+ * сравнение целиком — полный текст кадра он посмотрит в редакторе до или после.
+ */
+function diffSummary(proposal: AIProposal): string {
+  const parts: string[] = []
+  if (proposal.newTitle !== '' && proposal.newTitle !== proposal.oldTitle) {
+    parts.push(`заголовок: «${proposal.oldTitle}» → «${proposal.newTitle}»`)
+  }
+  if (proposal.newBody !== proposal.oldBody) {
+    const before = firstLine(proposal.oldBody)
+    const after = firstLine(proposal.newBody)
+    parts.push(`текст: «${before}» → «${after}»`)
+  }
+  return parts.length > 0 ? parts.join('; ') : 'без изменений'
+}
+
+/** Первая содержательная строка текста, обрезанная по словам. */
+function firstLine(text: string): string {
+  const clean = text.replace(/[#*_>`]/g, '').trim().split('\n').find((line) => line.trim() !== '')
+  if (!clean) return 'пусто'
+  const trimmed = clean.trim()
+  return trimmed.length > 60 ? `${trimmed.slice(0, 60)}…` : trimmed
 }
 
 /**

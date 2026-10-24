@@ -35,11 +35,15 @@ import (
 
 // toolResult — итог одного вызова: что вернуть модели, что показать человеку и что
 // изменилось в проекте.
+//
+// change и proposal взаимоисключающие: создание кадра — это изменение проекта (оно уже
+// случилось), а правка существующего — предложение (случится, когда человек подтвердит).
 type toolResult struct {
-	call    ai.ToolCall
-	report  Call
-	payload any
-	change  *Change
+	call     ai.ToolCall
+	report   Call
+	payload  any
+	change   *Change
+	proposal *store.AIChange
 }
 
 // refusedCall — вызов, который не выполнялся (кончился лимит изменений).
@@ -69,6 +73,10 @@ func (s *Service) execute(
 		return s.toolCreate(ctx, actorID, userID, projectID, call, false)
 	case ToolCreateSub:
 		return s.toolCreate(ctx, actorID, userID, projectID, call, true)
+	case ToolUpdateText:
+		return s.toolUpdateText(ctx, userID, projectID, call)
+	case ToolDeleteEvent:
+		return s.toolDeleteEvent(ctx, userID, projectID, call)
 	case ToolGenerateImage:
 		return s.toolGenerateImage(ctx, actorID, userID, projectID, call, caps)
 	default:
@@ -172,6 +180,123 @@ func (s *Service) toolGenerateImage(
 			Title:  event.Title,
 		},
 	}
+}
+
+// toolUpdateText предлагает переписать кадр.
+//
+// Инструмент НЕ правит текст: он сохраняет предложение со снимком «до» и «после»
+// (store.CreateAIChange), а применяет его человек в окне помощника. Так «перепиши вторую
+// главу» не может случиться само — и это не осторожность ради осторожности: отменить
+// молчаливую перезапись чужого текста было бы нечем.
+func (s *Service) toolUpdateText(
+	ctx context.Context, userID, projectID uuid.UUID, call ai.ToolCall,
+) toolResult {
+	if s.editor == nil {
+		return refusedCall(call, "правка существующих кадров недоступна на этом стенде")
+	}
+	args, err := ParseUpdate(call.Arguments, s.limits)
+	if err != nil {
+		return refusedCall(call, err.Error())
+	}
+	event, ok := s.findEvent(ctx, projectID, args.EventID)
+	if !ok {
+		return refusedCall(call, "кадр не найден в этом проекте: возьмите идентификатор из list_events")
+	}
+	// Предложение без изменений — не предложение, а шум в окне: модель просит
+	// «переписать» тем же текстом, который уже есть.
+	sameTitle := args.Title == nil || *args.Title == event.Title
+	sameBody := args.Body == nil || *args.Body == event.Body
+	if sameTitle && sameBody {
+		return refusedCall(call, "предлагать нечего: текст и заголовок уже такие — "+
+			"передайте то, что должно измениться")
+	}
+
+	change, err := s.store.CreateAIChange(ctx, store.AIChange{
+		ProjectID: projectID, UserID: userID,
+		Kind: store.AIChangeUpdateText, EventID: event.ID, EventTitle: event.Title,
+		OldTitle: event.Title, OldBody: event.Body,
+		NewTitle: pickText(args.Title, event.Title),
+		NewBody:  pickText(args.Body, event.Body),
+	})
+	if err != nil {
+		return refusedCall(call, "не удалось сохранить предложение: "+err.Error())
+	}
+	s.logger.Info("ai: предложена правка кадра",
+		"project", projectID, "user", userID, "event", event.ID, "change", change.ID)
+
+	return toolResult{
+		call: call,
+		report: Call{Name: call.Name, OK: true,
+			Detail: "предложил " + proposalTitle(store.AIChangeUpdateText, event.Title)},
+		payload: map[string]any{
+			"proposal_id": change.ID.String(),
+			"event_id":    event.ID.String(),
+			"status":      "ждёт подтверждения человеком",
+			"note":        proposalNote(store.AIChangeUpdateText),
+		},
+		proposal: change,
+	}
+}
+
+// toolDeleteEvent предлагает удалить кадр.
+func (s *Service) toolDeleteEvent(
+	ctx context.Context, userID, projectID uuid.UUID, call ai.ToolCall,
+) toolResult {
+	if s.editor == nil {
+		return refusedCall(call, "удаление кадров недоступно на этом стенде")
+	}
+	eventID, _, err := ParseDelete(call.Arguments, s.limits)
+	if err != nil {
+		return refusedCall(call, err.Error())
+	}
+	event, ok := s.findEvent(ctx, projectID, eventID)
+	if !ok {
+		return refusedCall(call, "кадр не найден в этом проекте: возьмите идентификатор из list_events")
+	}
+	// Детей проверяем ДО предложения: предлагать то, что сервер заведомо не применит, —
+	// значит показать человеку кнопку, которая не работает.
+	list, err := s.store.ListEvents(ctx, projectID)
+	if err != nil {
+		return refusedCall(call, "не удалось прочитать проект: "+err.Error())
+	}
+	for _, row := range list {
+		if row.ParentID != nil && *row.ParentID == event.ID {
+			return refusedCall(call, "у кадра «"+event.Title+"» есть под-события: "+
+				"удалять главу вместе с детьми нельзя — предложи сначала удалить их по одному")
+		}
+	}
+
+	change, err := s.store.CreateAIChange(ctx, store.AIChange{
+		ProjectID: projectID, UserID: userID,
+		Kind: store.AIChangeDeleteEvent, EventID: event.ID, EventTitle: event.Title,
+		OldTitle: event.Title, OldBody: event.Body,
+	})
+	if err != nil {
+		return refusedCall(call, "не удалось сохранить предложение: "+err.Error())
+	}
+	s.logger.Info("ai: предложено удаление кадра",
+		"project", projectID, "user", userID, "event", event.ID, "change", change.ID)
+
+	return toolResult{
+		call: call,
+		report: Call{Name: call.Name, OK: true,
+			Detail: "предложил " + proposalTitle(store.AIChangeDeleteEvent, event.Title)},
+		payload: map[string]any{
+			"proposal_id": change.ID.String(),
+			"event_id":    event.ID.String(),
+			"status":      "ждёт подтверждения человеком",
+			"note":        proposalNote(store.AIChangeDeleteEvent),
+		},
+		proposal: change,
+	}
+}
+
+// pickText — новое значение, если оно задано, иначе прежнее.
+func pickText(next *string, current string) string {
+	if next == nil {
+		return current
+	}
+	return *next
 }
 
 // findEvent ищет кадр в проекции проекта.

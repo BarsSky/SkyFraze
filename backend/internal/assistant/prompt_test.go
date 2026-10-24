@@ -75,7 +75,7 @@ func TestSystemPromptCarriesCapabilitiesAndRole(t *testing.T) {
 		Text: true, Images: false, Generation: store.GenerationText,
 		ImageNote: "владелец проекта выбрал режим «только текст»",
 	}
-	prompt := systemPrompt(project, persona, 7, caps)
+	prompt := systemPrompt(project, persona, 7, caps, true)
 
 	for _, want := range []string{
 		"Нестор", "Маяк", "Летописец", "Держи хронологию.", "Без спойлеров.",

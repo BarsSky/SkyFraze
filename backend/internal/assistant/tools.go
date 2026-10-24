@@ -40,6 +40,8 @@ const (
 	ToolReadEvent     = "read_event"
 	ToolCreateChapter = "create_chapter"
 	ToolCreateSub     = "create_sub_event"
+	ToolUpdateText    = "update_event_text"
+	ToolDeleteEvent   = "delete_event"
 	ToolGenerateImage = "generate_image"
 )
 
@@ -52,7 +54,7 @@ var ErrUnknownTool = errors.New("неизвестный инструмент")
 // Набор зависит от возможностей (`caps`): инструмента, которого агент сейчас не может
 // выполнить, в списке НЕТ. Так модель физически не может пообещать нарисовать картинку,
 // когда генератора нет, — обещание, которое нельзя выполнить, хуже отказа.
-func ToolDefs(caps Capabilities) []ai.ToolDef {
+func ToolDefs(caps Capabilities, editing bool) []ai.ToolDef {
 	defs := []ai.ToolDef{
 		{
 			Name: ToolListEvents,
@@ -115,6 +117,43 @@ func ToolDefs(caps Capabilities) []ai.ToolDef {
 		)
 	}
 
+	// Предложения правок — только если правка вообще подключена (`editing`) и текстом
+	// можно заниматься. Инструментов, которые нельзя выполнить, модель видеть не должна:
+	// иначе она пообещает переписать главу, а кнопки «Применить» в окне не будет.
+	if caps.Text && editing {
+		defs = append(defs,
+			ai.ToolDef{
+				Name: ToolUpdateText,
+				Description: "Предложить переписать заголовок и/или текст СУЩЕСТВУЮЩЕГО кадра. " +
+					"Прочитай кадр (read_event) и передай новый текст целиком: частичных правок нет. " +
+					"Правку применяет человек — ты только предлагаешь.",
+				Parameters: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"id":      map[string]any{"type": "string", "description": "Идентификатор кадра из list_events"},
+						"title":   map[string]any{"type": "string", "description": "Новый заголовок (необязательно; без него заголовок не меняется)"},
+						"body_md": map[string]any{"type": "string", "description": "Новый текст кадра в Markdown (необязательно; без него текст не меняется)"},
+						"reason":  map[string]any{"type": "string", "description": "Коротко, зачем правка: это увидит человек перед подтверждением"},
+					},
+					"required": []string{"id"},
+				},
+			},
+			ai.ToolDef{
+				Name: ToolDeleteEvent,
+				Description: "Предложить удалить кадр. Удалять можно только кадр без под-событий: " +
+					"если дети есть, сначала реши, что с ними. Удаление применяет человек — ты только предлагаешь.",
+				Parameters: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"id":     map[string]any{"type": "string", "description": "Идентификатор кадра из list_events"},
+						"reason": map[string]any{"type": "string", "description": "Коротко, почему кадр лишний: это увидит человек перед подтверждением"},
+					},
+					"required": []string{"id"},
+				},
+			},
+		)
+	}
+
 	// Инструмент иллюстраций — только если картинки доступны: иначе модель не должна
 	// даже знать, что «так можно», иначе она пообещает то, чего сервер не сделает.
 	if caps.Images && ImageToolAvailable {
@@ -138,6 +177,76 @@ func ToolDefs(caps Capabilities) []ai.ToolDef {
 		})
 	}
 	return defs
+}
+
+// UpdateArgs — разобранные аргументы предложения переписать кадр.
+type UpdateArgs struct {
+	// EventID — какой кадр переписать.
+	EventID uuid.UUID
+	// Title — новый заголовок (nil — не менять).
+	Title *string
+	// Body — новый текст (nil — не менять).
+	Body *string
+	// Reason — почему, словами модели: человек увидит это перед подтверждением.
+	Reason string
+}
+
+// ParseUpdate разбирает аргументы update_event_text.
+//
+// «Не задано» и «стереть» — разные вещи, поэтому пустая строка считается заданной, если
+// параметр вообще пришёл: стереть заголовок (оставив кадр без названия) — законное
+// действие, а вот «ни одного поля» — уже ошибка модели.
+func ParseUpdate(args map[string]any, limits Limits) (UpdateArgs, error) {
+	var out UpdateArgs
+	rawID := argString(args, "id")
+	if rawID == "" {
+		return out, errors.New("не задан id — скажи, какой кадр переписать (возьми из list_events)")
+	}
+	eventID, err := uuid.Parse(rawID)
+	if err != nil {
+		return out, errors.New("id не похож на идентификатор — возьми его из list_events")
+	}
+	out.EventID = eventID
+
+	if raw, ok := args["title"]; ok && raw != nil {
+		title := argString(args, "title")
+		if len([]rune(title)) > limits.MaxTitleChars {
+			return out, TooLongError{Field: "title", Limit: limits.MaxTitleChars}
+		}
+		out.Title = &title
+	}
+	if raw, ok := args["body_md"]; ok && raw != nil {
+		body := argString(args, "body_md")
+		if len([]rune(body)) > limits.MaxBodyChars {
+			return out, TooLongError{Field: "body_md", Limit: limits.MaxBodyChars}
+		}
+		out.Body = &body
+	}
+	if out.Title == nil && out.Body == nil {
+		return out, errors.New("нечего менять: передай title и/или body_md с новым содержимым")
+	}
+	out.Reason = argString(args, "reason")
+	if len([]rune(out.Reason)) > limits.MaxReasonChars {
+		out.Reason = string([]rune(out.Reason)[:limits.MaxReasonChars])
+	}
+	return out, nil
+}
+
+// ParseDelete разбирает аргументы предложения удалить кадр.
+func ParseDelete(args map[string]any, limits Limits) (uuid.UUID, string, error) {
+	rawID := argString(args, "id")
+	if rawID == "" {
+		return uuid.Nil, "", errors.New("не задан id — скажи, какой кадр удалить (возьми из list_events)")
+	}
+	eventID, err := uuid.Parse(rawID)
+	if err != nil {
+		return uuid.Nil, "", errors.New("id не похож на идентификатор — возьми его из list_events")
+	}
+	reason := argString(args, "reason")
+	if len([]rune(reason)) > limits.MaxReasonChars {
+		reason = string([]rune(reason)[:limits.MaxReasonChars])
+	}
+	return eventID, reason, nil
 }
 
 // GenerateArgs — разобранные аргументы генерации иллюстрации.
@@ -229,6 +338,9 @@ type Limits struct {
 	// MaxImagePromptChars — предел на промпт иллюстрации: он уходит в генератор, и
 	// простыня на десять тысяч знаков там ничего не улучшит.
 	MaxImagePromptChars int
+	// MaxReasonChars — предел на «зачем эта правка»: это подпись для человека, а не
+	// место для рассуждений модели.
+	MaxReasonChars int
 }
 
 // DefaultLimits — пределы по умолчанию. Значения подобраны так, чтобы помощник был
@@ -246,6 +358,7 @@ func DefaultLimits(maxToolCalls int) Limits {
 		MaxEventsInPrompt:   200,
 		MaxHistory:          20,
 		MaxImagePromptChars: 2000,
+		MaxReasonChars:      200,
 	}
 }
 

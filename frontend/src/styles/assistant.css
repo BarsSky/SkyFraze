@@ -349,6 +349,40 @@
 .ai-changes ul { margin: 0; padding-left: 18px; }
 .ai-changes button { justify-self: start; }
 
+/* Предложенные правки: проект ещё НЕ изменён, решение за человеком. */
+.ai-proposals {
+  display: grid;
+  gap: 6px;
+  margin: 0 12px 10px;
+  padding: 10px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  font-size: 13px;
+}
+.ai-proposals ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.ai-proposals__item { display: grid; gap: 4px; }
+.ai-proposals__title { font-weight: 600; }
+/* «Было → станет» одной строкой: длинный diff здесь мешает решению, а не помогает. */
+.ai-proposals__diff {
+  color: var(--fg-soft);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.ai-proposals__actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.ai-proposals__actions button { min-height: 32px; }
+/* Применённые — не зовут к действию, поэтому рамка спокойная. */
+.ai-proposals--applied { border-color: var(--border); }
+
 /* ── Поле ввода ───────────────────────────────────────────────────────── */
 
 .ai-composer {

@@ -14,20 +14,25 @@ vi.mock('./client', () => ({ http: { get: mocks.get, post: mocks.post, delete: m
 
 import {
   addAIEndpoint,
+  applyAIProposal,
   changeLabel,
   deleteAIConsent,
   deleteAIEndpoint,
+  discardAIProposal,
   getAIConfig,
   isCloudModelRef,
   listAIEndpoints,
   listAIModels,
+  listAIProposals,
   needsConsent,
   parseAIConfig,
   parseAIEndpoints,
   parseAIModels,
+  parseProposals,
   parseSSEBuffer,
   parseAITurn,
   readAIError,
+  revertAIProposal,
   saveAIKey,
   sendAIMessage,
   setAIConsent,
@@ -130,6 +135,78 @@ describe('parseAITurn: предложения следующих шагов', ()
     ])
     // Старый сервер поля не присылает — это пустой список, а не падение разметки.
     expect(parseAITurn({ answer: 'Готово.' }).suggestions).toEqual([])
+  })
+})
+
+describe('предложения правок', () => {
+  it('читает предложение из ответа и из списка, терпя отсутствующие поля', () => {
+    const turn = parseAITurn({
+      answer: 'Предлагаю переписать главу.',
+      proposals: [
+        {
+          id: 'p1',
+          kind: 'update_text',
+          status: 'pending',
+          event_id: 'e1',
+          event_title: 'Пролог',
+          old_title: 'Пролог',
+          old_body: 'Старый текст.',
+          new_title: 'Пролог',
+          new_body: 'Новый текст.',
+        },
+        // Без идентификатора предложение бесполезно: его нельзя ни применить, ни
+        // отклонить — значит, и показывать нечего.
+        { kind: 'delete_event', event_id: 'e2' },
+        { id: 'p3', event_id: 'e3' },
+      ],
+    })
+    expect(turn.proposals).toHaveLength(2)
+    expect(turn.proposals![0]).toEqual({
+      id: 'p1',
+      kind: 'update_text',
+      status: 'pending',
+      eventId: 'e1',
+      eventTitle: 'Пролог',
+      oldTitle: 'Пролог',
+      oldBody: 'Старый текст.',
+      newTitle: 'Пролог',
+      newBody: 'Новый текст.',
+    })
+    // Вид по умолчанию — перезапись: удаление опаснее, и «по умолчанию» им быть не должно.
+    expect(turn.proposals![1].kind).toBe('update_text')
+
+    expect(parseProposals({ proposals: [{ id: 'p1', event_id: 'e1' }] })).toHaveLength(1)
+    expect(parseProposals(null)).toEqual([])
+    expect(parseProposals({})).toEqual([])
+    // Старый сервер поля не присылает — пустой список, а не падение.
+    expect(parseAITurn({ answer: 'Готово.' }).proposals).toEqual([])
+  })
+
+  it('запросы правок уходят на свои адреса', async () => {
+    mocks.get.mockReturnValueOnce(reply({ proposals: [] }))
+    await listAIProposals('p1')
+    expect(mocks.get).toHaveBeenCalledWith('projects/p1/ai/proposals')
+
+    mocks.post.mockReturnValueOnce(reply({ proposal: { id: 'c1', event_id: 'e1' }, warning: '' }))
+    await applyAIProposal('p1', 'c1')
+    expect(mocks.post).toHaveBeenCalledWith('projects/p1/ai/proposals/c1/apply', { timeout: 30000 })
+
+    mocks.post.mockReturnValueOnce(reply({ proposal: { id: 'c1', event_id: 'e1' } }))
+    await revertAIProposal('p1', 'c1')
+    expect(mocks.post).toHaveBeenCalledWith('projects/p1/ai/proposals/c1/revert', { timeout: 30000 })
+
+    mocks.post.mockReturnValueOnce(reply({}))
+    await discardAIProposal('p1', 'c1')
+    expect(mocks.post).toHaveBeenCalledWith('projects/p1/ai/proposals/c1/discard')
+  })
+
+  it('событие proposal в потоке не выдаёт себя за изменение', () => {
+    const { events } = parseSSEBuffer(
+      'data: {"type":"proposal","proposal":{"id":"c1","event_id":"e1","kind":"delete_event"}}\n\n',
+    )
+    expect(events).toHaveLength(1)
+    expect(events[0].proposal?.id).toBe('c1')
+    expect(events[0].change).toBeUndefined()
   })
 })
 describe('changeLabel', () => {

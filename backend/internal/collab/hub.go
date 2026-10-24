@@ -234,6 +234,98 @@ func (h *Hub) removeIfEmpty(projectID uuid.UUID) {
 	}
 }
 
+// editLive — общий путь правки живого документа: перезапись текста, удаление кадра.
+//
+// Тот же порядок, что у вставки и привязки вложения, и по той же причине: источник правды
+// проекта — документ комнаты. Отличие одно: здесь правка не добавляет событие, а меняет
+// или убирает существующее, поэтому возможен честный ответ «кадра нет» (found: false).
+//
+// Вынесен в одну функцию, потому что правок становится три (вставка, привязка, эта), и
+// каждая следующая копия порядка «ждать загрузку → правка → diff → broadcast → снапшот»
+// рано или поздно разошлась бы: забыть `room.dirty` или не разослать апдейт инициатору —
+// тихие ошибки, которые видно только на живом стенде.
+func (h *Hub) editLive(
+	ctx context.Context, projectID, by uuid.UUID, what string,
+	apply func(doc *yjs.Doc) (bool, error),
+) (yjs.EditOutcome, error) {
+	h.mu.RLock()
+	room := h.rooms[projectID]
+	h.mu.RUnlock()
+	if room == nil {
+		// Живой комнаты нет: снапшот пишет вызывающий.
+		return yjs.EditOutcome{}, nil
+	}
+
+	room.docMu.Lock()
+	// Комната могла появиться ровно сейчас и ещё читать документ из базы. Писать в
+	// снапшот в этот момент нельзя: комната загрузит доимпортное состояние и затрёт
+	// правку своим ближайшим сохранением.
+	deadline := time.Now().Add(roomLoadWait)
+	for room.doc == nil && room.loading && time.Now().Before(deadline) {
+		room.docMu.Unlock()
+		time.Sleep(roomLoadPoll)
+		room.docMu.Lock()
+	}
+	if room.doc == nil {
+		loading := room.loading
+		room.docMu.Unlock()
+		if loading {
+			return yjs.EditOutcome{RoomLoading: true}, nil
+		}
+		return yjs.EditOutcome{}, nil
+	}
+
+	before := room.doc.StateVector()
+	found, err := apply(room.doc)
+	if err != nil {
+		room.docMu.Unlock()
+		return yjs.EditOutcome{}, err
+	}
+	if !found {
+		room.docMu.Unlock()
+		return yjs.EditOutcome{Handled: true}, nil
+	}
+	update, diffErr := room.doc.Diff(before)
+	room.dirty = true
+	room.lastBy = by
+	room.docMu.Unlock()
+	if diffErr != nil {
+		return yjs.EditOutcome{}, diffErr
+	}
+
+	// Апдейт уходит всем, включая инициатора: его вкладка — такая же клиентка комнаты,
+	// и правку она должна увидеть без перезагрузки страницы.
+	room.broadcast(nil, update)
+	h.logger.Info("collab: live doc edited", "project", projectID, "user", by, "what", what)
+
+	outcome := yjs.EditOutcome{Handled: true, Found: true}
+	if err := room.persistFromAnyClient(ctx, h.ev, h.logger); err != nil {
+		outcome.Warning = "правка сделана в открытых вкладках, но серверная копия не обновилась: " +
+			err.Error() + " — сервер повторит сохранение сам"
+	}
+	return outcome, nil
+}
+
+// SetEventTextLive переписывает заголовок и/или текст кадра в живом документе.
+//
+// `title`/`body` — указатели: nil означает «не трогать» (см. yjs.Doc.SetEventText).
+func (h *Hub) SetEventTextLive(
+	ctx context.Context, projectID, by uuid.UUID, eventID string, title, body *string,
+) (yjs.EditOutcome, error) {
+	return h.editLive(ctx, projectID, by, "text updated", func(doc *yjs.Doc) (bool, error) {
+		return doc.SetEventText(eventID, title, body)
+	})
+}
+
+// DeleteEventLive удаляет кадр из живого документа.
+func (h *Hub) DeleteEventLive(
+	ctx context.Context, projectID, by uuid.UUID, eventID string,
+) (yjs.EditOutcome, error) {
+	return h.editLive(ctx, projectID, by, "event deleted", func(doc *yjs.Doc) (bool, error) {
+		return doc.DeleteEvent(eventID)
+	})
+}
+
 // InsertLive вставляет события в документ ЖИВОЙ комнаты и рассылает апдейт.
 //
 // Handled=false означает «комнаты нет»: тогда вызывающий пишет снапшот в базу

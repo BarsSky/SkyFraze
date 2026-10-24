@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import type { AIConfig, AIEndpoint, AIModel, AISettings, AITurn } from '../../api/assistant'
+import type { AIConfig, AIEndpoint, AIModel, AIProposal, AISettings, AITurn } from '../../api/assistant'
 import { AssistantPanel } from './AssistantPanel'
 
 /**
@@ -32,6 +32,10 @@ const mocks = vi.hoisted(() => ({
   endpoints: vi.fn(),
   addEndpoint: vi.fn(),
   deleteEndpoint: vi.fn(),
+  proposals: vi.fn(),
+  applyProposal: vi.fn(),
+  revertProposal: vi.fn(),
+  discardProposal: vi.fn(),
 }))
 
 vi.mock('../../api/assistant', async () => {
@@ -58,6 +62,12 @@ vi.mock('../../api/assistant', async () => {
     listAIEndpoints: mocks.endpoints,
     addAIEndpoint: mocks.addEndpoint,
     deleteAIEndpoint: mocks.deleteEndpoint,
+    listAIProposals: mocks.proposals,
+    applyAIProposal: mocks.applyProposal,
+    revertAIProposal: mocks.revertProposal,
+    discardAIProposal: mocks.discardProposal,
+    parseProposal: actual.parseProposal,
+    parseProposals: actual.parseProposals,
   }
 })
 
@@ -182,6 +192,13 @@ beforeEach(() => {
   mocks.settings.mockResolvedValue(AGENT)
   mocks.saveSettings.mockResolvedValue({ ...AGENT, role: 'chronicler', roleTitle: 'Летописец' })
   mocks.endpoints.mockResolvedValue([])
+  mocks.proposals.mockResolvedValue([])
+  mocks.applyProposal.mockResolvedValue({ proposal: null, warning: '' })
+  mocks.revertProposal.mockResolvedValue({ proposal: null, warning: '' })
+  mocks.discardProposal.mockResolvedValue(undefined)
+  mocks.applyProposal.mockResolvedValue({ proposal: null, warning: '' })
+  mocks.revertProposal.mockResolvedValue({ proposal: null, warning: '' })
+  mocks.discardProposal.mockResolvedValue(undefined)
   mocks.addEndpoint.mockResolvedValue(null)
   mocks.deleteEndpoint.mockResolvedValue(undefined)
 })
@@ -736,6 +753,141 @@ describe('AssistantPanel', () => {
     expect((screen.getByRole('button', { name: 'Добавить сервер' }) as HTMLButtonElement).disabled).toBe(
       false,
     )
+  })
+
+  it('предложение правки показывается отдельно от изменений и применяется кнопкой', async () => {
+    const proposal: AIProposal = {
+      id: 'p1',
+      kind: 'update_text',
+      status: 'pending',
+      eventId: 'e1',
+      eventTitle: 'Пролог',
+      oldTitle: 'Пролог',
+      oldBody: 'Старый текст главы.',
+      newTitle: 'Пролог',
+      newBody: 'Новый текст главы.',
+    }
+    mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
+    mocks.proposals.mockResolvedValue([proposal])
+    mocks.applyProposal.mockResolvedValue({ proposal, warning: '' })
+    renderPanel()
+
+    // Блок отдельный: проект ещё не изменён, и это должно быть видно по подписи.
+    expect(await screen.findByText('Предложенные правки')).toBeTruthy()
+    expect(screen.getByText(/Переписать кадр «Пролог»/)).toBeTruthy()
+    // «Было → станет» одной строкой: человек решает по ней.
+    expect(screen.getByText(/Старый текст главы/)).toBeTruthy()
+    expect(screen.queryByText('Изменения в проекте')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Применить' }))
+    await waitFor(() => expect(mocks.applyProposal).toHaveBeenCalledWith('p1', 'p1'))
+    expect(await screen.findByText('Правки применены')).toBeTruthy()
+    expect(screen.queryByText('Предложенные правки')).toBeNull()
+  })
+
+  it('применённую правку можно вернуть, а удаление — нет', async () => {
+    const update: AIProposal = {
+      id: 'p1',
+      kind: 'update_text',
+      status: 'pending',
+      eventId: 'e1',
+      eventTitle: 'Пролог',
+      oldTitle: 'Пролог',
+      oldBody: 'Старый текст.',
+      newTitle: 'Пролог',
+      newBody: 'Новый текст.',
+    }
+    mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
+    mocks.proposals.mockResolvedValue([update])
+    mocks.applyProposal.mockResolvedValue({ proposal: update, warning: '' })
+    mocks.revertProposal.mockResolvedValue({ proposal: update, warning: '' })
+    renderPanel()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Применить' }))
+    await waitFor(() => expect(mocks.applyProposal).toHaveBeenCalledTimes(1))
+    fireEvent.click(await screen.findByRole('button', { name: 'Вернуть прежний текст' }))
+    await waitFor(() => expect(mocks.revertProposal).toHaveBeenCalledWith('p1', 'p1'))
+    // Вернувшееся предложение снова ждёт решения.
+    expect(await screen.findByText('Предложенные правки')).toBeTruthy()
+  })
+
+  it('отклонённое предложение не меняет проект', async () => {
+    const proposal: AIProposal = {
+      id: 'p1',
+      kind: 'delete_event',
+      status: 'pending',
+      eventId: 'e1',
+      eventTitle: 'Лишний кадр',
+      oldTitle: 'Лишний кадр',
+      oldBody: 'текст',
+      newTitle: '',
+      newBody: '',
+    }
+    mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
+    mocks.proposals.mockResolvedValue([proposal])
+    renderPanel()
+
+    expect(await screen.findByText(/Удалить кадр «Лишний кадр»/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Отклонить' }))
+    await waitFor(() => expect(mocks.discardProposal).toHaveBeenCalledWith('p1', 'p1'))
+    expect(await screen.findByText(/проект не изменился/)).toBeTruthy()
+    expect(screen.queryByText('Предложенные правки')).toBeNull()
+  })
+
+  it('предложение из потока появляется сразу, не дожидаясь конца ответа', async () => {
+    const proposal: AIProposal = {
+      id: 'p1',
+      kind: 'update_text',
+      status: 'pending',
+      eventId: 'e1',
+      eventTitle: 'Пролог',
+      oldTitle: 'Пролог',
+      oldBody: 'Старый текст.',
+      newTitle: 'Пролог',
+      newBody: 'Новый текст.',
+    }
+    mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
+    mocks.stream.mockImplementation(async (...args: unknown[]) => {
+      const options = args[4] as { handlers?: { onProposal?: (p: AIProposal) => void } }
+      options.handlers?.onProposal?.(proposal)
+      return TURN
+    })
+    renderPanel()
+
+    const input = await screen.findByLabelText('Сообщение помощнику')
+    await waitFor(() => expect((input as HTMLTextAreaElement).disabled).toBe(false))
+    fireEvent.change(input, { target: { value: 'Перепиши пролог' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Спросить' }))
+
+    expect(await screen.findByText(/Переписать кадр «Пролог»/)).toBeTruthy()
+  })
+
+  it('применённую правку видно и после перезагрузки: «Вернуть» не теряется', async () => {
+    // Сервер отдаёт и ожидающие, и применённые за последнюю неделю — иначе отмена
+    // доставалась бы только тем, кто не закрыл вкладку.
+    const applied: AIProposal = {
+      id: 'p1',
+      kind: 'update_text',
+      status: 'applied',
+      eventId: 'e1',
+      eventTitle: 'Пролог',
+      oldTitle: 'Пролог',
+      oldBody: 'Старый текст.',
+      newTitle: 'Пролог',
+      newBody: 'Новый текст.',
+    }
+    mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
+    mocks.proposals.mockResolvedValue([applied])
+    mocks.revertProposal.mockResolvedValue({
+      proposal: { ...applied, status: 'pending' },
+      warning: '',
+    })
+    renderPanel()
+
+    expect(await screen.findByText('Правки применены')).toBeTruthy()
+    expect(screen.queryByText('Предложенные правки')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Вернуть прежний текст' }))
+    await waitFor(() => expect(mocks.revertProposal).toHaveBeenCalledWith('p1', 'p1'))
   })
 
   it('Enter отправляет вопрос, Shift+Enter оставляет перенос строки', async () => {

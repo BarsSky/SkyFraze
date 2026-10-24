@@ -1726,6 +1726,12 @@ type LiveDoc interface {
 	// «вставка с одним полем»: привязка меняет уже существующее событие, и исход у неё
 	// свой (кадр может не найтись).
 	AttachAssetLive(ctx context.Context, projectID, by uuid.UUID, eventID, assetID string, asBackground bool) (yjs.AttachOutcome, error)
+	// SetEventTextLive — переписать заголовок и/или текст кадра (nil — «не трогать»).
+	// Исход тот же, что у привязки: кадр мог не найтись, а комната — ещё грузиться.
+	SetEventTextLive(ctx context.Context, projectID, by uuid.UUID, eventID string, title, body *string) (yjs.EditOutcome, error)
+	// DeleteEventLive — удалить кадр. Детей проверяет вызывающий: правило «что делать с
+	// под-событиями» — решение уровня сервиса, а не документа.
+	DeleteEventLive(ctx context.Context, projectID, by uuid.UUID, eventID string) (yjs.EditOutcome, error)
 }
 
 // UseLiveDoc подключает живые комнаты. Без него импорт «в место» работает только

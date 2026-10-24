@@ -49,6 +49,12 @@ func (h *Handler) Routes(r chi.Router) {
 	// Роль и поведение агента: читает участник проекта, меняет только владелец.
 	r.Get("/ai/settings", h.GetSettings)
 	r.Put("/ai/settings", h.SaveSettings)
+
+	// Правки существующих кадров: агент их предлагает, применяет человек.
+	r.Get("/ai/proposals", h.ListProposals)
+	r.Post("/ai/proposals/{pid}/apply", h.ApplyProposal)
+	r.Post("/ai/proposals/{pid}/revert", h.RevertProposal)
+	r.Post("/ai/proposals/{pid}/discard", h.DiscardProposal)
 }
 
 // GetSettings — GET .../ai/settings: имя агента, роль, указания и права спрашивающего.
@@ -265,6 +271,92 @@ func (h *Handler) StreamMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = stream.send(Event{Type: EventDone, Turn: turn})
+}
+
+// ListProposals — GET /api/projects/{id}/ai/proposals: правки, которые ждут решения.
+//
+// Нужен после перезагрузки страницы: предложение живёт на сервере, а не в окне, и
+// «я закрыл вкладку, а агент что-то предлагал» не должно означать «предложение пропало».
+func (h *Handler) ListProposals(w http.ResponseWriter, r *http.Request) {
+	uid, pid, ok := h.scope(w, r)
+	if !ok {
+		return
+	}
+	list, err := h.svc.Proposals(r.Context(), uid, pid)
+	if err != nil {
+		h.fail(w, "list proposals", err)
+		return
+	}
+	if list == nil {
+		list = []Proposal{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"proposals": list})
+}
+
+// proposalID читает {pid}.
+func (h *Handler) proposalID(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
+	id, err := uuid.Parse(strings.TrimSpace(chi.URLParam(r, "pid")))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid proposal id")
+		return uuid.Nil, false
+	}
+	return id, true
+}
+
+// ApplyProposal — POST .../ai/proposals/{pid}/apply: применить предложенную правку.
+//
+// actorID — агент: он автор правки, и в истории проекта (updated_by) должен стоять он,
+// а не человек, который нажал «Применить».
+func (h *Handler) ApplyProposal(w http.ResponseWriter, r *http.Request) {
+	uid, pid, ok := h.scope(w, r)
+	if !ok {
+		return
+	}
+	proposalID, ok := h.proposalID(w, r)
+	if !ok {
+		return
+	}
+	proposal, warning, err := h.svc.ApplyProposal(r.Context(), ai.AgentUserID, uid, pid, proposalID)
+	if err != nil {
+		h.fail(w, "apply proposal", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"proposal": proposal, "warning": warning})
+}
+
+// RevertProposal — POST .../ai/proposals/{pid}/revert: вернуть прежний текст.
+func (h *Handler) RevertProposal(w http.ResponseWriter, r *http.Request) {
+	uid, pid, ok := h.scope(w, r)
+	if !ok {
+		return
+	}
+	proposalID, ok := h.proposalID(w, r)
+	if !ok {
+		return
+	}
+	proposal, warning, err := h.svc.RevertProposal(r.Context(), ai.AgentUserID, uid, pid, proposalID)
+	if err != nil {
+		h.fail(w, "revert proposal", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"proposal": proposal, "warning": warning})
+}
+
+// DiscardProposal — POST .../ai/proposals/{pid}/discard: отказаться.
+func (h *Handler) DiscardProposal(w http.ResponseWriter, r *http.Request) {
+	uid, pid, ok := h.scope(w, r)
+	if !ok {
+		return
+	}
+	proposalID, ok := h.proposalID(w, r)
+	if !ok {
+		return
+	}
+	if err := h.svc.DiscardProposal(r.Context(), uid, pid, proposalID); err != nil {
+		h.fail(w, "discard proposal", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // scope достаёт пользователя и проект из запроса.

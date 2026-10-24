@@ -113,7 +113,11 @@ func modeTitle(mode string) string {
 }
 
 // systemPrompt собирает начало запроса: кто ты и по каким правилам работаешь.
-func systemPrompt(project *store.Project, persona Persona, maxCalls int, caps Capabilities) string {
+//
+// `editing` — можно ли предлагать правки существующих кадров: без этой возможности
+// правила не должны обещать «перепишу главу», иначе модель пообещает то, чего сервер
+// не умеет (ровно та же причина, по которой нет инструмента иллюстраций без генератора).
+func systemPrompt(project *store.Project, persona Persona, maxCalls int, caps Capabilities, editing bool) string {
 	title := "без названия"
 	if project != nil && strings.TrimSpace(project.Title) != "" {
 		title = project.Title
@@ -167,16 +171,40 @@ func systemPrompt(project *store.Project, persona Persona, maxCalls int, caps Ca
    текста не нужны: заголовок кадра уже отдельный.
 5. Не создавай больше %d кадров за один ответ и не повторяй уже созданное.
 6. Когда кадры созданы, коротко скажи по-русски, что именно сделано. Если ничего
-   создавать не нужно (например, тебя только спросили), просто ответь по существу.
+   создавать не нужно (например, тебя только спросили), просто ответь по существу.%s
 
 Отвечай по-русски, коротко и по делу.`,
-		name, title, role.String(), caps.promptBlock(), textTools, imageTools, fence, fence, maxCalls)
+		name, title, role.String(), caps.promptBlock(), textTools+editTools(editing),
+		imageTools, fence, fence, maxCalls, editRules(editing))
 }
 
 // textTools — перечисление текстовых инструментов для правил. Отдельной строкой, чтобы
 // список в правилах и список в реестре (`ToolDefs`) собирались из одного места.
 const textTools = ",\n- создавать главу верхнего уровня инструментом create_chapter" +
 	",\n- создавать под-событие внутри главы инструментом create_sub_event"
+
+// editTools — предложение правок (пусто, если правка не подключена).
+func editTools(editing bool) string {
+	if !editing {
+		return ""
+	}
+	return ",\n- предлагать переписать существующий кадр инструментом update_event_text" +
+		",\n- предлагать удалить кадр инструментом delete_event"
+}
+
+// editRules — правило про правки. Отдельным блоком, потому что это главное отличие от
+// создания: кадр НЕ меняется от вызова, и модель не должна думать, что «не получилось».
+func editRules(editing bool) string {
+	if !editing {
+		return ""
+	}
+	return "\n7. Существующие кадры ты НЕ переписываешь и НЕ удаляешь сам. update_event_text\n" +
+		"   и delete_event только ПРЕДЛАГАЮТ правку: она появится в окне помощника, и\n" +
+		"   человек подтвердит её одной кнопкой. После вызова говори «предлагаю», а не\n" +
+		"   «переписал»/«удалил», и не повторяй вызов: предложение уже сохранено.\n" +
+		"8. Передавай новый текст целиком: частичных правок нет. Перед этим прочитай\n" +
+		"   кадр через read_event, иначе ты перепишешь то, чего не видел."
+}
 
 // imageTools — чем агент рисует (пусто, пока инструмента нет: правила не должны
 // обещать то, чего в этой версии не существует).

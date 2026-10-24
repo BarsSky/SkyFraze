@@ -39,6 +39,9 @@ const (
 	EventCall = "call"
 	// EventChange — одно изменение в проекте.
 	EventChange = "change"
+	// EventProposal — правка существующего кадра, предложенная агентом: применяет
+	// человек, поэтому это не «изменение», а отдельное событие.
+	EventProposal = "proposal"
 	// EventDone — конец: итог целиком (в поле turn).
 	EventDone = "done"
 	// EventError — сбой после начала потока.
@@ -51,13 +54,14 @@ const (
 // у change — Change, у done — Turn. Так интерфейсу не нужно разбирать «что именно
 // пришло» по нескольким похожим событиям.
 type Event struct {
-	Type           string  `json:"type"`
-	ConversationID string  `json:"conversation_id,omitempty"`
-	Text           string  `json:"text,omitempty"`
-	Call           *Call   `json:"call,omitempty"`
-	Change         *Change `json:"change,omitempty"`
-	Turn           *Turn   `json:"turn,omitempty"`
-	Error          string  `json:"error,omitempty"`
+	Type           string    `json:"type"`
+	ConversationID string    `json:"conversation_id,omitempty"`
+	Text           string    `json:"text,omitempty"`
+	Call           *Call     `json:"call,omitempty"`
+	Change         *Change   `json:"change,omitempty"`
+	Proposal       *Proposal `json:"proposal,omitempty"`
+	Turn           *Turn     `json:"turn,omitempty"`
+	Error          string    `json:"error,omitempty"`
 }
 
 // Emitter отправляет событие человеку. Ошибка означает, что писать больше некуда

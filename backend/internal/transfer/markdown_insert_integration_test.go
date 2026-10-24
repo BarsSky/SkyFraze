@@ -262,6 +262,39 @@ type stubLive struct {
 	attachEvent  string
 	attachAsset  string
 	attachBgFlag bool
+	// Правка текста и удаление: что ответила «комната».
+	editFound   bool
+	editWarn    string
+	editEvent   string
+	editTitle   *string
+	editBody    *string
+	deleteFound bool
+	deleteWarn  string
+	deleteEvent string
+}
+
+// SetEventTextLive — заглушка правки текста (см. LiveDoc).
+func (s *stubLive) SetEventTextLive(
+	_ context.Context, _ uuid.UUID, _ uuid.UUID, eventID string, title, body *string,
+) (yjs.EditOutcome, error) {
+	s.calls++
+	s.editEvent, s.editTitle, s.editBody = eventID, title, body
+	if !s.editFound {
+		return yjs.EditOutcome{Handled: true}, nil
+	}
+	return yjs.EditOutcome{Handled: true, Found: true, Warning: s.editWarn}, nil
+}
+
+// DeleteEventLive — заглушка удаления кадра (см. LiveDoc).
+func (s *stubLive) DeleteEventLive(
+	_ context.Context, _ uuid.UUID, _ uuid.UUID, eventID string,
+) (yjs.EditOutcome, error) {
+	s.calls++
+	s.deleteEvent = eventID
+	if !s.deleteFound {
+		return yjs.EditOutcome{Handled: true}, nil
+	}
+	return yjs.EditOutcome{Handled: true, Found: true, Warning: s.deleteWarn}, nil
 }
 
 func (s *stubLive) AttachAssetLive(

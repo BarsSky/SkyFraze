@@ -204,6 +204,10 @@ func main() {
 	// Иллюстрации помощника ложатся вложениями проекта: тот же путь загрузки, что у
 	// файлов из интерфейса (квота, пережатие в WebP, дедупликация).
 	assistantSvc.UseAssets(assetsSvc)
+	// Правка и удаление существующих кадров: агент их ПРЕДЛАГАЕТ, а применяет тот же
+	// путь записи в документ, что у импорта и привязки вложений (живая комната впереди,
+	// снапшот при её отсутствии). Без этой строки помощник снова умел бы только создавать.
+	assistantSvc.UseEditor(transferSvc)
 	assistantH := assistant.NewHandler(assistantSvc, logger)
 
 	collabHub := collab.NewHub(logger, cfg.JWTSecret, evSvc, cfg.CORSOrigins)

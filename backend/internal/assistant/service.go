@@ -110,6 +110,17 @@ type AssetStore interface {
 		filename, contentType string, data []byte) (*store.Asset, error)
 }
 
+// EventEditor — правка существующих кадров (реализует transfer.Service).
+//
+// Отдельный интерфейс, а не ещё пара методов у Inserter: правка и вставка — разные
+// операции с разными исходами (кадр может не найтись, у кадра могут быть дети). Без него
+// помощник работает как раньше: инструменты правки модели просто не предлагаются.
+type EventEditor interface {
+	UpdateEventText(ctx context.Context, actorID, userID, projectID uuid.UUID,
+		eventID string, title, body *string) (string, error)
+	DeleteEvent(ctx context.Context, actorID, userID, projectID uuid.UUID, eventID string) (string, error)
+}
+
 // Service — беседы с моделью внутри проекта.
 type Service struct {
 	store    *store.Store
@@ -121,6 +132,8 @@ type Service struct {
 	// assets — куда класть сгенерированные картинки. Необязателен: без него помощник
 	// работает как раньше, а инструмент иллюстраций просто не предлагается.
 	assets AssetStore
+	// editor — правка и удаление существующих кадров. Необязателен по той же причине.
+	editor EventEditor
 }
 
 // New собирает сервис. Отсутствие вставки или прав не валит сервер: помощник —
@@ -142,6 +155,9 @@ func (s *Service) SetLimits(l Limits) { s.limits = l }
 // UseAssets подключает хранилище файлов: без него инструмент иллюстраций не предлагается
 // (картинку некуда положить), и это честнее, чем нарисовать её в никуда.
 func (s *Service) UseAssets(store AssetStore) { s.assets = store }
+
+// UseEditor подключает правку существующих кадров: без него помощник только создаёт.
+func (s *Service) UseEditor(editor EventEditor) { s.editor = editor }
 
 // Limits — действующие пределы (интерфейс показывает их в подсказке).
 func (s *Service) Limits() Limits { return s.limits }
@@ -442,6 +458,9 @@ type Turn struct {
 	// Suggestions — что можно сделать дальше: считает сервер по состоянию проекта и
 	// возможностям (см. suggestions.go). Пусто — предлагать нечего.
 	Suggestions []Suggestion `json:"suggestions,omitempty"`
+	// Proposals — правки существующих кадров, которые агент ПРЕДЛОЖИЛ, но не сделал:
+	// их применяет человек (см. proposals.go). Пусто — агент ничего не предлагал.
+	Proposals []Proposal `json:"proposals,omitempty"`
 }
 
 // Send отправляет вопрос модели и выполняет то, что она попросила.
@@ -597,7 +616,7 @@ func (s *Service) SendStreamImages(
 	messages := make([]ai.Message, 0, len(history)+3)
 	messages = append(messages, ai.Message{
 		Role: "system",
-		Content: systemPrompt(project, personaOf(settings), s.limits.MaxToolCalls, caps) + "\n\n" +
+		Content: systemPrompt(project, personaOf(settings), s.limits.MaxToolCalls, caps, s.editor != nil) + "\n\n" +
 			treeContext(list, s.limits.MaxEventsInPrompt),
 	})
 	messages = append(messages, history...)
@@ -773,7 +792,7 @@ func (s *Service) converse(
 		reply, partial, err := ask(ai.Request{
 			Model:       model,
 			Messages:    messages,
-			Tools:       ToolDefs(caps),
+			Tools:       ToolDefs(caps, s.editor != nil),
 			Temperature: 0.4,
 		})
 		if err != nil {
@@ -823,6 +842,9 @@ func (s *Service) converse(
 			if res.change != nil {
 				turn.Changes = append(turn.Changes, *res.change)
 			}
+			if res.proposal != nil {
+				turn.Proposals = append(turn.Proposals, ProposalDTO(*res.proposal))
+			}
 			payload = append(payload, toolPayload{
 				ToolCallID: res.call.ID, Name: res.call.Name, Result: res.payload,
 			})
@@ -849,6 +871,14 @@ func (s *Service) converse(
 				if res.change != nil {
 					change := *res.change
 					if err := emit(Event{Type: EventChange, Change: &change}); err != nil {
+						return s.finishStopped(ctx, conversation, model, "", tokensIn, tokensOut)
+					}
+				}
+				if res.proposal != nil {
+					// Предложение уходит отдельным событием, а не «изменением»: проект
+					// пока НЕ изменился, и путать эти два факта в интерфейсе нельзя.
+					proposal := ProposalDTO(*res.proposal)
+					if err := emit(Event{Type: EventProposal, Proposal: &proposal}); err != nil {
 						return s.finishStopped(ctx, conversation, model, "", tokensIn, tokensOut)
 					}
 				}

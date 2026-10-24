@@ -380,6 +380,8 @@ func setup(t *testing.T, replies ...ai.Reply) *env {
 	asst := assistant.New(st, models, proj, transferSvc, 10, testLogger())
 	// Иллюстрации помощника ложатся вложениями проекта — как в бою (см. main.go).
 	asst.UseAssets(assetsSvc)
+	// Правка существующих кадров — тем же путём записи, что в бою (см. main.go).
+	asst.UseEditor(transferSvc)
 	return &env{st: st, proj: proj, models: models, asst: asst, stub: stub}
 }
 
@@ -544,8 +546,8 @@ func TestSendCreatesChapterInProjectionAndDocument(t *testing.T) {
 	// Запрос к модели: правила, оглавление проекта и инструменты. Смотрим ПЕРВЫЙ
 	// запрос: в последнем уже лежат результаты вызовов, а не вопрос человека.
 	req := e.stub.firstRequest()
-	if len(req.Tools) != 4 {
-		t.Errorf("модели передано инструментов %d, ожидалось 4", len(req.Tools))
+	if len(req.Tools) != 6 {
+		t.Errorf("модели передано инструментов %d, ожидалось 6 (чтение, создание, правка, удаление)", len(req.Tools))
 	}
 	if !strings.Contains(req.Messages[0].Content, "Глава 1") {
 		t.Errorf("в контексте нет дерева проекта: %q", req.Messages[0].Content)
