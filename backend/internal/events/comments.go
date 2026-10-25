@@ -60,7 +60,22 @@ func (s *Service) AddComment(
 		}
 		return nil, err
 	}
-	return s.store.CreateEventComment(ctx, projectID, eventID, userID, text)
+	comment, err := s.store.CreateEventComment(ctx, projectID, eventID, userID, text)
+	if err != nil {
+		return nil, err
+	}
+	// Письма о новом замечании — в очередь, а не в момент ответа (миграция 0020).
+	// Сбой очереди не отменяет комментарий: он уже записан, и «письмо не ушло» — не повод
+	// отвечать автору ошибкой. Поэтому здесь только журнал.
+	if queued, queueErr := s.store.EnqueueCommentNotifications(
+		ctx, projectID, eventID, comment.ID, userID); queueErr != nil {
+		s.logger.Warn("events: уведомления о замечании не поставлены в очередь",
+			"project", projectID, "comment", comment.ID, "err", queueErr)
+	} else if queued > 0 {
+		s.logger.Info("events: замечание в очереди на уведомление",
+			"project", projectID, "comment", comment.ID, "recipients", queued)
+	}
+	return comment, nil
 }
 
 // ListComments — обсуждение одного кадра в порядке написания (viewer+).
@@ -133,4 +148,12 @@ func (s *Service) MarkCommentsSeen(
 		return err
 	}
 	return s.store.MarkCommentsSeen(ctx, projectID, eventID, userID)
+}
+
+// SetNotifyComments включает/выключает письма о замечаниях (галочка в профиле).
+//
+// Согласие спрашиваем явно: текст проекта уходит на чужой почтовый сервер, и по умолчанию
+// это выключено (как и отправка текста модели — docs/ai-assistant.md).
+func (s *Service) SetNotifyComments(ctx context.Context, userID uuid.UUID, enabled bool) error {
+	return s.store.SetNotifyComments(ctx, userID, enabled)
 }

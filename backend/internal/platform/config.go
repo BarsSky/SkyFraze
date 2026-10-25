@@ -33,6 +33,23 @@ type Config struct {
 	// Frontend CORS
 	CORSOrigins string `envconfig:"CORS_ORIGINS" default:"http://localhost:5173"`
 
+	// Уведомления о новых замечаниях по почте (docs/comments.md §5.2).
+	//
+	// Пустые NOTIFY_SMTP_HOST или NOTIFY_FROM означают «почта не настроена»: письма не
+	// уходят, уведомления остаются в интерфейсе (счётчики), и журнал говорит об этом
+	// одной строкой. Стенд без почтового сервера не должен выглядеть сломанным.
+	NotifySMTPHost string `envconfig:"NOTIFY_SMTP_HOST" default:""`
+	NotifySMTPPort int    `envconfig:"NOTIFY_SMTP_PORT" default:"587"`
+	NotifySMTPUser string `envconfig:"NOTIFY_SMTP_USER" default:""`
+	NotifySMTPPass string `envconfig:"NOTIFY_SMTP_PASS" default:""`
+	NotifyFrom     string `envconfig:"NOTIFY_FROM" default:""`
+	// NOTIFY_SMTP_TLS — соединение сразу по TLS (порт 465). По умолчанию STARTTLS.
+	NotifySMTPTLS         bool `envconfig:"NOTIFY_SMTP_TLS" default:"false"`
+	NotifyIntervalSeconds int  `envconfig:"NOTIFY_INTERVAL_SECONDS" default:"60"`
+	// APP_BASE_URL — адрес стенда для ссылок в письме (`https://skyfraze.example`).
+	// Пусто — письмо без ссылки: битая ссылка хуже её отсутствия.
+	AppBaseURL string `envconfig:"APP_BASE_URL" default:""`
+
 	// Администрирование развёртывания.
 	//
 	// AdminEmails — список администраторов через запятую. Права выдаются и уже

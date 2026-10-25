@@ -1,4 +1,4 @@
-package main
+﻿package main
 
 import (
 	"context"
@@ -25,6 +25,7 @@ import (
 	"github.com/skyfraze/backend/internal/events"
 	"github.com/skyfraze/backend/internal/feed"
 	"github.com/skyfraze/backend/internal/maintenance"
+	"github.com/skyfraze/backend/internal/notify"
 	"github.com/skyfraze/backend/internal/people"
 	"github.com/skyfraze/backend/internal/platform"
 	"github.com/skyfraze/backend/internal/projects"
@@ -159,6 +160,25 @@ func main() {
 	// загружено до появления пережатия, осталось в исходном весе.
 	sweeper.UseRecompressor(assetsSvc)
 	go sweeper.Run(ctx)
+
+	// Уведомления о новых замечаниях по почте (docs/comments.md §5.2). Очередь
+	// (миграция 0020) наполняется при создании комментария, а отправляет её этот обход.
+	// Без SMTP он не запускается вовсе — и это сказано в журнале, а не скрыто.
+	notifyCfg := notify.Config{
+		Host: cfg.NotifySMTPHost, Port: cfg.NotifySMTPPort,
+		Username: cfg.NotifySMTPUser, Password: cfg.NotifySMTPPass,
+		From: cfg.NotifyFrom, ImplicitTLS: cfg.NotifySMTPTLS,
+		BaseURL: cfg.AppBaseURL,
+		Interval: time.Duration(cfg.NotifyIntervalSeconds) * time.Second,
+	}
+	if notifyCfg.Enabled() {
+		notifySvc := notify.New(st, notify.NewSMTPSender(notifyCfg), notifyCfg, logger)
+		go notifySvc.Run(ctx)
+		logger.Info("notify: письма о новых замечаниях включены",
+			"host", notifyCfg.Host, "from", notifyCfg.From, "interval", notifyCfg.Interval.String())
+	} else {
+		logger.Info("notify: SMTP не настроен — уведомления о замечаниях только в интерфейсе")
+	}
 
 	evSvc := events.New(st, projSvc)
 	evSvc.UseLogger(logger)

@@ -77,6 +77,8 @@ type User struct {
 	// Discoverable — галочка «показывать меня»: выключенная убирает человека и
 	// из каталога, и из поиска соавторов.
 	Discoverable bool `db:"discoverable" json:"discoverable"`
+	// NotifyComments — согласие получать письма о новых замечаниях (по умолчанию нет).
+	NotifyComments bool `db:"notify_comments" json:"notify_comments"`
 	// IsAdmin — администратор развёртывания: управляет режимом регистрации
 	// и рассматривает заявки. Назначается env ADMIN_EMAILS (или первый пользователь).
 	IsAdmin   bool      `db:"is_admin" json:"is_admin"`
@@ -85,7 +87,7 @@ type User struct {
 }
 
 const userColumns = `id, email, password_hash, display_name, username, bio, crafts,
-	discoverable, is_admin, created_at, updated_at`
+	discoverable, notify_comments, is_admin, created_at, updated_at`
 
 func (s *Store) CreateUser(ctx context.Context, email, hash, name string) (*User, error) {
 	return s.CreateUserWithHash(ctx, email, hash, name, false)
@@ -164,6 +166,8 @@ type ProfileUpdate struct {
 	Bio          *string
 	Crafts       *[]string
 	Discoverable *bool
+	// NotifyComments — галочка «присылать замечания на почту».
+	NotifyComments *bool
 }
 
 // UpdateProfile меняет профиль одной операцией: интерфейс отправляет поля
@@ -178,9 +182,10 @@ func (s *Store) UpdateProfile(ctx context.Context, userID uuid.UUID, upd Profile
 		        bio          = COALESCE($4, bio),
 		        crafts       = COALESCE($5::text[], crafts),
 		        discoverable = COALESCE($6, discoverable),
+		        notify_comments = COALESCE($7, notify_comments),
 		        updated_at=now()
 		  WHERE id=$1 RETURNING `+userColumns,
-		userID, upd.DisplayName, upd.Username, upd.Bio, upd.Crafts, upd.Discoverable)
+		userID, upd.DisplayName, upd.Username, upd.Bio, upd.Crafts, upd.Discoverable, upd.NotifyComments)
 	if err != nil {
 		if isUsernameConflict(err) {
 			return nil, ErrAlreadyExists

@@ -19,6 +19,11 @@ export interface UserPublic {
    * отсутствие поля означает «виден», а не «скрыт».
    */
   discoverable?: boolean
+  /**
+   * Присылать письма о новых замечаниях. По умолчанию выключено: текст проекта уходит на
+   * почтовый сервер только по осознанному согласию (docs/comments.md §5.2).
+   */
+  notify_comments?: boolean
 }
 
 interface AuthState {

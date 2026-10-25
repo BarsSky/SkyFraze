@@ -50,6 +50,8 @@ type ProfileUpdate struct {
 	Bio          *string
 	Crafts       *[]string
 	Discoverable *bool
+	// NotifyComments — согласие на письма о новых замечаниях (docs/comments.md §5.2).
+	NotifyComments *bool
 }
 
 // UpdateProfile меняет профиль: имя, ник (@username), «о себе», специализации и
@@ -99,6 +101,7 @@ func (s *Service) UpdateProfile(ctx context.Context, userID uuid.UUID, upd Profi
 		change.Crafts = &crafts
 	}
 	change.Discoverable = upd.Discoverable
+	change.NotifyComments = upd.NotifyComments
 
 	return s.store.UpdateProfile(ctx, userID, change)
 }

@@ -54,7 +54,10 @@ type userPublic struct {
 	Bio          string   `json:"bio"`
 	Crafts       []string `json:"crafts"`
 	Discoverable bool     `json:"discoverable"`
-	IsAdmin      bool     `json:"is_admin"`
+	// NotifyComments — согласие получать письма о новых замечаниях. По умолчанию нет:
+	// текст проекта уходит на чужой почтовый сервер только осознанно (docs/comments.md §5.2).
+	NotifyComments bool `json:"notify_comments"`
+	IsAdmin        bool `json:"is_admin"`
 }
 
 func publicUser(u *store.User) userPublic {
@@ -67,7 +70,7 @@ func publicUser(u *store.User) userPublic {
 	return userPublic{
 		ID: u.ID.String(), Email: u.Email, DisplayName: u.DisplayName,
 		Username: u.Username, Bio: u.Bio, Crafts: crafts,
-		Discoverable: u.Discoverable, IsAdmin: u.IsAdmin,
+		Discoverable: u.Discoverable, NotifyComments: u.NotifyComments, IsAdmin: u.IsAdmin,
 	}
 }
 
@@ -79,6 +82,8 @@ type updateProfileReq struct {
 	Bio          *string   `json:"bio"`
 	Crafts       *[]string `json:"crafts"`
 	Discoverable *bool     `json:"discoverable"`
+	// NotifyComments — галочка «присылать замечания на почту».
+	NotifyComments *bool `json:"notify_comments"`
 }
 
 // UpdateProfile — имя, ник, «о себе», специализации и видимость в каталоге.
@@ -99,7 +104,8 @@ func (h *Handler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		Username:     req.Username,
 		Bio:          req.Bio,
 		Crafts:       req.Crafts,
-		Discoverable: req.Discoverable,
+		Discoverable:   req.Discoverable,
+		NotifyComments: req.NotifyComments,
 	})
 	if err != nil {
 		switch {

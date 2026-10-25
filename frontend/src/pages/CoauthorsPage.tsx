@@ -389,6 +389,9 @@ function ProfileCard() {
   /** Отсутствие поля — не «скрыт»: на сервере видимость включена по умолчанию. */
   const savedDiscoverable = user?.discoverable !== false
   const [discoverable, setDiscoverable] = useState(savedDiscoverable)
+  /** Письма о замечаниях: по умолчанию выключены — текст проекта уходит на почтовый сервер. */
+  const savedNotify = user?.notify_comments === true
+  const [notifyComments, setNotifyComments] = useState(savedNotify)
   const [state, setState] = useState<'idle' | 'busy' | 'saved'>('idle')
   const [message, setMessage] = useState<string | null>(null)
 
@@ -398,7 +401,8 @@ function ProfileCard() {
     setBio(user?.bio ?? '')
     setCrafts(craftsOf(user?.crafts))
     setDiscoverable(user?.discoverable !== false)
-  }, [user?.display_name, user?.username, user?.bio, user?.crafts, user?.discoverable])
+    setNotifyComments(user?.notify_comments === true)
+  }, [user?.display_name, user?.username, user?.bio, user?.crafts, user?.discoverable, user?.notify_comments])
 
   const nickOk = validUsername(nick)
   const savedCrafts = craftsOf(user?.crafts)
@@ -414,6 +418,7 @@ function ProfileCard() {
   if (bio.trim() !== (user?.bio ?? '')) patch.bio = bio.trim()
   if (!sameCrafts) patch.crafts = crafts
   if (discoverable !== savedDiscoverable) patch.discoverable = discoverable
+  if (notifyComments !== savedNotify) patch.notify_comments = notifyComments
   const changed = Object.keys(patch).length > 0
 
   async function save() {
@@ -487,6 +492,22 @@ function ProfileCard() {
           <span className="muted" style={{ display: 'block' }}>
             Включено по умолчанию: снимите галочку, чтобы скрыть себя из каталога и из
             поиска людей.
+          </span>
+        </span>
+      </label>
+
+      <label className="coauthors__toggle">
+        <input
+          type="checkbox"
+          checked={notifyComments}
+          onChange={(e) => setNotifyComments(e.target.checked)}
+          data-notify-comments
+        />
+        <span>
+          Присылать замечания на почту
+          <span className="muted" style={{ display: 'block' }}>
+            Обсуждение кадров — ваше дело и ваших соавторов: письмо уходит на почтовый сервер
+            стенда с текстом замечаний. Выключено по умолчанию.
           </span>
         </span>
       </label>
