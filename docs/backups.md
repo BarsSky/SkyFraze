@@ -107,12 +107,42 @@ bash deploy/backup.sh --drill /tmp/offsite   # копия ПРИЕХАЛА и в
 в отдельную базу: 3 проекта, 2 пользователя, 5 вложений, «файлов нет у вложений: 0».
 Без шага 4 офсайт — это надежда: копия может уехать битой или не уехать вовсе.
 
-**Что осталось на будущее (не сделано):** SkyFraze ходит в MinIO ключами оператора, у
-которых есть доступ и к бакетам skygate. Правильнее — отдельный пользователь MinIO с
-политикой только на `skyfraze/*` (`mc admin user add` + `mc admin policy attach`), чтобы
-компрометация стенда не открывала чужие бакеты. Пока это осознанный размен: политика
-заводится в общем MinIO, и делать её вслепую (без `mc` под рукой) рискованнее, чем
-оставить как есть.
+**Стенд ходит в MinIO не ключами оператора (0.46.3).** Сначала бакет обслуживался
+ключом оператора — то есть компрометация SkyFraze открывала и бакеты skygate. Теперь
+заведён отдельный пользователь MinIO `skyfraze` с одной политикой:
+
+```bash
+# политика: только бакет skyfraze, ни списка бакетов, ни чужих префиксов
+cat > skyfraze-rw.json <<'JSON'
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    { "Effect": "Allow", "Action": ["s3:ListBucket", "s3:GetBucketLocation"],
+      "Resource": ["arn:aws:s3:::skyfraze"] },
+    { "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject",
+                 "s3:AbortMultipartUpload", "s3:ListMultipartUploadParts"],
+      "Resource": ["arn:aws:s3:::skyfraze/*"] }
+  ]
+}
+JSON
+
+# mc берётся из релизов на GitHub: dl.min.io отдаёт 410 (клиент архивирован)
+curl -sSL -o ~/.local/bin/mc \
+  https://github.com/minio/mc/releases/download/RELEASE.2025-08-13T08-35-41Z/mc.linux-amd64.RELEASE.2025-08-13T08-35-41Z
+chmod 755 ~/.local/bin/mc
+
+MC_HOST_op="https://<оператор>:<секрет>@minio.<домен>"   # только на время настройки
+mc admin policy create op skyfraze-rw skyfraze-rw.json
+mc admin user add op skyfraze "$(head -c 64 /dev/urandom | tr -dc 'A-Za-z0-9' | head -c 40)"
+mc admin policy attach op skyfraze-rw --user skyfraze
+# ключи пользователя — в ~/.config/rclone/rclone.conf (600), ключ оператора со стенда убрать
+```
+
+**Чем проверено:** `mc ls` от нового пользователя видит `skyfraze/`, а `skygate-backups`
+отвечает `Access Denied`; полный список бакетов он тоже не видит (`mc ls` показывает только
+свой). Обычный запуск копии через таймер после смены ключей — `Result=success`, копия
+уехала, ротация отработала («копий в бакете: 3 (хранится 14)»).
 
 ## 3. Расписание
 
