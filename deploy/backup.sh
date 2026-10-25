@@ -351,8 +351,13 @@ rotate_kind() {
     log "ротация $label выключена ($keep)"
     return 0
   fi
+  # `|| true` обязателен: если каталогов этого уровня ещё нет, grep выходит с 1, а с
+  # `set -euo pipefail` неудачное присваивание убивает весь скрипт — копия создана, а
+  # офсайт и остальные уровни уже не выполнятся (именно так и случилось на первом прогоне
+  # с месячным уровнем: копия легла на место, а в бакет не уехала).
   list="$(find "$BACKUP_DIR" -maxdepth 1 -mindepth 1 -type d -printf '%f\n' 2>/dev/null \
-          | grep -E "$pattern" | sort -r)"
+          | grep -E "$pattern" || true)"
+  list="$(printf '%s\n' "$list" | grep . | sort -r || true)"
   count="$(printf '%s\n' "$list" | grep -c . || true)"
   if [ "$count" -le "$keep" ]; then
     log "копий $label: $count (хранится $keep)"
@@ -540,6 +545,24 @@ self_test() {
     printf '  месячный уровень удалён вместе с ежедневными — ПРОВАЛ\n'
     ok=1
   fi
+
+  # Второй проход — БЕЗ уровневых каталогов. Это отдельная проверка, и она появилась после
+  # реальной ошибки: когда недельных/месячных копий ещё нет, `grep` в фильтре выходит с 1, и
+  # с `set -euo pipefail` скрипт умирал прямо в ротации — копия создана, а офсайт уже нет.
+  # Живой прогон это поймал; самопроверка тогда молчала, потому что проверяла только случай
+  # «все уровни есть».
+  local tmp2
+  tmp2="$(mktemp -d)"
+  BACKUP_DIR="$tmp2"
+  for i in $(seq 1 4); do mkdir -p "$tmp2/2026-09-$(printf '%02d' "$i")_030000"; done
+  if BACKUP_KEEP=2 BACKUP_KEEP_WEEKLY=2 BACKUP_KEEP_MONTHLY=2 rotate >/dev/null 2>&1; then
+    printf '  ротация без уровневых копий не падает — ok\n'
+  else
+    printf '  ротация без уровневых копий упала (pipefail на пустом grep) — ПРОВАЛ\n'
+    ok=1
+  fi
+  rm -rf "$tmp2"
+  BACKUP_DIR="$tmp"
 
   # make_tiered: с зацепкой BACKUP_FORCE_TIER уровень создаётся в любой день и только один раз.
   mkdir -p "$tmp/2026-10-25_120000"
