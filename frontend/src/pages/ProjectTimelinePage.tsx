@@ -440,6 +440,8 @@ export function ProjectTimelinePage() {
             events={events}
             assets={assets}
             assetUrls={assetUrls}
+            projectId={projectId}
+            canEdit={canEdit === true}
             syncNote={connectionNote ?? syncNote}
             onChanged={() => {
               void pushTree()

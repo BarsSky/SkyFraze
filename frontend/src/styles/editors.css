@@ -326,3 +326,35 @@
 .ed-import__quota {
   flex: 1 1 100%; margin: 0; font-size: 0.82rem; color: var(--danger);
 }
+
+/* ─── обсуждение кадра ──────────────────────────────────────────────────────
+   Блок под редактором выбранного кадра. Комментарии — не текст проекта: они не
+   уезжают в книгу и в Markdown, поэтому и живут отдельным блоком, а не в поле
+   текста. Ширина ограничена той же колонкой, что у редактора. */
+.fc { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 10px; }
+.fc__head { display: flex; align-items: baseline; gap: 8px; }
+.fc__count { font-size: 12px; }
+.fc__list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.fc__item { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; }
+.fc__meta { display: flex; align-items: baseline; gap: 8px; font-size: 12px; }
+.fc__author { font-weight: 600; }
+.fc__stamp { font-size: 11px; }
+.fc__remove {
+  margin-left: auto; background: none; border: none; color: var(--fg-muted);
+  font-size: 16px; line-height: 1; cursor: pointer; padding: 0 4px;
+}
+.fc__remove:hover { color: var(--danger); }
+.fc__body { margin: 4px 0 0; font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.fc__form { display: flex; gap: 8px; margin-top: 10px; align-items: flex-start; }
+.fc__form textarea {
+  flex: 1; min-height: 44px; resize: vertical; font: inherit; font-size: 13px;
+  padding: 6px 8px; border-radius: 6px; border: 1px solid var(--border);
+  background: var(--bg-elev); color: var(--fg);
+}
+.fc__readonly { font-size: 12px; margin: 8px 0 0; }
+.fc__note { font-size: 12px; color: var(--danger); margin: 6px 0 0; }
+/* Бейдж у строки дерева: «здесь уже идёт разговор». */
+.ed-row__comments {
+  flex: 0 0 auto; font-size: 12px; color: var(--fg-muted);
+  border: 1px solid var(--border); border-radius: 999px; padding: 0 6px;
+}

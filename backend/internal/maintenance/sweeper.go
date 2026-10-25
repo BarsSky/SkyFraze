@@ -144,6 +144,10 @@ type Report struct {
 	RemovedFiles int   `json:"removed_files"`
 	RemovedBytes int64 `json:"removed_bytes"`
 	FailedFiles  int   `json:"failed_files"`
+	// RemovedComments — сколько комментариев к исчезнувшим кадрам убрано. Кадр исчезает
+	// из проекции (пересчёт дерева), а комментарий остаётся строкой без адресата: показать
+	// его негде, и без уборки такие строки копились бы вечно.
+	RemovedComments int `json:"removed_comments"`
 }
 
 // Report осматривает базу и хранилище, ничего не удаляя.
@@ -242,6 +246,19 @@ func (s *Sweeper) scan(ctx context.Context, remove bool) (*Report, error) {
 	// Порядок примеров — стабильный: отчёты сравнивают между собой.
 	sort.Slice(missing, func(i, j int) bool { return missing[i].Key < missing[j].Key })
 	report.MissingExamples = missing
+
+	// Комментарии к исчезнувшим кадрам. Кадр удаляется в CRDT-документе, и «его больше
+	// нет» — результат пересчёта проекции, а не событие, на которое можно подписаться.
+	// Поэтому чистим здесь, с тем же карантином, что у осиротевших файлов: свежая
+	// пропажа бывает серединой импорта.
+	if remove {
+		purged, err := s.store.PurgeOrphanEventComments(ctx, s.opts.Grace)
+		if err != nil {
+			s.logger.Warn("storage sweep: комментарии к исчезнувшим кадрам не убраны", "err", err)
+		} else if purged > 0 {
+			report.RemovedComments = int(purged)
+		}
+	}
 
 	return report, nil
 }

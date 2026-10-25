@@ -5,6 +5,8 @@ import { checkMove, type DropPlace, type MoveReject } from '../../collab/reorder
 import { editingPeers, typingLabel, type PeerState } from '../../collab/awareness'
 import { textString, titleString } from '../../collab/text'
 import { isSearchQuery, searchProject } from '../../lib/projectSearch'
+import { commentCounts as commentCountsRequest } from '../../api/comments'
+import { FrameComments } from './FrameComments'
 import {
   previewMarkdownImport,
   readImportErrorMessage,
@@ -41,6 +43,13 @@ interface Props {
   assets: Asset[]
   /** id ассета → blob-URL для превью (ассеты отдаются только с авторизацией). */
   assetUrls: Record<string, string>
+  /**
+   * Проект и право писать. Нужны обсуждению кадра: без id некуда слать запрос, а без
+   * права текст формы был бы обещанием, которое сервер отклонит. Необязательны — панель
+   * работает и без них (обсуждение просто не показывается).
+   */
+  projectId?: string
+  canEdit?: boolean
   syncNote?: string | null
   /** Любая правка CRDT: страница проецирует дерево на сервер. */
   onChanged: () => void
@@ -351,13 +360,15 @@ function dropClassFor(hint: DropHint): string {
  * `yMoveSubtree` (порядок в Y.Array + `parent_id`).
  */
 export function EditorsPanel({
-  events, assets, assetUrls, syncNote, onChanged, onUpload, onImportInto, presence, onEditing,
-  assetUsage, onDeleteAsset, assetNote, assetBusyId,
+  events, assets, assetUrls, projectId, canEdit, syncNote, onChanged, onUpload, onImportInto,
+  presence, onEditing, assetUsage, onDeleteAsset, assetNote, assetBusyId,
 }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [filter, setFilter] = useState('')
   const [version, setVersion] = useState(0) // перерисовка после правок CRDT
   const [filesNote, setFilesNote] = useState<string | null>(null)
+  /** Сколько комментариев у кадров: бейдж у строки дерева и счётчик обсуждения. */
+  const [commentCounts, setCommentCounts] = useState<Record<string, number>>({})
   const [drag, setDrag] = useState<DragView | null>(null)
   /** Подсказка для клавиатурных переносов: что не получилось и почему. */
   const [notice, setNotice] = useState<string | null>(null)
@@ -452,6 +463,34 @@ export function EditorsPanel({
       onEditingRef.current?.(editingIdRef.current, false)
     }, TYPING_IDLE_MS)
   }, [stopTyping])
+
+  // Счётчики обсуждения — один запрос на проект: N запросов по кадрам ради бейджа были
+  // бы дороже, чем весь список. Обновляются после каждого отправленного комментария.
+  useEffect(() => {
+    if (!projectId) return
+    let alive = true
+    commentCountsRequest(projectId)
+      .then((counts) => {
+        if (alive) setCommentCounts(counts)
+      })
+      .catch(() => undefined)
+    return () => {
+      alive = false
+    }
+  }, [projectId])
+
+  const noteCommentCount = useCallback((eventId: string, count: number) => {
+    setCommentCounts((current) => {
+      if (count <= 0) {
+        if (!(eventId in current)) return current
+        const next = { ...current }
+        delete next[eventId]
+        return next
+      }
+      if (current[eventId] === count) return current
+      return { ...current, [eventId]: count }
+    })
+  }, [])
 
   const rows = useMemo<NavRow[]>(() => {
     void version
@@ -1500,6 +1539,18 @@ export function EditorsPanel({
                   </span>
                 )}
                 {row.childCount > 0 && <span className="ed-row__badge">{row.childCount}</span>}
+                {/* Сколько замечаний у кадра: без этого комментарий пишется в пустоту —
+                    его никто не заметит, пока сам не откроет кадр. */}
+                {(commentCounts[row.id] ?? 0) > 0 && (
+                  <span
+                    className="ed-row__comments"
+                    data-comment-count={commentCounts[row.id]}
+                    title={`Комментариев: ${commentCounts[row.id]}`}
+                    aria-label={`Комментариев: ${commentCounts[row.id]}`}
+                  >
+                    {commentCounts[row.id]}
+                  </span>
+                )}
               </button>
             )
           })}
@@ -1531,6 +1582,14 @@ export function EditorsPanel({
               <p className="muted ed-editor__hint">
                 Изменения сохраняются автоматически; дерево синхронизируется с сервером.
               </p>
+              {projectId && selectedId && (
+                <FrameComments
+                  projectId={projectId}
+                  eventId={selectedId}
+                  canEdit={canEdit === true}
+                  onCountChange={noteCommentCount}
+                />
+              )}
             </>
           ) : (
             <p className="muted">Выберите событие слева или создайте новую главу.</p>

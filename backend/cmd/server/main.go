@@ -375,6 +375,10 @@ func main() {
 		// Читают viewer+, меняют editor+ (проверяется в events.Service).
 		evH.MountVersions(r)
 
+		// Обсуждение кадров (миграция 0018): чтение viewer+, запись editor+, удаление —
+		// только своё. Комментарии — не текст проекта: в документ и в книгу они не идут.
+		evH.MountComments(r)
+
 		r.Post("/assets", assetsH.Upload(authSvc))
 		r.Get("/assets", assetsH.List(authSvc))
 		// Занятое место и предел квоты: интерфейс показывает их рядом со списком
