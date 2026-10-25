@@ -55,6 +55,7 @@ ENV_BACKUP_KEEP="${BACKUP_KEEP:-}"
 ENV_BACKUP_RSYNC="${BACKUP_RSYNC:-}"
 ENV_BACKUP_RCLONE="${BACKUP_RCLONE:-}"
 ENV_BACKUP_RCLONE_KEEP="${BACKUP_RCLONE_KEEP:-}"
+ENV_BACKUP_ASSETS_RCLONE="${BACKUP_ASSETS_RCLONE:-}"
 
 BACKUP_DIR="${BACKUP_DIR:-$APP_DIR/backups}"
 # Сколько копий хранить на месте: чаще всего нужны последние дни, а не все сразу.
@@ -68,6 +69,10 @@ BACKUP_RCLONE="${BACKUP_RCLONE:-}"
 # то есть ~2 ГБ в год, и растёт он вместе с вложениями. По умолчанию 0 (ничего не
 # удаляем): удалять данные в чужом хранилище скрипт не должен без явного разрешения.
 BACKUP_RCLONE_KEEP="${BACKUP_RCLONE_KEEP:-0}"
+# Откуда брать вложения, если они лежат в S3 (STORAGE_DRIVER=s3): `remote:path` для
+# rclone, указывающий на КОРЕНЬ бакета вложений. Пусто — вложения читаются с диска
+# (обычный случай). Без этой строки при S3-хранилище в копию попала бы только база.
+BACKUP_ASSETS_RCLONE="${BACKUP_ASSETS_RCLONE:-}"
 
 log() { printf '%s %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$*"; }
 fail() { printf 'ошибка: %s\n' "$*" >&2; exit 1; }
@@ -100,7 +105,8 @@ load_backup_env() {
       BACKUP_RSYNC)  [ -n "$ENV_BACKUP_RSYNC" ]  || BACKUP_RSYNC="$val" ;;
       BACKUP_RCLONE) [ -n "$ENV_BACKUP_RCLONE" ] || BACKUP_RCLONE="$val" ;;
       BACKUP_RCLONE_KEEP) [ -n "$ENV_BACKUP_RCLONE_KEEP" ] || BACKUP_RCLONE_KEEP="$val" ;;
-      *) log "backup.env: не знаю настройку «$key» — ожидаются BACKUP_DIR, BACKUP_KEEP, BACKUP_RSYNC, BACKUP_RCLONE, BACKUP_RCLONE_KEEP" ;;
+      BACKUP_ASSETS_RCLONE) [ -n "$ENV_BACKUP_ASSETS_RCLONE" ] || BACKUP_ASSETS_RCLONE="$val" ;;
+      *) log "backup.env: не знаю настройку «$key» — ожидаются BACKUP_DIR, BACKUP_KEEP, BACKUP_RSYNC, BACKUP_RCLONE, BACKUP_RCLONE_KEEP, BACKUP_ASSETS_RCLONE" ;;
     esac
   done < "$file"
 }
@@ -205,10 +211,26 @@ create_backup() {
   compose exec -T "$PG_SERVICE" pg_restore -l < "$dir/db.dump" > "$dir/db.toc"
   grep -q 'TABLE DATA' "$dir/db.toc" || fail "в дампе нет данных таблиц — проверьте pg_restore -l"
 
-  # 2. Файлы вложений — тем же контейнером, что их пишет: путь и владелец совпадают,
-  # и не нужно угадывать имя docker-тома.
-  log "упаковываю каталог вложений $STORAGE_PATH"
-  compose exec -T "$BACKEND_SERVICE" tar czf - -C "$STORAGE_PATH" . > "$dir/assets.tar.gz"
+  # 2. Файлы вложений.
+  #
+  #    С диска — тем же контейнером, что их пишет: путь и владелец совпадают, и не нужно
+  #    угадывать имя docker-тома. Из S3 (STORAGE_DRIVER=s3) — скачиваем бакет rclone'ом и
+  #    упаковываем те же ключи: без этого в копии оказалась бы только база, а вложения
+  #    остались бы одной копией в бакете — и проверка восстановления честно упала бы на
+  #    «файлов нет у вложений». То есть архив обязан быть полным ЛЮБЫМ путём.
+  if [ -n "$BACKUP_ASSETS_RCLONE" ]; then
+    local tool
+    tool="$(tool_path rclone)" || fail "BACKUP_ASSETS_RCLONE задан, но rclone не установлен"
+    log "скачиваю вложения из S3: $BACKUP_ASSETS_RCLONE"
+    local scratch="$dir/.assets"
+    mkdir -p "$scratch"
+    "$tool" copy "$BACKUP_ASSETS_RCLONE" "$scratch" || fail "не удалось скачать вложения из S3"
+    tar czf "$dir/assets.tar.gz" -C "$scratch" .
+    rm -rf "$scratch"
+  else
+    log "упаковываю каталог вложений $STORAGE_PATH"
+    compose exec -T "$BACKEND_SERVICE" tar czf - -C "$STORAGE_PATH" . > "$dir/assets.tar.gz"
+  fi
 
   local projects assets users system events files
   projects="$(psql_at 'SELECT count(*) FROM projects')"

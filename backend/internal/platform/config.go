@@ -15,12 +15,20 @@ type Config struct {
 	JWTSecret  string `envconfig:"JWT_SECRET" required:"true"`
 	StorageDir string `envconfig:"STORAGE_DIR" default:"./storage"`
 
-	// Object store (filesystem in MVP; MinIO/S3 в Phase 2)
-	S3Endpoint string `envconfig:"S3_ENDPOINT" default:""`
-	S3Bucket   string `envconfig:"S3_BUCKET" default:"skyfraze-assets"`
-	S3Key      string `envconfig:"S3_KEY" default:""`
-	S3Secret   string `envconfig:"S3_SECRET" default:""`
-	S3UseSSL   bool   `envconfig:"S3_USE_SSL" default:"false"`
+	// Объектное хранилище вложений.
+	//
+	// STORAGE_DRIVER=s3 переносит файлы в S3/MinIO (docs/storage-s3.md): ключи в бакете —
+	// те же, что на диске (`<project_id>/<uuid>.<ext>`), поэтому переезд — это копирование
+	// файлов, а не миграция базы. По умолчанию local: стенд без настроенного S3 должен
+	// работать как работал.
+	StorageDriver string `envconfig:"STORAGE_DRIVER" default:"local"`
+	S3Endpoint    string `envconfig:"S3_ENDPOINT" default:""`
+	S3Bucket      string `envconfig:"S3_BUCKET" default:"skyfraze-assets"`
+	S3Prefix      string `envconfig:"S3_PREFIX" default:""`
+	S3Region      string `envconfig:"S3_REGION" default:"us-east-1"`
+	S3Key         string `envconfig:"S3_KEY" default:""`
+	S3Secret      string `envconfig:"S3_SECRET" default:""`
+	S3UseSSL      bool   `envconfig:"S3_USE_SSL" default:"false"`
 
 	// Frontend CORS
 	CORSOrigins string `envconfig:"CORS_ORIGINS" default:"http://localhost:5173"`

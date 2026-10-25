@@ -114,10 +114,30 @@ func main() {
 	projSvc := projects.New(st)
 	projH := projects.NewHandler(projSvc, logger)
 
-	objStore, err := storage.NewLocal(cfg.StorageDir)
-	if err != nil {
-		logger.Error("storage init", "err", err)
-		os.Exit(1)
+	// Хранилище вложений: диск или S3/MinIO (docs/storage-s3.md). Режим выбирается явно
+	// (STORAGE_DRIVER), а не «есть S3_ENDPOINT — значит S3»: наполовину настроенный стенд
+	// должен падать на старте с понятной ошибкой, а не переключаться молча.
+	var objStore storage.ObjectStore
+	if strings.EqualFold(cfg.StorageDriver, "s3") {
+		s3Store, s3Err := storage.NewS3(storage.S3Config{
+			Endpoint: cfg.S3Endpoint, UseSSL: cfg.S3UseSSL, Bucket: cfg.S3Bucket,
+			Prefix: cfg.S3Prefix, AccessKey: cfg.S3Key, SecretKey: cfg.S3Secret,
+			Region: cfg.S3Region,
+		})
+		if s3Err != nil {
+			logger.Error("storage init: S3", "err", s3Err)
+			os.Exit(1)
+		}
+		objStore = s3Store
+		logger.Info("storage: вложения в S3", "endpoint", cfg.S3Endpoint,
+			"bucket", cfg.S3Bucket, "prefix", cfg.S3Prefix)
+	} else {
+		localStore, localErr := storage.NewLocal(cfg.StorageDir)
+		if localErr != nil {
+			logger.Error("storage init", "err", localErr)
+			os.Exit(1)
+		}
+		objStore = localStore
 	}
 	assetsSvc := assets.New(st, objStore, projSvc)
 	assetsSvc.UseLogger(logger)

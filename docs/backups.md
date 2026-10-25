@@ -41,6 +41,7 @@ bash deploy/backup.sh                # копия в backups/<дата>
 | `BACKUP_RSYNC` | пусто | `user@host:/path` — копия уезжает по ssh (`rsync` на обоих концах) |
 | `BACKUP_RCLONE` | пусто | `remote:path` — копия уезжает через `rclone` (облако, S3, другой сервер) |
 | `BACKUP_RCLONE_KEEP` | `0` | сколько копий хранить в офсайте (`0` — не удалять ничего; локальный `BACKUP_KEEP` к бакету не относится, `rclone copy` только добавляет) |
+| `BACKUP_ASSETS_RCLONE` | пусто | `remote:path` — откуда брать вложения, если они лежат в S3 (`STORAGE_DRIVER=s3`, `docs/storage-s3.md` §10). Пусто — читаются с диска. Без этой строки при S3-хранилище копия осталась бы без файлов |
 
 **Куда их писать.** В отдельный файл стенда `backup.env` рядом с `.env`:
 

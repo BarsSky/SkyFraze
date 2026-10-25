@@ -50,6 +50,18 @@ services:
       DATABASE_URL: postgres://skyfraze:skyfraze_dev@postgres:5432/skyfraze?sslmode=disable
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
       STORAGE_DIR: /app/storage
+      # Вложения в S3/MinIO (docs/storage-s3.md). По умолчанию local: стенд без
+      # настроенного S3 работает как раньше. STORAGE_DRIVER=s3 включает объектное
+      # хранилище; ключи в бакете те же, что были на диске (`<project_id>/<uuid>.<ext>`),
+      # поэтому переезд — это копирование файлов, а не миграция базы.
+      STORAGE_DRIVER: ${STORAGE_DRIVER:-local}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_BUCKET: ${S3_BUCKET:-skyfraze-assets}
+      S3_PREFIX: ${S3_PREFIX:-}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_KEY: ${S3_KEY:-}
+      S3_SECRET: ${S3_SECRET:-}
+      S3_USE_SSL: ${S3_USE_SSL:-false}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost}
       LISTEN: ":8080"
       APP_ENV: production
