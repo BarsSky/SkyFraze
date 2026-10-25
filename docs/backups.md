@@ -40,6 +40,7 @@ bash deploy/backup.sh                # копия в backups/<дата>
 | `BACKUP_KEEP` | `7` | сколько копий хранить на месте (`0` — не удалять ничего) |
 | `BACKUP_RSYNC` | пусто | `user@host:/path` — копия уезжает по ssh (`rsync` на обоих концах) |
 | `BACKUP_RCLONE` | пусто | `remote:path` — копия уезжает через `rclone` (облако, S3, другой сервер) |
+| `BACKUP_RCLONE_KEEP` | `0` | сколько копий хранить в офсайте (`0` — не удалять ничего; локальный `BACKUP_KEEP` к бакету не относится, `rclone copy` только добавляет) |
 
 **Куда их писать.** В отдельный файл стенда `backup.env` рядом с `.env`:
 
@@ -88,6 +89,8 @@ chmod 600 ~/.config/rclone/rclone.conf
 
 # 3. Офсайт в backup.env стенда (не в .env — его читает только docker compose):
 echo 'BACKUP_RCLONE=skyfraze:skyfraze' >> ~/skyfraze/backup.env
+# и, если бакет не должен расти вечно, — сколько копий там хранить:
+echo 'BACKUP_RCLONE_KEEP=14' >> ~/skyfraze/backup.env
 
 # 4. Проверка: копия уходит, скачивается и РАЗВОРАЧИВАЕТСЯ
 bash deploy/backup.sh                       # в журнале: «офсайт: rclone → skyfraze:skyfraze»

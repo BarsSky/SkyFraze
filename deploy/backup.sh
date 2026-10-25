@@ -54,12 +54,20 @@ ENV_BACKUP_DIR="${BACKUP_DIR:-}"
 ENV_BACKUP_KEEP="${BACKUP_KEEP:-}"
 ENV_BACKUP_RSYNC="${BACKUP_RSYNC:-}"
 ENV_BACKUP_RCLONE="${BACKUP_RCLONE:-}"
+ENV_BACKUP_RCLONE_KEEP="${BACKUP_RCLONE_KEEP:-}"
 
 BACKUP_DIR="${BACKUP_DIR:-$APP_DIR/backups}"
 # Сколько копий хранить на месте: чаще всего нужны последние дни, а не все сразу.
 BACKUP_KEEP="${BACKUP_KEEP:-7}"
 BACKUP_RSYNC="${BACKUP_RSYNC:-}"
 BACKUP_RCLONE="${BACKUP_RCLONE:-}"
+# Сколько копий хранить в офсайте (только для rclone). 0 — не удалять ничего.
+#
+# Зачем вообще: локальная ротация (BACKUP_KEEP) к офсайту не относится — `rclone copy`
+# только добавляет. Без этой настройки бакет растёт вечно: у стенда это ~6 МБ в день,
+# то есть ~2 ГБ в год, и растёт он вместе с вложениями. По умолчанию 0 (ничего не
+# удаляем): удалять данные в чужом хранилище скрипт не должен без явного разрешения.
+BACKUP_RCLONE_KEEP="${BACKUP_RCLONE_KEEP:-0}"
 
 log() { printf '%s %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$*"; }
 fail() { printf 'ошибка: %s\n' "$*" >&2; exit 1; }
@@ -91,7 +99,8 @@ load_backup_env() {
       BACKUP_KEEP)   [ -n "$ENV_BACKUP_KEEP" ]   || BACKUP_KEEP="$val" ;;
       BACKUP_RSYNC)  [ -n "$ENV_BACKUP_RSYNC" ]  || BACKUP_RSYNC="$val" ;;
       BACKUP_RCLONE) [ -n "$ENV_BACKUP_RCLONE" ] || BACKUP_RCLONE="$val" ;;
-      *) log "backup.env: не знаю настройку «$key» — ожидаются BACKUP_DIR, BACKUP_KEEP, BACKUP_RSYNC, BACKUP_RCLONE" ;;
+      BACKUP_RCLONE_KEEP) [ -n "$ENV_BACKUP_RCLONE_KEEP" ] || BACKUP_RCLONE_KEEP="$val" ;;
+      *) log "backup.env: не знаю настройку «$key» — ожидаются BACKUP_DIR, BACKUP_KEEP, BACKUP_RSYNC, BACKUP_RCLONE, BACKUP_RCLONE_KEEP" ;;
     esac
   done < "$file"
 }
@@ -271,9 +280,34 @@ offsite() {
     log "офсайт: rclone → $BACKUP_RCLONE"
     "$tool" copy "$dir" "$BACKUP_RCLONE/$name"
     log "офсайт: копия отправлена"
+    rotate_offsite "$tool"
     return
   fi
   log "офсайт не настроен: копия остаётся на этой же машине (BACKUP_RSYNC или BACKUP_RCLONE)"
+}
+
+# rotate_offsite — оставить в бакете последние BACKUP_RCLONE_KEEP копий.
+#
+# Удаляем только каталоги, имя которых похоже на дату (`20ГГ-ММ-ДД_ЧЧММСС`): в бакете
+# могут лежать чужие объекты, и «ротация вообще всего» была бы уборкой не в своём
+# шкафу. Свежую копию не трогаем никогда — она в списке первая.
+rotate_offsite() {
+  local tool="$1"
+  [ "$BACKUP_RCLONE_KEEP" -gt 0 ] || return 0
+  local list count
+  # sort -r — от новых к старым, как у локальной ротации.
+  list="$("$tool" lsf --dirs-only "$BACKUP_RCLONE" 2>/dev/null | sed 's#/$##' \
+          | grep -E '^20[0-9]{2}-[0-9]{2}-[0-9]{2}_[0-9]{6}$' | sort -r)"
+  count="$(printf '%s\n' "$list" | grep -c . || true)"
+  if [ "$count" -le "$BACKUP_RCLONE_KEEP" ]; then
+    log "офсайт: копий в бакете: $count (хранится $BACKUP_RCLONE_KEEP)"
+    return 0
+  fi
+  printf '%s\n' "$list" | tail -n "+$((BACKUP_RCLONE_KEEP + 1))" | while read -r old; do
+    [ -n "$old" ] || continue
+    log "офсайт: удаляю старую копию $old (хранится $BACKUP_RCLONE_KEEP)"
+    "$tool" purge "$BACKUP_RCLONE/$old" >/dev/null
+  done
 }
 
 # ---------- проверка восстановления ----------
