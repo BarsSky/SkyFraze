@@ -12,6 +12,7 @@ package notify_test
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"io"
 	"log/slog"
 	"net"
@@ -221,8 +222,9 @@ func TestFlushGroupsCommentsPerPerson(t *testing.T) {
 	if !strings.Contains(message, "To: editor@example.com") {
 		t.Errorf("получатель: %s", firstLine(message, "To:"))
 	}
-	if !strings.Contains(message, "2 новых замечания") {
-		t.Errorf("тема письма: %s", firstLine(message, "Subject:"))
+	// Тема с кириллицей кодируется по RFC 2047 — проверяем, что раскодированная совпадает.
+	if subject := decodeSubject(t, firstLine(message, "Subject:")); subject != "SkyFraze: 2 новых замечания в «Проект с обсуждением»" {
+		t.Errorf("тема письма: %q", subject)
 	}
 	if !strings.Contains(message, "Первое замечание.") || !strings.Contains(message, "Второе замечание.") {
 		t.Errorf("в письме нет обоих замечаний:\n%s", message)
@@ -338,6 +340,20 @@ func (e *notifyEnv) notifyService(t *testing.T, fake *fakeSMTP) *notify.Service 
 	}
 	return notify.New(e.st, notify.NewSMTPSender(cfg), cfg,
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
+}
+
+// decodeSubject — раскодировать `Subject: =?UTF-8?B?…?=` (RFC 2047).
+func decodeSubject(t *testing.T, header string) string {
+	t.Helper()
+	value := strings.TrimSpace(strings.TrimPrefix(header, "Subject:"))
+	if !strings.HasPrefix(value, "=?UTF-8?B?") {
+		return value
+	}
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimSuffix(strings.TrimPrefix(value, "=?UTF-8?B?"), "?="))
+	if err != nil {
+		t.Fatalf("тема не раскодировалась: %v", err)
+	}
+	return string(raw)
 }
 
 func firstLine(message, prefix string) string {

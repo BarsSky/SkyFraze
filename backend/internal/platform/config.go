@@ -33,6 +33,15 @@ type Config struct {
 	// Frontend CORS
 	CORSOrigins string `envconfig:"CORS_ORIGINS" default:"http://localhost:5173"`
 
+	// Ограничение попыток входа (docs/security.md). 0 — выключить границу.
+	//
+	// Две границы: по адресу клиента (веер попыток по разным аккаунтам) и по email
+	// (перебор одного аккаунта с разных адресов). Одно ограничение не заменяет другое:
+	// за прокси все клиенты приходят с одного адреса, а перебор с ботнета идёт по одному
+	// аккаунту с разных.
+	AuthRatePerMinute      int `envconfig:"AUTH_RATE_PER_MINUTE" default:"30"`
+	AuthLoginPerEmailLimit int `envconfig:"AUTH_LOGIN_PER_EMAIL_PER_MINUTE" default:"5"`
+
 	// Уведомления о новых замечаниях по почте (docs/comments.md §5.2).
 	//
 	// Пустые NOTIFY_SMTP_HOST или NOTIFY_FROM означают «почта не настроена»: письма не

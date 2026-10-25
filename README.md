@@ -526,6 +526,13 @@ SkyFraze/
 | `VERSIONS_INTERVAL_MINUTES` | как часто сервер снимает автоснимок версии проекта (`docs/versions.md`) | `5` |
 | `VERSIONS_KEEP` | сколько версий держать на проект (`0` — без предела по количеству) | `100` |
 | `VERSIONS_MAX_MB` | предел суммы снапшотов версий на проект, МиБ (`0` — без предела) | `32` |
+| `STORAGE_DRIVER` | где лежат вложения: `local` (диск) или `s3` (`docs/storage-s3.md` §10) | `local` |
+| `S3_ENDPOINT` `S3_BUCKET` `S3_PREFIX` `S3_REGION` `S3_KEY` `S3_SECRET` `S3_USE_SSL` | доступ к S3/MinIO, если `STORAGE_DRIVER=s3`; ключи в бакете те же, что были на диске | — |
+| `AUTH_RATE_PER_MINUTE` | предел попыток на публичных ручках входа по адресу клиента (`0` — выключить, `docs/security.md`) | `30` |
+| `AUTH_LOGIN_PER_EMAIL_PER_MINUTE` | предел попыток входа по ОДНОМУ аккаунту (`0` — выключить) | `5` |
+| `NOTIFY_SMTP_HOST` `NOTIFY_SMTP_PORT` `NOTIFY_SMTP_USER` `NOTIFY_SMTP_PASS` `NOTIFY_SMTP_TLS` `NOTIFY_FROM` | почта для писем о новых замечаниях; пусто — почта выключена, уведомления только в интерфейсе (`docs/comments.md` §5.2) | пусто / `587` |
+| `NOTIFY_INTERVAL_SECONDS` | как часто обходить очередь писем | `60` |
+| `APP_BASE_URL` | адрес стенда для ссылок в письмах; пусто — письмо без ссылки | пусто |
 | `LISTEN` | bind address backend | `:8080` |
 | `APP_ENV` | environment marker | `production` |
 

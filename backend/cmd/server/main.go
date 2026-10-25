@@ -28,6 +28,7 @@ import (
 	"github.com/skyfraze/backend/internal/notify"
 	"github.com/skyfraze/backend/internal/people"
 	"github.com/skyfraze/backend/internal/platform"
+	"github.com/skyfraze/backend/internal/ratelimit"
 	"github.com/skyfraze/backend/internal/projects"
 	"github.com/skyfraze/backend/internal/storage"
 	"github.com/skyfraze/backend/internal/store"
@@ -82,6 +83,34 @@ func main() {
 	authSvc := auth.New(st, cfg.JWTSecret)
 	authSvc.SetAdminEmails(cfg.AdminEmailList())
 	authH := auth.NewHandler(authSvc, st, logger)
+
+	// Ограничение попыток входа (docs/security.md): по адресу клиента и по аккаунту.
+	// Без него единственный фактор входа — пароль — перебирался скриптом без ограничений.
+	loginLimiter := ratelimit.New(
+		ratelimit.Limit{PerWindow: cfg.AuthRatePerMinute, Window: time.Minute},
+		ratelimit.Limit{PerWindow: cfg.AuthLoginPerEmailLimit, Window: time.Minute},
+	)
+	if cfg.AuthRatePerMinute <= 0 && cfg.AuthLoginPerEmailLimit <= 0 {
+		logger.Warn("security: ограничение попыток входа выключено (AUTH_RATE_PER_MINUTE=0 и AUTH_LOGIN_PER_EMAIL_PER_MINUTE=0)")
+	} else {
+		logger.Info("security: ограничение попыток входа",
+			"per_ip_per_minute", cfg.AuthRatePerMinute,
+			"per_email_per_minute", cfg.AuthLoginPerEmailLimit)
+	}
+	// Уборка истёкших окон: карта счётчиков иначе растёт вместе с числом адресов.
+	go func() {
+		ticker := time.NewTicker(10 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				loginLimiter.Cleanup()
+			}
+		}
+	}()
+	authH.UseRateLimit(loginLimiter)
 
 	// Развёртывание задаёт администраторов и стартовый режим регистрации.
 	if granted := authSvc.SyncConfiguredAdmins(ctx); granted > 0 {
@@ -311,10 +340,13 @@ func main() {
 		// Публичная конфигурация входа: страница регистрации должна знать,
 		// свободная она или по заявке — ещё до отправки формы.
 		r.Get("/config", authH.Config)
-		r.Post("/register", authH.Register)
-		r.Post("/registration-requests", authH.RequestRegistration)
-		r.Post("/login", authH.Login)
-		r.Post("/refresh", authH.Refresh)
+		// Ограничение по адресу клиента — на публичных ручках входа; граница по аккаунту
+		// живёт в самой ручке (ей нужен email из тела).
+		limited := loginLimiter.Middleware
+		r.With(limited).Post("/register", authH.Register)
+		r.With(limited).Post("/registration-requests", authH.RequestRegistration)
+		r.With(limited).Post("/login", authH.Login)
+		r.With(limited).Post("/refresh", authH.Refresh)
 		r.Group(func(r chi.Router) {
 			r.Use(authSvc.WithUser)
 			r.Get("/me", authH.Me)

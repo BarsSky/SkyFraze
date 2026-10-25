@@ -1,4 +1,4 @@
-package auth
+﻿package auth
 
 import (
 	"encoding/json"
@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/skyfraze/backend/internal/ratelimit"
 	"github.com/skyfraze/backend/internal/store"
 )
 
@@ -15,11 +16,21 @@ type Handler struct {
 	svc    *Service
 	store  *store.Store
 	logger *slog.Logger
+	// limiter — ограничение попыток входа по аккаунту (docs/security.md). Необязателен:
+	// без него вход работает как раньше (и это видно в настройках стенда, а не подкравшись).
+	limiter *ratelimit.Limiter
 }
 
 func NewHandler(svc *Service, store *store.Store, logger *slog.Logger) *Handler {
 	return &Handler{svc: svc, store: store, logger: logger}
 }
+
+// UseRateLimit подключает ограничение попыток входа по email.
+//
+// Проверка стоит ЗДЕСЬ, после разбора тела, а не в middleware: ключ — сам аккаунт, и чтобы
+// получить его, тело всё равно нужно прочитать. Граница по адресу клиента живёт в
+// middleware (ей тело не нужно).
+func (h *Handler) UseRateLimit(limiter *ratelimit.Limiter) { h.limiter = limiter }
 
 type registerReq struct {
 	Email       string `json:"email"`
@@ -212,6 +223,16 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
+	}
+	// Ограничение по аккаунту: перебор одного пароля с разных адресов граница по IP не
+	// остановит. Проверяем ДО обращения к базе с хешем — дорогую часть (bcrypt) не должен
+	// оплачивать тот, кто уже превысил предел.
+	if h.limiter != nil {
+		if ok, wait := h.limiter.AllowKey(req.Email); !ok {
+			h.logger.Warn("login: слишком много попыток для аккаунта", "email", req.Email)
+			ratelimit.WriteLimited(w, wait)
+			return
+		}
 	}
 	u, tok, err := h.svc.Login(r.Context(), req.Email, req.Password)
 	if err != nil {

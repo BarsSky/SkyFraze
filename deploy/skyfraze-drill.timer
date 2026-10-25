@@ -1,0 +1,14 @@
+[Unit]
+Description=SkyFraze: еженедельная проверка, что копия восстанавливается
+Documentation=https://github.com/BarsSky/SkyFraze
+
+[Timer]
+# Раз в неделю, заведомо позже ночной копии (03:30): проверяем уже снятую копию.
+# Persistent=true — если машина была выключена в воскресенье, проверка пройдёт после
+# включения, а не пропустится на неделю.
+OnCalendar=Sun *-*-* 04:30:00
+Persistent=true
+RandomizedDelaySec=600
+
+[Install]
+WantedBy=timers.target

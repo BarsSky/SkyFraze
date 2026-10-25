@@ -147,19 +147,32 @@ mc admin policy attach op skyfraze-rw --user skyfraze
 
 ## 3. Расписание
 
+Ставятся **два** таймера: ежедневная копия и недельная проверка восстановления. Копия,
+которую ни разу не восстанавливали, копией не считается — файлы могут быть битыми, а дамп
+нечитаемым, и узнать об этом лучше в воскресенье, чем в день аварии.
+
 ```bash
 # Системные юниты (нужен root — обычный путь на своём сервере):
 sudo bash deploy/install-backup-units.sh
-systemctl list-timers skyfraze-backup.timer   # когда следующий запуск
-sudo systemctl start skyfraze-backup.service  # копия прямо сейчас
-journalctl -u skyfraze-backup.service -n 50   # что было в последнем запуске
+systemctl list-timers 'skyfraze-*'             # когда следующий запуск (копия и проверка)
+sudo systemctl start skyfraze-backup.service   # копия прямо сейчас
+sudo systemctl start skyfraze-drill.service    # проверка восстановления сейчас
+journalctl -u skyfraze-backup.service -n 50    # что было в последнем запуске
+journalctl -u skyfraze-drill.service -n 50     # и что сказала проверка
 
 # Пользовательские юниты (root не нужен) — когда sudo просит пароль или его нет:
 bash deploy/install-backup-units.sh --user
-systemctl --user list-timers skyfraze-backup.timer
+systemctl --user list-timers 'skyfraze-*'
 systemctl --user start skyfraze-backup.service
-journalctl --user -u skyfraze-backup.service -n 50
+systemctl --user start skyfraze-drill.service
+journalctl --user -u skyfraze-drill.service -n 50
+systemctl --user --failed                      # провал проверки видно здесь
 ```
+
+Проверка идёт раз в неделю (воскресенье, 04:30 + разброс) — заведомо позже ночной копии:
+проверять вчерашнюю, пока сегодняшняя пишется, значит проверять не то, что будет лежать в
+бэкапе. Разворачивает копию в ОТДЕЛЬНУЮ базу и временный каталог, рабочую не трогает, за
+собой убирает. Провал — это failed у юнита, а не тишина в журнале.
 
 Системный режим — предпочтительный: юнит живёт независимо от входов в систему, его видно
 в общем списке таймеров машины, и им управляет root. Режим `--user` существует потому, что

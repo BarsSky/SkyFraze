@@ -4,9 +4,16 @@
 #   sudo bash deploy/install-backup-units.sh [/путь/к/проекту]   # системные юниты
 #   bash deploy/install-backup-units.sh --user                   # свои, без sudo
 #
-# Системный режим (по умолчанию) ставит два юнита:
+# Системный режим (по умолчанию) ставит четыре юнита:
 #   skyfraze-backup.timer   — запускает копию раз в сутки (03:30 + случайный разброс)
 #   skyfraze-backup.service — сам скрипт deploy/backup.sh
+#   skyfraze-drill.timer    — раз в неделю запускает проверку восстановления
+#   skyfraze-drill.service  — `deploy/backup.sh --drill` по свежей копии
+#
+# Про drill. Копия, которую ни разу не восстанавливали, копией не считается: файлы могут
+# быть битыми, а дамп — нечитаемым, и узнать об этом лучше в воскресенье, чем в день аварии.
+# Проверка разворачивает копию в ОТДЕЛЬНУЮ базу и временный каталог, рабочую не трогает, и
+# убирает за собой. Провал виден как failed у юнита: `systemctl --user --failed`.
 #
 # Режим `--user` делает то же самое в пользовательском systemd: юниты кладутся в
 # ~/.config/systemd/user и включаются `systemctl --user`. Он нужен там, где sudo просит
@@ -62,7 +69,7 @@ fi
 chmod +x "$APP_DIR/deploy/backup.sh"
 
 install_system() {
-  for unit in skyfraze-backup.service skyfraze-backup.timer; do
+  for unit in skyfraze-backup.service skyfraze-backup.timer skyfraze-drill.service skyfraze-drill.timer; do
     sed -e "s#/home/skyadmin/skyfraze#$APP_DIR#g" \
         -e "s#^User=skyadmin#User=$INSTALL_USER#" \
         -e "s#^Group=skyadmin#Group=$(id -gn "$INSTALL_USER")#" \
@@ -72,11 +79,13 @@ install_system() {
 
   systemctl daemon-reload
   systemctl enable --now skyfraze-backup.timer
+  systemctl enable --now skyfraze-drill.timer
 
-  echo "== таймер:"
-  systemctl list-timers skyfraze-backup.timer --no-pager || true
+  echo "== таймеры:"
+  systemctl list-timers 'skyfraze-*' --no-pager || true
   echo "== проверить копию прямо сейчас: sudo systemctl start skyfraze-backup.service"
-  echo "== проверить, что копия восстанавливается: bash $APP_DIR/deploy/backup.sh --drill"
+  echo "== проверить восстановление сейчас: sudo systemctl start skyfraze-drill.service"
+  echo "== что было: journalctl -u skyfraze-drill.service -n 50"
 }
 
 # В пользовательском режиме unit-файлы не копируются как есть, а собираются: `User=` и
@@ -109,6 +118,26 @@ UNIT
       "$APP_DIR/deploy/skyfraze-backup.timer" > "$dir/skyfraze-backup.timer"
   echo "   $dir/skyfraze-backup.timer"
 
+  # Проверка восстановления — тем же способом, что и копия: отдельный юнит и недельный
+  # таймер. В user-режиме `User=`/`Group=` запрещены, поэтому сервис собирается здесь.
+  cat > "$dir/skyfraze-drill.service" <<UNIT
+[Unit]
+Description=SkyFraze: проверка восстановления последней копии (пользовательский таймер)
+Documentation=https://github.com/BarsSky/SkyFraze
+
+[Service]
+Type=oneshot
+WorkingDirectory=$APP_DIR
+Environment=SKYFRAZE_DIR=$APP_DIR
+ExecStart=/bin/bash $APP_DIR/deploy/backup.sh --drill
+TimeoutStartSec=1800
+UNIT
+  echo "   $dir/skyfraze-drill.service"
+
+  sed -e "s#/home/skyadmin/skyfraze#$APP_DIR#g" \
+      "$APP_DIR/deploy/skyfraze-drill.timer" > "$dir/skyfraze-drill.timer"
+  echo "   $dir/skyfraze-drill.timer"
+
   # Без linger таймер останавливается с выходом последней сессии: на сервере это значит
   # «копий почти нет». Своему пользователю включать linger можно без root.
   if ! loginctl show-user "$INSTALL_USER" 2>/dev/null | grep -q '^Linger=yes'; then
@@ -118,12 +147,13 @@ UNIT
 
   systemctl --user daemon-reload
   systemctl --user enable --now skyfraze-backup.timer
+  systemctl --user enable --now skyfraze-drill.timer
 
-  echo "== таймер:"
-  systemctl --user list-timers skyfraze-backup.timer --no-pager || true
+  echo "== таймеры:"
+  systemctl --user list-timers 'skyfraze-*' --no-pager || true
   echo "== проверить копию прямо сейчас: systemctl --user start skyfraze-backup.service"
+  echo "== проверить восстановление сейчас: systemctl --user start skyfraze-drill.service"
   echo "== журнал: journalctl --user -u skyfraze-backup.service -n 50"
-  echo "== проверить, что копия восстанавливается: bash $APP_DIR/deploy/backup.sh --drill"
 }
 
 if [ "$MODE" = "system" ]; then install_system; else install_user; fi

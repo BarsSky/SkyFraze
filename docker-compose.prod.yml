@@ -62,6 +62,20 @@ services:
       S3_KEY: ${S3_KEY:-}
       S3_SECRET: ${S3_SECRET:-}
       S3_USE_SSL: ${S3_USE_SSL:-false}
+      # Ограничение попыток входа (docs/security.md). 0 — выключить границу.
+      AUTH_RATE_PER_MINUTE: ${AUTH_RATE_PER_MINUTE:-30}
+      AUTH_LOGIN_PER_EMAIL_PER_MINUTE: ${AUTH_LOGIN_PER_EMAIL_PER_MINUTE:-5}
+      # Письма о новых замечаниях (docs/comments.md §5.2). Пустые NOTIFY_SMTP_HOST или
+      # NOTIFY_FROM — почта не настроена, уведомления остаются в интерфейсе.
+      NOTIFY_SMTP_HOST: ${NOTIFY_SMTP_HOST:-}
+      NOTIFY_SMTP_PORT: ${NOTIFY_SMTP_PORT:-587}
+      NOTIFY_SMTP_USER: ${NOTIFY_SMTP_USER:-}
+      NOTIFY_SMTP_PASS: ${NOTIFY_SMTP_PASS:-}
+      NOTIFY_SMTP_TLS: ${NOTIFY_SMTP_TLS:-false}
+      NOTIFY_FROM: ${NOTIFY_FROM:-}
+      NOTIFY_INTERVAL_SECONDS: ${NOTIFY_INTERVAL_SECONDS:-60}
+      # Адрес стенда для ссылок в письмах (пусто — письмо без ссылки).
+      APP_BASE_URL: ${APP_BASE_URL:-}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost}
       LISTEN: ":8080"
       APP_ENV: production

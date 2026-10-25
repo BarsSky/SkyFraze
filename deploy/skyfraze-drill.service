@@ -1,0 +1,19 @@
+[Unit]
+Description=SkyFraze: проверка восстановления последней копии
+Documentation=https://github.com/BarsSky/SkyFraze
+# Проверка идёт ТОЛЬКО после успешной копии: разворачивать вчерашнюю, пока сегодняшняя
+# ещё пишется, значит проверять не то, что будет лежать в бэкапе.
+After=skyfraze-backup.service
+
+[Service]
+Type=oneshot
+# Каталог установки SkyFraze (там же .env и docker-compose.prod.yml).
+WorkingDirectory=/home/skyadmin/skyfraze
+User=skyadmin
+Group=skyadmin
+Environment=SKYFRAZE_DIR=/home/skyadmin/skyfraze
+# Разбор копии: pg_restore в отдельную базу и распаковка вложений во временный каталог.
+ExecStart=/bin/bash /home/skyadmin/skyfraze/deploy/backup.sh --drill
+# Проверка на порядок быстрее копии (дамп маленький), но зависший docker не должен
+# держать юнит вечно — по таймауту systemd зафиксирует провал, и это будет видно.
+TimeoutStartSec=1800

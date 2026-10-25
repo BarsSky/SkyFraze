@@ -1,4 +1,4 @@
-// Package notify — письма о новых замечаниях.
+﻿// Package notify — письма о новых замечаниях.
 //
 // Что это и чего здесь нет. Уведомление — короткое письмо «в проекте X появились
 // замечания», собранное из очереди (comment_notifications, миграция 0020). Никакого
@@ -16,6 +16,7 @@ package notify
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -260,17 +261,31 @@ func (s *SMTPSender) Send(ctx context.Context, to, subject, body string) error {
 }
 
 // buildMessage — письмо в формате RFC 5322: заголовки, пустая строка, тело.
+//
+// Тема кодируется по RFC 2047, если в ней есть не-ASCII: в заголовке допустим только ASCII,
+// и живая отправка это показала — тело с кириллицей читалось, а тема доезжала как `??????`.
+// Base64-слово `=?UTF-8?B?…?=` понимают все почтовые клиенты.
 func buildMessage(from, to, subject, body string) string {
 	var b strings.Builder
 	b.WriteString("From: " + from + "\r\n")
 	b.WriteString("To: " + to + "\r\n")
-	b.WriteString("Subject: " + subject + "\r\n")
+	b.WriteString("Subject: " + encodeHeader(subject) + "\r\n")
 	b.WriteString("Date: " + time.Now().UTC().Format(time.RFC1123Z) + "\r\n")
 	b.WriteString("MIME-Version: 1.0\r\n")
 	b.WriteString("Content-Type: text/plain; charset=utf-8\r\n")
 	b.WriteString("\r\n")
 	b.WriteString(strings.ReplaceAll(body, "\n", "\r\n"))
 	return b.String()
+}
+
+// encodeHeader — RFC 2047 для не-ASCII значения заголовка.
+func encodeHeader(value string) string {
+	for _, r := range value {
+		if r > 127 {
+			return "=?UTF-8?B?" + base64.StdEncoding.EncodeToString([]byte(value)) + "?="
+		}
+	}
+	return value
 }
 
 // validAddress — простая проверка адреса: собака, точка, никаких переводов строк и скобок.
