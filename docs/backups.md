@@ -57,6 +57,60 @@ cp deploy/backup.env.example /home/skyadmin/skyfraze/backup.env
 они не спасают: `BACKUP_RSYNC`/`BACKUP_RCLONE` нужно задать. Скрипт каждый раз пишет в
 журнал, настроен офсайт или нет (`journalctl -u skyfraze-backup.service`).
 
+### 2.1. Офсайт в S3 (MinIO) — как это сделано на боевом стенде
+
+На стенде офсайт уезжает в **отдельный бакет** MinIO на NAS: тот же сервер, что хранит
+бэкапы skygate, но свой бакет — чужие данные в нём не лежат, и квота/ротация у каждого
+стенда свои.
+
+```bash
+# 1. rclone ставится БЕЗ root (sudo на стенде может просить пароль) — в ~/.local/bin.
+#    deploy/backup.sh ищет его и в PATH, и там: PATH пользовательского юнита systemd
+#    каталог ~/.local/bin не содержит, и без этого таймер писал бы «rclone не установлен»,
+#    пока ручной запуск работает.
+mkdir -p ~/.local/bin && cd /tmp \
+  && curl -sSL -o rclone.zip https://downloads.rclone.org/rclone-current-linux-amd64.zip \
+  && python3 -c "import zipfile,os,shutil;z=zipfile.ZipFile('rclone.zip');n=next(x for x in z.namelist() if x.endswith('/rclone'));z.extract(n,'/tmp/rx');shutil.copy2('/tmp/rx/'+n,os.path.expanduser('~/.local/bin/rclone'));os.chmod(os.path.expanduser('~/.local/bin/rclone'),0o755)" \
+  && ~/.local/bin/rclone version | head -1
+
+# 2. Remote в ~/.config/rclone/rclone.conf (права 600, ключи — от оператора MinIO):
+cat > ~/.config/rclone/rclone.conf <<'CONF'
+[skyfraze]
+type = s3
+provider = Minio
+access_key_id = <ключ>
+secret_access_key = <секрет>
+endpoint = https://minio.<домен>
+region = us-east-1
+CONF
+chmod 600 ~/.config/rclone/rclone.conf
+~/.local/bin/rclone lsd skyfraze:            # бакет skyfraze должен быть виден
+
+# 3. Офсайт в backup.env стенда (не в .env — его читает только docker compose):
+echo 'BACKUP_RCLONE=skyfraze:skyfraze' >> ~/skyfraze/backup.env
+
+# 4. Проверка: копия уходит, скачивается и РАЗВОРАЧИВАЕТСЯ
+bash deploy/backup.sh                       # в журнале: «офсайт: rclone → skyfraze:skyfraze»
+~/.local/bin/rclone size skyfraze:skyfraze  # объекты появились
+rm -rf /tmp/offsite && mkdir -p /tmp/offsite
+~/.local/bin/rclone copy skyfraze:skyfraze/<дата-время> /tmp/offsite
+(cd /tmp/offsite && sha256sum -c SHA256SUMS)
+bash deploy/backup.sh --drill /tmp/offsite   # копия ПРИЕХАЛА и восстанавливается
+```
+
+**Чем это проверено (2026-10-25, стенд v0.46.0):** копия `2026-10-25_050631` (5.7 MB:
+`db.dump` 315 KB, `assets.tar.gz` 5.4 MB) уехала в бакет, скачалась обратно, контрольные
+суммы `SHA256SUMS` сошлись (`db.dump: OK`, `assets.tar.gz: OK`), а `--drill` развернул её
+в отдельную базу: 3 проекта, 2 пользователя, 5 вложений, «файлов нет у вложений: 0».
+Без шага 4 офсайт — это надежда: копия может уехать битой или не уехать вовсе.
+
+**Что осталось на будущее (не сделано):** SkyFraze ходит в MinIO ключами оператора, у
+которых есть доступ и к бакетам skygate. Правильнее — отдельный пользователь MinIO с
+политикой только на `skyfraze/*` (`mc admin user add` + `mc admin policy attach`), чтобы
+компрометация стенда не открывала чужие бакеты. Пока это осознанный размен: политика
+заводится в общем MinIO, и делать её вслепую (без `mc` под рукой) рискованнее, чем
+оставить как есть.
+
 ## 3. Расписание
 
 ```bash

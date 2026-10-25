@@ -25,6 +25,14 @@
 # Офсайт. Пока копия лежит на той же машине, от потери машины она не спасает.
 # BACKUP_RSYNC=user@host:/path (нужен rsync на обоих концах) или
 # BACKUP_RCLONE=remote:path (нужен rclone — он же умеет S3 и прочие облака).
+# Утилиту ищем в PATH, а потом в ~/.local/bin: без root rclone ставится только туда,
+# а PATH пользовательского юнита systemd этот каталог не содержит.
+#
+# Пример S3 (MinIO на NAS, отдельный бакет под этот стенд):
+#   BACKUP_RCLONE=skyfraze:skyfraze
+# где [skyfraze] — remote в ~/.config/rclone/rclone.conf (type=s3, provider=Minio,
+# endpoint, ключи), а skyfraze после двоеточия — бакет. Копия ложится в
+# skyfraze:skyfraze/<дата-время>/, ровно теми же файлами, что лежат локально.
 #
 # Проверка восстановления. `--drill` разворачивает копию в ОТДЕЛЬНУЮ базу и во
 # временный каталог, сверяет, что у каждого вложения из базы есть файл в архиве, и
@@ -102,6 +110,27 @@ psql_at() {
 
 newest_backup() {
   find "$BACKUP_DIR" -maxdepth 1 -mindepth 1 -type d -name '20*' 2>/dev/null | sort | tail -1
+}
+
+# tool_path — где лежит внешняя утилита: сначала PATH, потом ~/.local/bin.
+#
+# Зачем второй вариант. rclone (офсайт в S3) часто приходится ставить БЕЗ root —
+# распаковать статический бинарник больше некуда, а sudo на стенде может быть
+# недоступен. Но PATH пользовательского юнита systemd — это
+# /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin, и ~/.local/bin в нём
+# нет: ручной запуск из шелла копию отправил бы, а таймер — нет, и разница вылезла
+# бы только в журнале ночью. Поэтому ищем сами, а не надеемся на PATH.
+tool_path() {
+  local name="$1" found
+  if found="$(command -v "$name" 2>/dev/null)" && [ -n "$found" ]; then
+    printf '%s\n' "$found"
+    return 0
+  fi
+  if [ -x "$HOME/.local/bin/$name" ]; then
+    printf '%s\n' "$HOME/.local/bin/$name"
+    return 0
+  fi
+  return 1
 }
 
 # Системные аккаунты (агент «Нестор») — не люди: колонка users.is_system появилась в
@@ -228,19 +257,19 @@ rotate() {
 }
 
 offsite() {
-  local dir="$1" name
+  local dir="$1" name tool
   name="$(basename "$dir")"
   if [ -n "$BACKUP_RSYNC" ]; then
-    command -v rsync >/dev/null || fail "BACKUP_RSYNC задан, но rsync не установлен"
+    tool="$(tool_path rsync)" || fail "BACKUP_RSYNC задан, но rsync не установлен"
     log "офсайт: rsync → $BACKUP_RSYNC"
-    rsync -az --stats "$dir/" "$BACKUP_RSYNC/$name/" >/dev/null
+    "$tool" -az --stats "$dir/" "$BACKUP_RSYNC/$name/" >/dev/null
     log "офсайт: копия отправлена"
     return
   fi
   if [ -n "$BACKUP_RCLONE" ]; then
-    command -v rclone >/dev/null || fail "BACKUP_RCLONE задан, но rclone не установлен"
+    tool="$(tool_path rclone)" || fail "BACKUP_RCLONE задан, но rclone не установлен (PATH или ~/.local/bin)"
     log "офсайт: rclone → $BACKUP_RCLONE"
-    rclone copy "$dir" "$BACKUP_RCLONE/$name"
+    "$tool" copy "$dir" "$BACKUP_RCLONE/$name"
     log "офсайт: копия отправлена"
     return
   fi
