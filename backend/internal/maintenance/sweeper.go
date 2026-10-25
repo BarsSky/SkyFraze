@@ -26,6 +26,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/skyfraze/backend/internal/assets"
 	"github.com/skyfraze/backend/internal/storage"
+
 	"github.com/skyfraze/backend/internal/store"
 )
 
@@ -186,32 +187,33 @@ func (s *Sweeper) scan(ctx context.Context, remove bool) (*Report, error) {
 	}
 	report.ProjectsUsage = usage
 
-	// Ключи вложений: с чем сверяем каталог.
+	// Ключи вложений: с чем сверяем хранилище.
 	keys, err := s.store.AssetKeys(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	files, err := s.obj.List(ctx, "")
-	if err != nil {
-		return nil, err
+	// Сверка идёт ПОТОКОМ (Walk), а не списком: файлов в хранилище бывает намного больше,
+	// чем строк в базе — осиротевшие копятся месяцами, а строки удаляются сразу. В памяти
+	// держим только ключи из базы (их число ограничено числом вложений), а «чего не
+	// встретили» получаем вычитанием: остаток множества после обхода и есть пропавшие файлы.
+	missing := make(map[string]uuid.UUID, len(keys))
+	for key, projectID := range keys {
+		missing[key] = projectID
 	}
-	report.ScanMillis = time.Since(started).Milliseconds()
-	report.FileCount = len(files)
-
-	present := make(map[string]bool, len(files))
 	orphans := make([]FileEntry, 0, len(report.OrphanExamples))
-	for _, file := range files {
+	walkErr := s.obj.Walk(ctx, "", func(file storage.ObjectInfo) error {
+		report.FileCount++
 		report.FileBytes += file.Size
-		present[file.Key] = true
 		if _, ok := keys[file.Key]; ok {
-			continue
+			delete(missing, file.Key)
+			return nil
 		}
 		// Файла нет среди вложений. Свежий — значит, запись ещё идёт (импорт):
 		// удалять его нельзя, иначе мы бы ломали чужой незавершённый импорт.
 		if time.Since(file.ModTime) < s.opts.Grace {
 			report.PendingFiles++
-			continue
+			return nil
 		}
 		report.OrphanFiles++
 		report.OrphanBytes += file.Size
@@ -219,33 +221,35 @@ func (s *Sweeper) scan(ctx context.Context, remove bool) (*Report, error) {
 			orphans = append(orphans, FileEntry{Key: file.Key, Size: file.Size, Modified: file.ModTime.UTC()})
 		}
 		if !remove {
-			continue
+			return nil
 		}
 		if err := s.obj.Delete(ctx, file.Key); err != nil {
 			s.logger.Warn("storage sweep: delete failed", "key", file.Key, "err", err)
 			report.FailedFiles++
-			continue
+			return nil
 		}
 		report.RemovedFiles++
 		report.RemovedBytes += file.Size
+		return nil
+	})
+	report.ScanMillis = time.Since(started).Milliseconds()
+	if walkErr != nil {
+		return nil, walkErr
 	}
 	report.OrphanExamples = orphans
 
 	// Обратная сторона: строка `assets` есть, файла нет. Это содержимое проекта, и
 	// удалять его молча нельзя — сообщаем, решение за человеком.
-	missing := make([]FileEntry, 0, len(report.MissingExamples))
-	for key, projectID := range keys {
-		if present[key] {
-			continue
-		}
+	missingList := make([]FileEntry, 0, len(report.MissingExamples))
+	for key, projectID := range missing {
 		report.MissingFiles++
-		if len(missing) < s.opts.Examples {
-			missing = append(missing, FileEntry{Key: key, Project: projectID.String()})
+		if len(missingList) < s.opts.Examples {
+			missingList = append(missingList, FileEntry{Key: key, Project: projectID.String()})
 		}
 	}
 	// Порядок примеров — стабильный: отчёты сравнивают между собой.
-	sort.Slice(missing, func(i, j int) bool { return missing[i].Key < missing[j].Key })
-	report.MissingExamples = missing
+	sort.Slice(missingList, func(i, j int) bool { return missingList[i].Key < missingList[j].Key })
+	report.MissingExamples = missingList
 
 	// Комментарии к исчезнувшим кадрам. Кадр удаляется в CRDT-документе, и «его больше
 	// нет» — результат пересчёта проекции, а не событие, на которое можно подписаться.

@@ -229,19 +229,36 @@ func (s *S3Store) Stat(ctx context.Context, key string) (*ObjectInfo, error) {
 	return info, nil
 }
 
-// List перечисляет объекты с префиксом (постранично, 1000 на страницу — предел S3).
-//
-// Пустой префикс — законный запрос «всё»: уборщик осиротевших файлов обходит хранилище
-// целиком. Префикс стенда при этом добавляется всегда: иначе в уборку попадут чужие
-// объекты того же бакета (другой стенд, ручные выгрузки).
+// List перечисляет объекты с префиксом — удобно для мелких задач и тестов.
+// Для уборки предпочтителен Walk: он не собирает всё в память.
 func (s *S3Store) List(ctx context.Context, prefix string) ([]ObjectInfo, error) {
+	var out []ObjectInfo
+	if err := s.Walk(ctx, prefix, func(info ObjectInfo) error {
+		out = append(out, info)
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// Walk перечисляет объекты с префиксом постранично, отдавая их по одному.
+//
+// Страница — 1000 объектов (предел S3), и следующая запрашивается только тогда, когда
+// предыдущая обработана: иначе на бакете в сотни тысяч объектов память съел бы сам список.
+// Пустой префикс — законный запрос «всё»: уборщик осиротевших файлов обходит хранилище
+// целиком. Префикс стенда при этом добавляется всегда: иначе в уборку попадут чужие объекты
+// того же бакета (другой стенд, ручные выгрузки).
+func (s *S3Store) Walk(ctx context.Context, prefix string, fn func(ObjectInfo) error) error {
 	if strings.Contains(prefix, "..") || strings.HasPrefix(prefix, "/") {
-		return nil, fmt.Errorf("invalid key: %q", prefix)
+		return fmt.Errorf("invalid key: %q", prefix)
 	}
 	fullPrefix := s.prefix + prefix
-	var out []ObjectInfo
 	token := ""
 	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		query := url.Values{}
 		query.Set("list-type", "2")
 		if fullPrefix != "" {
@@ -252,28 +269,30 @@ func (s *S3Store) List(ctx context.Context, prefix string) ([]ObjectInfo, error)
 		}
 		resp, err := s.do(ctx, http.MethodGet, "", query, nil, 0, nil)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if resp.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 			resp.Body.Close()
-			return nil, fmt.Errorf("storage: LIST %s: %s: %s", prefix, resp.Status, strings.TrimSpace(string(body)))
+			return fmt.Errorf("storage: LIST %s: %s: %s", prefix, resp.Status, strings.TrimSpace(string(body)))
 		}
 		var page listBucketResult
 		decodeErr := xml.NewDecoder(resp.Body).Decode(&page)
 		resp.Body.Close()
 		if decodeErr != nil {
-			return nil, fmt.Errorf("storage: LIST %s: разбор ответа: %w", prefix, decodeErr)
+			return fmt.Errorf("storage: LIST %s: разбор ответа: %w", prefix, decodeErr)
 		}
 		for _, item := range page.Contents {
-			out = append(out, ObjectInfo{
+			if err := fn(ObjectInfo{
 				Key:     strings.TrimPrefix(item.Key, s.prefix),
 				Size:    item.Size,
 				ModTime: item.LastModified,
-			})
+			}); err != nil {
+				return err
+			}
 		}
 		if !page.IsTruncated || page.NextToken == "" {
-			return out, nil
+			return nil
 		}
 		token = page.NextToken
 	}

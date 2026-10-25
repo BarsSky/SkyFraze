@@ -112,26 +112,50 @@ func (l *LocalStore) Stat(ctx context.Context, key string) (*ObjectInfo, error) 
 // найти файлы, на которые нет строк в `assets` (например, оставшиеся от удалённых
 // проектов). Несуществующий каталог — это пустой список, а не ошибка: значит,
 // файлов с таким префиксом просто нет.
+//
+// Для больших хранилищ есть Walk: он отдаёт объекты по одному и не собирает список в
+// память. List оставлен для мелких задач и тестов, где список удобнее.
 func (l *LocalStore) List(ctx context.Context, prefix string) ([]ObjectInfo, error) {
+	var out []ObjectInfo
+	err := l.Walk(ctx, prefix, func(info ObjectInfo) error {
+		out = append(out, info)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// Walk обходит хранилище и отдаёт объекты по одному.
+//
+// Зачем отдельный метод. Уборка осиротевших файлов сравнивает хранилище с базой, и файлов
+// в хранилище может быть НАМНОГО больше, чем строк (осиротевшие копятся месяцами, а строки
+// удаляются сразу). Список целиком — это память под все ключи; поток — только под один.
+func (l *LocalStore) Walk(ctx context.Context, prefix string, fn func(ObjectInfo) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	root := l.BaseDir
 	if prefix != "" {
 		if err := safeKey(strings.TrimSuffix(prefix, "/")); err != nil {
-			return nil, err
+			return err
 		}
 		root = filepath.Join(l.BaseDir, filepath.FromSlash(strings.TrimSuffix(prefix, "/")))
 	}
 	info, err := os.Stat(root)
 	if err != nil || !info.IsDir() {
-		return nil, nil
+		return nil
 	}
-
-	var out []ObjectInfo
-	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+	return filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
 			// Файл могли удалить между обходом и чтением — это не повод валить уборку.
 			if os.IsNotExist(err) {
 				return nil
 			}
+			return err
+		}
+		if err := ctx.Err(); err != nil {
 			return err
 		}
 		if entry.IsDir() {
@@ -148,15 +172,10 @@ func (l *LocalStore) List(ctx context.Context, prefix string) ([]ObjectInfo, err
 		if err != nil {
 			return err
 		}
-		out = append(out, ObjectInfo{
+		return fn(ObjectInfo{
 			Key:     filepath.ToSlash(rel),
 			Size:    fileInfo.Size(),
 			ModTime: fileInfo.ModTime(),
 		})
-		return nil
 	})
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
 }

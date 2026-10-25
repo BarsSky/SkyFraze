@@ -55,6 +55,8 @@ ENV_BACKUP_KEEP="${BACKUP_KEEP:-}"
 ENV_BACKUP_RSYNC="${BACKUP_RSYNC:-}"
 ENV_BACKUP_RCLONE="${BACKUP_RCLONE:-}"
 ENV_BACKUP_RCLONE_KEEP="${BACKUP_RCLONE_KEEP:-}"
+ENV_BACKUP_KEEP_WEEKLY="${BACKUP_KEEP_WEEKLY:-}"
+ENV_BACKUP_KEEP_MONTHLY="${BACKUP_KEEP_MONTHLY:-}"
 ENV_BACKUP_ASSETS_RCLONE="${BACKUP_ASSETS_RCLONE:-}"
 
 BACKUP_DIR="${BACKUP_DIR:-$APP_DIR/backups}"
@@ -69,6 +71,13 @@ BACKUP_RCLONE="${BACKUP_RCLONE:-}"
 # то есть ~2 ГБ в год, и растёт он вместе с вложениями. По умолчанию 0 (ничего не
 # удаляем): удалять данные в чужом хранилище скрипт не должен без явного разрешения.
 BACKUP_RCLONE_KEEP="${BACKUP_RCLONE_KEEP:-0}"
+# Второй уровень хранения на месте: недельные (воскресенье) и месячные (первое число) копии.
+# 0 — уровень не ведётся. Смысл: семь дней ежедневных не отвечают на «верни состояние месяц
+# назад», а история версий проекта — про правки, а не про восстановление после аварии.
+BACKUP_KEEP_WEEKLY="${BACKUP_KEEP_WEEKLY:-4}"
+BACKUP_KEEP_MONTHLY="${BACKUP_KEEP_MONTHLY:-3}"
+# Тестовая зацепка (не для стенда): создать уровень независимо от дня недели.
+BACKUP_FORCE_TIER="${BACKUP_FORCE_TIER:-}"
 # Откуда брать вложения, если они лежат в S3 (STORAGE_DRIVER=s3): `remote:path` для
 # rclone, указывающий на КОРЕНЬ бакета вложений. Пусто — вложения читаются с диска
 # (обычный случай). Без этой строки при S3-хранилище в копию попала бы только база.
@@ -105,8 +114,10 @@ load_backup_env() {
       BACKUP_RSYNC)  [ -n "$ENV_BACKUP_RSYNC" ]  || BACKUP_RSYNC="$val" ;;
       BACKUP_RCLONE) [ -n "$ENV_BACKUP_RCLONE" ] || BACKUP_RCLONE="$val" ;;
       BACKUP_RCLONE_KEEP) [ -n "$ENV_BACKUP_RCLONE_KEEP" ] || BACKUP_RCLONE_KEEP="$val" ;;
+      BACKUP_KEEP_WEEKLY) [ -n "$ENV_BACKUP_KEEP_WEEKLY" ] || BACKUP_KEEP_WEEKLY="$val" ;;
+      BACKUP_KEEP_MONTHLY) [ -n "$ENV_BACKUP_KEEP_MONTHLY" ] || BACKUP_KEEP_MONTHLY="$val" ;;
       BACKUP_ASSETS_RCLONE) [ -n "$ENV_BACKUP_ASSETS_RCLONE" ] || BACKUP_ASSETS_RCLONE="$val" ;;
-      *) log "backup.env: не знаю настройку «$key» — ожидаются BACKUP_DIR, BACKUP_KEEP, BACKUP_RSYNC, BACKUP_RCLONE, BACKUP_RCLONE_KEEP, BACKUP_ASSETS_RCLONE" ;;
+      *) log "backup.env: не знаю настройку «$key» — ожидаются BACKUP_DIR, BACKUP_KEEP, BACKUP_KEEP_WEEKLY, BACKUP_KEEP_MONTHLY, BACKUP_RSYNC, BACKUP_RCLONE, BACKUP_RCLONE_KEEP, BACKUP_ASSETS_RCLONE" ;;
     esac
   done < "$file"
 }
@@ -123,8 +134,19 @@ psql_at() {
   compose exec -T "$PG_SERVICE" psql -U "$DB_USER" -d "${2:-$DB_NAME}" -At -c "$1"
 }
 
+# Проверяем свежую ЕЖЕДНЕВНУЮ копию, а не уровневую: уровни — это те же данные, но
+# проверять надо то, что снимается каждый день. Если ежедневных нет (все удалены), берётся
+# любая.
 newest_backup() {
-  find "$BACKUP_DIR" -maxdepth 1 -mindepth 1 -type d -name '20*' 2>/dev/null | sort | tail -1
+  local daily tiered
+  daily="$(find "$BACKUP_DIR" -maxdepth 1 -mindepth 1 -type d -name '20*' 2>/dev/null \
+           | grep -E '/20[0-9]{2}-[0-9]{2}-[0-9]{2}_[0-9]{6}$' | sort | tail -1)"
+  if [ -n "$daily" ]; then
+    printf '%s\n' "$daily"
+    return 0
+  fi
+  tiered="$(find "$BACKUP_DIR" -maxdepth 1 -mindepth 1 -type d -name '20*' 2>/dev/null | sort | tail -1)"
+  [ -n "$tiered" ] && printf '%s\n' "$tiered"
 }
 
 # tool_path — где лежит внешняя утилита: сначала PATH, потом ~/.local/bin.
@@ -265,25 +287,81 @@ create_backup() {
   ( cd "$dir" && sha256sum db.dump assets.tar.gz > SHA256SUMS )
   log "готово: $(du -sh "$dir" | cut -f1), проектов $projects, вложений $assets, файлов $files"
 
+  make_tiered "$dir"
   rotate
   offsite "$dir"
   echo "$dir"
 }
 
-rotate() {
-  [ "$BACKUP_KEEP" -gt 0 ] || { log "ротация выключена (BACKUP_KEEP=0)"; return; }
-  local list
-  list="$(find "$BACKUP_DIR" -maxdepth 1 -mindepth 1 -type d -name '20*' | sort -r)"
-  local count
-  count="$(printf '%s\n' "$list" | grep -c . || true)"
-  if [ "$count" -le "$BACKUP_KEEP" ]; then
-    log "копий на месте: $count (хранится $BACKUP_KEEP)"
-    return
+# make_tiered — второй уровень хранения: недельные и месячные копии.
+#
+# Зачем. Ежедневные копии живут 7–14 дней, и «верни состояние месяц назад» ими не решается:
+# история версий проекта — это другое (она про правки, а не про восстановление после аварии).
+# Поэтому в воскресенье копия дополнительно кладётся с суффиксом `-w`, а первого числа —
+# с `-m`; срок хранения у этих уровней свой (BACKUP_KEEP_WEEKLY / BACKUP_KEEP_MONTHLY).
+#
+# Копия делается ЖЁСТКИМИ ССЫЛКАМИ (`cp -al`), а не копированием: файлы те же, место не
+# удваивается, а удаление ежедневной копии не ломает недельную — inode живёт, пока на него
+# есть ссылка. Если ФС не умеет (или это не локальный диск) — обычное копирование.
+#
+# Тестовая зацепка: BACKUP_FORCE_TIER=weekly|monthly позволяет создать уровень в любой день,
+# не ждя воскресенья. Без неё проверять ротацию пришлось бы неделей ожидания.
+make_tiered() {
+  local daily="$1" stamp suffix dest
+  stamp="$(basename "$daily")"
+  suffix=""
+  if [ "${BACKUP_FORCE_TIER:-}" = "monthly" ] || [ "$(date '+%d')" = "01" ]; then
+    suffix="m"
+  elif [ "${BACKUP_FORCE_TIER:-}" = "weekly" ] || [ "$(date '+%u')" = "7" ]; then
+    suffix="w"
   fi
-  printf '%s\n' "$list" | tail -n "+$((BACKUP_KEEP + 1))" | while read -r old; do
+  [ -n "$suffix" ] || return 0
+  dest="$BACKUP_DIR/${stamp}-${suffix}"
+  [ -d "$dest" ] && return 0
+  if cp -al "$daily" "$dest" 2>/dev/null; then
+    log "уровень хранения: $(basename "$dest") (жёсткие ссылки)"
+  else
+    cp -a "$daily" "$dest"
+    log "уровень хранения: $(basename "$dest") (копия)"
+  fi
+}
+
+# rotate — сроки хранения по уровням.
+#
+# Три независимых правила, а не одно общее: ежедневные, недельные (`-w`) и месячные (`-m`)
+# копии живут по своим числам, иначе месяц истории вытеснялся бы семью днями.
+#
+# Тестовая зацепка: именованные переменные KEEP уже позволяют прогнать ротацию с малыми
+# числами и посмотреть, что останется.
+rotate() {
+  rotate_kind '^20[0-9]{2}-[0-9]{2}-[0-9]{2}_[0-9]{6}$'     "$BACKUP_KEEP"         "ежедневных"
+  rotate_kind '^20[0-9]{2}-[0-9]{2}-[0-9]{2}_[0-9]{6}-w$'   "$BACKUP_KEEP_WEEKLY"  "недельных"
+  rotate_kind '^20[0-9]{2}-[0-9]{2}-[0-9]{2}_[0-9]{6}-m$'   "$BACKUP_KEEP_MONTHLY" "месячных"
+}
+
+# rotate_kind — оставить последние keep каталогов, чьё ИМЯ подходит под regex.
+#
+# Регулярное выражение, а не `case`: в `case` работают глобы, и шаблон вида `[0-9]{6}` там
+# означает совсем другое — первая версия на этом и провалилась (ротация не удаляла ничего,
+# и самопроверка ниже это поймала, а не живой стенд). Имя, а не полный путь: якоря `^`/`$`
+# должны относиться к имени каталога.
+rotate_kind() {
+  local pattern="$1" keep="$2" label="$3" list count
+  if [ "$keep" -le 0 ]; then
+    log "ротация $label выключена ($keep)"
+    return 0
+  fi
+  list="$(find "$BACKUP_DIR" -maxdepth 1 -mindepth 1 -type d -printf '%f\n' 2>/dev/null \
+          | grep -E "$pattern" | sort -r)"
+  count="$(printf '%s\n' "$list" | grep -c . || true)"
+  if [ "$count" -le "$keep" ]; then
+    log "копий $label: $count (хранится $keep)"
+    return 0
+  fi
+  printf '%s\n' "$list" | tail -n "+$((keep + 1))" | while read -r old; do
     [ -n "$old" ] || continue
-    log "удаляю старую копию: $(basename "$old")"
-    rm -rf "$old"
+    log "удаляю старую копию: $old"
+    rm -rf "$BACKUP_DIR/$old"
   done
 }
 
@@ -302,32 +380,48 @@ offsite() {
     log "офсайт: rclone → $BACKUP_RCLONE"
     "$tool" copy "$dir" "$BACKUP_RCLONE/$name"
     log "офсайт: копия отправлена"
+    # Уровневые копии (недельная/месячная) — тоже в офсайт: иначе «месяц назад» было бы
+    # только на той же машине, то есть ровно там, где его и потеряют.
+    local tier
+    for tier in "$dir"-w "$dir"-m; do
+      [ -d "$tier" ] || continue
+      "$tool" copy "$tier" "$BACKUP_RCLONE/$(basename "$tier")" >/dev/null
+      log "офсайт: уровень $(basename "$tier") отправлен"
+    done
     rotate_offsite "$tool"
     return
   fi
   log "офсайт не настроен: копия остаётся на этой же машине (BACKUP_RSYNC или BACKUP_RCLONE)"
 }
 
-# rotate_offsite — оставить в бакете последние BACKUP_RCLONE_KEEP копий.
+# rotate_offsite — сроки хранения в бакете, по уровням, как и на месте.
 #
-# Удаляем только каталоги, имя которых похоже на дату (`20ГГ-ММ-ДД_ЧЧММСС`): в бакете
-# могут лежать чужие объекты, и «ротация вообще всего» была бы уборкой не в своём
-# шкафу. Свежую копию не трогаем никогда — она в списке первая.
+# Удаляются ТОЛЬКО каталоги с именем-датой (для своего уровня): в бакете могут лежать чужие
+# объекты, и «ротация всего, что найдём» была бы уборкой не в своём шкафу. Свежая копия не
+# трогается никогда — она в списке первая. Уровневые копии (`-w`, `-m`) считаются отдельно и
+# отдельно же удаляются: иначе месячная копия вылетала бы как «старая ежедневная».
 rotate_offsite() {
   local tool="$1"
   [ "$BACKUP_RCLONE_KEEP" -gt 0 ] || return 0
-  local list count
+  rotate_offsite_kind "$tool" '[0-9]{6}$'     "$BACKUP_RCLONE_KEEP"         "ежедневных"
+  rotate_offsite_kind "$tool" '[0-9]{6}-w$'   "$BACKUP_KEEP_WEEKLY"          "недельных"
+  rotate_offsite_kind "$tool" '[0-9]{6}-m$'   "$BACKUP_KEEP_MONTHLY"         "месячных"
+}
+
+rotate_offsite_kind() {
+  local tool="$1" pattern="$2" keep="$3" label="$4" list count
+  [ "$keep" -gt 0 ] || return 0
   # sort -r — от новых к старым, как у локальной ротации.
   list="$("$tool" lsf --dirs-only "$BACKUP_RCLONE" 2>/dev/null | sed 's#/$##' \
-          | grep -E '^20[0-9]{2}-[0-9]{2}-[0-9]{2}_[0-9]{6}$' | sort -r)"
+          | grep -E "^20[0-9]{2}-[0-9]{2}-[0-9]{2}_${pattern}" | sort -r)"
   count="$(printf '%s\n' "$list" | grep -c . || true)"
-  if [ "$count" -le "$BACKUP_RCLONE_KEEP" ]; then
-    log "офсайт: копий в бакете: $count (хранится $BACKUP_RCLONE_KEEP)"
+  if [ "$count" -le "$keep" ]; then
+    log "офсайт: копий $label: $count (хранится $keep)"
     return 0
   fi
-  printf '%s\n' "$list" | tail -n "+$((BACKUP_RCLONE_KEEP + 1))" | while read -r old; do
+  printf '%s\n' "$list" | tail -n "+$((keep + 1))" | while read -r old; do
     [ -n "$old" ] || continue
-    log "офсайт: удаляю старую копию $old (хранится $BACKUP_RCLONE_KEEP)"
+    log "офсайт: удаляю старую копию $old ($label, хранится $keep)"
     "$tool" purge "$BACKUP_RCLONE/$old" >/dev/null
   done
 }
@@ -396,9 +490,85 @@ usage() {
   sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'
 }
 
+# ---------- самопроверка ротации ----------
+
+# self_test — проверка уровней хранения на временном каталоге.
+#
+# Зачем: ротация удаляет данные, и «посмотреть глазами на живом стенде» здесь плохой метод —
+# ошибка стоит реальных копий. Тест создаёт пустые каталоги с именами как у копий, прогоняет
+# ту же функцию rotate, что работает на стенде, и сверяет, что осталось. Реальный каталог
+# копий не трогается вовсе.
+#
+# Запуск: bash deploy/backup.sh --self-test
+self_test() {
+  local tmp
+  tmp="$(mktemp -d)"
+  # shellcheck disable=SC2064
+  trap "rm -rf '$tmp'" EXIT
+  BACKUP_DIR="$tmp"
+
+  # 10 ежедневных, 6 недельных, 4 месячных — заведомо больше любых пределов.
+  local i
+  for i in $(seq 1 10); do mkdir -p "$tmp/2026-09-$(printf '%02d' "$i")_030000"; done
+  for i in $(seq 1 6); do mkdir -p "$tmp/2026-08-$(printf '%02d' "$i")_030000-w"; done
+  for i in $(seq 1 4); do mkdir -p "$tmp/2026-07-$(printf '%02d' "$i")_030000-m"; done
+
+  BACKUP_KEEP=3 BACKUP_KEEP_WEEKLY=2 BACKUP_KEEP_MONTHLY=1 rotate >/dev/null
+
+  local daily weekly monthly ok=0
+  daily="$(find "$tmp" -maxdepth 1 -mindepth 1 -type d -name '20*' | grep -cE '[0-9]{6}$' || true)"
+  weekly="$(find "$tmp" -maxdepth 1 -mindepth 1 -type d -name '20*' | grep -cE '[0-9]{6}-w$' || true)"
+  monthly="$(find "$tmp" -maxdepth 1 -mindepth 1 -type d -name '20*' | grep -cE '[0-9]{6}-m$' || true)"
+
+  check_kind() {
+    local label="$1" got="$2" want="$3"
+    if [ "$got" = "$want" ]; then
+      printf '  %-12s %s (ожидалось %s) — ok\n' "$label" "$got" "$want"
+    else
+      printf '  %-12s %s (ожидалось %s) — ПРОВАЛ\n' "$label" "$got" "$want"
+      ok=1
+    fi
+  }
+  check_kind "ежедневных" "$daily" 3
+  check_kind "недельных" "$weekly" 2
+  check_kind "месячных" "$monthly" 1
+
+  # Уровни не должны вытесняться ежедневными: месячные копии старше всех и обязаны выжить.
+  if find "$tmp" -maxdepth 1 -type d -name '2026-07-*-m' | grep -q .; then
+    printf '  месячный уровень пережил ротацию — ok\n'
+  else
+    printf '  месячный уровень удалён вместе с ежедневными — ПРОВАЛ\n'
+    ok=1
+  fi
+
+  # make_tiered: с зацепкой BACKUP_FORCE_TIER уровень создаётся в любой день и только один раз.
+  mkdir -p "$tmp/2026-10-25_120000"
+  BACKUP_FORCE_TIER=weekly make_tiered "$tmp/2026-10-25_120000" >/dev/null
+  if [ -d "$tmp/2026-10-25_120000-w" ]; then
+    printf '  недельный уровень создаётся — ok\n'
+  else
+    printf '  недельный уровень не создан — ПРОВАЛ\n'
+    ok=1
+  fi
+  BACKUP_FORCE_TIER=weekly make_tiered "$tmp/2026-10-25_120000" >/dev/null
+  if [ "$(find "$tmp" -maxdepth 1 -type d -name '2026-10-25_120000-w' | wc -l)" = "1" ]; then
+    printf '  повторный вызов не создаёт дубль — ok\n'
+  else
+    printf '  повторный вызов создал дубль — ПРОВАЛ\n'
+    ok=1
+  fi
+
+  if [ "$ok" = "0" ]; then
+    log "самопроверка ротации пройдена"
+    return 0
+  fi
+  fail "самопроверка ротации не пройдена"
+}
 case "${1:-}" in
   --drill | drill) shift || true; drill "${1:-}" ;;
+  --self-test | self-test) self_test ;;
   "" ) create_backup ;;
   -h | --help | help) usage ;;
   *) fail "неизвестный аргумент: $1 (см. --help)" ;;
 esac
+

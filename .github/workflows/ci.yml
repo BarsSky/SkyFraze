@@ -34,6 +34,9 @@ jobs:
       - run: cd backend && go mod download
       - run: cd backend && go vet ./...
       - run: cd backend && go test ./...
+      # Ротация копий удаляет данные — проверка не требует базы и docker'а, зато ловит
+      # ошибку в шаблонах имён до того, как она съест реальные копии на стенде.
+      - run: bash deploy/backup.sh --self-test
 
   frontend-test:
     runs-on: ubuntu-latest
