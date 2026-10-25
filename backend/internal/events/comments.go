@@ -98,3 +98,39 @@ func (s *Service) DeleteComment(
 	}
 	return s.store.DeleteEventComment(ctx, projectID, commentID, userID)
 }
+
+// UnseenComments — сколько новых замечаний у кадров проекта (viewer+).
+//
+// «Новое» — написанное после того, как человек в последний раз открывал обсуждение этого
+// кадра, и не его собственное. Без этого единственный способ узнать о замечании — открыть
+// каждый кадр подряд.
+func (s *Service) UnseenComments(
+	ctx context.Context, userID, projectID uuid.UUID,
+) ([]store.CommentUnread, error) {
+	if err := s.proj.RequireViewer(ctx, userID, projectID); err != nil {
+		return nil, err
+	}
+	return s.store.EventCommentsUnread(ctx, projectID, userID)
+}
+
+// UnseenCommentsByProject — в каких моих проектах есть непрочитанные замечания.
+//
+// Нужно списку проектов: «сюда стоит заглянуть» должно быть видно, не открывая проект.
+func (s *Service) UnseenCommentsByProject(
+	ctx context.Context, userID uuid.UUID,
+) ([]store.ProjectCommentUnread, error) {
+	return s.store.ProjectsCommentsUnread(ctx, userID)
+}
+
+// MarkCommentsSeen отмечает обсуждение кадра прочитанным (viewer+).
+//
+// Отметка ставится, когда обсуждение действительно показано, а не при открытии проекта:
+// иначе счётчики обнулялись бы сами, и «новое» никто бы не увидел.
+func (s *Service) MarkCommentsSeen(
+	ctx context.Context, userID, projectID, eventID uuid.UUID,
+) error {
+	if err := s.proj.RequireViewer(ctx, userID, projectID); err != nil {
+		return err
+	}
+	return s.store.MarkCommentsSeen(ctx, projectID, eventID, userID)
+}

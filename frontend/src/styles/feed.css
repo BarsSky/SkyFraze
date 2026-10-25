@@ -91,6 +91,13 @@
   color: var(--bg); background: var(--accent-strong); vertical-align: middle;
 }
 .pub-link { margin: 6px 0 0; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 0.84rem; }
+/* Новые замечания в списке проектов: подсказка «сюда стоит заглянуть». Цвет тот же
+   акцент, но без заливки — бейдж «в ленте» уже занят плотным фоном, и два одинаково
+   громких ярлыка рядом читались бы как одно и то же. */
+.pub-badge--new {
+  color: var(--accent-strong); background: transparent;
+  border: 1px solid var(--accent-strong);
+}
 .pub-note { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 
 /* ── баннер ошибки с выходами ────────────────────────────────────────── */

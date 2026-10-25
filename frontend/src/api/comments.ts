@@ -61,6 +61,36 @@ export async function deleteComment(projectId: string, commentId: string): Promi
   )
 }
 
+/** Непрочитанные замечания по кадрам проекта: ключ — кадр, значение — сколько новых. */
+export type UnseenComments = Record<string, number>
+
+export async function unseenComments(projectId: string): Promise<UnseenComments> {
+  const raw = await http
+    .get(`projects/${encodeURIComponent(projectId)}/comments/unseen`)
+    .json<unknown>()
+  return parseUnseen(raw)
+}
+
+/** Отметить обсуждение кадра прочитанным — вызывается, когда оно показано. */
+export async function markCommentsSeen(projectId: string, eventId: string): Promise<void> {
+  await http.post(`projects/${encodeURIComponent(projectId)}/comments/seen`, {
+    json: { event_id: eventId },
+  })
+}
+
+/** Проект с непрочитанными замечаниями — строка списка проектов. */
+export interface ProjectUnseen {
+  projectId: string
+  title: string
+  unread: number
+  lastAt: string
+}
+
+export async function projectsWithUnseen(): Promise<ProjectUnseen[]> {
+  const raw = await http.get('comments/unseen').json<unknown>()
+  return parseProjectUnseen(raw)
+}
+
 // ── разбор ответов ──────────────────────────────────────────────────────
 // Сервер — внешний источник: «поля не пришло» даёт пустой список, а не падение разметки.
 
@@ -110,6 +140,39 @@ export function parseCounts(raw: unknown): CommentCounts {
   for (const [eventId, value] of Object.entries(counts)) {
     const n = asWhole(value)
     if (n > 0) out[eventId] = n
+  }
+  return out
+}
+
+/** Разбор непрочитанного: сервер отдаёт список строк «кадр — сколько — когда». */
+export function parseUnseen(raw: unknown): UnseenComments {
+  const record = asRecord(raw)
+  if (!Array.isArray(record?.unseen)) return {}
+  const out: UnseenComments = {}
+  for (const item of record.unseen) {
+    const row = asRecord(item)
+    const eventId = asText(row?.event_id)
+    const n = asWhole(row?.unread)
+    if (eventId && n > 0) out[eventId] = n
+  }
+  return out
+}
+
+export function parseProjectUnseen(raw: unknown): ProjectUnseen[] {
+  const record = asRecord(raw)
+  if (!Array.isArray(record?.projects)) return []
+  const out: ProjectUnseen[] = []
+  for (const item of record.projects) {
+    const row = asRecord(item)
+    const projectId = asText(row?.project_id)
+    const unread = asWhole(row?.unread)
+    if (!projectId || unread <= 0) continue
+    out.push({
+      projectId,
+      title: asText(row?.title),
+      unread,
+      lastAt: asText(row?.last_at),
+    })
   }
   return out
 }

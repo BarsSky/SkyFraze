@@ -3,6 +3,7 @@ import {
   createComment,
   deleteComment,
   listComments,
+  markCommentsSeen,
   type FrameComment,
 } from '../../api/comments'
 import { useAuthStore } from '../../store/auth'
@@ -53,14 +54,23 @@ export function FrameComments({ projectId, eventId, canEdit, onCountChange }: Pr
 
   const load = useCallback(
     async (id: string) => {
+      let list: FrameComment[] = []
       try {
-        const list = await listComments(projectId, id)
-        setComments(list)
-        onCountChange?.(id, list.length)
+        list = await listComments(projectId, id)
       } catch {
         // Кадр могли удалить, пока он был выбран: пустое обсуждение — верный ответ,
         // а панель не должна падать из-за этого.
-        setComments([])
+        list = []
+      }
+      setComments(list)
+      onCountChange?.(id, list.length)
+      // Отметка «прочитано» — отдельной попыткой и отдельным catch: её сбой не должен
+      // стирать уже показанное обсуждение. Не удалось отметить — счётчик «новых»
+      // просто останется, это не потеря данных.
+      try {
+        await markCommentsSeen(projectId, id)
+      } catch {
+        /* ничего: см. комментарий выше */
       }
     },
     [projectId, onCountChange],

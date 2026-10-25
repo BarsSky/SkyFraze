@@ -309,6 +309,11 @@ func main() {
 	// projects
 	r.Mount("/api/projects", projH.Routes(authSvc))
 
+	// Непрочитанные замечания по всем моим проектам: список проектов спрашивает это ДО
+	// выбора проекта, чтобы показать «сюда стоит заглянуть». Отдельный путь, а не
+	// /api/projects/{id}/…: проекта в запросе ещё нет.
+	r.With(authSvc.WithUser).Get("/api/comments/unseen", evH.CommentsUnreadAnywhere(authSvc))
+
 	// Публичная лента и публичные файлы. Всё дерево /api/public регистрируется
 	// одним Route (а не Mount + отдельным корневым роутом): у chi Mount создаёт
 	// wildcard-ветку, и соседний более специфичный путь легко становится

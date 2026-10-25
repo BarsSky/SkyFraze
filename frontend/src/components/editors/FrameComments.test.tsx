@@ -15,12 +15,14 @@ const mocks = vi.hoisted(() => ({
   list: vi.fn(),
   create: vi.fn(),
   remove: vi.fn(),
+  seen: vi.fn(),
 }))
 
 vi.mock('../../api/comments', () => ({
   listComments: mocks.list,
   createComment: mocks.create,
   deleteComment: mocks.remove,
+  markCommentsSeen: mocks.seen,
 }))
 
 const ME = { id: 'u1', email: 'me@example.com', display_name: 'Я', is_admin: false }
@@ -55,6 +57,7 @@ function show(canEdit = true, onCountChange = vi.fn()) {
 
 beforeEach(() => {
   mocks.list.mockResolvedValue([OWN, OTHER])
+  mocks.seen.mockResolvedValue(undefined)
   mocks.create.mockResolvedValue({
     ...OWN,
     id: 'c3',
@@ -76,6 +79,9 @@ describe('FrameComments', () => {
     expect(screen.getByText('Согласен, перепишу.')).toBeTruthy()
     expect(screen.getByText('Соавтор')).toBeTruthy()
     await waitFor(() => expect(screen.getByText('2')).toBeTruthy())
+    // Показ обсуждения = «прочитано»: отметка уходит на сервер сразу, иначе счётчик
+    // новых висел бы до перезагрузки страницы.
+    await waitFor(() => expect(mocks.seen).toHaveBeenCalledWith('p1', 'e1'))
   })
 
   it('удалить можно только свой комментарий', async () => {

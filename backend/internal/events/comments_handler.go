@@ -17,6 +17,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/skyfraze/backend/internal/auth"
 	"github.com/skyfraze/backend/internal/store"
 )
 
@@ -26,8 +27,77 @@ func (h *Handler) MountComments(r chi.Router) {
 	// editor+ (проверяет сервис).
 	r.Get("/comments", h.ListComments)
 	r.Get("/comments/counts", h.CommentCounts)
+	r.Get("/comments/unseen", h.UnseenComments)
 	r.Post("/comments", h.CreateComment)
+	r.Post("/comments/seen", h.MarkCommentsSeen)
 	r.Delete("/comments/{cid}", h.DeleteComment)
+}
+
+// UnseenComments — GET /comments/unseen: сколько новых замечаний у каждого кадра.
+func (h *Handler) UnseenComments(w http.ResponseWriter, r *http.Request) {
+	uid, pid, ok := h.identity(w, r)
+	if !ok {
+		return
+	}
+	list, err := h.svc.UnseenComments(r.Context(), uid, pid)
+	if err != nil {
+		h.fail(w, err, "unseen comments")
+		return
+	}
+	if list == nil {
+		list = []store.CommentUnread{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"unseen": list})
+}
+
+// MarkCommentsSeen — POST /comments/seen {"event_id":"..."}: обсуждение кадра прочитано.
+func (h *Handler) MarkCommentsSeen(w http.ResponseWriter, r *http.Request) {
+	uid, pid, ok := h.identity(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		EventID string `json:"event_id"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<10)).Decode(&body); err != nil && err != io.EOF {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	eventID, err := uuid.Parse(strings.TrimSpace(body.EventID))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "нужен event_id кадра")
+		return
+	}
+	if err := h.svc.MarkCommentsSeen(r.Context(), uid, pid, eventID); err != nil {
+		h.fail(w, err, "mark comments seen")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// CommentsUnreadAnywhere — GET /api/comments/unseen (без проекта): в каких моих проектах
+// есть непрочитанные замечания.
+//
+// Отдельно от /projects/{id}/…, потому что вопрос задаётся ДО выбора проекта: список
+// проектов должен показать «сюда стоит заглянуть». Права проверять не нужно — запрос
+// возвращает только проекты, где человек участник, и только счётчики.
+func (h *Handler) CommentsUnreadAnywhere(_ *auth.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		uid, err := auth.UserIDFromCtx(r.Context())
+		if err != nil {
+			writeErr(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		list, err := h.svc.UnseenCommentsByProject(r.Context(), uid)
+		if err != nil {
+			h.fail(w, err, "unseen comments anywhere")
+			return
+		}
+		if list == nil {
+			list = []store.ProjectCommentUnread{}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"projects": list})
+	}
 }
 
 // ListComments — GET /comments?event_id=...&limit=...

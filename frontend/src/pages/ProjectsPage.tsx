@@ -9,6 +9,7 @@ import { ImportFolderModal } from '../components/ImportFolderModal'
 import { projectWeight } from '../lib/projectWeight'
 import { copyText } from '../lib/clipboard'
 import { useAuthStore } from '../store/auth'
+import { projectsWithUnseen } from '../api/comments'
 
 export function ProjectsPage() {
   const [list, setList] = useState<Project[]>([])
@@ -20,6 +21,8 @@ export function ProjectsPage() {
   const [note, setNote] = useState<string | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [importing, setImporting] = useState(false)
+  /** Проект → сколько новых замечаний ждёт ответа (см. docs/comments.md). */
+  const [unseen, setUnseen] = useState<Record<string, number>>({})
   const userId = useAuthStore((s) => s.user?.id)
   const navigate = useNavigate()
 
@@ -35,6 +38,23 @@ export function ProjectsPage() {
   useEffect(() => {
     load()
   }, [load])
+
+  // Новые замечания: список проектов должен отвечать на вопрос «куда заглянуть», не
+  // открывая каждый проект. Ошибку не показываем — это подсказка, а не данные проекта.
+  useEffect(() => {
+    let alive = true
+    projectsWithUnseen()
+      .then((rows) => {
+        if (!alive) return
+        const next: Record<string, number> = {}
+        for (const row of rows) next[row.projectId] = row.unread
+        setUnseen(next)
+      })
+      .catch(() => undefined)
+    return () => {
+      alive = false
+    }
+  }, [list])
 
   // Открытое меню выгрузки закрывается кликом мимо: `<details>` сам этого не делает,
   // а оставленная висеть панель перекрывает кнопки соседних проектов.
@@ -273,6 +293,15 @@ export function ProjectsPage() {
                 }}>
                   <Link to={`/projects/${p.id}`}>{p.title}</Link>
                   {p.is_public && <span className="pub-badge" title="Видна всем в публичной ленте">в ленте</span>}
+                  {(unseen[p.id] ?? 0) > 0 && (
+                    <span
+                      className="pub-badge pub-badge--new"
+                      data-project-unseen={unseen[p.id]}
+                      title={`Новых замечаний в обсуждении: ${unseen[p.id]}`}
+                    >
+                      {unseen[p.id]} новых
+                    </span>
+                  )}
                 </h3>
                 <p className="muted" style={{
                   margin: 0,

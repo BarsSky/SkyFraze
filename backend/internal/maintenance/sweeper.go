@@ -258,6 +258,14 @@ func (s *Sweeper) scan(ctx context.Context, remove bool) (*Report, error) {
 		} else if purged > 0 {
 			report.RemovedComments = int(purged)
 		}
+		// Отметки «прочитано» к исчезнувшим кадрам: без кадра их не к чему приложить.
+		// Карантина здесь не нужно — это не данные, а флаг «я это видел», и потерять
+		// его нечего.
+		if views, err := s.store.PurgeOrphanCommentViews(ctx); err != nil {
+			s.logger.Warn("storage sweep: отметки прочитанного не убраны", "err", err)
+		} else if views > 0 {
+			s.logger.Info("storage sweep: убраны отметки прочитанного", "views", views)
+		}
 	}
 
 	return report, nil

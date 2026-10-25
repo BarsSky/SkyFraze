@@ -5,7 +5,7 @@ import { checkMove, type DropPlace, type MoveReject } from '../../collab/reorder
 import { editingPeers, typingLabel, type PeerState } from '../../collab/awareness'
 import { textString, titleString } from '../../collab/text'
 import { isSearchQuery, searchProject } from '../../lib/projectSearch'
-import { commentCounts as commentCountsRequest } from '../../api/comments'
+import { commentCounts as commentCountsRequest, unseenComments as unseenCommentsRequest } from '../../api/comments'
 import { FrameComments } from './FrameComments'
 import {
   previewMarkdownImport,
@@ -369,6 +369,8 @@ export function EditorsPanel({
   const [filesNote, setFilesNote] = useState<string | null>(null)
   /** Сколько комментариев у кадров: бейдж у строки дерева и счётчик обсуждения. */
   const [commentCounts, setCommentCounts] = useState<Record<string, number>>({})
+  /** Сколько из них новых (написаны после моего последнего просмотра). */
+  const [unseenCounts, setUnseenCounts] = useState<Record<string, number>>({})
   const [drag, setDrag] = useState<DragView | null>(null)
   /** Подсказка для клавиатурных переносов: что не получилось и почему. */
   const [notice, setNotice] = useState<string | null>(null)
@@ -474,6 +476,13 @@ export function EditorsPanel({
         if (alive) setCommentCounts(counts)
       })
       .catch(() => undefined)
+    // Непрочитанное — вторым запросом, но в том же проходе: оба нужны дереву, и «сколько
+    // всего» без «сколько нового» превращает бейдж в декорацию.
+    unseenCommentsRequest(projectId)
+      .then((unseen) => {
+        if (alive) setUnseenCounts(unseen)
+      })
+      .catch(() => undefined)
     return () => {
       alive = false
     }
@@ -489,6 +498,14 @@ export function EditorsPanel({
       }
       if (current[eventId] === count) return current
       return { ...current, [eventId]: count }
+    })
+    // Обсуждение показано — значит, прочитано: отметку на сервере поставил сам блок
+    // комментариев, здесь гасим бейдж, чтобы он не висел до перезагрузки страницы.
+    setUnseenCounts((current) => {
+      if (!(eventId in current)) return current
+      const next = { ...current }
+      delete next[eventId]
+      return next
     })
   }, [])
 
@@ -1540,13 +1557,26 @@ export function EditorsPanel({
                 )}
                 {row.childCount > 0 && <span className="ed-row__badge">{row.childCount}</span>}
                 {/* Сколько замечаний у кадра: без этого комментарий пишется в пустоту —
-                    его никто не заметит, пока сам не откроет кадр. */}
+                    его никто не заметит, пока сам не откроет кадр. Новые выделены
+                    акцентом: «здесь есть что прочитать». */}
                 {(commentCounts[row.id] ?? 0) > 0 && (
                   <span
-                    className="ed-row__comments"
+                    className={[
+                      'ed-row__comments',
+                      (unseenCounts[row.id] ?? 0) > 0 ? 'ed-row__comments--new' : '',
+                    ].filter(Boolean).join(' ')}
                     data-comment-count={commentCounts[row.id]}
-                    title={`Комментариев: ${commentCounts[row.id]}`}
-                    aria-label={`Комментариев: ${commentCounts[row.id]}`}
+                    data-comment-unseen={unseenCounts[row.id] ?? 0}
+                    title={
+                      (unseenCounts[row.id] ?? 0) > 0
+                        ? `Комментариев: ${commentCounts[row.id]}, новых: ${unseenCounts[row.id]}`
+                        : `Комментариев: ${commentCounts[row.id]}`
+                    }
+                    aria-label={
+                      (unseenCounts[row.id] ?? 0) > 0
+                        ? `Комментариев: ${commentCounts[row.id]}, новых: ${unseenCounts[row.id]}`
+                        : `Комментариев: ${commentCounts[row.id]}`
+                    }
                   >
                     {commentCounts[row.id]}
                   </span>

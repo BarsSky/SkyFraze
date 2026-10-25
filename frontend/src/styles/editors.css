@@ -358,3 +358,5 @@
   flex: 0 0 auto; font-size: 12px; color: var(--fg-muted);
   border: 1px solid var(--border); border-radius: 999px; padding: 0 6px;
 }
+/* Новые замечания у кадра: бейдж выделен акцентом — «тут есть что прочитать». */
+.ed-row__comments--new { color: var(--accent); border-color: var(--accent); font-weight: 600; }
