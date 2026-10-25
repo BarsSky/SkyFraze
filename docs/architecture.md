@@ -20,7 +20,7 @@
 | Решение | Почему |
 |---|---|
 | Postgres 15 (вместо 16) | Образ `postgres:15-alpine` доступен локально в этом окружении; `postgres:16-alpine` нет. Семантически одно и то же. |
-| Filesystem ObjectStore (вместо MinIO) | Образ `minio/minio` недоступен. `internal/storage.ObjectStore` — единая абстракция; MinIO добавим в Phase 2 без изменения контракта. |
+| Filesystem ObjectStore (вместо MinIO) | На старте образ `minio/minio` был недоступен. `internal/storage.ObjectStore` — единая абстракция; **с 0.49.0 работают обе реализации**: `LocalStore` (по умолчанию) и `S3Store` за тем же контрактом, стенд переключён на S3 (`docs/storage-s3.md` §10). |
 | npm (вместо pnpm) | pnpm не установлен; npm есть. Vite-проект работает идентично. |
 | C++ НЕ участвует в Phase 1 | См. план — C++ остаётся в Phase 3 (native renderer). |
 | Three.js для 3D | Полноценный WebGL; события = 3D-объекты. |
@@ -43,6 +43,13 @@ assets               (id, project_id, owner_id, filename, mime, size, s3_key,
                       kind, content_hash, ...)
 event_assets         (event_id, asset_id)                 -- M2M
 sessions             (id, user_id, refresh_token_hash, expires_at)
+project_event_state  (project_id PK, yjs_state, revision)     -- CRDT-снапшот комнаты
+project_revisions    (id, project_id, kind, label, events, size, state, ...)  -- 0016
+ai_changes           (id, project_id, user_id, kind, status, old_*, new_*, frame)  -- 0015, 0017
+event_comments       (id, project_id, event_id, user_id, body, created_at)     -- 0018
+comment_views        (user_id, event_id, seen_at PK(user_id,event_id))          -- 0019
+comment_notifications(id, project_id, event_id, comment_id, user_id,
+                      sent_at, attempts, last_error)                            -- 0020
 schema_migrations    (version PK, applied_at)
 ```
 
@@ -130,6 +137,12 @@ CASCADE`), `depth` (0..8, проверяется CHECK), `position` (0..n-1 вн
   (`assets.UsageChecker` ← `collab.Hub.AssetUsage`), потому что ссылки живут в
   CRDT-документе, а не в таблицах
 - `collab` — изолированный WebSocket-хаб
+- `storage` — `ObjectStore` и две реализации: `LocalStore` (диск) и `S3Store` (S3/MinIO,
+  своя подпись SigV4 без SDK); выбор — `STORAGE_DRIVER`
+- `notify` — письма о новых замечаниях: очередь `comment_notifications` и фоновый обход;
+  без настроенного SMTP не запускается (`docs/comments.md` §5.2)
+- `ratelimit` — ограничение попыток входа (по адресу клиента и по аккаунту,
+  `docs/security.md`)
 - `platform` — config, logger, db pool, раннер миграций
 
 ## Иерархия событий (вложенность)
