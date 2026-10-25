@@ -90,11 +90,19 @@ jobs:
           docker run -d --name s3 -p 9010:8333 \
             -v /tmp/s3conf/s3.json:/etc/seaweedfs/s3.json:ro \
             chrislusf/seaweedfs:4.50 server -s3 -dir=/data -s3.config=/etc/seaweedfs/s3.json
+          # Готовность: сервер отвечает по S3-порту. `403` здесь — это «готов»: ключи заданы,
+          # и анонимный запрос к корню отклоняется (на этом шаге бакета ещё нет, а на
+          # отсутствующий бакет S3 отвечает `NoSuchBucket`). `curl -f` на такой ответ падает,
+          # поэтому статус-код читаем явно — иначе проверка готовности не даёт засчитать
+          # работающий сервер и job падает на ровном месте.
           for i in $(seq 1 60); do
-            if curl -fsS -o /dev/null http://127.0.0.1:9010/; then echo "S3 готов"; exit 0; fi
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:9010/ 2>/dev/null || true)
+            if [ "$code" = "200" ] || [ "$code" = "403" ]; then
+              echo "S3 готов (HTTP $code)"; exit 0
+            fi
             sleep 1
           done
-          echo "S3 не поднялся:"; docker logs s3; exit 1
+          echo "S3 не поднялся (последний код: $code):"; docker logs s3; exit 1
       - name: бакет для тестов
         run: |
           # Создание бакета повторяем: S3-порт отвечает чуть раньше, чем поднимается мастер
