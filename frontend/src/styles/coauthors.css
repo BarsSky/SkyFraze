@@ -156,3 +156,21 @@ span.craft-chip { cursor: default; }
      должно попадать пальцем и в фильтре каталога, и в профиле. */
   .craft-chip { min-height: 34px; }
 }
+
+/* ─── второй фактор входа и сеансы (компонент TwoFactorSettings) ──────────────
+   Блок стоит в профиле отдельной секцией: это настройки ВХОДА, а не профиля, и
+   сохраняются они сразу — поэтому визуально отделены линией, а не полем формы. */
+.twofa { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 14px; }
+.twofa__row { display: flex; align-items: baseline; gap: 10px; }
+.twofa__hint { font-size: 12px; margin: 6px 0 10px; }
+.twofa__subhead { margin: 18px 0 6px; }
+.twofa__setup { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+.twofa__secret {
+  display: block; font-size: 13px; letter-spacing: 0.06em; word-break: break-all;
+  background: var(--bg); border: 1px dashed var(--border); border-radius: 6px; padding: 6px 8px; margin: 6px 0;
+}
+.twofa__url { font-size: 11px; word-break: break-all; margin: 0 0 8px; }
+.twofa__form { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.twofa__codes ul { columns: 2; font-size: 13px; padding-left: 18px; }
+.twofa__sessions { font-size: 12px; margin: 6px 0 10px; padding-left: 18px; }
+.twofa__note { font-size: 12px; margin: 8px 0 0; }

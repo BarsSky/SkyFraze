@@ -1,4 +1,4 @@
-﻿package main
+package main
 
 import (
 	"context"
@@ -346,12 +346,17 @@ func main() {
 		r.With(limited).Post("/register", authH.Register)
 		r.With(limited).Post("/registration-requests", authH.RequestRegistration)
 		r.With(limited).Post("/login", authH.Login)
+		// Второй шаг входа: пропуск + код 2FA. Токенов до него нет, поэтому ручка публичная
+		// и ограничена теми же границами, что и сам вход.
+		r.With(limited).Post("/login/2fa", authH.LoginTOTP)
 		r.With(limited).Post("/refresh", authH.Refresh)
 		r.Group(func(r chi.Router) {
 			r.Use(authSvc.WithUser)
 			r.Get("/me", authH.Me)
 			// Профиль: имя и ник (@username), по которому человека находят.
 			r.Patch("/me", authH.UpdateProfile)
+			// Второй фактор и активные сеансы (docs/security.md).
+			authH.MountTwoFactor(r)
 		})
 	})
 

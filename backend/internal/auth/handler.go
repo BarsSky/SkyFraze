@@ -1,4 +1,4 @@
-﻿package auth
+package auth
 
 import (
 	"encoding/json"
@@ -68,7 +68,11 @@ type userPublic struct {
 	// NotifyComments — согласие получать письма о новых замечаниях. По умолчанию нет:
 	// текст проекта уходит на чужой почтовый сервер только осознанно (docs/comments.md §5.2).
 	NotifyComments bool `json:"notify_comments"`
-	IsAdmin        bool `json:"is_admin"`
+	// TOTPEnabled — включён ли второй фактор входа (docs/security.md). Заполняется
+	// обработчиками через publicUserWith2FA: таблица 2FA отдельная, и в самом store.User
+	// этого поля нет.
+	TOTPEnabled bool `json:"totp_enabled"`
+	IsAdmin     bool `json:"is_admin"`
 }
 
 func publicUser(u *store.User) userPublic {
@@ -132,7 +136,7 @@ func (h *Handler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	writeJSON(w, http.StatusOK, publicUser(u))
+	writeJSON(w, http.StatusOK, h.publicUserWith2FA(r, u))
 }
 
 // Config — публичная конфигурация входа: как на этой инсталляции пускают новых
@@ -237,6 +241,21 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	u, tok, err := h.svc.Login(r.Context(), req.Email, req.Password)
 	if err != nil {
 		switch {
+		case errors.Is(err, ErrTOTPRequired):
+			// Пароль верный, но токенов ещё нет: отдаём короткоживущий пропуск и просим код.
+			// Так интерфейс узнаёт про второй фактор только после пароля — до него это
+			// знание ничего не даёт взломщику, а после даёт, и прятать его бессмысленно.
+			challenge, challengeErr := h.svc.BeginTOTPChallenge(u.ID)
+			if challengeErr != nil {
+				h.logger.Error("login: пропуск для 2FA", "err", challengeErr)
+				writeErr(w, http.StatusInternalServerError, "login failed")
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"totp_required": true,
+				"challenge":     challenge,
+			})
+			return
 		case errors.Is(err, ErrInvalidCreds):
 			writeErr(w, http.StatusUnauthorized, "invalid credentials")
 		case errors.Is(err, ErrRequestPending):
@@ -250,7 +269,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"user":   publicUser(u),
+		"user":   h.publicUserWith2FA(r, u),
 		"tokens": toResp(tok),
 	})
 }
@@ -284,7 +303,7 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "user not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, publicUser(u))
+	writeJSON(w, http.StatusOK, h.publicUserWith2FA(r, u))
 }
 
 // helpers

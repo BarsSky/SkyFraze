@@ -21,6 +21,8 @@ export interface UserPublic {
   discoverable?: boolean
   /** Присылать письма о новых замечаниях (по умолчанию нет). */
   notify_comments?: boolean
+  /** Включён ли второй фактор входа (docs/security.md). */
+  totp_enabled?: boolean
 }
 
 /** Как на этой инсталляции пускают новых пользователей. */
@@ -58,13 +60,93 @@ export async function requestRegistration(input: {
     .json<{ status: string; email: string }>()
 }
 
-export async function login(input: { email: string; password: string }) {
+/**
+ * Вход. Два возможных ответа, и это не «неопределённость», а второй фактор:
+ * сервер отвечает `{totp_required, challenge}` когда пароля мало, и токены выдаются только
+ * после кода. Возвращаем размеченное объединение — пусть забыть проверить его нельзя.
+ */
+export type LoginResult =
+  | { kind: 'two-factor'; challenge: string }
+  | { kind: 'ok'; user: UserPublic }
+
+export async function login(input: { email: string; password: string }): Promise<LoginResult> {
+  const raw = await http.post('auth/login', { json: input }).json<unknown>()
+  const record = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : null
+  if (record?.totp_required === true) {
+    return { kind: 'two-factor', challenge: String(record.challenge ?? '') }
+  }
+  const r = raw as { user: UserPublic; tokens: { access: string; refresh: string } }
+  useAuthStore.getState().setTokens(r.tokens.access, r.tokens.refresh)
+  useAuthStore.getState().setUser(r.user)
+  return { kind: 'ok', user: r.user }
+}
+
+/** Второй шаг входа: пропуск из первого шага + код приложения (или код восстановления). */
+export async function loginTOTP(challenge: string, code: string): Promise<UserPublic> {
   const r = await http
-    .post('auth/login', { json: input })
+    .post('auth/login/2fa', { json: { challenge, code } })
     .json<{ user: UserPublic; tokens: { access: string; refresh: string } }>()
   useAuthStore.getState().setTokens(r.tokens.access, r.tokens.refresh)
   useAuthStore.getState().setUser(r.user)
   return r.user
+}
+
+/** Настройка 2FA: секрет и ссылка otpauth (QR не рисуем — секрет можно ввести руками). */
+export interface TOTPSetup {
+  secret: string
+  url: string
+  hint?: string
+}
+
+export async function setupTOTP(): Promise<TOTPSetup> {
+  return await http.post('auth/2fa/setup').json<TOTPSetup>()
+}
+
+export async function enableTOTP(code: string): Promise<{ recovery_codes: string[]; note?: string }> {
+  return await http
+    .post('auth/2fa/enable', { json: { code } })
+    .json<{ recovery_codes: string[]; note?: string }>()
+}
+
+export async function disableTOTP(code: string): Promise<void> {
+  await http.post('auth/2fa/disable', { json: { code } })
+}
+
+/** Активный сеанс: где и когда человек вошёл. */
+export interface AuthSession {
+  id: string
+  userAgent: string
+  ip: string
+  createdAt: string
+  expiresAt: string
+}
+
+export async function listSessions(): Promise<AuthSession[]> {
+  const raw = await http.get('auth/sessions').json<unknown>()
+  const record = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : null
+  const list = Array.isArray(record?.sessions) ? record?.sessions : []
+  const out: AuthSession[] = []
+  for (const item of list as Array<Record<string, unknown>>) {
+    const id = typeof item?.id === 'string' ? item.id : ''
+    if (!id) continue
+    out.push({
+      id,
+      userAgent: typeof item.user_agent === 'string' ? item.user_agent : '',
+      ip: typeof item.ip === 'string' ? item.ip : '',
+      createdAt: typeof item.created_at === 'string' ? item.created_at : '',
+      expiresAt: typeof item.expires_at === 'string' ? item.expires_at : '',
+    })
+  }
+  return out
+}
+
+/** Закрыть все сеансы, кроме текущего браузера. */
+export async function revokeOtherSessions(): Promise<number> {
+  const refresh = useAuthStore.getState().refreshToken ?? ''
+  const raw = await http
+    .post('auth/sessions/revoke-others', { json: { refresh } })
+    .json<{ revoked?: number }>()
+  return typeof raw?.revoked === 'number' ? raw.revoked : 0
 }
 
 export async function me(): Promise<UserPublic> {

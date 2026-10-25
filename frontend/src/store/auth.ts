@@ -24,6 +24,8 @@ export interface UserPublic {
    * почтовый сервер только по осознанному согласию (docs/comments.md §5.2).
    */
   notify_comments?: boolean
+  /** Включён ли второй фактор входа. */
+  totp_enabled?: boolean
 }
 
 interface AuthState {

@@ -18,6 +18,7 @@ import { useAuthStore } from '../store/auth'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { InviteForm } from '../components/coauthors/InviteForm'
 import { CraftPicker } from '../components/coauthors/CraftPicker'
+import { TwoFactorSettings } from '../components/account/TwoFactorSettings'
 import { craftsOf } from '../lib/crafts'
 
 /**
@@ -518,6 +519,10 @@ function ProfileCard() {
         </button>
         {message && <span className="muted">{message}</span>}
       </div>
+
+      {/* Второй фактор и активные сеансы — отдельный блок: это настройки входа, а не
+          профиля, и сохраняются они сразу, а не кнопкой «Сохранить профиль». */}
+      <TwoFactorSettings />
     </section>
   )
 }

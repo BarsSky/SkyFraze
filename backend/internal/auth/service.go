@@ -304,6 +304,11 @@ func (s *Service) Login(ctx context.Context, email, password string) (*store.Use
 	if req, err := s.store.GetPendingRegistrationRequest(ctx, email); err == nil && req != nil {
 		return nil, nil, ErrRequestPending
 	}
+	// Второй фактор: пароль верный, но токенов пока нет. Пропуск выдаёт обработчик —
+	// здесь только сигнал, чтобы HTTP-слой сам решил, как это показать.
+	if _, enabled, err := s.store.TOTPOf(ctx, u.ID); err == nil && enabled {
+		return u, nil, ErrTOTPRequired
+	}
 	s.GrantConfiguredAdmin(ctx, u)
 	tok, err := s.issueTokens(ctx, u.ID, "")
 	if err != nil {
