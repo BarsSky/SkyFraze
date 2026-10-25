@@ -25,6 +25,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/skyfraze/backend/internal/assets"
+	"github.com/skyfraze/backend/internal/projects"
 	"github.com/skyfraze/backend/internal/storage"
 
 	"github.com/skyfraze/backend/internal/store"
@@ -269,6 +270,25 @@ func (s *Sweeper) scan(ctx context.Context, remove bool) (*Report, error) {
 			s.logger.Warn("storage sweep: отметки прочитанного не убраны", "err", err)
 		} else if views > 0 {
 			s.logger.Info("storage sweep: убраны отметки прочитанного", "views", views)
+		}
+
+		// Корзина проектов (миграция 0022): «восстановить можно 30 дней» — обещание
+		// интерфейса, и выполнять его должен тот же фоновый процесс, что и остальную уборку.
+		// Иначе проект висел бы в корзине вечно, а человека уверяли бы в обратном.
+		//
+		// Срок берётся из projects.TrashRetention — одна константа на сервис, интерфейс и
+		// уборку: три разных «30 дней» рано или поздно разошлись бы.
+		trashed, err := s.store.PurgeExpiredProjects(ctx, projects.TrashRetention)
+		if err != nil {
+			s.logger.Warn("storage sweep: корзина проектов не убрана", "err", err)
+		}
+		for projectID, keys := range trashed {
+			s.logger.Info("storage sweep: проект удалён из корзины окончательно",
+				"project", projectID, "files", len(keys))
+			// Файлы удаляет уборщик хранилища: после удаления строк у них не осталось
+			// ссылок, и следующий проход снимет их сам (карантин на свежие файлы здесь не
+			// мешает — они старые). Дублировать удаление здесь значило бы иметь два
+			// механизма уборки файлов, которые расходятся.
 		}
 	}
 

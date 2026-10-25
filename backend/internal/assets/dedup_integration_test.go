@@ -152,6 +152,9 @@ func TestUploadDeduplicatesSameContent(t *testing.T) {
 }
 
 // Общий файл живёт, пока на него ссылается хотя бы один проект.
+//
+// С 0.54.0 удаление мягкое: «в корзину» файлы не трогает (возврат должен быть полным), а
+// ключи собирает и освобождает только окончательное удаление — purge.
 func TestDeleteProjectKeepsSharedFile(t *testing.T) {
 	e := setup(t)
 	ctx := context.Background()
@@ -195,7 +198,16 @@ func TestDeleteProjectKeepsSharedFile(t *testing.T) {
 		t.Fatalf("удаление проекта: %v", err)
 	}
 
-	// Общий файл на месте (им пользуется оставшийся проект), личный — удалён.
+	// Проект в корзине: файлы на месте — иначе «вернуть» вернуло бы проект без картинок.
+	if _, err := e.obj.Stat(ctx, shared.S3Key); err != nil {
+		t.Errorf("удаление в корзину унесло файл: %v", err)
+	}
+
+	// Окончательное удаление: общий файл на месте (им пользуется оставшийся проект),
+	// личный — удалён.
+	if err := e.proj.Purge(ctx, owner, victim.ID); err != nil {
+		t.Fatalf("окончательное удаление: %v", err)
+	}
 	files := e.files(t)
 	if len(files) != 1 || files[0].Key != shared.S3Key {
 		t.Fatalf("после удаления в хранилище %+v, ожидался только общий файл %s", files, shared.S3Key)
@@ -207,6 +219,9 @@ func TestDeleteProjectKeepsSharedFile(t *testing.T) {
 	// Последняя ссылка ушла — уходит и файл.
 	if err := e.proj.Delete(ctx, owner, keeper.ID); err != nil {
 		t.Fatalf("удаление второго проекта: %v", err)
+	}
+	if err := e.proj.Purge(ctx, owner, keeper.ID); err != nil {
+		t.Fatalf("окончательное удаление второго проекта: %v", err)
 	}
 	if files := e.files(t); len(files) != 0 {
 		t.Fatalf("после последней ссылки файлы остались: %+v", files)

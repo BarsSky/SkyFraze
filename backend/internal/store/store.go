@@ -209,6 +209,10 @@ type Project struct {
 	PublicSlug  *string    `db:"public_slug" json:"public_slug,omitempty"`
 	PublishedAt *time.Time `db:"published_at" json:"published_at,omitempty"`
 	ViewsCount  int        `db:"views_count" json:"views_count"`
+	// DeletedAt — проект в корзине (миграция 0022). NULL у активного; в обычных выборках
+	// колонки нет вовсе (её добавляют только запросы корзины), и это нормально: признак
+	// «удалён» и так выражается тем, что проект не попал в выборку.
+	DeletedAt *time.Time `db:"deleted_at" json:"deleted_at,omitempty"`
 }
 
 const projectColumns = `id, owner_id, title, description, created_at, updated_at,
@@ -221,9 +225,18 @@ func (s *Store) CreateProject(ctx context.Context, ownerID uuid.UUID, title, des
 		ownerID, title, desc)
 }
 
+// GetProject читает АКТИВНЫЙ проект: проект из корзины для этого метода не существует.
+//
+// Фильтр здесь, а не в каждом обработчике, потому что через этот метод идёт и владелец, и
+// проверка соавторства. Забыть фильтр в одном месте из двадцати — вопрос времени; в одной
+// точке входа — нет. Корзина читает проект отдельными методами (store_project_trash.go).
 func (s *Store) GetProject(ctx context.Context, id uuid.UUID) (*Project, error) {
-	return qOne[Project](ctx, s.Pool,
-		`SELECT `+projectColumns+` FROM projects WHERE id=$1`, id)
+	p, err := qOne[Project](ctx, s.Pool,
+		`SELECT `+projectColumns+` FROM projects WHERE id=$1 AND deleted_at IS NULL`, id)
+	if errors.Is(err, ErrNotFound) {
+		return nil, err
+	}
+	return p, err
 }
 
 func (s *Store) ListProjectsForUser(ctx context.Context, userID uuid.UUID) ([]Project, error) {
@@ -231,9 +244,10 @@ func (s *Store) ListProjectsForUser(ctx context.Context, userID uuid.UUID) ([]Pr
 		`SELECT p.id, p.owner_id, p.title, p.description, p.created_at, p.updated_at,
 		        p.is_public, p.public_slug, p.published_at, p.views_count
 		   FROM projects p
-		  WHERE p.owner_id = $1
+		  WHERE p.deleted_at IS NULL
+		    AND (p.owner_id = $1
 		     OR EXISTS (SELECT 1 FROM team_memberships tm
-		                 WHERE tm.project_id = p.id AND tm.user_id = $1)
+		                 WHERE tm.project_id = p.id AND tm.user_id = $1))
 		  ORDER BY p.created_at DESC`, userID)
 }
 
@@ -290,8 +304,12 @@ func (s *Store) AddMembership(ctx context.Context, projectID, userID uuid.UUID, 
 
 func (s *Store) GetMembership(ctx context.Context, projectID, userID uuid.UUID) (*MembershipLite, error) {
 	return qOne[MembershipLite](ctx, s.Pool,
-		`SELECT project_id, user_id, role, added_at
-		   FROM team_memberships WHERE project_id=$1 AND user_id=$2`,
+		// Членство в удалённом проекте не даёт ничего: участники проекта из корзины
+		// получают «нет доступа», как и все остальные.
+		`SELECT tm.project_id, tm.user_id, tm.role, tm.added_at
+		   FROM team_memberships tm
+		   JOIN projects p ON p.id = tm.project_id
+		  WHERE tm.project_id=$1 AND tm.user_id=$2 AND p.deleted_at IS NULL`,
 		projectID, userID)
 }
 

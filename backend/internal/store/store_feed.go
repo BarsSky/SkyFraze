@@ -72,7 +72,7 @@ func (s *Store) ListPublicFeed(ctx context.Context, sort FeedSort, limit, offset
 	return qAll[FeedItem](ctx, s.Pool,
 		`SELECT `+feedColumns+`
 		   FROM projects p`+feedJoins+`
-		  WHERE p.is_public AND p.public_slug IS NOT NULL
+		  WHERE p.is_public AND p.public_slug IS NOT NULL AND p.deleted_at IS NULL
 		  ORDER BY `+order+`
 		  LIMIT $1 OFFSET $2`, limit, offset)
 }
@@ -82,15 +82,16 @@ func (s *Store) GetFeedItemBySlug(ctx context.Context, slug string) (*FeedItem, 
 	return qOne[FeedItem](ctx, s.Pool,
 		`SELECT `+feedColumns+`
 		   FROM projects p`+feedJoins+`
-		  WHERE p.is_public AND p.public_slug = $1`, slug)
+		  WHERE p.is_public AND p.public_slug = $1 AND p.deleted_at IS NULL`, slug)
 }
 
 // GetPublicProjectBySlug — проект, доступный публично. Неопубликованный slug
 // даёт ErrNotFound (а не «forbidden»), чтобы нельзя было перебором отличить
-// существующий закрытый проект от несуществующего.
+// существующий закрытый проект от несуществующего. Проект из корзины публичным не бывает.
 func (s *Store) GetPublicProjectBySlug(ctx context.Context, slug string) (*Project, error) {
 	return qOne[Project](ctx, s.Pool,
-		`SELECT `+projectColumns+` FROM projects WHERE is_public AND public_slug=$1`, slug)
+		`SELECT `+projectColumns+` FROM projects
+		  WHERE is_public AND public_slug=$1 AND deleted_at IS NULL`, slug)
 }
 
 // SetPublication включает/выключает публикацию. Slug передаётся только при первой

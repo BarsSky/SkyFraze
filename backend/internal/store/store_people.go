@@ -59,6 +59,7 @@ const userPublicFrom = `
 	      SELECT COUNT(*) AS cnt
 	        FROM projects p
 	       WHERE p.owner_id = u.id AND p.is_public AND p.public_slug IS NOT NULL
+	         AND p.deleted_at IS NULL
 	  ) st ON true`
 
 const userPublicColumns = `u.id, u.username, u.display_name, u.bio, u.crafts,
@@ -136,6 +137,7 @@ func (s *Store) GetUserPublic(ctx context.Context, id uuid.UUID) (*UserPublic, [
 		`SELECT id, title, public_slug
 		   FROM projects
 		  WHERE owner_id = $1 AND is_public AND public_slug IS NOT NULL
+		    AND deleted_at IS NULL
 		  ORDER BY published_at DESC NULLS LAST, created_at DESC`, id)
 	if err != nil {
 		return nil, nil, err

@@ -43,3 +43,39 @@ export async function createProject(input: { title: string; description: string 
 export async function deleteProject(id: string): Promise<void> {
   await http.delete(`projects/${id}`)
 }
+
+/**
+ * Проект в корзине: удалён, но ещё восстановим.
+ *
+ * `days_left` считает сервер от `retention_days`: срок хранения — обещание продукта, и
+ * держать его копию в браузере значило бы однажды разойтись с сервером и соврать человеку
+ * про то, что проект ещё можно вернуть.
+ */
+export interface TrashedProject {
+  id: string
+  title: string
+  description: string
+  deleted_at: string
+  days_left: number
+}
+
+export interface TrashResponse {
+  projects: TrashedProject[]
+  retention_days: number
+}
+
+export async function listTrash(): Promise<TrashResponse> {
+  return await http.get('projects/trash').json<TrashResponse>()
+}
+
+export async function restoreProject(id: string): Promise<void> {
+  await http.post(`projects/${id}/restore`)
+}
+
+/**
+ * Удалить навсегда. Необратимо: файлы и история версий уходят вместе с проектом —
+ * поэтому это отдельный вызов, а не «удалить дважды» то же кнопкой.
+ */
+export async function purgeProject(id: string): Promise<void> {
+  await http.delete(`projects/${id}/purge`)
+}

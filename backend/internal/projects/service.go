@@ -2,6 +2,7 @@ package projects
 
 import (
 	"context"
+	"time"
 	"errors"
 
 	"github.com/google/uuid"
@@ -145,29 +146,86 @@ func (s *Service) Update(ctx context.Context, userID, projectID uuid.UUID, title
 	return s.store.UpdateProject(ctx, projectID, title, desc)
 }
 
-// Delete — только owner.
+// TrashRetention — сколько проект лежит в корзине до окончательного удаления.
+//
+// Тридцать дней — тот же срок, что у «Вернуть» для правок агента: месяц — граница, после
+// которой отмена превращается в откат проекта. Корзина не должна становиться архивом.
+const TrashRetention = 30 * 24 * time.Hour
+
+// Delete — только owner: проект уезжает в КОРЗИНУ (миграция 0022).
+//
+// До 0.54.0 удаление было жёстким: строка проекта и всё, что на неё ссылается (события,
+// вложения, история версий), исчезали сразу, и «случайно удалил не тот проект» лечилось
+// только ночной копией. Теперь проект помечается удалённым: он пропадает из списка, из API и
+// из публичной ленты, но 30 дней его можно вернуть одной кнопкой — с текстом, вложениями и
+// историей. Файлы не удаляются: возврат должен быть полным, а не «почти».
 func (s *Service) Delete(ctx context.Context, userID, projectID uuid.UUID) error {
 	m, err := s.requireMember(ctx, userID, projectID, store.RoleOwner)
 	if err != nil {
+		// Повторное удаление: проекта для обычных проверок уже нет, и человек, нажавший
+		// «удалить» дважды (или обновивший страницу с открытым диалогом), должен получить
+		// успех, а не «forbidden» на то, что уже сделано. Чужой проект в корзине при этом
+		// остаётся чужим.
+		if errors.Is(err, ErrForbidden) {
+			if p, derr := s.store.DeletedProject(ctx, projectID); derr == nil && p.OwnerID == userID {
+				return s.store.SoftDeleteProject(ctx, projectID)
+			}
+		}
 		return err
 	}
 	if m.Role != store.RoleOwner {
 		return ErrForbidden
 	}
-	// Ключи файлов собираем ДО удаления: строки вложений уходят каскадом вместе с
-	// проектом, и после удаления о файлах уже нечего спросить.
-	var files []string
-	if s.files != nil {
-		files, _ = s.files.ProjectFileKeys(ctx, projectID)
-	}
-	if err := s.store.DeleteProject(ctx, projectID); err != nil {
+	return s.store.SoftDeleteProject(ctx, projectID)
+}
+
+// Trash — корзина владельца: что удалено и сколько осталось до окончательного удаления.
+func (s *Service) Trash(ctx context.Context, userID uuid.UUID) ([]store.Project, error) {
+	return s.store.DeletedProjects(ctx, userID)
+}
+
+// Restore — вернуть проект из корзины (только владелец).
+//
+// Права проверяются по записи корзины, а не по обычному requireMember: удалённый проект для
+// обычных проверок «не существует», иначе он был бы доступен команде, пока лежит в корзине.
+func (s *Service) Restore(ctx context.Context, userID, projectID uuid.UUID) error {
+	p, err := s.store.DeletedProject(ctx, projectID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return ErrNotFound
+		}
 		return err
 	}
-	// Файлы — после строки: если уборка не удалась, проект всё равно удалён, а
-	// потерянные объекты найдёт уборщик хранилища (maintenance.Sweeper). Файл,
-	// которым пользуется ещё один проект (дедупликация), не удаляется — это решает
-	// сам уборщик вложений по числу оставшихся ссылок.
-	if len(files) > 0 {
+	if p.OwnerID != userID {
+		return ErrForbidden
+	}
+	return s.store.RestoreProject(ctx, projectID)
+}
+
+// Purge — удалить из корзины окончательно (только владелец и только из корзины).
+//
+// Это необратимо и осознанно: файлы удаляются вместе с проектом, история версий — тоже.
+// Отдельный метод, а не «удалить дважды», чтобы окончательное удаление нельзя было нажать
+// по ошибке той же кнопкой.
+func (s *Service) Purge(ctx context.Context, userID, projectID uuid.UUID) error {
+	p, err := s.store.DeletedProject(ctx, projectID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return ErrNotFound
+		}
+		return err
+	}
+	if p.OwnerID != userID {
+		return ErrForbidden
+	}
+	files, err := s.store.PurgeProject(ctx, projectID)
+	if err != nil {
+		return err
+	}
+	// Файлы — после строки: если уборка не удалась, строки уже нет, а потерянные объекты
+	// подберёт уборщик хранилища. Файл, которым пользуется другой проект (дедупликация),
+	// остаётся: это решает DeleteUnreferencedFiles по числу оставшихся ссылок.
+	if s.files != nil && len(files) > 0 {
 		_, _ = s.files.DeleteUnreferencedFiles(ctx, files)
 	}
 	return nil

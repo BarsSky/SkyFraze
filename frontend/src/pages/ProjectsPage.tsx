@@ -1,11 +1,21 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { listProjects, createProject, deleteProject, type Project } from '../api/projects'
+import {
+  listProjects,
+  createProject,
+  deleteProject,
+  listTrash,
+  restoreProject,
+  purgeProject,
+  type Project,
+  type TrashedProject,
+} from '../api/projects'
 import { setPublication } from '../api/feed'
 import { exportProject, importProject } from '../api/transfer'
 import { exportStoryBook, exportStoryMarkdown } from '../api/storyFiles'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { ImportFolderModal } from '../components/ImportFolderModal'
+import { TrashPanel } from '../components/projects/TrashPanel'
 import { projectWeight } from '../lib/projectWeight'
 import { copyText } from '../lib/clipboard'
 import { useAuthStore } from '../store/auth'
@@ -23,6 +33,16 @@ export function ProjectsPage() {
   const [importing, setImporting] = useState(false)
   /** Проект → сколько новых замечаний ждёт ответа (см. docs/comments.md). */
   const [unseen, setUnseen] = useState<Record<string, number>>({})
+  /**
+   * Корзина: удалённые проекты и срок, за который их ещё можно вернуть.
+   *
+   * Список корзины грузим сразу, а не по нажатию: кнопка должна сразу говорить, есть ли
+   * там что-то («Корзина · 2»), иначе человек, удаливший проект случайно, не догадается,
+   * что его можно вернуть, и уйдёт искать копию в другом месте.
+   */
+  const [trash, setTrash] = useState<{ projects: TrashedProject[]; retention_days: number } | null>(null)
+  const [openTrash, setOpenTrash] = useState(false)
+  const [trashBusyId, setTrashBusyId] = useState<string | null>(null)
   const userId = useAuthStore((s) => s.user?.id)
   const navigate = useNavigate()
 
@@ -35,9 +55,18 @@ export function ProjectsPage() {
       .catch(setError)
   }, [])
 
+  const refreshTrash = useCallback(() => {
+    listTrash()
+      .then(setTrash)
+      // Ошибку корзины не показываем баннером: это не данные проекта, и падать из-за
+      // подсказки «есть что вернуть» страница не должна.
+      .catch(() => undefined)
+  }, [])
+
   useEffect(() => {
     load()
-  }, [load])
+    refreshTrash()
+  }, [load, refreshTrash])
 
   // Новые замечания: список проектов должен отвечать на вопрос «куда заглянуть», не
   // открывая каждый проект. Ошибку не показываем — это подсказка, а не данные проекта.
@@ -83,13 +112,55 @@ export function ProjectsPage() {
     }
   }
 
-  async function onDelete(id: string) {
-    if (!confirm('Удалить проект?')) return
+  /**
+   * Удаление — это корзина, а не конец. Поэтому и текст подтверждения другой: человек
+   * должен знать, что ошибка поправима, и что срок ограничен. Пока проект в корзине, он
+   * не виден ни команде, ни в публичной ленте — это видно и сказано.
+   */
+  async function onDelete(p: Project) {
+    if (!confirm(`Удалить «${p.title}»?\n\nПроект уедет в корзину: он пропадёт из списка и станет недоступен соавторам, но вернуть его можно будет 30 дней.`)) return
     try {
-      await deleteProject(id)
-      setList((cur) => cur.filter((p) => p.id !== id))
+      await deleteProject(p.id)
+      setList((cur) => cur.filter((item) => item.id !== p.id))
+      refreshTrash()
+      setNote(`«${p.title}» в корзине — вернуть можно 30 дней`)
     } catch (e) {
       setError(e)
+    }
+  }
+
+  /** Вернуть проект из корзины: полный возврат — текст, файлы, история, участие. */
+  async function onRestore(p: TrashedProject) {
+    setTrashBusyId(p.id)
+    setError(null)
+    try {
+      await restoreProject(p.id)
+      load()
+      refreshTrash()
+      setNote(`«${p.title}» вернулась в список проектов`)
+    } catch (e) {
+      setError(e)
+    } finally {
+      setTrashBusyId(null)
+    }
+  }
+
+  /**
+   * Удалить навсегда. Подтверждение отдельное и явное: это единственное действие в
+   * списке проектов, которое нельзя отменить ничем, кроме ночной копии.
+   */
+  async function onPurge(p: TrashedProject) {
+    if (!confirm(`Удалить «${p.title}» навсегда?\n\nТекст, файлы и история версий будут удалены. Вернуть их будет нечем.`)) return
+    setTrashBusyId(p.id)
+    setError(null)
+    try {
+      await purgeProject(p.id)
+      refreshTrash()
+      setNote(`«${p.title}» удалена окончательно`)
+    } catch (e) {
+      setError(e)
+    } finally {
+      setTrashBusyId(null)
     }
   }
 
@@ -213,6 +284,7 @@ export function ProjectsPage() {
   // потому что там другой набор действий (только чтение).
   const own = list.filter((p) => p.access !== 'coauthor')
   const shared = list.filter((p) => p.access === 'coauthor')
+  const trashCount = trash?.projects.length ?? 0
 
   return (
     <div style={{ maxWidth: 760, margin: '0 auto' }}>
@@ -243,6 +315,18 @@ export function ProjectsPage() {
             />
           </label>
           <button onClick={() => setOpenNew((v) => !v)}>{openNew ? 'Отмена' : '+ Новый проект'}</button>
+          {/* Корзина: пока в ней что-то есть, кнопка говорит числом — иначе удалённый
+              проект «исчезает» бесследно, и человек не находит способ его вернуть. */}
+          <button
+            type="button"
+            className="secondary"
+            aria-expanded={openTrash}
+            data-trash-toggle
+            title="Удалённые проекты: вернуть или удалить окончательно"
+            onClick={() => setOpenTrash((v) => !v)}
+          >
+            {openTrash ? 'Скрыть корзину' : trashCount > 0 ? `Корзина · ${trashCount}` : 'Корзина'}
+          </button>
         </div>
       </div>
 
@@ -436,12 +520,27 @@ export function ProjectsPage() {
                   </button>
                 )}
                 <Link to={`/projects/${p.id}/settings`}><button className="secondary">Участники</button></Link>
-                <button className="secondary" onClick={() => onDelete(p.id)}>Удалить</button>
+                <button className="secondary" onClick={() => void onDelete(p)}>Удалить</button>
               </div>
             </div>
           )
         })}
       </div>
+
+      {/* Корзина: отдельным блоком под списком. Удалённое не должно стоять рядом с
+          рабочим — но и не должно исчезать без следа: «вернуть можно 30 дней» это
+          обещание, а обещание без кнопки не существует. */}
+      {openTrash && (
+        <div style={{ marginTop: 16 }}>
+          <TrashPanel
+            items={trash?.projects ?? []}
+            retentionDays={trash?.retention_days ?? 30}
+            busyId={trashBusyId}
+            onRestore={(p) => void onRestore(p)}
+            onPurge={(p) => void onPurge(p)}
+          />
+        </div>
+      )}
 
       {/* Проекты соавторов: открыты владельцем на чтение. Правок здесь нет —
           ни публикации, ни участников, ни удаления; только «открыть». */}

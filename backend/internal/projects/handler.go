@@ -1,10 +1,13 @@
 package projects
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"math"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -56,7 +59,89 @@ func (h *Handler) Routes(authSvc *auth.Service) http.Handler {
 	r.Use(authSvc.WithUser)
 	r.Get("/", h.List)
 	r.Post("/", h.Create)
+	// /trash здесь НЕТ намеренно, хотя по смыслу он «коллекция». Роутер монтируется через
+	// Mount, а param-ветка /api/projects/{id} в cmd/server/main.go перехватывает статический
+	// "trash" как идентификатор: chi выбирает {id} раньше wildcard от Mount, uuid.Parse
+	// получает "trash" и отдаёт 400. Поэтому корзина регистрируется на корневом роутере
+	// рядом с /api/projects/import — до монтирования (проверено e2e).
 	return r
+}
+
+// Trash — GET /api/projects/trash: удалённые проекты владельца.
+func (h *Handler) Trash(w http.ResponseWriter, r *http.Request) {
+	uid, err := auth.UserIDFromCtx(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	list, err := h.svc.Trash(r.Context(), uid)
+	if err != nil {
+		h.logger.Error("project trash", "err", err)
+		writeErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	out := make([]map[string]any, 0, len(list))
+	for _, p := range list {
+		item := map[string]any{
+			"id": p.ID.String(), "title": p.Title, "description": p.Description,
+			"deleted_at": p.DeletedAt,
+		}
+		// Сколько дней осталось до окончательного удаления — это и есть обещание корзины,
+		// и человек должен видеть срок, а не догадываться о нём.
+		if p.DeletedAt != nil {
+			left := TrashRetention - time.Since(*p.DeletedAt)
+			// Округление вверх: удалил минуту назад — «можно вернуть ещё 30 дней», а не
+			// 29. Остаток меньше суток всё равно означает «сегодня последний шанс», и
+			// показывать 0 при живом проекте было бы ложью в другую сторону.
+			days := int(math.Ceil(left.Hours() / 24))
+			if days < 0 {
+				days = 0
+			}
+			item["days_left"] = days
+		}
+		out = append(out, item)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"projects": out, "retention_days": int(TrashRetention.Hours() / 24)})
+}
+
+// RestoreTrash — POST /api/projects/{id}/restore: вернуть проект из корзины.
+func (h *Handler) RestoreTrash(w http.ResponseWriter, r *http.Request) {
+	h.trashAction(w, r, h.svc.Restore, "restore project")
+}
+
+// PurgeTrash — DELETE /api/projects/{id}/purge: удалить из корзины навсегда.
+func (h *Handler) PurgeTrash(w http.ResponseWriter, r *http.Request) {
+	h.trashAction(w, r, h.svc.Purge, "purge project")
+}
+
+// trashAction — общее для «вернуть» и «удалить навсегда»: права и ответы одинаковые.
+func (h *Handler) trashAction(
+	w http.ResponseWriter, r *http.Request,
+	action func(context.Context, uuid.UUID, uuid.UUID) error, op string,
+) {
+	uid, err := auth.UserIDFromCtx(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	pid, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	if err := action(r.Context(), uid, pid); err != nil {
+		switch {
+		case errors.Is(err, ErrNotFound):
+			writeErr(w, http.StatusNotFound, "not found")
+		case errors.Is(err, ErrForbidden):
+			writeErr(w, http.StatusForbidden, "forbidden")
+		default:
+			h.logger.Error(op, "err", err)
+			writeErr(w, http.StatusInternalServerError, "failed")
+		}
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // projectListItem — проект вместе с тем, КАК пользователь получил к нему доступ:

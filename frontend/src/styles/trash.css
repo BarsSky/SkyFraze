@@ -1,0 +1,40 @@
+/* SkyFraze — корзина проектов (0.54.0).
+ *
+ * Отдельный блок под списком проектов: удалённое не должно соседствовать с рабочим.
+ * Стили рядом с фичей, а не в общем файле кнопок: у «Вернуть» и «Удалить навсегда»
+ * разные веса, и это различие — часть смысла, а не оформление.
+ */
+
+.trash-panel { display: flex; flex-direction: column; gap: 10px; }
+
+.trash-panel__list { display: flex; flex-direction: column; gap: 8px; }
+
+.trash-panel__item {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap;
+  padding: 8px 10px;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg);
+}
+
+/* Название обрезается, а не переносится: длинный заголовок иначе выдавливает
+   кнопки и карточка вырастает в высоту на пустом месте. */
+.trash-panel__title {
+  display: block;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 0.95rem;
+}
+
+/* «Удалить навсегда» красится в опасный цвет, но остаётся secondary: это не
+   основное действие карточки, и оно не должно перетягивать взгляд с «Вернуть». */
+.trash-panel__item .danger-text { color: var(--danger); }
+.trash-panel__item .danger-text:hover {
+  border-color: color-mix(in srgb, var(--danger) 55%, var(--border));
+}
+
+@media (max-width: 860px) {
+  /* На телефоне кнопки встают под текстом во всю ширину: два действия рядом
+     давали по 8 символов на кнопку и нечитаемые подписи. */
+  .trash-panel__item > .row { flex: 1 1 100%; }
+  .trash-panel__item .row button { flex: 1 1 auto; min-height: 34px; }
+}

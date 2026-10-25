@@ -218,8 +218,12 @@ func TestSweepReportsMissingFilesWithoutDeleting(t *testing.T) {
 	}
 }
 
-// Удаление проекта уносит его файлы (и не трогает чужие).
-func TestDeleteProjectRemovesFiles(t *testing.T) {
+// Окончательное удаление проекта уносит его файлы (и не трогает чужие).
+//
+// С 0.54.0 удаление мягкое: проект сначала уезжает в корзину, и файлы при этом остаются —
+// возврат должен вернуть рукопись целиком. Освобождает файлы только purge, по последней
+// ссылке (вложения дедуплицируются, поэтому файл другого проекта переживает удаление).
+func TestPurgeProjectRemovesFiles(t *testing.T) {
 	e := setup(t)
 	ctx := context.Background()
 	owner := e.user(t, "owner@example.com")
@@ -249,6 +253,14 @@ func TestDeleteProjectRemovesFiles(t *testing.T) {
 	if err := e.proj.Delete(ctx, owner, victim.ID); err != nil {
 		t.Fatalf("удаление проекта: %v", err)
 	}
+	// Пока проект в корзине, файл на месте: иначе «вернуть» вернуло бы проект без картинок.
+	if _, err := e.obj.Stat(ctx, gone.S3Key); err != nil {
+		t.Errorf("удаление в корзину унесло файл: %v", err)
+	}
+
+	if err := e.proj.Purge(ctx, owner, victim.ID); err != nil {
+		t.Fatalf("окончательное удаление: %v", err)
+	}
 
 	if _, err := e.obj.Stat(ctx, gone.S3Key); err == nil {
 		t.Errorf("файл удалённого проекта остался: %s", gone.S3Key)
@@ -259,6 +271,77 @@ func TestDeleteProjectRemovesFiles(t *testing.T) {
 	if keys := e.keys(t); len(keys) != 1 || keys[0] != kept.S3Key {
 		t.Errorf("в хранилище: %v, ожидался только %s", keys, kept.S3Key)
 	}
+}
+
+// «Восстановить можно 30 дней» — обещание интерфейса, и выполняет его уборка: проект,
+// пролежавший в корзине дольше срока, удаляется окончательно, а свежее удалённое остаётся.
+//
+// Файлы уходят не в тот же проход, а в следующий: уборка сначала обходит хранилище, потом
+// чистит корзину, и после удаления строк файл остаётся осиротевшим ровно до следующего
+// обхода. Это не мелочь, а порядок шагов — его и проверяем.
+func TestSweeperPurgesExpiredTrash(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	owner := e.user(t, "owner@example.com")
+
+	expired, err := e.proj.Create(ctx, owner, "Давно в корзине", "")
+	if err != nil {
+		t.Fatalf("проект: %v", err)
+	}
+	fresh, err := e.proj.Create(ctx, owner, "Недавно в корзине", "")
+	if err != nil {
+		t.Fatalf("второй проект: %v", err)
+	}
+	gone, err := e.assets.Upload(ctx, owner, expired.ID, assets.UploadOpts{
+		Filename: "уйдёт.png", ContentType: "image/png", Size: 4, Reader: strings.NewReader("PNG1"),
+	})
+	if err != nil {
+		t.Fatalf("вложение: %v", err)
+	}
+	// Файл делаем старым: уборка не трогает свежие файлы (карантин на середину импорта),
+	// и без сдвига времени проверять «файл осиротел» было бы нечего.
+	if err := ageFile(e.dir, gone.S3Key, sweepDaysAgo); err != nil {
+		t.Fatalf("время файла: %v", err)
+	}
+
+	for _, id := range []uuid.UUID{expired.ID, fresh.ID} {
+		if err := e.proj.Delete(ctx, owner, id); err != nil {
+			t.Fatalf("удаление в корзину: %v", err)
+		}
+	}
+	// Сорок дней в корзине при сроке 30 — просрочено.
+	if _, err := e.st.Pool.Exec(ctx,
+		`UPDATE projects SET deleted_at = now() - interval '40 days' WHERE id = $1`, expired.ID); err != nil {
+		t.Fatalf("состарить проект: %v", err)
+	}
+
+	sweeper := maintenance.New(e.st, e.obj, testLogger(t), maintenance.Options{})
+	if _, err := sweeper.Sweep(ctx); err != nil {
+		t.Fatalf("уборка: %v", err)
+	}
+	if _, err := e.st.DeletedProject(ctx, expired.ID); err == nil {
+		t.Error("просроченный проект остался в корзине")
+	}
+	if _, err := e.st.DeletedProject(ctx, fresh.ID); err != nil {
+		t.Errorf("свежее удаление убрано раньше срока: %v", err)
+	}
+	// Файл на месте: строки уже нет, но обход хранилища был до уборки корзины.
+	if _, err := e.obj.Stat(ctx, gone.S3Key); err != nil {
+		t.Fatalf("файл исчез раньше времени: %v", err)
+	}
+	// Второй проход видит его осиротевшим и убирает.
+	if _, err := sweeper.Sweep(ctx); err != nil {
+		t.Fatalf("вторая уборка: %v", err)
+	}
+	if _, err := e.obj.Stat(ctx, gone.S3Key); err == nil {
+		t.Error("файл удалённого проекта остался после второй уборки")
+	}
+}
+
+// ageFile двигает время файла в хранилище: уборка удаляет только то, что старше карантина.
+func ageFile(dir, key string, age time.Duration) error {
+	when := time.Now().Add(-age)
+	return os.Chtimes(filepath.Join(dir, filepath.FromSlash(key)), when, when)
 }
 
 // Отчёт называет тяжёлые проекты поимённо: «база выросла» — не ответ на вопрос

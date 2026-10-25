@@ -11,6 +11,7 @@ import './styles/markdown.css'
 import './styles/transfer.css'
 import './styles/assistant.css'
 import './styles/versions.css'
+import './styles/trash.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

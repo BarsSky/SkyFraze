@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatBytes, formatDate, formatRating, formatViews, plural } from './format'
+import { formatBytes, formatDate, formatDaysLeft, formatRating, formatViews, plural } from './format'
 
 describe('plural', () => {
   it('склоняет по русским правилам', () => {
@@ -39,6 +39,18 @@ describe('formatDate', () => {
     expect(formatDate('2026-09-27T15:00:00Z')).toMatch(/^2[67]\.09\.2026$/)
     expect(formatDate(null)).toBe('')
     expect(formatDate('мусор')).toBe('')
+  })
+})
+
+describe('formatDaysLeft', () => {
+  it('склоняет срок корзины и не обещает возврат после него', () => {
+    expect(formatDaysLeft(30)).toBe('30 дней')
+    expect(formatDaysLeft(21)).toBe('21 день')
+    expect(formatDaysLeft(2)).toBe('2 дня')
+    expect(formatDaysLeft(11)).toBe('11 дней')
+    expect(formatDaysLeft(0)).toBe('срок истёк')
+    expect(formatDaysLeft(-1)).toBe('срок истёк')
+    expect(formatDaysLeft(Number.NaN)).toBe('срок истёк')
   })
 })
 

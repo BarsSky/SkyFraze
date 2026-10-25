@@ -383,6 +383,12 @@ func main() {
 	r.With(authSvc.WithUser).Post("/api/projects/import/markdown/preview", transferH.MarkdownPreview)
 	r.With(authSvc.WithUser).Post("/api/projects/import/markdown", transferH.MarkdownImport)
 
+	// Корзина проектов — тоже СТАТИЧЕСКИЙ путь, и поэтому регистрируется здесь, а не внутри
+	// projH.Routes (смонтированного через Mount): param-ветка /api/projects/{id} ниже
+	// перехватывает "trash" как идентификатор, uuid.Parse падает, и клиент получает 400 на
+	// пустом месте. Проверено e2e: без этой строки список корзины не открывался вовсе.
+	r.With(authSvc.WithUser).Get("/api/projects/trash", projH.Trash)
+
 	// projects
 	r.Mount("/api/projects", projH.Routes(authSvc))
 
@@ -427,7 +433,12 @@ func main() {
 		// одиночного проекта недостижимы и оставлены только для List/Create.
 		r.Get("/", projH.Get)
 		r.Put("/", projH.Update)
+		// Удаление — в корзину (миграция 0022): проект пропадает из API и ленты, но 30 дней
+		// его можно вернуть. Окончательное удаление — отдельным путём, чтобы его нельзя было
+		// нажать по ошибке той же кнопкой.
 		r.Delete("/", projH.Delete)
+		r.Post("/restore", projH.RestoreTrash)
+		r.Delete("/purge", projH.PurgeTrash)
 
 		r.Get("/members", teamsH.Members(authSvc))
 		// Прямое добавление участника (владелец): основной путь — выбрать соавтора
