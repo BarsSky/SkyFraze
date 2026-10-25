@@ -20,7 +20,7 @@
 | Решение | Почему |
 |---|---|
 | Postgres 15 (вместо 16) | Образ `postgres:15-alpine` доступен локально в этом окружении; `postgres:16-alpine` нет. Семантически одно и то же. |
-| Filesystem ObjectStore (вместо MinIO) | На старте образ `minio/minio` был недоступен. `internal/storage.ObjectStore` — единая абстракция; **с 0.49.0 работают обе реализации**: `LocalStore` (по умолчанию) и `S3Store` за тем же контрактом, стенд переключён на S3 (`docs/storage-s3.md` §10). |
+| Filesystem ObjectStore (вместо MinIO) | На старте образ `minio/minio` был недоступен. `internal/storage.ObjectStore` — единая абстракция; **с 0.49.0 работают обе реализации**: `LocalStore` (по умолчанию) и `S3Store` за тем же контрактом, стенд переключён на S3 (`docs/storage-s3.md` §11). |
 | npm (вместо pnpm) | pnpm не установлен; npm есть. Vite-проект работает идентично. |
 | C++ НЕ участвует в Phase 1 | См. план — C++ остаётся в Phase 3 (native renderer). |
 | Three.js для 3D | Полноценный WebGL; события = 3D-объекты. |

@@ -48,6 +48,74 @@ jobs:
       - run: cd frontend && npx tsc --noEmit
       - run: cd frontend && npx vitest run
 
+  # Контракт ObjectStore на НАСТОЯЩЕМ S3, а не на поддельном HTTP-сервере.
+  #
+  # Зачем отдельный job. `S3Store` — вторая реализация хранилища, и на ней лежат вложения
+  # боевого стенда. Поддельный сервер в unit-тестах проверяет, что клиент послал то, что мы
+  # думаем, и ничего не говорит о том, принимает ли это S3: расхождения вылезают в мелочах —
+  # кодирование юникода в ключе, `Content-Type`, `Last-Modified` с точностью до секунды,
+  # обрезка префикса стенда при листинге. Здесь `go test` гоняет один и тот же набор по
+  # обеим реализациям (`conformance_test.go`), и вторая — живой S3 API.
+  #
+  # Почему не MinIO, хотя на стенде MinIO. В октябре 2025 MinIO перестал публиковать образы:
+  # `minio/minio` удалён с Docker Hub, `quay.io/minio/minio` отвечает 401 без учётной записи.
+  # Поэтому поднимается SeaweedFS — S3-совместимый сервер, который проверяет подпись
+  # по-настоящему (без ключей объект не создать). Сам MinIO стенда проверяется живой
+  # загрузкой файла — docs/storage-s3.md §11.
+  storage-s3:
+    runs-on: ubuntu-latest
+    env:
+      S3_TEST_ENDPOINT: http://127.0.0.1:9010
+      S3_TEST_ACCESS_KEY: confkey
+      S3_TEST_SECRET_KEY: confsecret
+      S3_TEST_BUCKET: skyfraze-conformance
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.26', cache-dependency-path: backend/go.sum }
+      - name: S3-сервер (SeaweedFS)
+        run: |
+          mkdir -p /tmp/s3conf
+          cat > /tmp/s3conf/s3.json <<'JSON'
+          {
+            "identities": [
+              {
+                "name": "conformance",
+                "credentials": [{"accessKey": "confkey", "secretKey": "confsecret"}],
+                "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+              }
+            ]
+          }
+          JSON
+          docker run -d --name s3 -p 9010:8333 \
+            -v /tmp/s3conf/s3.json:/etc/seaweedfs/s3.json:ro \
+            chrislusf/seaweedfs:4.50 server -s3 -dir=/data -s3.config=/etc/seaweedfs/s3.json
+          for i in $(seq 1 60); do
+            if curl -fsS -o /dev/null http://127.0.0.1:9010/; then echo "S3 готов"; exit 0; fi
+            sleep 1
+          done
+          echo "S3 не поднялся:"; docker logs s3; exit 1
+      - name: бакет для тестов
+        run: |
+          # Создание бакета повторяем: S3-порт отвечает чуть раньше, чем поднимается мастер
+          # SeaweedFS, и первый `weed shell` может не достучаться. Ошибку setup лучше
+          # показать здесь, чем «тест упал на NoSuchBucket».
+          for i in $(seq 1 30); do
+            if docker exec -i s3 sh -c \
+              "echo 's3.bucket.create -name $S3_TEST_BUCKET' | weed shell -master=127.0.0.1:9333" 2>&1 \
+              | grep -q "created bucket"; then
+              echo "бакет создан"; exit 0
+            fi
+            sleep 2
+          done
+          echo "бакет не создан"; docker logs s3; exit 1
+      # Контракт + вся остальная проверка пакета хранилища (подпись по вектору AWS,
+      # страницы листинга, конфиг проверяется на старте).
+      - run: cd backend && go test ./internal/storage/ -count=1 -v
+      - name: лог S3 при падении
+        if: failure()
+        run: docker logs s3
+
   # Дымовые сценарии в браузере: чистый postgres + backend + vite (его поднимает
   # сам Playwright) и `npm run e2e`. Проверяем ровно то, чего не видно в unit-тестах:
   # первая регистрация на пустой инсталляции доводит до /projects, неверный пароль

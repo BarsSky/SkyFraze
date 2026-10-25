@@ -91,7 +91,7 @@
   разговор о тексте, а не текст (`docs/comments.md`)
 - **Вложения можно держать в S3/MinIO** (`STORAGE_DRIVER=s3`): файлы перестают быть частью
   машины стенда, а бакет получает версионирование. Копии при этом остаются полными —
-  `deploy/backup.sh` умеет брать вложения из бакета (`docs/storage-s3.md` §10)
+  `deploy/backup.sh` умеет брать вложения из бакета (`docs/storage-s3.md` §11)
 - **Выгрузка и загрузка Markdown**: проект скачивается одной лентой (`.md`), а можно
   и zip с ассетами — `story.md`, папка `story/` по файлу на кадр, картинки и манифест
   переноса (тот же архив годится для переноса на другой стенд). Обратно — «Импорт
@@ -571,7 +571,7 @@ SkyFraze/
 | `VERSIONS_INTERVAL_MINUTES` | как часто сервер снимает автоснимок версии проекта (`docs/versions.md`) | `5` |
 | `VERSIONS_KEEP` | сколько версий держать на проект (`0` — без предела по количеству) | `100` |
 | `VERSIONS_MAX_MB` | предел суммы снапшотов версий на проект, МиБ (`0` — без предела) | `32` |
-| `STORAGE_DRIVER` | где лежат вложения: `local` (диск) или `s3` (`docs/storage-s3.md` §10) | `local` |
+| `STORAGE_DRIVER` | где лежат вложения: `local` (диск) или `s3` (`docs/storage-s3.md` §11) | `local` |
 | `S3_ENDPOINT` `S3_BUCKET` `S3_PREFIX` `S3_REGION` `S3_KEY` `S3_SECRET` `S3_USE_SSL` | доступ к S3/MinIO, если `STORAGE_DRIVER=s3`; ключи в бакете те же, что были на диске | — |
 | `AUTH_RATE_PER_MINUTE` | предел попыток на публичных ручках входа по адресу клиента (`0` — выключить, `docs/security.md`) | `30` |
 | `AUTH_LOGIN_PER_EMAIL_PER_MINUTE` | предел попыток входа по ОДНОМУ аккаунту (`0` — выключить) | `5` |
@@ -612,6 +612,13 @@ cd backend && go test ./...
 
 # Frontend unit
 cd frontend && npm test
+
+# Хранилище вложений: контракт ObjectStore прогоняется по ОБЕИМ реализациям — на диске
+# (всегда) и против настоящего S3 (если задан S3_TEST_ENDPOINT; в CI это отдельный job).
+# Готовый docker-запуск сервера и что именно проверяется — docs/storage-s3.md §12.
+cd backend && S3_TEST_ENDPOINT=http://127.0.0.1:9010 S3_TEST_ACCESS_KEY=confkey \
+  S3_TEST_SECRET_KEY=confsecret S3_TEST_BUCKET=skyfraze-conformance \
+  go test ./internal/storage/ -run Conformance -v
 
 # E2E в браузере (Playwright): регистрация на пустой инсталляции, вход,
 # защищённые страницы, загрузка проекта, прокрутка, помощник. Vite Playwright
