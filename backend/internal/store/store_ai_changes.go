@@ -150,14 +150,3 @@ func (s *Store) SetAIChangeFrame(ctx context.Context, id uuid.UUID, frame json.R
 	return err
 }
 
-// ExpireAIChangesForKey выбрасывает ожидающие предложения по кадру.
-//
-// Нужно, когда кадр изменили или удалили в обход помощника: старое предложение после
-// этого либо затрёт правку человека, либо будет ссылаться на несуществующий кадр.
-func (s *Store) ExpireAIChangesForKey(ctx context.Context, projectID, eventID uuid.UUID) error {
-	_, err := s.Pool.Exec(ctx,
-		`UPDATE ai_changes SET status=$3
-		  WHERE project_id=$1 AND event_id=$2 AND status=$4`,
-		projectID, eventID, AIChangeSuperseded, AIChangePending)
-	return err
-}

@@ -21,7 +21,6 @@ import (
 	"log/slog"
 	"net"
 	"net/smtp"
-	"sort"
 	"strings"
 	"time"
 
@@ -286,7 +285,3 @@ func validAddress(address string) error {
 	return nil
 }
 
-// sortRows — стабильный порядок внутри письма (по времени письма).
-func sortRows(rows []store.CommentNotification) {
-	sort.SliceStable(rows, func(i, j int) bool { return rows[i].CreatedAt.Before(rows[j].CreatedAt) })
-}
