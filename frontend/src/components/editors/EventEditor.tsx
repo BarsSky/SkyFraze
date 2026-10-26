@@ -1,12 +1,20 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { Asset } from '../../api/assets'
 import type { YMap } from '../../collab/yprovider'
 import { applyLocalEdit, ensureText, setText, textString, type TextField } from '../../collab/text'
+import { encodeAnchor } from '../../collab/anchors'
 import { ImageViewer } from '../ImageViewer'
 import { MarkdownBlock } from '../MarkdownBlock'
 import { MarkdownEditor } from '../MarkdownEditor'
 import { looksLikeMarkdown } from '../../lib/markdown'
 import { BackgroundPicker, type BackgroundValue } from './BackgroundPicker'
+
+/** Выделенный фрагмент текста, к которому можно поставить замечание. */
+export interface FrameFragment {
+  start: string
+  end: string
+  quote: string
+}
 
 interface Props {
   ymap: YMap
@@ -28,6 +36,12 @@ interface Props {
    * дерева, здесь — «я печатаю» для соседей (панель гасит его по тишине).
    */
   onTyping?: () => void
+  /**
+   * Замечание к фрагменту: человек выделил текст и нажал «Замечание к фрагменту».
+   * Якорь уже закодирован (позиции — `Y.RelativePosition`), панели остаётся отправить его
+   * вместе с комментарием.
+   */
+  onFragmentSelected?: (fragment: FrameFragment) => void
 }
 
 const eventDateText = (value: unknown): string => {
@@ -81,6 +95,7 @@ function useFieldDraft(field: TextField, ymap: YMap, write: (field: TextField, m
  */
 export function EventEditor({
   ymap, assets, images, assetUrls, onUpload, onUploadMany, onAttach, onDetach, onBackgroundChange, background, onChange, onTyping,
+  onFragmentSelected,
 }: Props) {
   /**
    * Записать правку поля.
@@ -103,6 +118,46 @@ export function EventEditor({
   const bodyField = useFieldDraft('body', ymap, editField)
   const title = titleField.value
   const body = bodyField.value
+  // Выделение в поле текста запоминаем, чтобы кнопка «Замечание к фрагменту» появлялась только
+  // когда есть что выделять. Храним номера, а не текст: текст берём из Y.Text в момент нажатия.
+  const bodyRef = useRef<HTMLTextAreaElement | null>(null)
+  const [selection, setSelection] = useState<{ from: number; to: number } | null>(null)
+
+  const updateSelection = () => {
+    const el = bodyRef.current
+    if (!el) return
+    const from = el.selectionStart ?? 0
+    const to = el.selectionEnd ?? 0
+    setSelection(to > from ? { from, to } : null)
+  }
+
+  /**
+   * Поставить замечание к фрагменту.
+   *
+   * Якорь считается по `Y.Text` (а не по строке в `textarea`) — и только после того, как
+   * черновик применён: пока поле в фокусе, его содержимым владеет человек, и CRDT может
+   * отставать на одну правку. Поэтому сначала снимаем фокус (это фиксирует диф), затем
+   * сверяем выделенный текст с тем, что лежит в CRDT по тем же индексам, и только при
+   * совпадении отдаём якорь.
+   */
+  const selectFragment = () => {
+    if (!selection) return
+    const el = bodyRef.current
+    const quote = el ? el.value.slice(selection.from, selection.to) : ''
+    bodyRef.current?.blur()
+    const text = ensureText(ymap, 'body')
+    const remote = text.toString()
+    if (remote.slice(selection.from, selection.to) !== quote) {
+      // Расхождение возможно, если соавтор правил этот же кусок. Честнее промолчать
+      // кнопкой, чем привязать замечание к другому тексту.
+      setSelection(null)
+      return
+    }
+    const encoded = encodeAnchor(text, selection.from, selection.to)
+    if (!encoded) return
+    onFragmentSelected?.({ ...encoded })
+    setSelection(null)
+  }
   const attachedIds = ((ymap.get('assets') as string[] | undefined) ?? []).filter(Boolean)
   const eventDate = eventDateText(ymap.get('event_date'))
   const [viewer, setViewer] = useState<number | null>(null)
@@ -136,11 +191,16 @@ export function EventEditor({
           Текст <span className="ed-field__hint">Markdown: таблицы, формулы, диаграммы</span>
         </span>
         <textarea
+          ref={bodyRef}
           value={body}
           onFocus={bodyField.onFocus}
           onBlur={bodyField.onBlur}
+          onSelect={updateSelection}
+          onMouseUp={updateSelection}
+          onKeyUp={updateSelection}
           onChange={(e) => {
             bodyField.onChange(e.currentTarget)
+            updateSelection()
             onChange?.()
             onTyping?.()
           }}
@@ -148,6 +208,17 @@ export function EventEditor({
           placeholder={'Описание события. Разметка: **жирный**, - список, | таблица |, $формула$'}
         />
         <div className="ed-md__actions">
+          {onFragmentSelected && selection && (
+            <button
+              type="button"
+              className="secondary"
+              data-select-fragment
+              title="Поставить замечание к выделенному фрагменту текста"
+              onClick={selectFragment}
+            >
+              Замечание к фрагменту
+            </button>
+          )}
           <button type="button" className="secondary" onClick={() => setMdOpen(true)}>
             Открыть редактор Markdown
           </button>

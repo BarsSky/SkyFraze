@@ -22,6 +22,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	ygo "github.com/Deln0r/ygo"
 	"github.com/google/uuid"
 
 	"github.com/skyfraze/backend/internal/store"
@@ -46,6 +47,7 @@ var ErrEventNotFound = errors.New("кадр не найден")
 // начинается форум, а не обсуждение кадра. Поэтому у ответа родитель обязан быть корневым.
 func (s *Service) AddComment(
 	ctx context.Context, userID, projectID, eventID uuid.UUID, body string, parentID *uuid.UUID,
+	anchor *store.CommentAnchor,
 ) (*store.EventComment, error) {
 	if err := s.proj.RequireEditor(ctx, userID, projectID); err != nil {
 		return nil, err
@@ -71,10 +73,29 @@ func (s *Service) AddComment(
 			return nil, err
 		}
 	}
+	if anchor != nil {
+		checked, aerr := checkAnchor(anchor)
+		if aerr != nil {
+			return nil, aerr
+		}
+		anchor = checked
+	}
 	comment, err := s.store.CreateEventComment(ctx, projectID, eventID, userID, text, parentID)
 	if err != nil {
 		return nil, err
-	} // Письма о новом замечании — в очередь, а не в момент ответа (миграция 0020).
+	}
+	// Якорь — отдельной строкой и после комментария: замечание уже существует, и «якорь не
+	// сохранился» не повод его терять. При сбое пишем в журнал и отдаём комментарий без
+	// якоря — он останется замечанием к кадру, а не пропадёт.
+	if anchor != nil {
+		if aerr := s.store.SetCommentAnchor(ctx, comment.ID, *anchor); aerr != nil {
+			s.logger.Warn("events: якорь замечания не сохранён",
+				"project", projectID, "comment", comment.ID, "err", aerr)
+		} else {
+			comment.Anchor = anchor
+		}
+	}
+	// Письма о новом замечании — в очередь, а не в момент ответа (миграция 0020).
 	// Сбой очереди не отменяет комментарий: он уже записан, и «письмо не ушло» — не повод
 	// отвечать автору ошибкой. Поэтому здесь только журнал.
 	if queued, queueErr := s.store.EnqueueCommentNotifications(
@@ -89,6 +110,62 @@ func (s *Service) AddComment(
 	// сохранён, а «никого не позвали» — не повод отвечать автору ошибкой.
 	s.saveMentions(ctx, projectID, comment, userID)
 	return comment, nil
+}
+
+// MaxAnchorRunes — предел на фрагмент, к которому ставится замечание.
+//
+// 500 знаков — это абзац-два. Замечание к пяти абзацам сразу превращается в «перепиши
+// главу», и его место — в обычном замечании к кадру (а правка кадра — в правке кадра).
+const MaxAnchorRunes = 500
+
+// checkAnchor проверяет якорь перед записью: поле, декодируемость позиций и цитату.
+//
+// Почему проверяем только это. Резолвить якорь в документе на этой стороне бессмысленно:
+// сервер видит снапшот, который отстаёт до ~5 с, и «не нашёл» означало бы «ваш свежий
+// комментарий не принят» на ровном месте. Сами байты при этом проверяются строго — мусор в
+// `Y.RelativePosition` потом не разберёт никто, и якорь станет вечной ошибкой чтения.
+func checkAnchor(anchor *store.CommentAnchor) (*store.CommentAnchor, error) {
+	field := strings.TrimSpace(anchor.Field)
+	if field == "" {
+		field = "body"
+	}
+	if field != "body" {
+		return nil, fmt.Errorf("%w: замечание к фрагменту — пока только к тексту кадра", ErrValidation)
+	}
+	if len(anchor.Start) == 0 || len(anchor.End) == 0 {
+		return nil, fmt.Errorf("%w: у якоря нет позиции начала или конца", ErrValidation)
+	}
+	start, err := ygo.DecodeRelativePosition(anchor.Start)
+	if err != nil {
+		return nil, fmt.Errorf("%w: позиция начала не читается", ErrValidation)
+	}
+	end, err := ygo.DecodeRelativePosition(anchor.End)
+	if err != nil {
+		return nil, fmt.Errorf("%w: позиция конца не читается", ErrValidation)
+	}
+	// Позиция внутри `Y.Text` задаётся либо конкретным символом (`Item`), либо типом —
+	// в зависимости от того, что прислал Yjs. Требуем, чтобы было задано хоть что-то:
+	// пустая структура после декодирования означает мусор, а не якорь.
+	looksLikePosition := func(rp ygo.RelativePosition) bool {
+		return rp.Item != nil || rp.Type != nil || rp.TName != nil
+	}
+	if !looksLikePosition(start) {
+		return nil, fmt.Errorf("%w: позиция начала не похожа на место в тексте", ErrValidation)
+	}
+	if !looksLikePosition(end) {
+		return nil, fmt.Errorf("%w: позиция конца не похожа на место в тексте", ErrValidation)
+	}
+	quote := strings.TrimSpace(anchor.Quote)
+	if quote == "" {
+		return nil, fmt.Errorf("%w: у замечания к фрагменту нет цитаты", ErrValidation)
+	}
+	if utf8.RuneCountInString(quote) > MaxAnchorRunes {
+		return nil, fmt.Errorf("%w: фрагмент длиннее %d знаков — оставьте замечание к кадру",
+			ErrValidation, MaxAnchorRunes)
+	}
+	return &store.CommentAnchor{
+		Field: field, Start: anchor.Start, End: anchor.End, Quote: quote,
+	}, nil
 }
 
 // mentionPattern — `@ник` в тексте.
@@ -236,11 +313,22 @@ func (s *Service) ListComments(
 		// Реакции — не содержимое обсуждения: если их не удалось прочитать, показываем
 		// комментарии без счётчиков, а не падаем и не прячем разговор.
 		s.logger.Warn("events: реакции не прочитаны", "project", projectID, "err", err)
-		return list, nil
+	} else {
+		for i := range list {
+			if value, ok := stats[list[i].ID]; ok {
+				list[i].Reactions = value
+			}
+		}
 	}
-	for i := range list {
-		if value, ok := stats[list[i].ID]; ok {
-			list[i].Reactions = value
+	// Якоря — тем же приёмом: один запрос на весь список.
+	anchors, aerr := s.store.CommentAnchors(ctx, ids)
+	if aerr != nil {
+		s.logger.Warn("events: якоря замечаний не прочитаны", "project", projectID, "err", aerr)
+	} else {
+		for i := range list {
+			if anchor, ok := anchors[list[i].ID]; ok {
+				list[i].Anchor = &anchor
+			}
 		}
 	}
 	return list, nil

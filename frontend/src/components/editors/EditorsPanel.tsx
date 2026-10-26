@@ -5,7 +5,11 @@ import { checkMove, type DropPlace, type MoveReject } from '../../collab/reorder
 import { editingPeers, typingLabel, type PeerState } from '../../collab/awareness'
 import { textString, titleString } from '../../collab/text'
 import { isSearchQuery, searchProject } from '../../lib/projectSearch'
-import { commentCounts as commentCountsRequest, unseenComments as unseenCommentsRequest } from '../../api/comments'
+import {
+  commentCounts as commentCountsRequest,
+  unseenComments as unseenCommentsRequest,
+  type FrameAnchor,
+} from '../../api/comments'
 import { FrameComments } from './FrameComments'
 import {
   previewMarkdownImport,
@@ -35,7 +39,7 @@ import {
 } from '../../collab/yprovider'
 import type { Asset, AssetUsage } from '../../api/assets'
 import { ProjectFiles } from './ProjectFiles'
-import { EventEditor } from './EventEditor'
+import { EventEditor, type FrameFragment } from './EventEditor'
 import type { BackgroundValue } from './BackgroundPicker'
 
 interface Props {
@@ -378,6 +382,12 @@ export function EditorsPanel({
   const [chunk, setChunk] = useState<ImportChunk | null>(null)
   const [chunkMode, setChunkMode] = useState<ChunkMode>('end')
   const [importBusy, setImportBusy] = useState(false)
+  /**
+   * Фрагмент, к которому человек сейчас пишет замечание (пришёл из редактора кадра).
+   * Живёт в панели, а не в редакторе: замечание уходит в блок обсуждения, который стоит
+   * рядом, и выбранный фрагмент должен пережить перерисовку редактора.
+   */
+  const [pendingAnchor, setPendingAnchor] = useState<FrameAnchor | null>(null)
   const syncTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const navRef = useRef<HTMLElement | null>(null)
   const gestureRef = useRef<DragGesture | null>(null)
@@ -1608,6 +1618,9 @@ export function EditorsPanel({
                 onBackgroundChange={changeBackground}
                 onChange={() => scheduleSync()}
                 onTyping={markTyping}
+                onFragmentSelected={(fragment: FrameFragment) =>
+                  setPendingAnchor({ field: 'body', ...fragment })
+                }
               />
               <p className="muted ed-editor__hint">
                 Изменения сохраняются автоматически; дерево синхронизируется с сервером.
@@ -1618,6 +1631,10 @@ export function EditorsPanel({
                   eventId={selectedId}
                   canEdit={canEdit === true}
                   onCountChange={noteCommentCount}
+                  ymap={selectedMap}
+                  pendingAnchor={pendingAnchor}
+                  onAnchorConsumed={() => setPendingAnchor(null)}
+                  onAnchorClear={() => setPendingAnchor(null)}
                 />
               )}
             </>

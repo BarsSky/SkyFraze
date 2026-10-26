@@ -49,6 +49,7 @@ const comment = (over: Partial<FrameComment> = {}): FrameComment => ({
   parentId: null,
   deleted: false,
   reactions: { agree: 0, done: 0, mine: [] },
+  anchor: null,
   ...over,
 })
 
@@ -180,7 +181,7 @@ describe('FrameComments', () => {
     fireEvent.change(input, { target: { value: 'Новое замечание.' } })
     fireEvent.click(screen.getByRole('button', { name: 'Написать' }))
 
-    await waitFor(() => expect(mocks.create).toHaveBeenCalledWith('p1', 'e1', 'Новое замечание.'))
+    await waitFor(() => expect(mocks.create).toHaveBeenCalledWith('p1', 'e1', 'Новое замечание.', null, null))
     expect(await screen.findByText('Новое замечание.')).toBeTruthy()
     // Поле сброшено: иначе второе нажатие отправило бы то же самое ещё раз.
     await waitFor(() => expect((screen.getByLabelText('Новый комментарий') as HTMLTextAreaElement).value).toBe(''))
@@ -245,7 +246,7 @@ describe('FrameComments', () => {
     expect(document.querySelector('[data-frame-mention-menu]')).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: 'Написать' }))
-    await waitFor(() => expect(mocks.create).toHaveBeenCalledWith('p1', 'e1', 'Смотри @editor'))
+    await waitFor(() => expect(mocks.create).toHaveBeenCalledWith('p1', 'e1', 'Смотри @editor', null, null))
     expect(onCount).toHaveBeenCalled()
   })
 
@@ -301,5 +302,55 @@ describe('FrameComments', () => {
     show()
     await screen.findByText('Комментарий удалён')
     expect(document.querySelector('[data-frame-reactions]')).toBeNull()
+  })
+
+  it('замечание к фрагменту показывает цитату', async () => {
+    mocks.list.mockResolvedValue([
+      comment({
+        body: 'Здесь провал.',
+        anchor: { field: 'body', start: 'AA==', end: 'AA==', quote: 'Второй абзац.' },
+      }),
+    ])
+    show()
+    await screen.findByText('Здесь провал.')
+    const quote = document.querySelector('[data-frame-anchor]')
+    expect(quote?.textContent).toContain('Второй абзац.')
+  })
+
+  it('выбранный фрагмент виден в форме и убирается', async () => {
+    const onConsumed = vi.fn()
+    const onClear = vi.fn()
+    render(
+      <FrameComments
+        projectId="p1"
+        eventId="e1"
+        canEdit
+        pendingAnchor={{ field: 'body', start: 'AA==', end: 'BB==', quote: 'Второй абзац.' }}
+        onAnchorConsumed={onConsumed}
+        onAnchorClear={onClear}
+      />,
+    )
+    const pending = await screen.findByText('Второй абзац.', { exact: false })
+    expect(pending).toBeTruthy()
+    expect(document.querySelector('[data-frame-anchor-pending]')).toBeTruthy()
+    fireEvent.click(document.querySelector('[data-frame-anchor-clear]') as HTMLButtonElement)
+    expect(onClear).toHaveBeenCalled()
+  })
+
+  it('отправка с выбранным фрагментом уходит с якорем, и фрагмент сбрасывается', async () => {
+    const onConsumed = vi.fn()
+    const anchor = { field: 'body', start: 'AA==', end: 'BB==', quote: 'Второй абзац.' }
+    mocks.create.mockResolvedValue(comment({ id: 'c9', body: 'Замечание к фрагменту.' }))
+    render(
+      <FrameComments projectId="p1" eventId="e1" canEdit pendingAnchor={anchor} onAnchorConsumed={onConsumed} />,
+    )
+    await screen.findByLabelText('Новый комментарий')
+    fireEvent.change(screen.getByLabelText('Новый комментарий'), { target: { value: 'Замечание к фрагменту.' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Написать' }))
+    await waitFor(() =>
+      expect(mocks.create).toHaveBeenCalledWith('p1', 'e1', 'Замечание к фрагменту.', null, anchor),
+    )
+    // Фрагмент забран: следующее замечание не должно молча уехать к тому же куску.
+    expect(onConsumed).toHaveBeenCalled()
   })
 })

@@ -20,6 +20,27 @@ import (
 	ygo "github.com/Deln0r/ygo"
 )
 
+// TextOf отдаёт `Y.Text` поля кадра — то, к чему привязываются якоря замечаний к фрагменту.
+//
+// Зачем снаружи. Якорь (`Y.RelativePosition`) создаётся и резолвится против конкретного
+// `Y.Text`, а не против строки: иначе он теряет смысл. Клиент делает это в браузере, а
+// серверу доступ нужен, чтобы проверять и применять правки фрагментов (docs/fragment-comments.md).
+//
+// Возвращает false, если кадра нет или в нём ещё нет `Y.Text` (старый снапшот, где текст лежит
+// скалярной строкой): создавать его здесь нельзя — писатель документа один, и это не сервис
+// комментариев.
+func (d *Doc) TextOf(eventID, field string) (*ygo.Text, bool) {
+	m, ok := d.eventMap(eventID)
+	if !ok {
+		return nil, false
+	}
+	text, ok := m.Get(field + "_text").(*ygo.Text)
+	if !ok {
+		return nil, false
+	}
+	return text, true
+}
+
 // EventByID находит кадр по идентификатору.
 func (d *Doc) EventByID(id string) (Event, bool) {
 	if strings.TrimSpace(id) == "" {

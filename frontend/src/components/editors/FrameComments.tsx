@@ -7,10 +7,14 @@ import {
   setCommentReaction,
   type CommentReactions,
   type FrameComment,
+  type FrameAnchor,
   type ReactionKind,
 } from '../../api/comments'
 import { listMembers } from '../../api/teams'
 import { useAuthStore } from '../../store/auth'
+import { anchorStatus, anchorText, resolveAnchor } from '../../collab/anchors'
+import { ensureText } from '../../collab/text'
+import type { YMap } from '../../collab/yprovider'
 import {
   applyMention,
   matchMentionCandidates,
@@ -49,6 +53,50 @@ interface Props {
   canEdit: boolean
   /** Сообщить панели, что счётчик кадра изменился (бейдж у строки дерева). */
   onCountChange?: (eventId: string, count: number) => void
+  /**
+   * Документ кадра: по нему резолвятся якоря замечаний к фрагменту. Без него замечания
+   * показываются без подсветки, но в остальном работают (резолв — украшение, не данные).
+   */
+  ymap?: YMap
+  /**
+   * Выделенный фрагмент, к которому человек сейчас пишет замечание (пришёл из редактора).
+   * `null` — замечание к кадру целиком, как раньше.
+   */
+  pendingAnchor?: FrameAnchor | null
+  /** Панель забрала фрагмент (после отправки или отмены) — редактору пора его забыть. */
+  onAnchorConsumed?: () => void
+  /** Убрать выбранный фрагмент, не отправляя замечание. */
+  onAnchorClear?: () => void
+}
+
+/**
+ * Плашка фрагмента в тексте замечания.
+ *
+ * Цитата — не украшение: когда якорь больше не резолвится (текст переписали), только она
+ * позволяет понять, о каком куске шла речь. Поэтому цитата хранится на сервере, а не берётся
+ * из текущего документа.
+ */
+function AnchorQuote({
+  anchor,
+  text,
+}: {
+  anchor: FrameAnchor
+  text: ReturnType<typeof ensureText> | null
+}) {
+  const status = text ? anchorStatus(text, anchor) : 'ok'
+  return (
+    <p className="fc__quote" data-frame-anchor={status}>
+      <span className="fc__quote-mark" aria-hidden="true">
+        «
+      </span>
+      {anchor.quote}
+      <span className="fc__quote-mark" aria-hidden="true">
+        »
+      </span>
+      {status === 'collapsed' && <span className="fc__quote-note"> — фрагмент удалён</span>}
+      {status === 'orphan' && <span className="fc__quote-note"> — фрагмент не найден</span>}
+    </p>
+  )
 }
 
 /** Время комментария: коротко и по-русски — «25.10, 14:32». */
@@ -282,7 +330,16 @@ function buildThreads(list: FrameComment[]): { threads: Thread[]; orphans: Frame
   return { threads, orphans }
 }
 
-export function FrameComments({ projectId, eventId, canEdit, onCountChange }: Props) {
+export function FrameComments({
+  projectId,
+  eventId,
+  canEdit,
+  onCountChange,
+  ymap,
+  pendingAnchor,
+  onAnchorConsumed,
+  onAnchorClear,
+}: Props) {
   const me = useAuthStore((state) => state.user)
   const [comments, setComments] = useState<FrameComment[]>([])
   const [draft, setDraft] = useState('')
@@ -355,8 +412,9 @@ export function FrameComments({ projectId, eventId, canEdit, onCountChange }: Pr
     setBusy(true)
     setNote(null)
     try {
-      const created = await createComment(projectId, eventId, body)
+      const created = await createComment(projectId, eventId, body, null, pendingAnchor ?? null)
       setDraft('')
+      onAnchorConsumed?.()
       if (created) {
         setComments((list) => {
           const next = [...list, created]
@@ -376,7 +434,7 @@ export function FrameComments({ projectId, eventId, canEdit, onCountChange }: Pr
     } finally {
       setBusy(false)
     }
-  }, [busy, draft, projectId, eventId, load, onCountChange])
+  }, [busy, draft, projectId, eventId, load, onCountChange, pendingAnchor, onAnchorConsumed])
 
   const sendReply = useCallback(
     async (root: FrameComment) => {
@@ -448,6 +506,9 @@ export function FrameComments({ projectId, eventId, canEdit, onCountChange }: Pr
     [projectId],
   )
 
+  // Текст кадра для резолва якорей: только чтение, ничего не создаёт (см. collab/text.ts).
+  const bodyText = ymap ? ensureText(ymap, 'body') : null
+
   const { threads, orphans } = useMemo(() => buildThreads(comments), [comments])
   const total = liveCount(comments)
 
@@ -477,6 +538,7 @@ export function FrameComments({ projectId, eventId, canEdit, onCountChange }: Pr
           </button>
         )}
       </div>
+      {!comment.deleted && comment.anchor && <AnchorQuote anchor={comment.anchor} text={bodyText} />}
       {!comment.deleted && <CommentBody text={comment.body} />}
       {!comment.deleted && (
         <ReactionBar
@@ -566,20 +628,42 @@ export function FrameComments({ projectId, eventId, canEdit, onCountChange }: Pr
       )}
 
       {canEdit ? (
-        <div className="fc__form">
-          <MentionInput
-            label="Новый комментарий"
-            placeholder="Замечание к кадру… (ник — через @)"
-            rows={2}
-            value={draft}
-            onChange={setDraft}
-            candidates={candidates}
-            disabled={busy}
-          />
-          <button type="button" onClick={() => void send()} disabled={busy || draft.trim() === ''}>
-            {busy ? 'Отправляю…' : 'Написать'}
-          </button>
-        </div>
+        <>
+          {/* Выбранный фрагмент: видно, к чему именно уйдёт замечание, и его можно убрать —
+              «к кадру» и «к абзацу» это разные замечания, и путать их нельзя. */}
+          {pendingAnchor && (
+            <div className="fc__pending" data-frame-anchor-pending>
+              <span className="fc__pending-label">замечание к фрагменту:</span>
+              <span className="fc__pending-quote">«{pendingAnchor.quote}»</span>
+              <button
+                type="button"
+                className="fc__remove"
+                title="Убрать выделение: замечание будет к кадру целиком"
+                aria-label="Убрать выделенный фрагмент"
+                onClick={() => onAnchorClear?.()}
+                data-frame-anchor-clear
+              >
+                ×
+              </button>
+            </div>
+          )}
+          <div className="fc__form">
+            <MentionInput
+              label="Новый комментарий"
+              placeholder={
+                pendingAnchor ? 'Замечание к фрагменту… (ник — через @)' : 'Замечание к кадру… (ник — через @)'
+              }
+              rows={2}
+              value={draft}
+              onChange={setDraft}
+              candidates={candidates}
+              disabled={busy}
+            />
+            <button type="button" onClick={() => void send()} disabled={busy || draft.trim() === ''}>
+              {busy ? 'Отправляю…' : 'Написать'}
+            </button>
+          </div>
+        </>
       ) : (
         <p className="muted fc__readonly">Читать обсуждение можно, писать — нет: у вас доступ на просмотр.</p>
       )}

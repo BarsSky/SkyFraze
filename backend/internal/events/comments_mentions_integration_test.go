@@ -61,7 +61,7 @@ func TestCommentsMentionsOnlyParticipants(t *testing.T) {
 
 	// Ники подбираются из email: editor@example.com → "editor".
 	if _, err := e.svc.AddComment(ctx, e.owner, projectID, first,
-		"@editor, посмотри второй абзац", nil); err != nil {
+		"@editor, посмотри второй абзац", nil, nil); err != nil {
 		t.Fatalf("комментарий с упоминанием: %v", err)
 	}
 	list, err := e.svc.ListComments(ctx, e.owner, projectID, first, 0)
@@ -79,7 +79,7 @@ func TestCommentsMentionsOnlyParticipants(t *testing.T) {
 	// Посторонний, ник которого в проекте не встречается, не получает уведомления: ник в
 	// тексте остаётся текстом. Ошибки нет — опечатка в нике не должна отменять замечание.
 	if _, err := e.svc.AddComment(ctx, e.owner, projectID, first,
-		"@stranger, и тебе привет", nil); err != nil {
+		"@stranger, и тебе привет", nil, nil); err != nil {
 		t.Fatalf("комментарий с чужим ником: %v", err)
 	}
 	list, err = e.svc.ListComments(ctx, e.owner, projectID, first, 0)
@@ -99,7 +99,7 @@ func TestCommentsMentionsOnlyParticipants(t *testing.T) {
 	}
 
 	// Свой ник — подпись, а не просьба: себя в списке упоминаний нет.
-	if _, err := e.svc.AddComment(ctx, e.owner, projectID, first, "@owner, я поправил", nil); err != nil {
+	if _, err := e.svc.AddComment(ctx, e.owner, projectID, first, "@owner, я поправил", nil, nil); err != nil {
 		t.Fatalf("комментарий со своим ником: %v", err)
 	}
 	list, err = e.svc.ListComments(ctx, e.owner, projectID, first, 0)
@@ -120,10 +120,10 @@ func TestCommentsMentionsCountedInUnread(t *testing.T) {
 	editor := e.member(t, projectID, store.RoleEditor)
 
 	// Два замечания: одно с упоминанием редактора, второе — без.
-	if _, err := e.svc.AddComment(ctx, e.owner, projectID, first, "@editor, глянь", nil); err != nil {
+	if _, err := e.svc.AddComment(ctx, e.owner, projectID, first, "@editor, глянь", nil, nil); err != nil {
 		t.Fatalf("первое: %v", err)
 	}
-	if _, err := e.svc.AddComment(ctx, e.owner, projectID, second, "Просто замечание", nil); err != nil {
+	if _, err := e.svc.AddComment(ctx, e.owner, projectID, second, "Просто замечание", nil, nil); err != nil {
 		t.Fatalf("второе: %v", err)
 	}
 	unread, err := e.svc.UnseenCommentsByProject(ctx, editor)
@@ -159,11 +159,11 @@ func TestCommentsMentionsInReply(t *testing.T) {
 	projectID, first, _ := e.project(t)
 	editor := e.member(t, projectID, store.RoleEditor)
 
-	root, err := e.svc.AddComment(ctx, e.owner, projectID, first, "Замечание", nil)
+	root, err := e.svc.AddComment(ctx, e.owner, projectID, first, "Замечание", nil, nil)
 	if err != nil {
 		t.Fatalf("замечание: %v", err)
 	}
-	reply, err := e.svc.AddComment(ctx, e.owner, projectID, first, "Ответ: @editor, ты как?", &root.ID)
+	reply, err := e.svc.AddComment(ctx, e.owner, projectID, first, "Ответ: @editor, ты как?", &root.ID, nil)
 	if err != nil {
 		t.Fatalf("ответ: %v", err)
 	}

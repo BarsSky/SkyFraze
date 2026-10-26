@@ -26,6 +26,8 @@ export interface FrameComment {
   deleted: boolean
   /** Реакции: сколько «согласен»/«сделано» и какие из них мои (миграция 0025). */
   reactions: CommentReactions
+  /** Замечание к фрагменту текста (0026). null — замечание к кадру целиком. */
+  anchor: FrameAnchor | null
 }
 
 /** Реакции на замечание. Два вида, оба про работу, а не про человека. */
@@ -33,6 +35,19 @@ export interface CommentReactions {
   agree: number
   done: number
   mine: string[]
+}
+
+/**
+ * Якорь замечания к фрагменту текста (миграция 0026). Позиции — base64 от
+ * `Y.encodeRelativePosition`: резолвятся в живом документе, поэтому переживают чужие правки
+ * (docs/fragment-comments.md).
+ */
+export interface FrameAnchor {
+  field: string
+  start: string
+  end: string
+  /** Что было выделено: нужно, когда якорь больше не резолвится. */
+  quote: string
 }
 
 /** Вид реакции: «согласен» (принято к работе) и «сделано» (правка внесена). */
@@ -69,11 +84,14 @@ export async function createComment(
    * сюда попадает только идентификатор корневого замечания.
    */
   parentId?: string | null,
+  /** Замечание к фрагменту: позиции считает клиент, он один видит живой документ. */
+  anchor?: FrameAnchor | null,
 ): Promise<FrameComment | null> {
+  const json: Record<string, unknown> = { event_id: eventId, body }
+  if (parentId) json.parent_id = parentId
+  if (anchor) json.anchor = anchor
   const raw = await http
-    .post(`projects/${encodeURIComponent(projectId)}/comments`, {
-      json: parentId ? { event_id: eventId, body, parent_id: parentId } : { event_id: eventId, body },
-    })
+    .post(`projects/${encodeURIComponent(projectId)}/comments`, { json })
     .json<unknown>()
   const record = asRecord(raw)
   return parseComment(record?.comment)
@@ -170,6 +188,21 @@ export function parseComment(raw: unknown): FrameComment | null {
     parentId: parentId === '' ? null : parentId,
     deleted: record?.deleted === true,
     reactions: parseReactions(record?.reactions),
+    anchor: parseAnchor(record?.anchor),
+  }
+}
+
+/** Разбор якоря: нет поля или нет позиций — замечание к кадру, а не падение разметки. */
+export function parseAnchor(raw: unknown): FrameAnchor | null {
+  const record = asRecord(raw)
+  const start = asText(record?.start)
+  const end = asText(record?.end)
+  if (!start || !end) return null
+  return {
+    field: asText(record?.field) || 'body',
+    start,
+    end,
+    quote: asText(record?.quote),
   }
 }
 

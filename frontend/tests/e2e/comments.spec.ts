@@ -101,6 +101,37 @@ test('замечание к кадру пишется, видно в дерев�
     page.locator('[data-frame-comments] [data-frame-reaction="agree:0"]').first(),
   ).toBeVisible()
 
+  // 4.2. Замечание к ФРАГМЕНТУ: выделяем кусок текста в редакторе и ставим замечание к нему.
+  // Якорь — Y.RelativePosition, поэтому после перезагрузки цитата остаётся привязанной к тому
+  // же тексту, а не к «пятому символу пятой строки».
+  const bodyArea = page.locator('.ed-form textarea').first()
+  await bodyArea.click()
+  await page.keyboard.press('Control+Home')
+  // Настоящее выделение клавиатурой: React-овский onSelect слушает нативные события, и
+  // синтетически отправленный `select` его не будит.
+  await page.keyboard.down('Shift')
+  for (let i = 0; i < 8; i += 1) await page.keyboard.press('ArrowRight')
+  await page.keyboard.up('Shift')
+  await page.locator('[data-select-fragment]').click()
+  const pending = page.locator('[data-frame-anchor-pending]')
+  await expect(pending).toBeVisible()
+  const quoted = (await pending.textContent()) ?? ''
+  expect(quoted.length).toBeGreaterThan(0)
+
+  const fragmentComment = 'К этому куску замечание.'
+  await page.getByLabel('Новый комментарий').fill(fragmentComment)
+  await page.getByRole('button', { name: 'Написать' }).click()
+  await expect(page.locator('[data-frame-comments]')).toContainText(fragmentComment, { timeout: 30_000 })
+  // Цитата фрагмента видна и привязана к живому тексту (статус ok, а не «удалён»).
+  await expect(page.locator('[data-frame-comments] [data-frame-anchor="ok"]').first()).toBeVisible()
+  // Панель забрала фрагмент: следующее замечание не должно молча уехать к тому же куску.
+  await expect(page.locator('[data-frame-anchor-pending]')).toHaveCount(0)
+
+  await page.reload()
+  await expect(
+    page.locator('[data-frame-comments] [data-frame-anchor="ok"]').first(),
+  ).toBeVisible({ timeout: 45_000 })
+
   // 5. Свой комментарий можно удалить. Удаление мягкое: замечание остаётся строкой
   // «Комментарий удалён», а ответ на него — живым. Жёсткое удаление унесло бы чужой текст.
   await page
@@ -111,8 +142,9 @@ test('замечание к кадру пишется, видно в дерев�
   await expect(page.locator('[data-frame-comments]')).not.toContainText(comment, { timeout: 30_000 })
   await expect(page.locator('[data-frame-comments]')).toContainText('Комментарий удалён')
   await expect(page.locator('[data-frame-comments]')).toContainText(reply)
-  // В счётчике остался только ответ: удалённое не считается.
-  await expect(page.locator('.ed-row--chapter .ed-row__comments').first()).toHaveText('1', { timeout: 30_000 })
+  // В счётчике остались живые: ответ на удалённое замечание и замечание к фрагменту.
+  // Удалённое не считается — иначе счётчик звал бы к «(удалён)».
+  await expect(page.locator('.ed-row--chapter .ed-row__comments').first()).toHaveText('2', { timeout: 30_000 })
 })
 
 /**

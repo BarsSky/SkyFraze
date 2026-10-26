@@ -34,6 +34,9 @@ type EventComment struct {
 	// Reactions — реакции на замечание (миграция 0025). Не колонка таблицы: заполняется
 	// отдельным запросом на весь список (см. CommentReactionStats), чтобы не плодить N+1.
 	Reactions CommentReactions `db:"-" json:"reactions"`
+	// Anchor — замечание к фрагменту текста (миграция 0026). nil — замечание к кадру целиком.
+	// Заполняется тоже отдельным запросом (см. CommentAnchors).
+	Anchor *CommentAnchor `db:"-" json:"anchor,omitempty"`
 }
 
 const eventCommentColumns = `c.id, c.project_id, c.event_id, c.user_id,

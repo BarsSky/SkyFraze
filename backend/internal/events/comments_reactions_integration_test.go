@@ -27,7 +27,7 @@ func TestCommentsReactions(t *testing.T) {
 	projectID, first, _ := e.project(t)
 	editor := e.member(t, projectID, store.RoleEditor)
 
-	comment, err := e.svc.AddComment(ctx, e.owner, projectID, first, "Здесь провал в логике.", nil)
+	comment, err := e.svc.AddComment(ctx, e.owner, projectID, first, "Здесь провал в логике.", nil, nil)
 	if err != nil {
 		t.Fatalf("замечание: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestCommentsReactionsRights(t *testing.T) {
 	projectID, first, _ := e.project(t)
 	reader := e.member(t, projectID, store.RoleViewer)
 
-	comment, err := e.svc.AddComment(ctx, e.owner, projectID, first, "Замечание.", nil)
+	comment, err := e.svc.AddComment(ctx, e.owner, projectID, first, "Замечание.", nil, nil)
 	if err != nil {
 		t.Fatalf("замечание: %v", err)
 	}

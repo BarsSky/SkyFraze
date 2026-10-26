@@ -7,6 +7,7 @@ package events
 // N запросов по кадрам.
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -164,6 +165,14 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		EventID  string `json:"event_id"`
 		Body     string `json:"body"`
 		ParentID string `json:"parent_id"`
+		// Anchor — замечание к фрагменту текста (миграция 0026). Позиции приходят от клиента:
+		// он один видит живой документ и считает индексы теми же единицами (UTF-16), что Yjs.
+		Anchor *struct {
+			Field string `json:"field"`
+			Start string `json:"start"`
+			End   string `json:"end"`
+			Quote string `json:"quote"`
+		} `json:"anchor"`
 	}
 	// Предел чтения — с запасом на MaxCommentRunes: строка в 4000 знаков в UTF-8 это до
 	// 16 КБ, а всё, что больше 64 КБ, — уже не комментарий.
@@ -185,7 +194,23 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		}
 		parentID = &parsed
 	}
-	comment, err := h.svc.AddComment(r.Context(), uid, pid, eventID, body.Body, parentID)
+	var anchor *store.CommentAnchor
+	if body.Anchor != nil {
+		start, serr := base64.StdEncoding.DecodeString(strings.TrimSpace(body.Anchor.Start))
+		if serr != nil || len(start) == 0 {
+			writeErr(w, http.StatusBadRequest, "якорь: позиция начала не читается")
+			return
+		}
+		end, eerr := base64.StdEncoding.DecodeString(strings.TrimSpace(body.Anchor.End))
+		if eerr != nil || len(end) == 0 {
+			writeErr(w, http.StatusBadRequest, "якорь: позиция конца не читается")
+			return
+		}
+		anchor = &store.CommentAnchor{
+			Field: body.Anchor.Field, Start: start, End: end, Quote: body.Anchor.Quote,
+		}
+	}
+	comment, err := h.svc.AddComment(r.Context(), uid, pid, eventID, body.Body, parentID, anchor)
 	if err != nil {
 		if errors.Is(err, ErrValidation) {
 			writeErr(w, http.StatusBadRequest, strings.TrimPrefix(err.Error(), ErrValidation.Error()+": "))
