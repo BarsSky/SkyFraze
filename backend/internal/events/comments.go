@@ -25,6 +25,7 @@ import (
 	ygo "github.com/Deln0r/ygo"
 	"github.com/google/uuid"
 
+	"github.com/skyfraze/backend/internal/collab/yjs"
 	"github.com/skyfraze/backend/internal/store"
 )
 
@@ -79,6 +80,9 @@ func (s *Service) AddComment(
 			return nil, aerr
 		}
 		anchor = checked
+		if verr := s.verifyAnchorText(ctx, projectID, eventID, anchor); verr != nil {
+			return nil, verr
+		}
 	}
 	comment, err := s.store.CreateEventComment(ctx, projectID, eventID, userID, text, parentID)
 	if err != nil {
@@ -117,6 +121,66 @@ func (s *Service) AddComment(
 // 500 знаков — это абзац-два. Замечание к пяти абзацам сразу превращается в «перепиши
 // главу», и его место — в обычном замечании к кадру (а правка кадра — в правке кадра).
 const MaxAnchorRunes = 500
+
+// DocSource — откуда взять документ проекта, чтобы проверить якорь по свежему тексту.
+//
+// Интерфейс, а не прямая зависимость: events не должен тащить транспорт (то же решение, что
+// у LiveRestore). Возвращается nil, если живой комнаты нет — тогда используется снапшот базы.
+type DocSource interface {
+	DocForRead(ctx context.Context, projectID uuid.UUID) *yjs.Doc
+}
+
+// UseDocSource подключает живой документ для проверки якорей.
+func (s *Service) UseDocSource(source DocSource) { s.docs = source }
+
+// verifyAnchorText сверяет цитату с тем, что стоит по якорю в документе.
+//
+// Почему проверка «по возможности», а не всегда. Живая комната — свежий документ, и
+// расхождение там означает ровно то, что написано: человек (или соавтор) успел переписать
+// фрагмент, и привязывать замечание к новому тексту нельзя — это отказ. Снапшот базы
+// отстаёт до ~5 секунд, и по нему расхождение может быть ложным, поэтому по снапшоту только
+// пишем в журнал: отбивать законное замечание из-за периода сохранения хуже, чем сохранить
+// его с якорем, который клиент сейчас же пересчитает.
+func (s *Service) verifyAnchorText(
+	ctx context.Context, projectID, eventID uuid.UUID, anchor *store.CommentAnchor,
+) error {
+	if s.docs != nil {
+		if doc := s.docs.DocForRead(ctx, projectID); doc != nil {
+			span, ok := doc.ResolveSpan(eventID.String(), anchor.Field, anchor.Start, anchor.End)
+			if !ok {
+				// Якорь не нашёлся в свежем документе: кадр удалён или текст переписан
+				// целиком. Замечание всё равно сохраняем (цитата у человека останется),
+				// но в ответе клиент увидит orphan — резолв идёт по тому же документу.
+				s.logger.Info("events: якорь замечания не разрешился по живому документу",
+					"project", projectID, "event", eventID)
+				return nil
+			}
+			text, _ := doc.SpanText(eventID.String(), anchor.Field, span)
+			if text != "" && text != anchor.Quote {
+				return fmt.Errorf("%w: текст фрагмента изменился — выделите его заново", ErrValidation)
+			}
+			return nil
+		}
+	}
+	// Комнаты нет: проверяем по снапшоту, но только для журнала (см. выше).
+	state, err := s.store.GetProjectEventState(ctx, projectID)
+	if err != nil || state == nil || len(state.YjsState) == 0 {
+		return nil
+	}
+	doc, derr := yjs.FromState(state.YjsState)
+	if derr != nil {
+		return nil
+	}
+	span, ok := doc.ResolveSpan(eventID.String(), anchor.Field, anchor.Start, anchor.End)
+	if !ok {
+		return nil
+	}
+	if text, ok := doc.SpanText(eventID.String(), anchor.Field, span); ok && text != "" && text != anchor.Quote {
+		s.logger.Info("events: цитата якоря расходится со снапшотом (комнаты нет)",
+			"project", projectID, "event", eventID)
+	}
+	return nil
+}
 
 // checkAnchor проверяет якорь перед записью: поле, декодируемость позиций и цитату.
 //

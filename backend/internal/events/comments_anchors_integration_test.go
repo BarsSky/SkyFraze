@@ -174,3 +174,118 @@ func TestCommentsAnchorReplyIsIndependent(t *testing.T) {
 		t.Errorf("ответ получил якорь сам по себе: %+v", reply.Anchor)
 	}
 }
+
+// docSource — подделка «живой комнаты»: документ, который видит сервер.
+type docSource struct{ doc *yjs.Doc }
+
+func (d docSource) DocForRead(context.Context, uuid.UUID) *yjs.Doc { return d.doc }
+
+// Якорь сверяется по ЖИВОМУ документу: если фрагмент успели переписать, замечание к старому
+// тексту не принимается — иначе оно привязалось бы к чужому абзацу.
+//
+// Важная деталь, которую этот тест и выявил: `Y.RelativePosition` разрешается только в
+// ДОКУМЕНТЕ ТОЙ ЖЕ ЛИНИИ (идентификаторы элементов общие). Поэтому якорь здесь строится по
+// документу комнаты — ровно как у клиента, чей документ приехал из снапшота сервера.
+// Свежесобранный документ из другого набора байтов якоря не разрешит: для него это чужие id.
+func TestCommentsAnchorCheckedAgainstLiveDoc(t *testing.T) {
+	e := setupComments(t)
+	ctx := context.Background()
+	projectID, first, _ := e.project(t)
+
+	live := yjs.NewDoc()
+	if err := live.SeedEvents([]yjs.EventSeed{{
+		ID: first.String(), Title: "Глава", Body: "Первый абзац.\nВторой абзац.\nТретий абзац.",
+	}}); err != nil {
+		t.Fatalf("живой документ: %v", err)
+	}
+	e.svc.UseDocSource(docSource{doc: live})
+	anchor := e.anchorForDoc(t, live, first, "Второй абзац.")
+
+	// Якорь совпадает с текстом документа — замечание принимается.
+	if _, err := e.svc.AddComment(ctx, e.owner, projectID, first, "Замечание.", nil, anchor); err != nil {
+		t.Fatalf("замечание к совпадающему фрагменту отвергнуто: %v", err)
+	}
+
+	// Случай 1: внутри фрагмента дописали слова. Якорь по-прежнему разрешается, но текст в
+	// нём другой — замечание к «старому» тексту не принимается.
+	span, ok := live.ResolveSpan(first.String(), "body", anchor.Start, anchor.End)
+	if !ok {
+		t.Fatal("якорь не разрешился в своём документе")
+	}
+	inside := span.From + 6 // после слова «Второй»
+	if found, err := live.ReplaceEventSpan(first.String(), "body", inside, inside, " самый"); err != nil || !found {
+		t.Fatalf("вставка внутри фрагмента: found=%v err=%v", found, err)
+	}
+	if text, _ := live.SpanText(first.String(), "body", span); text == anchor.Quote {
+		t.Fatalf("фрагмент не изменился: %q", text)
+	}
+	if _, err := e.svc.AddComment(ctx, e.owner, projectID, first, "Замечание к старому тексту.", nil, anchor); !errors.Is(err, events.ErrValidation) {
+		t.Fatalf("замечание к изменённому фрагменту принято: %v", err)
+	}
+
+	// Случай 2: фрагмент заменили целиком (так делает правка ассистента и восстановление
+	// версии). Что мы знаем измеренного: якорь может остаться разрешимым (Yjs/ygo
+	// восстанавливают позицию по соседям) — тогда сработает сверка цитаты и замечание будет
+	// отвергнуто; может перестать разрешаться — тогда замечание принимается, но привязки к
+	// тексту уже нет (в интерфейсе «фрагмент не найден»). Нарушение — третье: принять
+	// замечание, привязав его к ИЗМЕНЁННОМУ тексту. Это и проверяем.
+	span, ok = live.ResolveSpan(first.String(), "body", anchor.Start, anchor.End)
+	if !ok {
+		t.Fatal("якорь перестал разрешаться до замены фрагмента")
+	}
+	if found, err := live.ReplaceEventSpan(first.String(), "body", span.From, span.To, "Правка."); err != nil || !found {
+		t.Fatalf("замена фрагмента: found=%v err=%v", found, err)
+	}
+	_, addErr := e.svc.AddComment(ctx, e.owner, projectID, first, "Замечание к исчезнувшему фрагменту.", nil, anchor)
+	if addErr == nil {
+		// Приняли — значит привязки к ЧУЖОМУ тексту нет: либо якорь больше не разрешается,
+		// либо разрешается в пустой фрагмент («удалён»). Слова о другом тексте не должно быть.
+		if after, ok := live.ResolveSpan(first.String(), "body", anchor.Start, anchor.End); ok {
+			if text := mustSpan(t, live, first, after); text != "" && text != anchor.Quote {
+				t.Fatalf("замечание принято и привязано к изменённому тексту %q", text)
+			}
+		}
+	} else if !errors.Is(addErr, events.ErrValidation) {
+		t.Fatalf("неожиданный отказ: %v", addErr)
+	}
+}
+
+// mustSpan достаёт текст фрагмента (для сообщения о провале).
+func mustSpan(t *testing.T, doc *yjs.Doc, eventID uuid.UUID, span yjs.Span) string {
+	t.Helper()
+	text, _ := doc.SpanText(eventID.String(), "body", span)
+	return text
+}
+
+// anchorForDoc строит якорь по КОНКРЕТНОМУ документу (а не по собственному) — иначе
+// идентификаторы элементов не совпадут, и якорь не разрешится ни на клиенте, ни на сервере.
+func (e *commentEnv) anchorForDoc(t *testing.T, doc *yjs.Doc, eventID uuid.UUID, quote string) *store.CommentAnchor {
+	t.Helper()
+	text, ok := doc.TextOf(eventID.String(), "body")
+	if !ok {
+		t.Fatal("текста кадра нет в документе")
+	}
+	content := text.String()
+	from := strings.Index(content, quote)
+	if from < 0 {
+		t.Fatalf("цитата %q не найдена", quote)
+	}
+	startPos, err := ygo.CreateRelativePositionFromTypeIndex(text, uint64(len([]rune(content[:from]))), 1)
+	if err != nil {
+		t.Fatalf("якорь начала: %v", err)
+	}
+	to := from + len(quote)
+	endPos, err := ygo.CreateRelativePositionFromTypeIndex(text, uint64(len([]rune(content[:to]))), -1)
+	if err != nil {
+		t.Fatalf("якорь конца: %v", err)
+	}
+	start, err := ygo.EncodeRelativePosition(startPos)
+	if err != nil {
+		t.Fatalf("кодирование начала: %v", err)
+	}
+	end, err := ygo.EncodeRelativePosition(endPos)
+	if err != nil {
+		t.Fatalf("кодирование конца: %v", err)
+	}
+	return &store.CommentAnchor{Field: "body", Start: start, End: end, Quote: quote}
+}

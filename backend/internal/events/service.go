@@ -49,6 +49,8 @@ type Service struct {
 	revisions RevisionPolicy
 	// liveRestore — живая комната для восстановления версии (может быть nil).
 	liveRestore LiveRestore
+	// docs — живой документ проекта для проверки якорей замечаний (может быть nil).
+	docs DocSource
 }
 
 func New(s *store.Store, proj *projects.Service) *Service {

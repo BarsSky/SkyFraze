@@ -362,6 +362,35 @@ func (h *Hub) ReviveEventLive(
 	return revived, outcome, nil
 }
 
+// DocForRead отдаёт документ живой комнаты для ЧТЕНИЯ (резолв якорей, проверка фрагмента).
+//
+// Возвращается `nil`, если комнаты нет: тогда вызывающий читает снапшот базы. Указатель на
+// документ отдаётся без блокировки, потому что читать его без записи безопасно (как и
+// `LiveState`), а править через него нельзя — для правок есть `ReplaceEventSpanLive`.
+func (h *Hub) DocForRead(_ context.Context, projectID uuid.UUID) *yjs.Doc {
+	h.mu.RLock()
+	room := h.rooms[projectID]
+	h.mu.RUnlock()
+	if room == nil {
+		return nil
+	}
+	room.docMu.Lock()
+	defer room.docMu.Unlock()
+	return room.doc
+}
+
+// ReplaceEventSpanLive заменяет фрагмент текста в живом документе.
+//
+// Этим путём идёт правка по замечанию к фрагменту: Delete+Insert внутри `Y.Text`, а не
+// перезапись кадра целиком — иначе у соседних замечаний погибли бы якоря.
+func (h *Hub) ReplaceEventSpanLive(
+	ctx context.Context, projectID, by uuid.UUID, eventID, field string, from, to uint64, replacement string,
+) (yjs.EditOutcome, error) {
+	return h.editLive(ctx, projectID, by, "span updated", func(doc *yjs.Doc) (bool, error) {
+		return doc.ReplaceEventSpan(eventID, field, from, to, replacement)
+	})
+}
+
 // LiveState — текущее состояние документа комнаты (пусто, если комнаты нет или её
 // документ ещё не загружен).
 //

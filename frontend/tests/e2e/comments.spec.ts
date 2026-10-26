@@ -78,6 +78,12 @@ test('замечание к кадру пишется, видно в дерев�
 
   // 4. Обсуждение живёт на сервере, а не только в состоянии компонента.
   await page.reload()
+  // После перезагрузки сначала ждём дерево: на пустой базе проекция доезжает не сразу, и
+  // без этого ожидания панель обсуждения ещё не отрисована (падало «element(s) not found»,
+  // хотя данные целы). Это ожидание состояния, а не «подождать на всякий случай».
+  await expect(page.locator('.ed-row--chapter', { hasText: 'Пролог' }).first()).toBeVisible({
+    timeout: 45_000,
+  })
   await expect(page.locator('[data-frame-comments]')).toContainText(comment, { timeout: 45_000 })
   await expect(page.locator('[data-frame-comments]')).toContainText(reply, { timeout: 45_000 })
   await expect(page.locator('.ed-row--chapter .ed-row__comments').first()).toHaveText('2')
