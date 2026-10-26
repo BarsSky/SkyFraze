@@ -81,7 +81,21 @@ func main() {
 	st := store.New(pool)
 
 	authSvc := auth.New(st, cfg.JWTSecret)
+	authSvc.UseLogger(logger)
 	authSvc.SetAdminEmails(cfg.AdminEmailList())
+	// Ключи доступа (docs/webauthn.md): RP ID и разрешённый origin берутся из APP_BASE_URL —
+	// публичного адреса, а не из заголовка запроса. Не настроен адрес — ручки ключей говорят
+	// «не настроено», а вход по паролю и TOTP работают как раньше.
+	if err := authSvc.UseWebAuthn(cfg.AppBaseURL); err != nil {
+		if errors.Is(err, auth.ErrWebAuthnDisabled) {
+			logger.Info("security: ключи доступа выключены (APP_BASE_URL не задан)")
+		} else {
+			logger.Error("security: ключи доступа не настроены", "err", err)
+			os.Exit(1)
+		}
+	} else {
+		logger.Info("security: ключи доступа включены", "app_base_url", cfg.AppBaseURL)
+	}
 	authH := auth.NewHandler(authSvc, st, logger)
 
 	// Ограничение попыток входа (docs/security.md): по адресу клиента и по аккаунту.
@@ -356,6 +370,10 @@ func main() {
 		// Второй шаг входа: пропуск + код 2FA. Токенов до него нет, поэтому ручка публичная
 		// и ограничена теми же границами, что и сам вход.
 		r.With(limited).Post("/login/2fa", authH.LoginTOTP)
+		// Вход ключом доступа (docs/webauthn.md): две ручки церемонии, публичные — токенов
+		// до её конца нет. Ограничение то же, что у входа по паролю.
+		r.With(limited).Post("/login/webauthn/begin", authH.WebAuthnLoginBegin)
+		r.With(limited).Post("/login/webauthn/finish", authH.WebAuthnLoginFinish)
 		r.With(limited).Post("/refresh", authH.Refresh)
 		r.Group(func(r chi.Router) {
 			r.Use(authSvc.WithUser)
@@ -364,6 +382,8 @@ func main() {
 			r.Patch("/me", authH.UpdateProfile)
 			// Второй фактор и активные сеансы (docs/security.md).
 			authH.MountTwoFactor(r)
+			// Ключи доступа: привязка, список и удаление (docs/webauthn.md).
+			authH.MountWebAuthnKeys(r)
 		})
 	})
 

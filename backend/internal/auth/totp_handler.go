@@ -1,4 +1,4 @@
-﻿package auth
+package auth
 
 // totp_handler.go — HTTP-ручки второго фактора и сеансов.
 //
@@ -227,9 +227,10 @@ func (h *Handler) allowTOTPAttempt(w http.ResponseWriter, r *http.Request, userI
 	return true
 }
 
-// publicUserWith2FA — профиль с признаком включённого второго фактора.
+// publicUserWith2FA — профиль с признаками факторов входа.
 func (h *Handler) publicUserWith2FA(r *http.Request, u *store.User) userPublic {
 	out := publicUser(u)
 	out.TOTPEnabled = h.svc.TOTPEnabled(r.Context(), u.ID)
+	out.PasskeysEnabled = h.svc.WebAuthnEnabled()
 	return out
 }

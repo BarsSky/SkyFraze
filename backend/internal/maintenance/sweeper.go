@@ -290,6 +290,15 @@ func (s *Sweeper) scan(ctx context.Context, remove bool) (*Report, error) {
 			// мешает — они старые). Дублировать удаление здесь значило бы иметь два
 			// механизма уборки файлов, которые расходятся.
 		}
+
+		// Церемонии ключей доступа (миграция 0028): строка появляется на каждый начатый
+		// вход и на каждую попытку привязки — включая брошенные вкладки. Без уборки таблица
+		// растёт вместе с числом попыток, а пользы от просроченных записей нет.
+		if purged, err := s.store.PurgeExpiredWebAuthnChallenges(ctx); err != nil {
+			s.logger.Warn("storage sweep: просроченные церемонии ключей не убраны", "err", err)
+		} else if purged > 0 {
+			s.logger.Info("storage sweep: убраны просроченные церемонии ключей", "count", purged)
+		}
 	}
 
 	return report, nil

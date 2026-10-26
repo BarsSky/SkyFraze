@@ -6,10 +6,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 	"unicode/utf8"
 
+	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
@@ -111,10 +113,32 @@ type Service struct {
 	store       *store.Store
 	secret      string
 	adminEmails map[string]bool
+	// webauthn — ключи доступа (docs/webauthn.md). nil, если стенд не настроен:
+	// тогда ручки ключей отвечают «не настроено», а вход по паролю работает как раньше.
+	webauthn *webauthn.WebAuthn
+	logger   *slog.Logger
 }
 
 func New(s *store.Store, secret string) *Service {
-	return &Service{store: s, secret: secret, adminEmails: map[string]bool{}}
+	return &Service{
+		store: s, secret: secret, adminEmails: map[string]bool{},
+		logger: slog.Default(),
+	}
+}
+
+// UseLogger — журнал сервиса (нужен предупреждениям о счётчике подписей ключа).
+func (s *Service) UseLogger(l *slog.Logger) {
+	if l != nil {
+		s.logger = l
+	}
+}
+
+// log — журнал с запасным значением: сервис собирается и в тестах, где логгера нет.
+func (s *Service) log() *slog.Logger {
+	if s.logger == nil {
+		return slog.Default()
+	}
+	return s.logger
 }
 
 // SetAdminEmails — администраторы, назначенные развёртыванием (env ADMIN_EMAILS).
@@ -306,7 +330,13 @@ func (s *Service) Login(ctx context.Context, email, password string) (*store.Use
 	}
 	// Второй фактор: пароль верный, но токенов пока нет. Пропуск выдаёт обработчик —
 	// здесь только сигнал, чтобы HTTP-слой сам решил, как это показать.
+	//
+	// Вторым фактором считается не только TOTP, но и привязанный ключ доступа: если человек
+	// завёл ключ, он ждёт, что одного пароля не хватит (docs/webauthn.md, решение 2).
 	if _, enabled, err := s.store.TOTPOf(ctx, u.ID); err == nil && enabled {
+		return u, nil, ErrTOTPRequired
+	}
+	if s.WebAuthnPasskeyCount(ctx, u.ID) > 0 {
 		return u, nil, ErrTOTPRequired
 	}
 	s.GrantConfiguredAdmin(ctx, u)

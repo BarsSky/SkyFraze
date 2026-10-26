@@ -72,7 +72,11 @@ type userPublic struct {
 	// обработчиками через publicUserWith2FA: таблица 2FA отдельная, и в самом store.User
 	// этого поля нет.
 	TOTPEnabled bool `json:"totp_enabled"`
-	IsAdmin     bool `json:"is_admin"`
+	// PasskeysEnabled — настроены ли на стенде ключи доступа (docs/webauthn.md). Профиль по
+	// этому признаку показывает (или прячет) раздел ключей: предлагать кнопку, которая
+	// всегда отвечает 501, — хуже, чем не предлагать её вовсе.
+	PasskeysEnabled bool `json:"passkeys_enabled"`
+	IsAdmin         bool `json:"is_admin"`
 }
 
 func publicUser(u *store.User) userPublic {
@@ -147,6 +151,9 @@ func (h *Handler) Config(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"registration_mode": mode,
 		"bootstrap":         bootstrap,
+		// Ключи доступа настроены на стенде? Форма входа показывает по этому признаку
+		// кнопку «войти ключом» (docs/webauthn.md §7).
+		"passkeys": h.svc.WebAuthnEnabled(),
 	})
 }
 
@@ -242,8 +249,8 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrTOTPRequired):
-			// Пароль верный, но токенов ещё нет: отдаём короткоживущий пропуск и просим код.
-			// Так интерфейс узнаёт про второй фактор только после пароля — до него это
+			// Пароль верный, но токенов ещё нет: отдаём короткоживущий пропуск и просим второй
+			// шаг. Так интерфейс узнаёт про второй фактор только после пароля — до него это
 			// знание ничего не даёт взломщику, а после даёт, и прятать его бессмысленно.
 			challenge, challengeErr := h.svc.BeginTOTPChallenge(u.ID)
 			if challengeErr != nil {
@@ -251,9 +258,13 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 				writeErr(w, http.StatusInternalServerError, "login failed")
 				return
 			}
+			// Чем человек может пройти второй шаг: кодом из приложения и/или ключом доступа.
+			// Ключи считаются отдельно от TOTP: включён только ключ — кода у человека нет.
 			writeJSON(w, http.StatusOK, map[string]any{
 				"totp_required": true,
 				"challenge":     challenge,
+				"totp":          h.svc.TOTPEnabled(r.Context(), u.ID),
+				"passkeys":      h.svc.WebAuthnPasskeyCount(r.Context(), u.ID) > 0,
 			})
 			return
 		case errors.Is(err, ErrInvalidCreds):

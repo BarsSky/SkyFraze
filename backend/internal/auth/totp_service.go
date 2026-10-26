@@ -141,6 +141,12 @@ func (s *Service) checkTOTPOrRecovery(ctx context.Context, userID uuid.UUID, sec
 	if VerifyTOTP(secret, code, time.Now()) {
 		return true
 	}
+	return s.consumeRecoveryCode(ctx, userID, code)
+}
+
+// consumeRecoveryCode гасит код восстановления. Один раз и навсегда: повтор того же кода —
+// отказ, иначе листок с кодами был бы многоразовым.
+func (s *Service) consumeRecoveryCode(ctx context.Context, userID uuid.UUID, code string) bool {
 	normalized := normalizeRecoveryCode(code)
 	if len(normalized) < 8 {
 		return false
@@ -170,6 +176,10 @@ func (s *Service) BeginTOTPChallenge(userID uuid.UUID) (string, error) {
 //
 // Пропуск проверяется вместе с кодом: без этого достаточно было бы знать один пароль, а сам
 // пропуск можно предъявить только с верным кодом.
+//
+// Если TOTP не включён, но привязаны ключи доступа, второй шаг всё равно был (ключи требуют
+// его), и код восстановления здесь — единственный путь внутрь для того, кто потерял устройство.
+// Поэтому в этом случае принимается ТОЛЬКО код восстановления: кода из приложения у него нет.
 func (s *Service) LoginTOTP(ctx context.Context, challenge, code string) (*store.User, *Tokens, error) {
 	userID, err := s.parseTOTPChallenge(challenge)
 	if err != nil {
@@ -180,10 +190,17 @@ func (s *Service) LoginTOTP(ctx context.Context, challenge, code string) (*store
 		return nil, nil, ErrTOTPInvalid
 	}
 	secret, enabled, err := s.store.TOTPOf(ctx, userID)
-	if err != nil || !enabled {
+	hasPasskeys := s.WebAuthnPasskeyCount(ctx, userID) > 0
+	if !enabled && !hasPasskeys {
 		return nil, nil, ErrTOTPInvalid
 	}
-	if !s.checkTOTPOrRecovery(ctx, userID, secret, code) {
+	ok := false
+	if enabled {
+		ok = s.checkTOTPOrRecovery(ctx, userID, secret, code)
+	} else {
+		ok = s.consumeRecoveryCode(ctx, userID, code)
+	}
+	if !ok {
 		return nil, nil, ErrTOTPInvalid
 	}
 	// Сессия: тот же путь, что и при обычном входе (одна точка выдачи токенов).
