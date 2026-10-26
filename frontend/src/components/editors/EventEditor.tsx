@@ -42,6 +42,13 @@ interface Props {
    * вместе с комментарием.
    */
   onFragmentSelected?: (fragment: FrameFragment) => void
+  /**
+   * Диапазон, который надо показать в тексте (клик по замечанию к фрагменту). 
+once
+   * меняется при каждом нажатии: без него повторный клик по тому же замечанию не сдвинул бы
+   * выделение, если оно уже стоит там.
+   */
+  focusRange?: { from: number; to: number; nonce: number } | null
 }
 
 const eventDateText = (value: unknown): string => {
@@ -96,6 +103,7 @@ function useFieldDraft(field: TextField, ymap: YMap, write: (field: TextField, m
 export function EventEditor({
   ymap, assets, images, assetUrls, onUpload, onUploadMany, onAttach, onDetach, onBackgroundChange, background, onChange, onTyping,
   onFragmentSelected,
+  focusRange,
 }: Props) {
   /**
    * Записать правку поля.
@@ -122,6 +130,26 @@ export function EventEditor({
   // когда есть что выделять. Храним номера, а не текст: текст берём из Y.Text в момент нажатия.
   const bodyRef = useRef<HTMLTextAreaElement | null>(null)
   const [selection, setSelection] = useState<{ from: number; to: number } | null>(null)
+
+  /**
+   * Показать замечание в тексте: выделяем фрагмент прямо в поле и прокручиваем к нему.
+   *
+   * Почему выделение, а не подсветка поверх textarea. Подсветка потребовала бы зеркального
+   * слоя под полем (своя разметка, синхронизация прокрутки и шрифта) — заметная сложность ради
+   * того же результата. Нативное выделение видно сразу, прокручивается само и не расходится с
+   * текстом ни на символ. Минус честно назван: выделение живёт, пока в поле не щёлкнули.
+   */
+  useEffect(() => {
+    if (!focusRange) return
+    const el = bodyRef.current
+    if (!el) return
+    el.focus()
+    el.setSelectionRange(focusRange.from, focusRange.to)
+    // Прокручиваем так, чтобы фрагмент оказался в середине поля, а не у края.
+    const lineHeight = 20
+    const line = el.value.slice(0, focusRange.from).split('\n').length - 1
+    el.scrollTop = Math.max(0, line * lineHeight - el.clientHeight / 2)
+  }, [focusRange])
 
   const updateSelection = () => {
     const el = bodyRef.current

@@ -67,6 +67,11 @@ interface Props {
   onAnchorConsumed?: () => void
   /** Убрать выбранный фрагмент, не отправляя замечание. */
   onAnchorClear?: () => void
+  /**
+   * Показать фрагмент замечания в тексте кадра (выделить и прокрутить). Панель не знает,
+   * где стоит поле ввода, — это решает редактор кадра.
+   */
+  onShowFragment?: (range: { from: number; to: number }) => void
 }
 
 /**
@@ -79,11 +84,15 @@ interface Props {
 function AnchorQuote({
   anchor,
   text,
+  onShow,
 }: {
   anchor: FrameAnchor
   text: ReturnType<typeof ensureText> | null
+  onShow?: (range: { from: number; to: number }) => void
 }) {
   const status = text ? anchorStatus(text, anchor) : 'ok'
+  const range = text ? resolveAnchor(text, anchor) : null
+  const canShow = onShow !== undefined && range !== null && range.to > range.from
   return (
     <p className="fc__quote" data-frame-anchor={status}>
       <span className="fc__quote-mark" aria-hidden="true">
@@ -95,6 +104,17 @@ function AnchorQuote({
       </span>
       {status === 'collapsed' && <span className="fc__quote-note"> — фрагмент удалён</span>}
       {status === 'orphan' && <span className="fc__quote-note"> — фрагмент не найден</span>}
+      {canShow && (
+        <button
+          type="button"
+          className="fc__quote-show"
+          data-frame-anchor-show
+          title="Показать этот фрагмент в тексте кадра"
+          onClick={() => onShow?.(range)}
+        >
+          показать в тексте
+        </button>
+      )}
     </p>
   )
 }
@@ -339,6 +359,7 @@ export function FrameComments({
   pendingAnchor,
   onAnchorConsumed,
   onAnchorClear,
+  onShowFragment,
 }: Props) {
   const me = useAuthStore((state) => state.user)
   const [comments, setComments] = useState<FrameComment[]>([])
@@ -538,7 +559,9 @@ export function FrameComments({
           </button>
         )}
       </div>
-      {!comment.deleted && comment.anchor && <AnchorQuote anchor={comment.anchor} text={bodyText} />}
+      {!comment.deleted && comment.anchor && (
+        <AnchorQuote anchor={comment.anchor} text={bodyText} onShow={onShowFragment} />
+      )}
       {!comment.deleted && <CommentBody text={comment.body} />}
       {!comment.deleted && (
         <ReactionBar

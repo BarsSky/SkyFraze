@@ -449,6 +449,15 @@
   overflow-wrap: anywhere;
 }
 .fc__quote-mark { color: var(--accent); }
+/* «Показать в тексте» — ссылка внутри цитаты: выделяет фрагмент в поле кадра. Это удобство,
+   а не действие с данными, поэтому вид у него скромный и цель нажатия — не меньше 24 px. */
+.fc__quote-show {
+  margin-left: 6px; padding: 2px 4px;
+  background: none; border: 0; border-bottom: 1px dashed var(--accent);
+  color: var(--accent); cursor: pointer;
+  font-size: 12px; line-height: 1.4; min-height: 24px;
+}
+.fc__quote-show:hover { border-bottom-style: solid; }
 /* «Фрагмент удалён / не найден» — словами, а не пустым местом. */
 .fc__quote-note { color: var(--danger); }
 .fc__quote[data-frame-anchor='collapsed'],

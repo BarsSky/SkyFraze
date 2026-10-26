@@ -138,6 +138,16 @@ test('замечание к кадру пишется, видно в дерев�
     page.locator('[data-frame-comments] [data-frame-anchor="ok"]').first(),
   ).toBeVisible({ timeout: 45_000 })
 
+  // 4.3. «Показать в тексте»: замечание к фрагменту находит свой кусок в поле кадра.
+  // Проверяем выделение в самом textarea — именно это видит человек, а не разметку панели.
+  await page.locator('[data-frame-comments] [data-frame-anchor-show]').first().click()
+  const selected = await page.locator('.ed-form textarea').first().evaluate((el) => {
+    const area = el as HTMLTextAreaElement
+    return { from: area.selectionStart, to: area.selectionEnd, text: area.value.slice(area.selectionStart, area.selectionEnd) }
+  })
+  expect(selected.to).toBeGreaterThan(selected.from)
+  expect(selected.text.length).toBeGreaterThan(0)
+
   // 5. Свой комментарий можно удалить. Удаление мягкое: замечание остаётся строкой
   // «Комментарий удалён», а ответ на него — живым. Жёсткое удаление унесло бы чужой текст.
   await page

@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import * as Y from 'yjs'
 import { FrameComments } from './FrameComments'
+import { encodeAnchor } from '../../collab/anchors'
+import type { YMap } from '../../collab/yprovider'
 import type { FrameComment } from '../../api/comments'
 
 /**
@@ -295,6 +298,29 @@ describe('FrameComments', () => {
     await screen.findByText('Тут герой не мог знать про маяк.')
     const agree = document.querySelector('[data-frame-reaction="agree:1"]') as HTMLButtonElement
     expect(agree.disabled).toBe(true)
+  })
+
+  it('«показать в тексте» отдаёт диапазон фрагмента', async () => {
+    // Настоящий документ: якорь резолвится только в той же линии, и подделка тут не пройдёт.
+    const doc = new Y.Doc()
+    const map = doc.getMap('event') as unknown as YMap
+    const text = new Y.Text()
+    doc.transact(() => {
+      text.insert(0, 'Первый абзац. Второй абзац.')
+      ;(map as unknown as Y.Map<unknown>).set('body_text', text)
+    })
+    const from = text.toString().indexOf('Второй абзац.')
+    const encoded = encodeAnchor(text, from, from + 'Второй абзац.'.length)!
+    const anchor = { field: 'body', ...encoded }
+    mocks.list.mockResolvedValue([comment({ anchor })])
+    const onShow = vi.fn()
+
+    render(
+      <FrameComments projectId="p1" eventId="e1" canEdit ymap={map} onShowFragment={onShow} />,
+    )
+    expect(await screen.findByText('Второй абзац.')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'показать в тексте' }))
+    expect(onShow).toHaveBeenCalledWith({ from, to: from + 'Второй абзац.'.length })
   })
 
   it('удалённое замечание реакций не показывает', async () => {

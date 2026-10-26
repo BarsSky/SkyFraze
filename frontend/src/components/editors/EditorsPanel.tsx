@@ -388,6 +388,12 @@ export function EditorsPanel({
    * рядом, и выбранный фрагмент должен пережить перерисовку редактора.
    */
   const [pendingAnchor, setPendingAnchor] = useState<FrameAnchor | null>(null)
+  /**
+   * Фрагмент, который надо показать в тексте (клик по замечанию). 
+once — чтобы повторный
+   * клик по тому же замечанию срабатывал снова.
+   */
+  const [focusRange, setFocusRange] = useState<{ from: number; to: number; nonce: number } | null>(null)
   const syncTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const navRef = useRef<HTMLElement | null>(null)
   const gestureRef = useRef<DragGesture | null>(null)
@@ -1621,6 +1627,7 @@ export function EditorsPanel({
                 onFragmentSelected={(fragment: FrameFragment) =>
                   setPendingAnchor({ field: 'body', ...fragment })
                 }
+                focusRange={focusRange}
               />
               <p className="muted ed-editor__hint">
                 Изменения сохраняются автоматически; дерево синхронизируется с сервером.
@@ -1635,6 +1642,9 @@ export function EditorsPanel({
                   pendingAnchor={pendingAnchor}
                   onAnchorConsumed={() => setPendingAnchor(null)}
                   onAnchorClear={() => setPendingAnchor(null)}
+                  onShowFragment={(range) =>
+                    setFocusRange((current) => ({ ...range, nonce: (current?.nonce ?? 0) + 1 }))
+                  }
                 />
               )}
             </>
