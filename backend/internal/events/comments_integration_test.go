@@ -88,7 +88,7 @@ func TestCommentsAddListAndCount(t *testing.T) {
 	ctx := context.Background()
 	projectID, first, second := e.project(t)
 
-	comment, err := e.svc.AddComment(ctx, e.owner, projectID, first, "  Тут герой не мог знать про маяк.  ")
+	comment, err := e.svc.AddComment(ctx, e.owner, projectID, first, "  Тут герой не мог знать про маяк.  ", nil)
 	if err != nil {
 		t.Fatalf("комментарий: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestCommentsAddListAndCount(t *testing.T) {
 		t.Errorf("комментарий: %+v", comment)
 	}
 
-	if _, err := e.svc.AddComment(ctx, e.owner, projectID, first, "И ещё одно замечание."); err != nil {
+	if _, err := e.svc.AddComment(ctx, e.owner, projectID, first, "И ещё одно замечание.", nil); err != nil {
 		t.Fatalf("второй комментарий: %v", err)
 	}
 	list, err := e.svc.ListComments(ctx, e.owner, projectID, first, 0)
@@ -143,7 +143,7 @@ func TestCommentsRights(t *testing.T) {
 	e := setupComments(t)
 	ctx := context.Background()
 	projectID, first, _ := e.project(t)
-	if _, err := e.svc.AddComment(ctx, e.owner, projectID, first, "Замечание владельца."); err != nil {
+	if _, err := e.svc.AddComment(ctx, e.owner, projectID, first, "Замечание владельца.", nil); err != nil {
 		t.Fatalf("комментарий: %v", err)
 	}
 	reader := e.member(t, projectID, store.RoleViewer)
@@ -154,11 +154,11 @@ func TestCommentsRights(t *testing.T) {
 		t.Fatalf("читатель должен видеть обсуждение: %v", err)
 	}
 	// А писать — нет.
-	if _, err := e.svc.AddComment(ctx, reader, projectID, first, "Влезу в разговор."); !errors.Is(err, projects.ErrForbidden) {
+	if _, err := e.svc.AddComment(ctx, reader, projectID, first, "Влезу в разговор.", nil); !errors.Is(err, projects.ErrForbidden) {
 		t.Fatalf("читателю писать нельзя, получено %v", err)
 	}
 	// Редактор пишет.
-	if _, err := e.svc.AddComment(ctx, editor, projectID, first, "Замечание редактора."); err != nil {
+	if _, err := e.svc.AddComment(ctx, editor, projectID, first, "Замечание редактора.", nil); err != nil {
 		t.Fatalf("редактор должен писать: %v", err)
 	}
 
@@ -172,18 +172,19 @@ func TestCommentsRights(t *testing.T) {
 	}
 }
 
-// Удалить можно только свой комментарий.
+// Удалить можно только свой комментарий, и удаление мягкое: строка остаётся, тело пустое,
+// ответы на неё не теряют смысл (миграция 0023).
 func TestCommentsDelete(t *testing.T) {
 	e := setupComments(t)
 	ctx := context.Background()
 	projectID, first, _ := e.project(t)
 	editor := e.member(t, projectID, store.RoleEditor)
 
-	mine, err := e.svc.AddComment(ctx, e.owner, projectID, first, "Моё замечание.")
+	mine, err := e.svc.AddComment(ctx, e.owner, projectID, first, "Моё замечание.", nil)
 	if err != nil {
 		t.Fatalf("комментарий: %v", err)
 	}
-	theirs, err := e.svc.AddComment(ctx, editor, projectID, first, "Замечание редактора.")
+	theirs, err := e.svc.AddComment(ctx, editor, projectID, first, "Замечание редактора.", nil)
 	if err != nil {
 		t.Fatalf("комментарий редактора: %v", err)
 	}
@@ -196,12 +197,89 @@ func TestCommentsDelete(t *testing.T) {
 	if err := e.svc.DeleteComment(ctx, e.owner, projectID, mine.ID); err != nil {
 		t.Fatalf("свой комментарий: %v", err)
 	}
+	// Повторное удаление — «не найдено»: второй раз удалять нечего.
+	if err := e.svc.DeleteComment(ctx, e.owner, projectID, mine.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("повторное удаление: %v", err)
+	}
 	list, err := e.svc.ListComments(ctx, e.owner, projectID, first, 0)
 	if err != nil {
 		t.Fatalf("список: %v", err)
 	}
-	if len(list) != 1 || list[0].ID != theirs.ID {
-		t.Fatalf("после удаления остался не тот комментарий: %+v", list)
+	if len(list) != 2 {
+		t.Fatalf("удалённая строка остаётся в списке (мягкое удаление), получено %+v", list)
+	}
+	if list[0].ID != mine.ID || !list[0].Deleted || list[0].Body != "" {
+		t.Errorf("удалённый комментарий: %+v", list[0])
+	}
+	if list[1].ID != theirs.ID || list[1].Deleted || list[1].Body == "" {
+		t.Errorf("живой комментарий: %+v", list[1])
+	}
+	// Счётчик кадра зовёт к живому разговору, а не к «(удалён)».
+	counts, err := e.svc.CommentCounts(ctx, e.owner, projectID)
+	if err != nil {
+		t.Fatalf("счётчики: %v", err)
+	}
+	if counts[first] != 1 {
+		t.Errorf("в счётчике кадра %d, ожидался 1 (удалённый не считается)", counts[first])
+	}
+}
+
+// Ответы ветками: одна ветка на замечание, глубже — отказ, разные кадры не склеиваются.
+func TestCommentsThreads(t *testing.T) {
+	e := setupComments(t)
+	ctx := context.Background()
+	projectID, first, second := e.project(t)
+	editor := e.member(t, projectID, store.RoleEditor)
+
+	root, err := e.svc.AddComment(ctx, e.owner, projectID, first, "Здесь провал в логике.", nil)
+	if err != nil {
+		t.Fatalf("замечание: %v", err)
+	}
+	reply, err := e.svc.AddComment(ctx, editor, projectID, first, "Согласен, перепишу.", &root.ID)
+	if err != nil {
+		t.Fatalf("ответ: %v", err)
+	}
+	if reply.ParentID == nil || *reply.ParentID != root.ID {
+		t.Fatalf("родитель ответа: %+v", reply)
+	}
+
+	// Ответ на ответ — отказ: ветка одноуровневая (docs/comments.md §7).
+	if _, err := e.svc.AddComment(ctx, e.owner, projectID, first, "Ответ на ответ.", &reply.ID); !errors.Is(err, events.ErrValidation) {
+		t.Fatalf("ответ на ответ должен отвергаться, получено %v", err)
+	}
+	// Родитель из другого кадра — отказ: ответ иначе был бы невидим.
+	if _, err := e.svc.AddComment(ctx, e.owner, projectID, second, "Не туда.", &root.ID); !errors.Is(err, events.ErrValidation) {
+		t.Fatalf("родитель из другого кадра должен отвергаться, получено %v", err)
+	}
+	// Родителя нет вовсе — отказ.
+	missing := uuid.New()
+	if _, err := e.svc.AddComment(ctx, e.owner, projectID, first, "В пустоту.", &missing); !errors.Is(err, events.ErrValidation) {
+		t.Fatalf("несуществующий родитель должен отвергаться, получено %v", err)
+	}
+
+	// Удаление корня не уносит ответ: удалённое замечание остаётся «удалённым», ответ жив.
+	if err := e.svc.DeleteComment(ctx, e.owner, projectID, root.ID); err != nil {
+		t.Fatalf("удаление корня: %v", err)
+	}
+	list, err := e.svc.ListComments(ctx, e.owner, projectID, first, 0)
+	if err != nil {
+		t.Fatalf("список: %v", err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("после удаления корня в ветке %d строк, ожидалось 2: %+v", len(list), list)
+	}
+	var liveReply bool
+	for _, item := range list {
+		if item.ID == reply.ID && !item.Deleted && item.Body == "Согласен, перепишу." {
+			liveReply = true
+		}
+	}
+	if !liveReply {
+		t.Errorf("ответ пропал вместе с удалённым корнем: %+v", list)
+	}
+	// Ответить на удалённое замечание нельзя: отвечать не на что.
+	if _, err := e.svc.AddComment(ctx, editor, projectID, first, "Ещё ответ.", &root.ID); !errors.Is(err, events.ErrValidation) {
+		t.Fatalf("ответ на удалённое замечание должен отвергаться, получено %v", err)
 	}
 }
 
@@ -211,19 +289,19 @@ func TestCommentsValidation(t *testing.T) {
 	ctx := context.Background()
 	projectID, first, _ := e.project(t)
 
-	if _, err := e.svc.AddComment(ctx, e.owner, projectID, first, "   \n\t "); !errors.Is(err, events.ErrValidation) {
+	if _, err := e.svc.AddComment(ctx, e.owner, projectID, first, "   \n\t ", nil); !errors.Is(err, events.ErrValidation) {
 		t.Fatalf("пустой комментарий должен быть отказом, получено %v", err)
 	}
 	long := strings.Repeat("я", events.MaxCommentRunes+1)
-	if _, err := e.svc.AddComment(ctx, e.owner, projectID, first, long); !errors.Is(err, events.ErrValidation) {
+	if _, err := e.svc.AddComment(ctx, e.owner, projectID, first, long, nil); !errors.Is(err, events.ErrValidation) {
 		t.Fatalf("слишком длинный комментарий должен быть отказом, получено %v", err)
 	}
 	// Ровно по пределу — можно: предел не должен быть «на один знак меньше».
 	atLimit := strings.Repeat("я", events.MaxCommentRunes)
-	if _, err := e.svc.AddComment(ctx, e.owner, projectID, first, atLimit); err != nil {
+	if _, err := e.svc.AddComment(ctx, e.owner, projectID, first, atLimit, nil); err != nil {
 		t.Fatalf("комментарий ровно по пределу должен проходить: %v", err)
 	}
-	if _, err := e.svc.AddComment(ctx, e.owner, projectID, uuid.New(), "К несуществующему кадру."); !errors.Is(err, events.ErrValidation) {
+	if _, err := e.svc.AddComment(ctx, e.owner, projectID, uuid.New(), "К несуществующему кадру.", nil); !errors.Is(err, events.ErrValidation) {
 		t.Fatalf("комментарий к несуществующему кадру должен быть отказом, получено %v", err)
 	}
 }
@@ -234,11 +312,11 @@ func TestCommentsPurgeOrphans(t *testing.T) {
 	ctx := context.Background()
 	projectID, first, second := e.project(t)
 
-	live, err := e.svc.AddComment(ctx, e.owner, projectID, first, "Живой кадр.")
+	live, err := e.svc.AddComment(ctx, e.owner, projectID, first, "Живой кадр.", nil)
 	if err != nil {
 		t.Fatalf("комментарий: %v", err)
 	}
-	orphan, err := e.svc.AddComment(ctx, e.owner, projectID, second, "Кадр сейчас исчезнет.")
+	orphan, err := e.svc.AddComment(ctx, e.owner, projectID, second, "Кадр сейчас исчезнет.", nil)
 	if err != nil {
 		t.Fatalf("комментарий: %v", err)
 	}

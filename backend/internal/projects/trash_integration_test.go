@@ -261,7 +261,7 @@ func TestTrashHidesUnreadComments(t *testing.T) {
 		t.Fatalf("кадр: %v", err)
 	}
 	// Замечание пишет ДРУГОЙ человек: своё замечание непрочитанным не считается.
-	if _, err := e.st.CreateEventComment(e.ctx, p.ID, eventID, e.other.ID, "поправь середину"); err != nil {
+	if _, err := e.st.CreateEventComment(e.ctx, p.ID, eventID, e.other.ID, "поправь середину", nil); err != nil {
 		t.Fatalf("замечание: %v", err)
 	}
 	unread, err := e.st.ProjectsCommentsUnread(e.ctx, e.owner.ID)

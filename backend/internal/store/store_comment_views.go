@@ -48,6 +48,7 @@ func (s *Store) EventCommentsUnread(
 		          ON v.user_id = $2 AND v.event_id = c.event_id
 		  WHERE c.project_id = $1
 		    AND c.user_id <> $2
+		    AND c.deleted_at IS NULL
 		    AND c.created_at > COALESCE(v.seen_at, to_timestamp(0))
 		  GROUP BY c.event_id
 		  ORDER BY last_at DESC`, projectID, userID)
@@ -70,6 +71,7 @@ func (s *Store) ProjectsCommentsUnread(
 		   LEFT JOIN comment_views v
 		          ON v.user_id = $1 AND v.event_id = c.event_id
 		  WHERE c.user_id <> $1
+		    AND c.deleted_at IS NULL
 		    AND c.created_at > COALESCE(v.seen_at, to_timestamp(0))
 		    AND p.deleted_at IS NULL
 		    AND (p.owner_id = $1

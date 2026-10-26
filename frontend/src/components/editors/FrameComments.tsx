@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   createComment,
   deleteComment,
@@ -16,11 +16,19 @@ import { useAuthStore } from '../../store/auth'
  * вкладку за ним — значит терять замечание. Счётчики у строк дерева (их считает панель
  * редакторов) показывают, где разговор уже идёт.
  *
+ * Ответы ветками (0.57.0) — ровно один уровень: «замечание — ответы на него». Ответ на
+ * ответ в узкой панели под кадром превращается в лесенку отступов, где на телефоне остаётся
+ * по 12 знаков на строку. Один уровень покрывает разговор двух-трёх человек; глубже
+ * начинается форум, а не обсуждение кадра. Сервер это тоже проверяет — интерфейс лишь не
+ * предлагает того, что сервер отвергнет.
+ *
+ * Удалённое замечание остаётся строкой «Комментарий удалён», а его ответы — живыми: мягкое
+ * удаление сделано именно ради этого, иначе вместе со своим текстом автор уносил бы чужие
+ * слова.
+ *
  * Чего здесь нет намеренно:
  *   - живого обновления по сокету: обсуждение не текст проекта, и «перечитал кадр —
  *     увидел новые замечания» честно описывает происходящее;
- *   - ответов ветками и упоминаний: сначала должен работать плоский разговор, иначе
- *     обсуждение превращается в отдельный продукт;
  *   - правки комментария: сказанное можно удалить (своё), но не переписать.
  */
 
@@ -45,10 +53,58 @@ function commentStamp(iso: string): string {
   })
 }
 
+/** Сколько комментариев видно: удалённые не считаются — счётчик зовёт к живому разговору. */
+function liveCount(list: FrameComment[]): number {
+  return list.filter((comment) => !comment.deleted).length
+}
+
+/** Ветка: корневое замечание и его ответы (только живые родители могут получать ответы). */
+interface Thread {
+  root: FrameComment
+  replies: FrameComment[]
+}
+
+/**
+ * Раскладка плоского списка в ветки.
+ *
+ * Порядок сохраняется как пришёл: корни по времени написания, ответы — тоже. Отдельный
+ * запрос за деревом не нужен: список уже весь, и группировка — это несколько строк кода
+ * против лишнего round-trip.
+ *
+ * Ответ, чей родитель не пришёл (кадр длинный, список обрезан лимитом), не теряется: он
+ * показывается отдельной строкой с пометкой, а не пропадает молча.
+ */
+function buildThreads(list: FrameComment[]): { threads: Thread[]; orphans: FrameComment[] } {
+  const roots: FrameComment[] = []
+  const byParent = new Map<string, FrameComment[]>()
+  for (const comment of list) {
+    if (!comment.parentId) {
+      roots.push(comment)
+      continue
+    }
+    const bucket = byParent.get(comment.parentId)
+    if (bucket) bucket.push(comment)
+    else byParent.set(comment.parentId, [comment])
+  }
+  const threads: Thread[] = []
+  const orphans: FrameComment[] = []
+  const known = new Set(roots.map((root) => root.id))
+  for (const root of roots) {
+    threads.push({ root, replies: byParent.get(root.id) ?? [] })
+  }
+  for (const [parentId, replies] of byParent) {
+    if (!known.has(parentId)) orphans.push(...replies)
+  }
+  return { threads, orphans }
+}
+
 export function FrameComments({ projectId, eventId, canEdit, onCountChange }: Props) {
   const me = useAuthStore((state) => state.user)
   const [comments, setComments] = useState<FrameComment[]>([])
   const [draft, setDraft] = useState('')
+  /** Корень, на который сейчас отвечают: под ним открывается поле ответа. */
+  const [replyTo, setReplyTo] = useState<string | null>(null)
+  const [replyDraft, setReplyDraft] = useState('')
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState<string | null>(null)
 
@@ -63,7 +119,7 @@ export function FrameComments({ projectId, eventId, canEdit, onCountChange }: Pr
         list = []
       }
       setComments(list)
-      onCountChange?.(id, list.length)
+      onCountChange?.(id, liveCount(list))
       // Отметка «прочитано» — отдельной попыткой и отдельным catch: её сбой не должен
       // стирать уже показанное обсуждение. Не удалось отметить — счётчик «новых»
       // просто останется, это не потеря данных.
@@ -80,6 +136,8 @@ export function FrameComments({ projectId, eventId, canEdit, onCountChange }: Pr
     setComments([])
     setNote(null)
     setDraft('')
+    setReplyTo(null)
+    setReplyDraft('')
     if (eventId) void load(eventId)
   }, [eventId, load])
 
@@ -94,7 +152,7 @@ export function FrameComments({ projectId, eventId, canEdit, onCountChange }: Pr
       if (created) {
         setComments((list) => {
           const next = [...list, created]
-          onCountChange?.(eventId, next.length)
+          onCountChange?.(eventId, liveCount(next))
           return next
         })
       } else {
@@ -112,24 +170,87 @@ export function FrameComments({ projectId, eventId, canEdit, onCountChange }: Pr
     }
   }, [busy, draft, projectId, eventId, load, onCountChange])
 
+  const sendReply = useCallback(
+    async (root: FrameComment) => {
+      const body = replyDraft.trim()
+      if (!body || busy) return
+      setBusy(true)
+      setNote(null)
+      try {
+        const created = await createComment(projectId, eventId, body, root.id)
+        setReplyDraft('')
+        setReplyTo(null)
+        if (created) {
+          setComments((list) => {
+            const next = [...list, created]
+            onCountChange?.(eventId, liveCount(next))
+            return next
+          })
+        } else {
+          await load(eventId)
+        }
+      } catch (e) {
+        setNote(
+          e instanceof Error && e.message
+            ? 'Не удалось ответить: ' + e.message
+            : 'Не удалось отправить ответ.',
+        )
+      } finally {
+        setBusy(false)
+      }
+    },
+    [busy, replyDraft, projectId, eventId, load, onCountChange],
+  )
+
   const remove = useCallback(
     async (comment: FrameComment) => {
       setBusy(true)
       setNote(null)
       try {
         await deleteComment(projectId, comment.id)
-        setComments((list) => {
-          const next = list.filter((item) => item.id !== comment.id)
-          onCountChange?.(eventId, next.length)
-          return next
-        })
+        // Не убираем строку: сервер оставляет её «удалённой», и ответы на неё должны
+        // остаться на месте. Перечитываем, чтобы порядок и счётчики пришли с сервера.
+        await load(eventId)
       } catch {
         setNote('Не удалось удалить комментарий.')
       } finally {
         setBusy(false)
       }
     },
-    [projectId, eventId, onCountChange],
+    [projectId, eventId, load],
+  )
+
+  const { threads, orphans } = useMemo(() => buildThreads(comments), [comments])
+  const total = liveCount(comments)
+
+  /** Одна строка обсуждения: корень и ответы рисуются одинаково, разница — место. */
+  const row = (comment: FrameComment, isReply: boolean) => (
+    <li
+      key={comment.id}
+      className={isReply ? 'fc__item fc__item--reply' : 'fc__item'}
+      data-frame-comment-id={comment.id}
+      data-frame-comment-reply={isReply ? '1' : undefined}
+    >
+      <div className="fc__meta">
+        <span className="fc__author">
+          {comment.deleted ? <em>Комментарий удалён</em> : comment.authorName || 'Участник'}
+        </span>
+        <span className="muted fc__stamp">{commentStamp(comment.createdAt)}</span>
+        {!comment.deleted && me?.id === comment.userId && (
+          <button
+            type="button"
+            className="fc__remove"
+            disabled={busy}
+            onClick={() => void remove(comment)}
+            aria-label={`Удалить комментарий ${commentStamp(comment.createdAt)}`}
+            title="Удалить свой комментарий"
+          >
+            ×
+          </button>
+        )}
+      </div>
+      {!comment.deleted && <p className="fc__body">{comment.body}</p>}
+    </li>
   )
 
   return (
@@ -137,33 +258,73 @@ export function FrameComments({ projectId, eventId, canEdit, onCountChange }: Pr
       <div className="fc__head">
         <strong>Обсуждение</strong>
         <span className="muted fc__count" data-frame-comments-count>
-          {comments.length > 0 ? `${comments.length}` : 'пока пусто'}
+          {total > 0 ? `${total}` : 'пока пусто'}
         </span>
       </div>
 
       {comments.length > 0 && (
         <ul className="fc__list">
-          {comments.map((comment) => (
-            <li key={comment.id} className="fc__item" data-frame-comment-id={comment.id}>
-              <div className="fc__meta">
-                <span className="fc__author">{comment.authorName || 'Участник'}</span>
-                <span className="muted fc__stamp">{commentStamp(comment.createdAt)}</span>
-                {me?.id === comment.userId && (
-                  <button
-                    type="button"
-                    className="fc__remove"
-                    disabled={busy}
-                    onClick={() => void remove(comment)}
-                    aria-label={`Удалить комментарий ${commentStamp(comment.createdAt)}`}
-                    title="Удалить свой комментарий"
-                  >
-                    ×
-                  </button>
-                )}
-              </div>
-              <p className="fc__body">{comment.body}</p>
+          {threads.map(({ root, replies }) => (
+            <li key={root.id} className="fc__thread" data-frame-thread={root.id}>
+              <ul className="fc__branch">{row(root, false)}</ul>
+              {replies.length > 0 && (
+                <ul className="fc__replies">
+                  {replies.map((reply) => row(reply, true))}
+                </ul>
+              )}
+              {canEdit && !root.deleted && (
+                <>
+                  {replyTo === root.id ? (
+                    <div className="fc__reply-form" data-frame-reply-form={root.id}>
+                      <textarea
+                        value={replyDraft}
+                        onChange={(e) => setReplyDraft(e.target.value)}
+                        placeholder="Ответ на замечание…"
+                        aria-label="Ответ на замечание"
+                        rows={2}
+                        maxLength={4000}
+                        autoFocus
+                      />
+                      <div className="row" style={{ gap: 8 }}>
+                        <button
+                          type="button"
+                          disabled={busy || replyDraft.trim() === ''}
+                          onClick={() => void sendReply(root)}
+                        >
+                          {busy ? 'Отправляю…' : 'Ответить'}
+                        </button>
+                        <button
+                          type="button"
+                          className="secondary"
+                          onClick={() => {
+                            setReplyTo(null)
+                            setReplyDraft('')
+                          }}
+                        >
+                          Отмена
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      className="fc__reply-open"
+                      disabled={busy}
+                      onClick={() => {
+                        setReplyTo(root.id)
+                        setReplyDraft('')
+                      }}
+                      data-frame-reply-open={root.id}
+                    >
+                      Ответить
+                    </button>
+                  )}
+                </>
+              )}
             </li>
           ))}
+          {/* Ответы, чей родитель не пришёл (обрезанный список): показываем, а не теряем. */}
+          {orphans.map((comment) => row(comment, true))}
         </ul>
       )}
 

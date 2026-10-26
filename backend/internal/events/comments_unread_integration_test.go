@@ -24,7 +24,7 @@ func TestCommentsUnreadLifecycle(t *testing.T) {
 	editor := e.member(t, projectID, store.RoleEditor)
 
 	// Своё замечание новым не считается — иначе счётчик горел бы от собственных слов.
-	if _, err := e.svc.AddComment(ctx, e.owner, projectID, first, "Моё замечание."); err != nil {
+	if _, err := e.svc.AddComment(ctx, e.owner, projectID, first, "Моё замечание.", nil); err != nil {
 		t.Fatalf("свой комментарий: %v", err)
 	}
 	unread, err := e.svc.UnseenComments(ctx, e.owner, projectID)
@@ -36,7 +36,7 @@ func TestCommentsUnreadLifecycle(t *testing.T) {
 	}
 
 	// Замечание другого человека — новое.
-	if _, err := e.svc.AddComment(ctx, editor, projectID, first, "Замечание редактора."); err != nil {
+	if _, err := e.svc.AddComment(ctx, editor, projectID, first, "Замечание редактора.", nil); err != nil {
 		t.Fatalf("комментарий редактора: %v", err)
 	}
 	unread, err = e.svc.UnseenComments(ctx, e.owner, projectID)
@@ -72,7 +72,7 @@ func TestCommentsUnreadLifecycle(t *testing.T) {
 	}
 
 	// Новое замечание после просмотра снова новое.
-	if _, err := e.svc.AddComment(ctx, editor, projectID, first, "Ещё одно."); err != nil {
+	if _, err := e.svc.AddComment(ctx, editor, projectID, first, "Ещё одно.", nil); err != nil {
 		t.Fatalf("третье замечание: %v", err)
 	}
 	unread, err = e.svc.UnseenComments(ctx, e.owner, projectID)
@@ -84,7 +84,7 @@ func TestCommentsUnreadLifecycle(t *testing.T) {
 	}
 
 	// Прочитанное по одному кадру не гасит другой: это разные разговоры.
-	if _, err := e.svc.AddComment(ctx, editor, projectID, second, "Замечание ко второму кадру."); err != nil {
+	if _, err := e.svc.AddComment(ctx, editor, projectID, second, "Замечание ко второму кадру.", nil); err != nil {
 		t.Fatalf("замечание ко второму кадру: %v", err)
 	}
 	unread, err = e.svc.UnseenComments(ctx, e.owner, projectID)
@@ -127,12 +127,12 @@ func TestCommentsUnreadOnlyMyProjects(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("дерево чужого проекта: %v", err)
 	}
-	if _, err := e.svc.AddComment(ctx, other.ID, foreign.ID, foreignEvent, "Тут я писал."); err != nil {
+	if _, err := e.svc.AddComment(ctx, other.ID, foreign.ID, foreignEvent, "Тут я писал.", nil); err != nil {
 		t.Fatalf("комментарий в чужом проекте: %v", err)
 	}
 	// И комментарий в моём проекте, чтобы список был не пустым.
 	editor := e.member(t, projectID, store.RoleEditor)
-	if _, err := e.svc.AddComment(ctx, editor, projectID, first, "Замечание."); err != nil {
+	if _, err := e.svc.AddComment(ctx, editor, projectID, first, "Замечание.", nil); err != nil {
 		t.Fatalf("комментарий редактора: %v", err)
 	}
 

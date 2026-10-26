@@ -33,13 +33,18 @@ const MaxCommentRunes = 4000
 // ErrEventNotFound — кадра нет в проекте (проекция могла обогнать документ).
 var ErrEventNotFound = errors.New("кадр не найден")
 
-// AddComment пишет комментарий к кадру.
+// AddComment пишет комментарий к кадру. parentID != nil — ответ на замечание (0023).
 //
 // Кадр проверяется по проекции: документ комнаты и проекция расходятся не больше чем на
 // период сохранения (5 с), а комментарий к несуществующему кадру показать будет негде — он
 // останется в таблице сиротой до уборки. Честнее отказать сразу.
+//
+// Ветка ровно одного уровня, и это решение, а не недоделка: ответ на ответ в узкой панели
+// под кадром превращается в лесенку отступов, где на телефоне остаётся по 12 знаков на
+// строку. «Замечание — ответы на него» покрывает разговор двух-трёх человек; глубже
+// начинается форум, а не обсуждение кадра. Поэтому у ответа родитель обязан быть корневым.
 func (s *Service) AddComment(
-	ctx context.Context, userID, projectID, eventID uuid.UUID, body string,
+	ctx context.Context, userID, projectID, eventID uuid.UUID, body string, parentID *uuid.UUID,
 ) (*store.EventComment, error) {
 	if err := s.proj.RequireEditor(ctx, userID, projectID); err != nil {
 		return nil, err
@@ -60,7 +65,12 @@ func (s *Service) AddComment(
 		}
 		return nil, err
 	}
-	comment, err := s.store.CreateEventComment(ctx, projectID, eventID, userID, text)
+	if parentID != nil {
+		if err := s.checkReplyParent(ctx, projectID, eventID, *parentID); err != nil {
+			return nil, err
+		}
+	}
+	comment, err := s.store.CreateEventComment(ctx, projectID, eventID, userID, text, parentID)
 	if err != nil {
 		return nil, err
 	}
@@ -76,6 +86,33 @@ func (s *Service) AddComment(
 			"project", projectID, "comment", comment.ID, "recipients", queued)
 	}
 	return comment, nil
+}
+
+// checkReplyParent проверяет, что ответ вешают на живое корневое замечание ТОГО ЖЕ кадра.
+//
+// Все три условия — про одно: ветка не должна связывать разные кадры и не должна расти
+// вглубь. Родитель из другого кадра сделал бы ответ невидимым (его читают в обсуждении
+// своего кадра), а ответ на удалённое замечание — висящим на пустоте.
+func (s *Service) checkReplyParent(
+	ctx context.Context, projectID, eventID, parentID uuid.UUID,
+) error {
+	parent, err := s.store.EventCommentByID(ctx, projectID, parentID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return fmt.Errorf("%w: замечания %s нет в проекте", ErrValidation, parentID)
+		}
+		return err
+	}
+	if parent.EventID != eventID {
+		return fmt.Errorf("%w: ответ можно писать только на замечание этого кадра", ErrValidation)
+	}
+	if parent.Deleted {
+		return fmt.Errorf("%w: замечание удалено, отвечать не на что", ErrValidation)
+	}
+	if parent.ParentID != nil {
+		return fmt.Errorf("%w: ответы одноуровневые — отвечайте на замечание, а не на ответ", ErrValidation)
+	}
+	return nil
 }
 
 // ListComments — обсуждение одного кадра в порядке написания (viewer+).
@@ -104,7 +141,8 @@ func (s *Service) CommentCounts(
 // DeleteComment удаляет свой комментарий.
 //
 // Автор проверяется запросом (`AND user_id=$3`), а не чтением перед ним: между проверкой
-// и удалением оставалась бы щель, а удаляется чужой текст.
+// и удалением оставалась бы щель, а удаляется чужой текст. Удаление мягкое: строка остаётся
+// с пустым телом, чтобы ответы на неё не потеряли смысл (миграция 0023).
 func (s *Service) DeleteComment(
 	ctx context.Context, userID, projectID, commentID uuid.UUID,
 ) error {

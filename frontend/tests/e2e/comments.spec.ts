@@ -56,18 +56,35 @@ test('замечание к кадру пишется, видно в дерев�
   const badge = page.locator('.ed-row--chapter .ed-row__comments').first()
   await expect(badge).toHaveText('1', { timeout: 30_000 })
 
-  // 4. Комментарий живёт на сервере, а не только в состоянии компонента.
+  // 3.1. Ответ веткой: он стоит под замечанием, а не отдельной строкой, и счётчик растёт.
+  const reply = 'Согласен, перепишу сцену.'
+  await comments.getByRole('button', { name: 'Ответить' }).first().click()
+  const replyField = comments.getByLabel('Ответ на замечание')
+  await expect(replyField).toBeVisible()
+  await replyField.fill(reply)
+  await comments.locator('[data-frame-reply-form]').getByRole('button', { name: 'Ответить' }).click()
+  await expect(comments.getByText(reply)).toBeVisible({ timeout: 30_000 })
+  await expect(comments.locator('[data-frame-comment-reply="1"]')).toHaveCount(1)
+  await expect(badge).toHaveText('2', { timeout: 30_000 })
+
+  // 4. Обсуждение живёт на сервере, а не только в состоянии компонента.
   await page.reload()
   await expect(page.locator('[data-frame-comments]')).toContainText(comment, { timeout: 45_000 })
-  await expect(page.locator('.ed-row--chapter .ed-row__comments').first()).toHaveText('1')
+  await expect(page.locator('[data-frame-comments]')).toContainText(reply, { timeout: 45_000 })
+  await expect(page.locator('.ed-row--chapter .ed-row__comments').first()).toHaveText('2')
 
-  // 5. Свой комментарий можно удалить — вместе со счётчиком в дереве.
+  // 5. Свой комментарий можно удалить. Удаление мягкое: замечание остаётся строкой
+  // «Комментарий удалён», а ответ на него — живым. Жёсткое удаление унесло бы чужой текст.
   await page
     .locator('[data-frame-comments]')
     .getByRole('button', { name: /Удалить комментарий/ })
+    .first()
     .click()
   await expect(page.locator('[data-frame-comments]')).not.toContainText(comment, { timeout: 30_000 })
-  await expect(page.locator('.ed-row--chapter .ed-row__comments')).toHaveCount(0, { timeout: 30_000 })
+  await expect(page.locator('[data-frame-comments]')).toContainText('Комментарий удалён')
+  await expect(page.locator('[data-frame-comments]')).toContainText(reply)
+  // В счётчике остался только ответ: удалённое не считается.
+  await expect(page.locator('.ed-row--chapter .ed-row__comments').first()).toHaveText('1', { timeout: 30_000 })
 })
 
 /**

@@ -17,6 +17,13 @@ export interface FrameComment {
   authorName: string
   body: string
   createdAt: string
+  /** Замечание, на которое это ответ (миграция 0023). У корневых — null. */
+  parentId: string | null
+  /**
+   * Комментарий удалён автором: строка осталась, тело вычищено, ответы на неё живы.
+   * Удаление мягкое намеренно — иначе вместе с замечанием пропали бы чужие ответы.
+   */
+  deleted: boolean
 }
 
 /** Сколько комментариев у каждого кадра: ключ — идентификатор кадра. */
@@ -45,10 +52,15 @@ export async function createComment(
   projectId: string,
   eventId: string,
   body: string,
+  /**
+   * Ответ на замечание. Ветка одноуровневая: сервер отвергает ответ на ответ, поэтому
+   * сюда попадает только идентификатор корневого замечания.
+   */
+  parentId?: string | null,
 ): Promise<FrameComment | null> {
   const raw = await http
     .post(`projects/${encodeURIComponent(projectId)}/comments`, {
-      json: { event_id: eventId, body },
+      json: parentId ? { event_id: eventId, body, parent_id: parentId } : { event_id: eventId, body },
     })
     .json<unknown>()
   const record = asRecord(raw)
@@ -111,6 +123,7 @@ export function parseComment(raw: unknown): FrameComment | null {
   const id = asText(record?.id)
   const eventId = asText(record?.event_id)
   if (!id || !eventId) return null
+  const parentId = asText(record?.parent_id)
   return {
     id,
     eventId,
@@ -118,6 +131,8 @@ export function parseComment(raw: unknown): FrameComment | null {
     authorName: asText(record?.author_name),
     body: asText(record?.body),
     createdAt: asText(record?.created_at),
+    parentId: parentId === '' ? null : parentId,
+    deleted: record?.deleted === true,
   }
 }
 

@@ -336,6 +336,29 @@
 .fc__count { font-size: 12px; }
 .fc__list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .fc__item { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; }
+/* ── ветки (0.57.0) ──────────────────────────────────────────────────────
+   Ветка — корневое замечание и ответы под ним. Отступ у ответов небольшой и с
+   вертикальной линией: он показывает «это ответ на верхнее», но не съедает ширину —
+   в узкой панели под кадром каждый отступ стоит символов в строке. */
+.fc__thread { display: flex; flex-direction: column; gap: 6px; }
+.fc__branch, .fc__replies { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.fc__replies { margin-left: 14px; padding-left: 10px; border-left: 2px solid var(--border); }
+.fc__item--reply { background: transparent; }
+.fc__item--reply .fc__author { font-weight: 500; }
+.fc__reply-open {
+  align-self: flex-start; margin: 2px 0 0 4px;
+  background: none; border: none; padding: 4px 2px; cursor: pointer;
+  color: var(--accent);
+  /* Цель нажатия пальцем: подпись короткая, но кликать в неё мимо нельзя. */
+  min-height: 28px; font-size: 12px;
+}
+.fc__reply-open:hover { text-decoration: underline; }
+.fc__reply-form { display: flex; flex-direction: column; gap: 6px; margin: 2px 0 4px 4px; }
+.fc__reply-form textarea {
+  min-height: 44px; resize: vertical; font: inherit; font-size: 13px;
+  padding: 6px 8px; border-radius: 6px; border: 1px solid var(--border);
+  background: var(--bg-elev); color: var(--fg);
+}
 .fc__meta { display: flex; align-items: baseline; gap: 8px; font-size: 12px; }
 .fc__author { font-weight: 600; }
 .fc__stamp { font-size: 11px; }

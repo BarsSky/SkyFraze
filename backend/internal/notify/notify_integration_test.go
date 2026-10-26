@@ -200,10 +200,10 @@ func TestFlushGroupsCommentsPerPerson(t *testing.T) {
 	}
 
 	// Два замечания владельца: редактор должен получить ОДНО письмо.
-	if _, err := e.svc.AddComment(ctx, e.owner, projectID, eventID, "Первое замечание."); err != nil {
+	if _, err := e.svc.AddComment(ctx, e.owner, projectID, eventID, "Первое замечание.", nil); err != nil {
 		t.Fatalf("первое: %v", err)
 	}
-	if _, err := e.svc.AddComment(ctx, e.owner, projectID, eventID, "Второе замечание."); err != nil {
+	if _, err := e.svc.AddComment(ctx, e.owner, projectID, eventID, "Второе замечание.", nil); err != nil {
 		t.Fatalf("второе: %v", err)
 	}
 
@@ -251,7 +251,7 @@ func TestNoConsentNoEmail(t *testing.T) {
 	ctx := context.Background()
 	projectID, eventID := e.seedProject(t)
 
-	if _, err := e.svc.AddComment(ctx, e.owner, projectID, eventID, "Замечание без согласия."); err != nil {
+	if _, err := e.svc.AddComment(ctx, e.owner, projectID, eventID, "Замечание без согласия.", nil); err != nil {
 		t.Fatalf("комментарий: %v", err)
 	}
 	sent, _, err := svc.Flush(ctx)
@@ -273,7 +273,7 @@ func TestFlushRetriesAfterFailure(t *testing.T) {
 	if err := e.st.SetNotifyComments(ctx, e.other, true); err != nil {
 		t.Fatalf("согласие: %v", err)
 	}
-	if _, err := e.svc.AddComment(ctx, e.owner, projectID, eventID, "Замечание."); err != nil {
+	if _, err := e.svc.AddComment(ctx, e.owner, projectID, eventID, "Замечание.", nil); err != nil {
 		t.Fatalf("комментарий: %v", err)
 	}
 
@@ -317,7 +317,7 @@ func TestNoEmailForOutsiders(t *testing.T) {
 	if err := e.st.SetNotifyComments(ctx, outsider.ID, true); err != nil {
 		t.Fatalf("согласие: %v", err)
 	}
-	if _, err := e.svc.AddComment(ctx, e.owner, projectID, eventID, "Замечание."); err != nil {
+	if _, err := e.svc.AddComment(ctx, e.owner, projectID, eventID, "Замечание.", nil); err != nil {
 		t.Fatalf("комментарий: %v", err)
 	}
 	pending, err := e.st.PendingCommentNotifications(ctx, 10, 3)

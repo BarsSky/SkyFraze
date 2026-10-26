@@ -1,14 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { FrameComments } from './FrameComments'
+import type { FrameComment } from '../../api/comments'
 
 /**
  * Обсуждение кадра.
  *
  * Проверяем то, что человек видит и трогает: список замечаний приезжает при выборе кадра,
- * своё можно удалить (чужое — нельзя), отправка добавляет комментарий и сбрасывает поле,
- * а читателю форма не показывается вовсе — иначе он написал бы замечание, которое сервер
- * отклонит.
+ * ответы стоят под своим замечанием, отправка сбрасывает поле, удалённое замечание остаётся
+ * на месте «удалённым» (иначе вместе с ним исчезли бы чужие ответы), а читателю форма не
+ * показывается вовсе — иначе он написал бы замечание, которое сервер отклонит.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -31,22 +32,26 @@ vi.mock('../../store/auth', () => ({
   useAuthStore: (selector: (state: { user: unknown }) => unknown) => selector({ user: ME }),
 }))
 
-const OWN = {
+const comment = (over: Partial<FrameComment> = {}): FrameComment => ({
   id: 'c1',
   eventId: 'e1',
   userId: 'u1',
   authorName: 'Я',
   body: 'Тут герой не мог знать про маяк.',
   createdAt: '2026-10-25T10:00:00Z',
-}
-const OTHER = {
+  parentId: null,
+  deleted: false,
+  ...over,
+})
+
+const OWN = comment()
+const OTHER = comment({
   id: 'c2',
-  eventId: 'e1',
   userId: 'u2',
   authorName: 'Соавтор',
   body: 'Согласен, перепишу.',
   createdAt: '2026-10-25T11:00:00Z',
-}
+})
 
 function show(canEdit = true, onCountChange = vi.fn()) {
   render(
@@ -58,12 +63,7 @@ function show(canEdit = true, onCountChange = vi.fn()) {
 beforeEach(() => {
   mocks.list.mockResolvedValue([OWN, OTHER])
   mocks.seen.mockResolvedValue(undefined)
-  mocks.create.mockResolvedValue({
-    ...OWN,
-    id: 'c3',
-    body: 'Новое замечание.',
-    createdAt: '2026-10-25T12:00:00Z',
-  })
+  mocks.create.mockResolvedValue(comment({ id: 'c3', body: 'Новое замечание.', createdAt: '2026-10-25T12:00:00Z' }))
   mocks.remove.mockResolvedValue(undefined)
 })
 
@@ -84,7 +84,22 @@ describe('FrameComments', () => {
     await waitFor(() => expect(mocks.seen).toHaveBeenCalledWith('p1', 'e1'))
   })
 
+  it('удалённое замечание остаётся строкой «Комментарий удалён», а ответы на него — живыми', async () => {
+    const reply = comment({ id: 'r1', userId: 'u2', authorName: 'Соавтор', parentId: 'c1', body: 'Отвечаю.' })
+    mocks.list.mockResolvedValue([{ ...OWN, deleted: true, body: '' }, reply])
+    const onCount = show()
+
+    expect(await screen.findByText('Комментарий удалён')).toBeTruthy()
+    expect(screen.getByText('Отвечаю.')).toBeTruthy()
+    // Счётчик зовёт к живому разговору: удалённое не считается.
+    await waitFor(() => expect(onCount).toHaveBeenLastCalledWith('e1', 1))
+    expect(screen.getByText('1')).toBeTruthy()
+  })
+
   it('удалить можно только свой комментарий', async () => {
+    mocks.list
+      .mockResolvedValueOnce([OWN, OTHER])
+      .mockResolvedValue([{ ...OWN, deleted: true, body: '' }, OTHER])
     const onCount = show()
     await screen.findByText('Согласен, перепишу.')
     const buttons = screen.getAllByRole('button', { name: /Удалить комментарий/ })
@@ -92,8 +107,58 @@ describe('FrameComments', () => {
     expect(buttons).toHaveLength(1)
     fireEvent.click(buttons[0])
     await waitFor(() => expect(mocks.remove).toHaveBeenCalledWith('p1', 'c1'))
-    await waitFor(() => expect(screen.queryByText('Тут герой не мог знать про маяк.')).toBeNull())
-    expect(onCount).toHaveBeenLastCalledWith('e1', 1)
+    // Строка не исчезла: она стала «удалённой» — на ней могут висеть чужие ответы.
+    expect(await screen.findByText('Комментарий удалён')).toBeTruthy()
+    await waitFor(() => expect(onCount).toHaveBeenLastCalledWith('e1', 1))
+  })
+
+  it('ответы стоят под своим замечанием', async () => {
+    const reply = comment({ id: 'r1', userId: 'u2', authorName: 'Соавтор', parentId: 'c1', body: 'Отвечаю.' })
+    mocks.list.mockResolvedValue([OWN, reply])
+    show()
+    await screen.findByText('Отвечаю.')
+    const replyRow = document.querySelector('[data-frame-comment-id="r1"]')
+    expect(replyRow?.getAttribute('data-frame-comment-reply')).toBe('1')
+    // Ответ внутри ветки корня, а не отдельной строкой верхнего уровня.
+    const thread = document.querySelector('[data-frame-thread="c1"]')
+    expect(thread?.querySelector('[data-frame-comment-id="r1"]')).toBeTruthy()
+  })
+
+  it('ответ отправляется с родителем и появляется в ветке', async () => {
+    mocks.create.mockResolvedValue(
+      comment({ id: 'r2', userId: 'u1', parentId: 'c1', body: 'Мой ответ.', createdAt: '2026-10-25T13:00:00Z' }),
+    )
+    const onCount = show()
+    await screen.findByText('Тут герой не мог знать про маяк.')
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Ответить' })[0])
+    const field = screen.getByLabelText('Ответ на замечание') as HTMLTextAreaElement
+    fireEvent.change(field, { target: { value: 'Мой ответ.' } })
+    // Кнопка «Ответить» есть у каждого замечания, поэтому отправляем из формы этого корня.
+    const form = document.querySelector('[data-frame-reply-form="c1"]') as HTMLElement
+    expect(form).toBeTruthy()
+    fireEvent.click(form.querySelector('button') as HTMLButtonElement)
+
+    await waitFor(() => expect(mocks.create).toHaveBeenCalledWith('p1', 'e1', 'Мой ответ.', 'c1'))
+    expect(await screen.findByText('Мой ответ.')).toBeTruthy()
+    expect(document.querySelector('[data-frame-comment-id="r2"]')?.getAttribute('data-frame-comment-reply')).toBe('1')
+    await waitFor(() => expect(onCount).toHaveBeenLastCalledWith('e1', 3))
+    // Поле ответа закрылось: второй ответ на то же замечание — новое нажатие.
+    expect(screen.queryByLabelText('Ответ на замечание')).toBeNull()
+  })
+
+  it('на удалённое замечание ответить нельзя — и кнопки нет', async () => {
+    mocks.list.mockResolvedValue([{ ...OWN, deleted: true, body: '' }])
+    show()
+    await screen.findByText('Комментарий удалён')
+    expect(screen.queryByRole('button', { name: 'Ответить' })).toBeNull()
+  })
+
+  it('ответ без родителя в списке не теряется', async () => {
+    // Список обрезан лимитом: корня в нём нет, а ответ пришёл.
+    mocks.list.mockResolvedValue([comment({ id: 'r9', parentId: 'нет-такого', body: 'Висящий ответ.' })])
+    show()
+    expect(await screen.findByText('Висящий ответ.')).toBeTruthy()
   })
 
   it('отправка добавляет комментарий и очищает поле', async () => {
@@ -123,6 +188,8 @@ describe('FrameComments', () => {
     show(false)
     await screen.findByText('Согласен, перепишу.')
     expect(screen.queryByLabelText('Новый комментарий')).toBeNull()
+    // Кнопки «Ответить» у читателя тоже нет: писать он не может.
+    expect(screen.queryByRole('button', { name: 'Ответить' })).toBeNull()
     expect(screen.getByText(/Читать обсуждение можно/)).toBeTruthy()
   })
 

@@ -114,6 +114,10 @@ var schemaSteps = []struct{ probe, file string }{
 	                  WHERE table_schema='public' AND table_name='projects'
 	                    AND column_name='deleted_at')`,
 		"0022_project_trash.up.sql"},
+	{`SELECT EXISTS (SELECT 1 FROM information_schema.columns
+	                  WHERE table_schema='public' AND table_name='event_comments'
+	                    AND column_name='parent_id')`,
+		"0023_comment_threads.up.sql"},
 }
 
 // Setup открывает отдельную БД для пакета (suffix), применяет миграции и

@@ -147,15 +147,19 @@ func (h *Handler) CommentCounts(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"counts": out})
 }
 
-// CreateComment — POST /comments {"event_id":"...","body":"..."}
+// CreateComment — POST /comments {"event_id":"...","body":"...","parent_id":"..."}
+//
+// parent_id необязателен: без него это замечание, с ним — ответ на замечание (одна ветка,
+// см. events.AddComment).
 func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	uid, pid, ok := h.identity(w, r)
 	if !ok {
 		return
 	}
 	var body struct {
-		EventID string `json:"event_id"`
-		Body    string `json:"body"`
+		EventID  string `json:"event_id"`
+		Body     string `json:"body"`
+		ParentID string `json:"parent_id"`
 	}
 	// Предел чтения — с запасом на MaxCommentRunes: строка в 4000 знаков в UTF-8 это до
 	// 16 КБ, а всё, что больше 64 КБ, — уже не комментарий.
@@ -168,7 +172,16 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "нужен event_id кадра")
 		return
 	}
-	comment, err := h.svc.AddComment(r.Context(), uid, pid, eventID, body.Body)
+	var parentID *uuid.UUID
+	if raw := strings.TrimSpace(body.ParentID); raw != "" {
+		parsed, perr := uuid.Parse(raw)
+		if perr != nil {
+			writeErr(w, http.StatusBadRequest, "parent_id должен быть идентификатором замечания")
+			return
+		}
+		parentID = &parsed
+	}
+	comment, err := h.svc.AddComment(r.Context(), uid, pid, eventID, body.Body, parentID)
 	if err != nil {
 		if errors.Is(err, ErrValidation) {
 			writeErr(w, http.StatusBadRequest, strings.TrimPrefix(err.Error(), ErrValidation.Error()+": "))
