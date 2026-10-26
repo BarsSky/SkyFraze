@@ -379,6 +379,41 @@ func (h *Hub) DocForRead(_ context.Context, projectID uuid.UUID) *yjs.Doc {
 	return room.doc
 }
 
+// ReplaceEventSpanCheckedLive заменяет фрагмент, ПРЕДВАРИТЕЛЬНО сверив его текст.
+//
+// Зачем одним вызовом, а не «прочитать текст, потом заменить». Между чтением и заменой
+// документ мог измениться (в комнате печатают прямо сейчас), и тогда правка легла бы в
+// другое место. Здесь сверка и замена идут под одной блокировкой документа, поэтому
+// «фрагмент не изменился» — факт, а не надежда. Несовпадение — `yjs.ErrSpanChanged`.
+func (h *Hub) ReplaceEventSpanCheckedLive(
+	ctx context.Context, projectID, by uuid.UUID, eventID, field string,
+	start, end []byte, expect, replacement string,
+) (yjs.EditOutcome, []byte, []byte, error) {
+	var newStart, newEnd []byte
+	outcome, err := h.editLive(ctx, projectID, by, "span updated", func(doc *yjs.Doc) (bool, error) {
+		span, ok := doc.ResolveSpan(eventID, field, start, end)
+		if !ok {
+			return false, nil
+		}
+		text, ok := doc.SpanText(eventID, field, span)
+		if !ok {
+			return false, nil
+		}
+		if text != expect {
+			return false, yjs.ErrSpanChanged
+		}
+		found, rerr := doc.ReplaceEventSpan(eventID, field, span.From, span.To, replacement)
+		if rerr != nil || !found {
+			return found, rerr
+		}
+		// Якорь на новый текст: прежний после Delete+Insert уже не годится для «Вернуть».
+		newStart, newEnd, _ = doc.AnchorSpan(eventID, field, span.From,
+			span.From+yjs.UTF16Len(replacement))
+		return true, nil
+	})
+	return outcome, newStart, newEnd, err
+}
+
 // ReplaceEventSpanLive заменяет фрагмент текста в живом документе.
 //
 // Этим путём идёт правка по замечанию к фрагменту: Delete+Insert внутри `Y.Text`, а не

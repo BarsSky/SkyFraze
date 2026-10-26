@@ -44,6 +44,12 @@ type Proposal struct {
 	OldBody  string `json:"old_body"`
 	NewTitle string `json:"new_title"`
 	NewBody  string `json:"new_body"`
+	// Фрагмент (kind=update_span, миграция 0027): замечание, к которому относится правка, и
+	// текст «было/станет» для ЭТОГО куска. Отдельные поля, а не OldBody/NewBody: правка
+	// фрагмента проверяется и показывается по куску, а не по кадру целиком.
+	CommentID *uuid.UUID `json:"comment_id,omitempty"`
+	OldSpan   string     `json:"old_span"`
+	NewSpan   string     `json:"new_span"`
 }
 
 // Ошибки работы с предложениями.
@@ -62,6 +68,7 @@ func ProposalDTO(c store.AIChange) Proposal {
 		ID: c.ID, Kind: c.Kind, Status: c.Status,
 		EventID: c.EventID, EventTitle: c.EventTitle,
 		OldTitle: c.OldTitle, OldBody: c.OldBody, NewTitle: c.NewTitle, NewBody: c.NewBody,
+		CommentID: c.CommentID, OldSpan: c.OldSpan, NewSpan: c.NewSpan,
 	}
 }
 
@@ -129,6 +136,9 @@ func (s *Service) applyProposal(
 	if change.Status != from {
 		return nil, "", ErrProposalNotFound
 	}
+	// Правка фрагмента сверяется ПО ФРАГМЕНТУ, а не по кадру, и делает это своя ветка ниже.
+	// Поэтому общие проверки «кадр не изменился» её пропускают: у предложения фрагмента
+	// OldTitle/OldBody пусты (оно про кусок), и общая сверка отвергала бы его всегда.
 	if change.Kind == store.AIChangeUpdateText {
 		// Ожидаемое состояние зависит от действия: перед применением кадр должен быть
 		// ровно таким, каким его запомнили ДО, а перед возвратом — таким, каким его
@@ -143,13 +153,52 @@ func (s *Service) applyProposal(
 			_ = s.store.SetAIChangeStatus(ctx, change.ID, from, store.AIChangeSuperseded)
 			return nil, "", err
 		}
-	} else if !revert {
+	} else if !revert && change.Kind == store.AIChangeDeleteEvent {
 		// Удаление тоже требует «кадр не изменился»: если человек правил текст после
 		// предложения, удалять уже не тот кадр, который обсуждали с помощником.
 		if err := s.requireUnchanged(ctx, projectID, change.EventID, change.OldTitle, change.OldBody); err != nil {
 			_ = s.store.SetAIChangeStatus(ctx, change.ID, from, store.AIChangeSuperseded)
 			return nil, "", err
 		}
+	}
+
+	// Правка фрагмента: сверяется ФРАГМЕНТ, а не кадр.
+	//
+	// Почему не общий requireUnchanged: предложение про два абзаца, и чужая правка в
+	// соседнем абзаце не должна его отменять — иначе «предложение устарело» появлялось бы
+	// там, где всё на месте. Зато если изменился сам фрагмент, применять нельзя: человек
+	// подтверждал правку по тексту, которого уже нет.
+	if change.Kind == store.AIChangeUpdateSpan {
+		// Ожидаемый текст и замена зависят от действия: применяем old_span → new_span,
+		// возвращаем new_span → old_span.
+		expect, replacement := change.OldSpan, change.NewSpan
+		if revert {
+			expect, replacement = change.NewSpan, change.OldSpan
+		}
+		if len(change.AnchorStart) == 0 || len(change.AnchorEnd) == 0 {
+			return nil, "", ErrProposalStale
+		}
+		warning, newStart, newEnd, err := s.editor.ReplaceSpanChecked(ctx, actorID, userID, projectID,
+			change.EventID.String(), "body", change.AnchorStart, change.AnchorEnd, expect, replacement)
+		if err != nil {
+			if errors.Is(err, yjs.ErrSpanChanged) {
+				_ = s.store.SetAIChangeStatus(ctx, change.ID, from, store.AIChangeSuperseded)
+				return nil, "", ErrProposalStale
+			}
+			return nil, "", editErrorText(err)
+		}
+		// Якорь на новый текст: следующее действие (повторное «Применить» или «Вернуть»)
+		// ищет фрагмент по нему. Сбой записи не отменяет правку — она уже в документе,
+		// но следующее действие может не найти фрагмент, и об этом честно в журнале.
+		if len(newStart) > 0 && len(newEnd) > 0 {
+			if aerr := s.store.SetAIChangeSpanAnchor(ctx, change.ID, newStart, newEnd); aerr != nil {
+				s.logger.Warn("ai: якорь предложения не обновлён — «Вернуть» может не найти фрагмент",
+					"change", change.ID, "err", aerr)
+			} else {
+				change.AnchorStart, change.AnchorEnd = newStart, newEnd
+			}
+		}
+		return change, warning, nil
 	}
 
 	if change.Kind == store.AIChangeUpdateText {

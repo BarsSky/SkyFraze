@@ -36,6 +36,7 @@ import (
 	"github.com/skyfraze/backend/internal/assistant"
 	"github.com/skyfraze/backend/internal/auth"
 	"github.com/skyfraze/backend/internal/collab/yjs"
+	"github.com/skyfraze/backend/internal/events"
 	"github.com/skyfraze/backend/internal/platform/testdb"
 	"github.com/skyfraze/backend/internal/projects"
 	"github.com/skyfraze/backend/internal/storage"
@@ -382,6 +383,9 @@ func setup(t *testing.T, replies ...ai.Reply) *env {
 	asst.UseAssets(assetsSvc)
 	// Правка существующих кадров — тем же путём записи, что в бою (см. main.go).
 	asst.UseEditor(transferSvc)
+	// Обсуждение кадров: помощник читает замечания и предлагает правку фрагмента
+	// (как в бою, см. main.go: asst.UseComments(evSvc)).
+	asst.UseComments(events.New(st, proj))
 	return &env{st: st, proj: proj, models: models, asst: asst, stub: stub}
 }
 
@@ -546,8 +550,9 @@ func TestSendCreatesChapterInProjectionAndDocument(t *testing.T) {
 	// Запрос к модели: правила, оглавление проекта и инструменты. Смотрим ПЕРВЫЙ
 	// запрос: в последнем уже лежат результаты вызовов, а не вопрос человека.
 	req := e.stub.firstRequest()
-	if len(req.Tools) != 6 {
-		t.Errorf("модели передано инструментов %d, ожидалось 6 (чтение, создание, правка, удаление)", len(req.Tools))
+	if len(req.Tools) != 8 {
+		t.Errorf("модели передано инструментов %d, ожидалось 8 (чтение, обсуждение, создание, правка кадра, "+
+			"правка фрагмента, удаление)", len(req.Tools))
 	}
 	if !strings.Contains(req.Messages[0].Content, "Глава 1") {
 		t.Errorf("в контексте нет дерева проекта: %q", req.Messages[0].Content)

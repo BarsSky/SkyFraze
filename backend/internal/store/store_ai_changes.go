@@ -23,6 +23,10 @@ const (
 	AIChangeUpdateText = "update_text"
 	// AIChangeDeleteEvent — удалить кадр.
 	AIChangeDeleteEvent = "delete_event"
+	// AIChangeUpdateSpan — заменить ФРАГМЕНТ текста кадра (правка по замечанию к фрагменту,
+	// миграция 0027). Отдельный вид, а не update_text: сверка при применении идёт по
+	// фрагменту, иначе чужая правка в соседнем абзаце отменяла бы законное предложение.
+	AIChangeUpdateSpan = "update_span"
 )
 
 // Состояния предложения.
@@ -62,20 +66,33 @@ type AIChange struct {
 	CreatedAt      time.Time       `db:"created_at" json:"created_at"`
 	AppliedAt      *time.Time      `db:"applied_at" json:"applied_at"`
 	Frame          json.RawMessage `db:"frame" json:"-"`
+	// CommentID — замечание, по которому предложена правка фрагмента (kind=update_span).
+	CommentID *uuid.UUID `db:"comment_id" json:"comment_id,omitempty"`
+	// AnchorStart/AnchorEnd — копия якоря на момент предложения: комментарий могли удалить
+	// или связать с другим местом, а предложение обязано остаться проверяемым.
+	AnchorStart []byte `db:"anchor_start" json:"-"`
+	AnchorEnd   []byte `db:"anchor_end" json:"-"`
+	// OldSpan/NewSpan — текст фрагмента «было» и «станет». Сверка при применении идёт по
+	// OldSpan: «фрагмент не изменился» — то же правило, что у правки кадра, но уровнем ниже.
+	OldSpan string `db:"old_span" json:"old_span"`
+	NewSpan string `db:"new_span" json:"new_span"`
 }
 
 const aiChangeColumns = `id, project_id, conversation_id, user_id, kind, event_id, event_title,
-	old_title, old_body, new_title, new_body, status, created_at, applied_at, frame`
+	old_title, old_body, new_title, new_body, status, created_at, applied_at, frame,
+	comment_id, anchor_start, anchor_end, old_span, new_span`
 
 // CreateAIChange сохраняет предложение.
 func (s *Store) CreateAIChange(ctx context.Context, c AIChange) (*AIChange, error) {
 	return qOne[AIChange](ctx, s.Pool,
 		`INSERT INTO ai_changes (project_id, conversation_id, user_id, kind, event_id, event_title,
-		                         old_title, old_body, new_title, new_body, status)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		                         old_title, old_body, new_title, new_body, status,
+		                         comment_id, anchor_start, anchor_end, old_span, new_span)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 		 RETURNING `+aiChangeColumns,
 		c.ProjectID, c.ConversationID, c.UserID, c.Kind, c.EventID, c.EventTitle,
-		c.OldTitle, c.OldBody, c.NewTitle, c.NewBody, AIChangePending)
+		c.OldTitle, c.OldBody, c.NewTitle, c.NewBody, AIChangePending,
+		c.CommentID, c.AnchorStart, c.AnchorEnd, c.OldSpan, c.NewSpan)
 }
 
 // AIChangeByID читает предложение проекта.
@@ -150,3 +167,13 @@ func (s *Store) SetAIChangeFrame(ctx context.Context, id uuid.UUID, frame json.R
 	return err
 }
 
+// SetAIChangeSpanAnchor обновляет якорь предложения правки фрагмента.
+//
+// Нужно после каждой успешной замены: `Delete` + `Insert` уносит элементы, к которым был
+// привязан прежний якорь, и следующее действие («Вернуть», повторное «Применить») без нового
+// якоря уже не найдёт фрагмент. Обновляем тем якорем, который рассчитал документ.
+func (s *Store) SetAIChangeSpanAnchor(ctx context.Context, id uuid.UUID, start, end []byte) error {
+	_, err := s.Pool.Exec(ctx,
+		`UPDATE ai_changes SET anchor_start = $2, anchor_end = $3 WHERE id = $1`, id, start, end)
+	return err
+}

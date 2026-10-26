@@ -12,6 +12,7 @@ package yjs
 // 1–2 знака, и это ровно тот класс ошибок, который молчит.
 
 import (
+	"errors"
 	"fmt"
 
 	ygo "github.com/Deln0r/ygo"
@@ -73,6 +74,11 @@ func (d *Doc) SpanText(eventID, field string, span Span) (string, bool) {
 	}
 	return utf16Slice(text.String(), span.From, span.To), true
 }
+
+// ErrSpanChanged — текст фрагмента не совпал с ожидаемым: кто-то правил этот кусок после
+// того, как предложение было сделано. Отдельная ошибка, чтобы вызывающий отличил «не сошлось»
+// от «сломалось»: первое превращается в «предложение устарело», второе — в 500.
+var ErrSpanChanged = errors.New("фрагмент изменился")
 
 // ReplaceEventSpan заменяет фрагмент текста кадра — Delete + Insert ВНУТРИ `Y.Text`.
 //
@@ -143,4 +149,46 @@ func utf16Len(r rune) int {
 		return 2
 	}
 	return 1
+}
+
+// AnchorSpan кодирует якорь на диапазон текущего текста кадра.
+//
+// Нужен после правки фрагмента: `Delete` + `Insert` уносит элементы, к которым был привязан
+// прежний якорь (измерено в §4: после замены якорь либо схлопывается, либо перестаёт
+// разрешаться). Поэтому «Вернуть» не может пользоваться прежним якорем — сразу после правки
+// сохраняется якорь на НОВЫЙ текст, и отмена идёт уже по нему.
+func (d *Doc) AnchorSpan(eventID, field string, from, to uint64) ([]byte, []byte, bool) {
+	text, ok := d.TextOf(eventID, field)
+	if !ok {
+		return nil, nil, false
+	}
+	if to > text.Length() {
+		return nil, nil, false
+	}
+	startPos, err := ygo.CreateRelativePositionFromTypeIndex(text, from, 1)
+	if err != nil {
+		return nil, nil, false
+	}
+	endPos, err := ygo.CreateRelativePositionFromTypeIndex(text, to, -1)
+	if err != nil {
+		return nil, nil, false
+	}
+	start, err := ygo.EncodeRelativePosition(startPos)
+	if err != nil {
+		return nil, nil, false
+	}
+	end, err := ygo.EncodeRelativePosition(endPos)
+	if err != nil {
+		return nil, nil, false
+	}
+	return start, end, true
+}
+
+// UTF16Len — длина строки в единицах UTF-16 (как её считает Yjs).
+func UTF16Len(s string) uint64 {
+	var units uint64
+	for _, r := range s {
+		units += uint64(utf16Len(r))
+	}
+	return units
 }

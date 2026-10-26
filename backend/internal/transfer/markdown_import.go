@@ -1735,6 +1735,15 @@ type LiveDoc interface {
 	DeleteEventLive(ctx context.Context, projectID, by uuid.UUID, eventID string) (*yjs.RemovedEvent, yjs.EditOutcome, error)
 	// ReviveEventLive — вернуть удалённый кадр на прежнее место (отмена удаления).
 	ReviveEventLive(ctx context.Context, projectID, by uuid.UUID, removed yjs.RemovedEvent) (yjs.ReviveResult, yjs.EditOutcome, error)
+	// DocForRead — документ комнаты для ЧТЕНИЯ (резолв якоря, текст фрагмента).
+	DocForRead(ctx context.Context, projectID uuid.UUID) *yjs.Doc
+	// ReplaceEventSpanCheckedLive — заменить фрагмент текста, сверив его содержимое с
+	// ожидаемым (правка по замечанию к фрагменту). Сверка и замена — под одной блокировкой
+	// документа: иначе между «проверили» и «заменили» в комнате успевают напечатать.
+	// Второй и третий результаты — якорь на НОВЫЙ текст: после замены прежний якорь
+	// схлопывается или перестаёт разрешаться, и «Вернуть» идёт уже по новому.
+	ReplaceEventSpanCheckedLive(ctx context.Context, projectID, by uuid.UUID, eventID, field string,
+		start, end []byte, expect, replacement string) (yjs.EditOutcome, []byte, []byte, error)
 }
 
 // UseLiveDoc подключает живые комнаты. Без него импорт «в место» работает только

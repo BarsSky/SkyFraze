@@ -285,6 +285,9 @@ func main() {
 	// путь записи в документ, что у импорта и привязки вложений (живая комната впереди,
 	// снапшот при её отсутствии). Без этой строки помощник снова умел бы только создавать.
 	assistantSvc.UseEditor(transferSvc)
+	// Обсуждение кадров: помощник читает замечания и предлагает правку ИМЕННО того фрагмента,
+	// о котором написали. Без этой строки он снова правил бы кадр целиком.
+	assistantSvc.UseComments(evSvc)
 	assistantH := assistant.NewHandler(assistantSvc, logger)
 
 	collabHub := collab.NewHub(logger, cfg.JWTSecret, evSvc, cfg.CORSOrigins)

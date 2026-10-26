@@ -125,6 +125,26 @@ type EventEditor interface {
 		eventID string) (string, *yjs.RemovedEvent, error)
 	ReviveEvent(ctx context.Context, actorID, userID, projectID uuid.UUID,
 		removed yjs.RemovedEvent) (string, yjs.ReviveResult, error)
+	// ReplaceSpanChecked — заменить фрагмент текста, сверив его с ожидаемым (правка по
+	// замечанию к фрагменту). Несовпадение — yjs.ErrSpanChanged.
+	// Второй и третий результаты — якорь на НОВЫЙ текст: после замены прежний якорь
+	// схлопывается, и «Вернуть» идёт уже по новому.
+	ReplaceSpanChecked(ctx context.Context, actorID, userID, projectID uuid.UUID,
+		eventID, field string, start, end []byte, expect, replacement string) (string, []byte, []byte, error)
+	// SpanText — текущий текст фрагмента: предложение показывает «было», и по этому тексту
+	// потом проверяется «фрагмент не изменился».
+	SpanText(ctx context.Context, userID, projectID uuid.UUID, eventID, field string,
+		start, end []byte) (string, bool, error)
+}
+
+// CommentReader — обсуждение кадров: без него помощник не знает, что чинить.
+//
+// Интерфейс, а не прямая зависимость (как EventEditor): помощник не должен тащить за собой
+// весь пакет обсуждений, а без обсуждения он просто работает как раньше.
+type CommentReader interface {
+	ListComments(ctx context.Context, userID, projectID, eventID uuid.UUID, limit int) ([]store.EventComment, error)
+	CommentByID(ctx context.Context, userID, projectID, commentID uuid.UUID) (*store.EventComment, error)
+	CommentAnchor(ctx context.Context, userID, projectID, commentID uuid.UUID) (*store.CommentAnchor, error)
 }
 
 // Service — беседы с моделью внутри проекта.
@@ -140,6 +160,9 @@ type Service struct {
 	assets AssetStore
 	// editor — правка и удаление существующих кадров. Необязателен по той же причине.
 	editor EventEditor
+	// comments — обсуждение кадров: источник замечаний, по которым предлагается правка
+	// фрагмента. Необязателен: без него инструменты обсуждения не предлагаются модели.
+	comments CommentReader
 }
 
 // New собирает сервис. Отсутствие вставки или прав не валит сервер: помощник —
@@ -161,6 +184,9 @@ func (s *Service) SetLimits(l Limits) { s.limits = l }
 // UseAssets подключает хранилище файлов: без него инструмент иллюстраций не предлагается
 // (картинку некуда положить), и это честнее, чем нарисовать её в никуда.
 func (s *Service) UseAssets(store AssetStore) { s.assets = store }
+
+// UseComments подключает обсуждение кадров: без него помощник не видит замечаний.
+func (s *Service) UseComments(reader CommentReader) { s.comments = reader }
 
 // UseEditor подключает правку существующих кадров: без него помощник только создаёт.
 func (s *Service) UseEditor(editor EventEditor) { s.editor = editor }

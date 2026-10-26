@@ -268,3 +268,115 @@ const orphanWarning = "кадр вернулся главой верхнего �
 
 // ErrEventHasChildren — у кадра есть под-события: удалять вместе с ними нельзя.
 var ErrEventHasChildren = errors.New("у кадра есть под-события")
+
+// ReplaceSpanChecked заменяет фрагмент текста кадра, сверив его с ожидаемым.
+//
+// Зачем отдельный метод, а не ReplaceEventSpan «как есть». Правка по замечанию к фрагменту
+// делается по предложению ассистента: между «предложил» и «применили» человек мог править
+// этот же абзац. Проверка идёт по тексту фрагмента (не по времени — часы разные), и в живой
+// комнате сверка с заменой идут под одной блокировкой документа: иначе между «проверили» и
+// «заменили» в комнате успевают напечатать.
+//
+// Несовпадение текста — `yjs.ErrSpanChanged`: вызывающий превращает его в «предложение
+// устарело», а не в 500.
+func (s *Service) ReplaceSpanChecked(
+	ctx context.Context, actorID, userID, projectID uuid.UUID,
+	eventID, field string, start, end []byte, expect, replacement string,
+) (string, []byte, []byte, error) {
+	if err := s.proj.RequireEditor(ctx, userID, projectID); err != nil {
+		if errors.Is(err, projects.ErrForbidden) {
+			return "", nil, nil, ErrForbidden
+		}
+		return "", nil, nil, err
+	}
+
+	// Живая комната — главный путь: сверка и замена в одном шаге по документу, который
+	// редакторы видят сейчас.
+	if s.live != nil {
+		outcome, newStart, newEnd, err := s.live.ReplaceEventSpanCheckedLive(ctx, projectID, actorID,
+			eventID, field, start, end, expect, replacement)
+		if err != nil {
+			return "", nil, nil, err
+		}
+		switch {
+		case outcome.RoomLoading:
+			return "", nil, nil, ErrMarkdownBusy
+		case outcome.Handled && !outcome.Found:
+			return "", nil, nil, ErrEventNotFound
+		case outcome.Handled:
+			return outcome.Warning, newStart, newEnd, nil
+		}
+	}
+
+	// Комнаты нет: правим снапшот и перестраиваем проекцию.
+	doc, err := s.serverDocument(ctx, projectID)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	span, ok := doc.ResolveSpan(eventID, field, start, end)
+	if !ok {
+		return "", nil, nil, ErrEventNotFound
+	}
+	text, ok := doc.SpanText(eventID, field, span)
+	if !ok {
+		return "", nil, nil, ErrEventNotFound
+	}
+	if text != expect {
+		return "", nil, nil, yjs.ErrSpanChanged
+	}
+	found, err := doc.ReplaceEventSpan(eventID, field, span.From, span.To, replacement)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	if !found {
+		return "", nil, nil, ErrEventNotFound
+	}
+	// Якорь на НОВЫЙ текст: прежний после Delete+Insert либо схлопнулся, либо перестал
+	// разрешаться (измерено в docs/fragment-comments.md §4), и «Вернуть» по нему не сработает.
+	newStart, newEnd, _ := doc.AnchorSpan(eventID, field, span.From,
+		span.From+yjs.UTF16Len(replacement))
+	if _, err := s.store.SaveProjectEventStateServer(ctx, projectID, actorID, doc.EncodeState()); err != nil {
+		return "", nil, nil, err
+	}
+	if err := s.projectDocument(ctx, projectID, actorID, doc); err != nil {
+		return fmt.Sprintf("фрагмент изменён, но таблица событий не перестроена (%v) — "+
+			"она обновится при следующем сохранении", err), newStart, newEnd, nil
+	}
+	return "", newStart, newEnd, nil
+}
+
+// SpanText читает текущий текст фрагмента по якорю (viewer+).
+//
+// Нужно помощнику: прежде чем предлагать правку фрагмента, надо показать человеку «было».
+// Живая комната — свежий документ; без неё читаем снапшот (он отстаёт до 5 с, и это
+// нормально: предложение всё равно проверится по тексту при применении).
+func (s *Service) SpanText(
+	ctx context.Context, userID, projectID uuid.UUID, eventID, field string, start, end []byte,
+) (string, bool, error) {
+	if err := s.proj.RequireViewer(ctx, userID, projectID); err != nil {
+		if errors.Is(err, projects.ErrForbidden) {
+			return "", false, ErrForbidden
+		}
+		return "", false, err
+	}
+	if s.live != nil {
+		if doc := s.live.DocForRead(ctx, projectID); doc != nil {
+			span, ok := doc.ResolveSpan(eventID, field, start, end)
+			if !ok {
+				return "", false, nil
+			}
+			text, ok := doc.SpanText(eventID, field, span)
+			return text, ok, nil
+		}
+	}
+	doc, err := s.serverDocument(ctx, projectID)
+	if err != nil {
+		return "", false, err
+	}
+	span, ok := doc.ResolveSpan(eventID, field, start, end)
+	if !ok {
+		return "", false, nil
+	}
+	text, ok := doc.SpanText(eventID, field, span)
+	return text, ok, nil
+}

@@ -506,3 +506,33 @@ func (s *Service) MarkCommentsSeen(
 func (s *Service) SetNotifyComments(ctx context.Context, userID uuid.UUID, enabled bool) error {
 	return s.store.SetNotifyComments(ctx, userID, enabled)
 }
+
+// CommentByID читает замечание проекта (viewer+).
+//
+// Нужно помощнику: чтобы предложить правку фрагмента, он должен знать, к какому кадру
+// относится замечание и что в нём написано. Права те же, что у чтения обсуждения.
+func (s *Service) CommentByID(
+	ctx context.Context, userID, projectID, commentID uuid.UUID,
+) (*store.EventComment, error) {
+	if err := s.proj.RequireViewer(ctx, userID, projectID); err != nil {
+		return nil, err
+	}
+	return s.store.EventCommentByID(ctx, projectID, commentID)
+}
+
+// CommentAnchor читает якорь замечания (nil — замечание к кадру целиком).
+func (s *Service) CommentAnchor(
+	ctx context.Context, userID, projectID, commentID uuid.UUID,
+) (*store.CommentAnchor, error) {
+	if err := s.proj.RequireViewer(ctx, userID, projectID); err != nil {
+		return nil, err
+	}
+	anchors, err := s.store.CommentAnchors(ctx, []uuid.UUID{commentID})
+	if err != nil {
+		return nil, err
+	}
+	if anchor, ok := anchors[commentID]; ok {
+		return &anchor, nil
+	}
+	return nil, nil
+}

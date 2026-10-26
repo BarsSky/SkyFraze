@@ -766,6 +766,8 @@ describe('AssistantPanel', () => {
       oldBody: 'Старый текст главы.',
       newTitle: 'Пролог',
       newBody: 'Новый текст главы.',
+      oldSpan: '',
+      newSpan: '',
     }
     mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
     mocks.proposals.mockResolvedValue([proposal])
@@ -785,6 +787,38 @@ describe('AssistantPanel', () => {
     expect(screen.queryByText('Предложенные правки')).toBeNull()
   })
 
+  it('правка фрагмента показывается как «было → станет» для куска и возвращается отдельной кнопкой', async () => {
+    const spanProposal: AIProposal = {
+      id: 'sp1',
+      kind: 'update_span',
+      status: 'pending',
+      eventId: 'e1',
+      eventTitle: 'Пролог',
+      oldTitle: '',
+      oldBody: '',
+      newTitle: '',
+      newBody: '',
+      commentId: 'c1',
+      oldSpan: 'текст главы',
+      newSpan: 'логика восстановлена',
+    }
+    mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
+    mocks.proposals.mockResolvedValue([spanProposal])
+    mocks.applyProposal.mockResolvedValue({ proposal: { ...spanProposal, status: 'applied' }, warning: '' })
+    renderPanel()
+
+    // Подпись отличает правку фрагмента от перезаписи кадра: человек подтверждает то,
+    // что прочитал, а не «правку вообще».
+    expect(await screen.findByText(/Правка фрагмента в кадре «Пролог»/)).toBeTruthy()
+    expect(screen.getByText(/текст главы/)).toBeTruthy()
+    expect(screen.getByText(/логика восстановлена/)).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Применить' }))
+    await waitFor(() => expect(mocks.applyProposal).toHaveBeenCalledWith('p1', 'sp1'))
+    expect(await screen.findByText(/Фрагмент в кадре «Пролог» изменён/)).toBeTruthy()
+    // Кнопка возврата говорит про фрагмент, а не про весь текст кадра.
+    expect(screen.getByRole('button', { name: 'Вернуть прежний фрагмент' })).toBeTruthy()
+  })
   it('применённую перезапись можно вернуть прежним текстом', async () => {
     const update: AIProposal = {
       id: 'p1',
@@ -796,6 +830,8 @@ describe('AssistantPanel', () => {
       oldBody: 'Старый текст.',
       newTitle: 'Пролог',
       newBody: 'Новый текст.',
+      oldSpan: '',
+      newSpan: '',
     }
     mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
     mocks.proposals.mockResolvedValue([update])
@@ -822,6 +858,8 @@ describe('AssistantPanel', () => {
       oldBody: 'текст',
       newTitle: '',
       newBody: '',
+  oldSpan: '',
+  newSpan: '',
     }
     const applied: AIProposal = { ...removal, status: 'applied' }
     mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
@@ -851,6 +889,8 @@ describe('AssistantPanel', () => {
       oldBody: 'текст',
       newTitle: '',
       newBody: '',
+  oldSpan: '',
+  newSpan: '',
     }
     mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
     mocks.proposals.mockResolvedValue([proposal])
@@ -874,6 +914,8 @@ describe('AssistantPanel', () => {
       oldBody: 'Старый текст.',
       newTitle: 'Пролог',
       newBody: 'Новый текст.',
+      oldSpan: '',
+      newSpan: '',
     }
     mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
     mocks.stream.mockImplementation(async (...args: unknown[]) => {
@@ -904,6 +946,8 @@ describe('AssistantPanel', () => {
       oldBody: 'Старый текст.',
       newTitle: 'Пролог',
       newBody: 'Новый текст.',
+      oldSpan: '',
+      newSpan: '',
     }
     mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
     mocks.proposals.mockResolvedValue([applied])

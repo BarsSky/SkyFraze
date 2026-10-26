@@ -244,8 +244,10 @@ func TestParseTextToolCallsLooseJSONNeedsKnownTool(t *testing.T) {
 // урезанные — отдельным тестом ниже.
 func TestToolDefsAreWellFormed(t *testing.T) {
 	defs := ToolDefs(Capabilities{Text: true, Images: true}, true)
-	if len(defs) != 7 {
-		t.Fatalf("инструментов %d, ожидалось 7", len(defs))
+	// 9 = чтение дерева и кадра, обсуждение кадров, создание главы и под-события,
+	// предложение правки кадра, правка фрагмента по замечанию, удаление, иллюстрация.
+	if len(defs) != 9 {
+		t.Fatalf("инструментов %d, ожидалось 9", len(defs))
 	}
 	seen := map[string]bool{}
 	for _, def := range defs {

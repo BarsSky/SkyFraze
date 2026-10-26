@@ -1341,15 +1341,15 @@ export function AssistantPanel({
               <ul>
                 {proposals.map((proposal) => (
                   <li key={proposal.id} className="ai-proposals__item" data-proposal-id={proposal.id}>
-                    <span className="ai-proposals__title">
-                      {proposal.kind === 'delete_event'
-                        ? `Удалить кадр «${proposal.eventTitle}»`
-                        : `Переписать кадр «${proposal.eventTitle}»`}
-                    </span>
-                    {proposal.kind !== 'delete_event' && (
-                      <span className="ai-proposals__diff">
-                        {diffSummary(proposal)}
+                    <span className="ai-proposals__title">{proposalTitle(proposal, 'pending')}</span>
+                    {proposal.kind === 'update_span' ? (
+                      <span className="ai-proposals__diff" data-proposal-span>
+                        <del>{proposal.oldSpan}</del> → <ins>{proposal.newSpan}</ins>
                       </span>
+                    ) : (
+                      proposal.kind !== 'delete_event' && (
+                        <span className="ai-proposals__diff">{diffSummary(proposal)}</span>
+                      )
                     )}
                     <span className="ai-proposals__actions">
                       <button
@@ -1381,18 +1381,18 @@ export function AssistantPanel({
               <ul>
                 {appliedProposals.map((proposal) => (
                   <li key={proposal.id} className="ai-proposals__item" data-proposal-id={proposal.id}>
-                    <span className="ai-proposals__title">
-                      {proposal.kind === 'delete_event'
-                        ? `Удалён кадр «${proposal.eventTitle}»`
-                        : `Переписан кадр «${proposal.eventTitle}»`}
-                    </span>
+                    <span className="ai-proposals__title">{proposalTitle(proposal, 'applied')}</span>
                     <span className="ai-proposals__actions">
                       <button
                         className="secondary"
                         onClick={() => void revertProposal(proposal)}
                         disabled={proposalBusy !== null}
                       >
-                        {proposal.kind === 'delete_event' ? 'Вернуть кадр' : 'Вернуть прежний текст'}
+                        {proposal.kind === 'delete_event'
+                          ? 'Вернуть кадр'
+                          : proposal.kind === 'update_span'
+                            ? 'Вернуть прежний фрагмент'
+                            : 'Вернуть прежний текст'}
                       </button>
                     </span>
                   </li>
@@ -1566,12 +1566,31 @@ export function AssistantPanel({
 }
 
 /**
+ * Заголовок предложения по виду правки.
+ *
+ * Отдельной функцией, потому что видов три и они расходятся: кадр (переписать/удалить) и
+ * фрагмент — «правка фрагмента по замечанию». Ошибка в подписи не ломает правку, но человек
+ * подтверждает именно то, что прочитал, — поэтому подпись считается в одном месте.
+ */
+function proposalTitle(proposal: AIProposal, stage: 'pending' | 'applied'): string {
+  const title = proposal.eventTitle
+  if (proposal.kind === 'delete_event') {
+    return stage === 'pending' ? `Удалить кадр «${title}»` : `Удалён кадр «${title}»`
+  }
+  if (proposal.kind === 'update_span') {
+    return stage === 'pending'
+      ? `Правка фрагмента в кадре «${title}»`
+      : `Фрагмент в кадре «${title}» изменён`
+  }
+  return stage === 'pending' ? `Переписать кадр «${title}»` : `Переписан кадр «${title}»`
+}
+
+/**
  * Коротко, что изменится: «заголовок: было → станет» и первая строка текста.
  *
  * Полный diff здесь был бы не нужен: человек решает «применять или нет», а не читает
  * сравнение целиком — полный текст кадра он посмотрит в редакторе до или после.
- */
-function diffSummary(proposal: AIProposal): string {
+ */function diffSummary(proposal: AIProposal): string {
   const parts: string[] = []
   if (proposal.newTitle !== '' && proposal.newTitle !== proposal.oldTitle) {
     parts.push(`заголовок: «${proposal.oldTitle}» → «${proposal.newTitle}»`)

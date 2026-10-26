@@ -43,6 +43,9 @@ const (
 	ToolUpdateText    = "update_event_text"
 	ToolDeleteEvent   = "delete_event"
 	ToolGenerateImage = "generate_image"
+	// Обсуждение и правка фрагмента по замечанию (0.62.0).
+	ToolReadComments        = "read_comments"
+	ToolProposeFragmentEdit = "propose_fragment_edit"
 )
 
 // ErrUnknownTool — модель попросила инструмент, которого нет. Это не падение сервера:
@@ -136,6 +139,37 @@ func ToolDefs(caps Capabilities, editing bool) []ai.ToolDef {
 						"reason":  map[string]any{"type": "string", "description": "Коротко, зачем правка: это увидит человек перед подтверждением"},
 					},
 					"required": []string{"id"},
+				},
+			},
+			// Обсуждение кадров и правка по замечанию к фрагменту. Оба инструмента
+			// предлагаются только вместе с правкой: читать обсуждение, чтобы ничего не мочь
+			// исправить, — бесполезная подсказка модели.
+			ai.ToolDef{
+				Name: ToolReadComments,
+				Description: "Прочитать обсуждение кадра: замечания и ответы с авторами, а у замечаний к фрагменту — цитату. " +
+					"Нужно, чтобы понять, что именно просят исправить, прежде чем предлагать правку.",
+				Parameters: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"id": map[string]any{"type": "string", "description": "Идентификатор кадра из list_events"},
+					},
+					"required": []string{"id"},
+				},
+			},
+			ai.ToolDef{
+				Name: ToolProposeFragmentEdit,
+				Description: "Предложить заменить ФРАГМЕНТ текста кадра, к которому относится замечание. " +
+					"Передай идентификатор замечания (из read_comments) и новый текст фрагмента целиком. " +
+					"Если фрагмент успел измениться, предложение не создастся — это нормально, попроси человека уточнить. " +
+					"Правку применяет человек — ты только предлагаешь.",
+				Parameters: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"comment_id": map[string]any{"type": "string", "description": "Идентификатор замечания из read_comments"},
+						"replacement": map[string]any{"type": "string", "description": "Новый текст выделенного фрагмента (Markdown, без окружающих абзацев)"},
+						"reason":     map[string]any{"type": "string", "description": "Коротко, что исправляет правка: это увидит человек"},
+					},
+					"required": []string{"comment_id", "replacement"},
 				},
 			},
 			ai.ToolDef{
@@ -446,4 +480,41 @@ func trimFloat(v float64) string {
 		return fmt.Sprintf("%d", int64(v))
 	}
 	return fmt.Sprintf("%g", v)
+}
+// FragmentEditArgs — разобранные аргументы предложения правки фрагмента.
+type FragmentEditArgs struct {
+	// CommentID — замечание, к фрагменту которого относится правка.
+	CommentID uuid.UUID
+	// Replacement — новый текст фрагмента.
+	Replacement string
+	// Reason — почему, словами модели: человек увидит это перед подтверждением.
+	Reason string
+}
+
+// ParseFragmentEdit разбирает аргументы propose_fragment_edit.
+//
+// Пустая замена — законное действие: это удаление фрагмента. Поэтому «не задано» проверяется
+// по наличию параметра, а не по длине строки.
+func ParseFragmentEdit(args map[string]any, limits Limits) (FragmentEditArgs, error) {
+	var out FragmentEditArgs
+	rawID := argString(args, "comment_id")
+	commentID, err := uuid.Parse(rawID)
+	if err != nil {
+		return out, errors.New("нужен идентификатор замечания из read_comments")
+	}
+	replacement, ok := args["replacement"]
+	if !ok {
+		return out, errors.New("нужен новый текст фрагмента в поле replacement")
+	}
+	text, isString := replacement.(string)
+	if !isString {
+		return out, errors.New("replacement должен быть строкой")
+	}
+	if limits.MaxBodyChars > 0 && len([]rune(text)) > limits.MaxBodyChars {
+		return out, fmt.Errorf("фрагмент длиннее %d знаков — разбей правку на части", limits.MaxBodyChars)
+	}
+	out.CommentID = commentID
+	out.Replacement = text
+	out.Reason = argString(args, "reason")
+	return out, nil
 }

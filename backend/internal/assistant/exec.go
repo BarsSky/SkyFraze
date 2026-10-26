@@ -77,6 +77,10 @@ func (s *Service) execute(
 		return s.toolUpdateText(ctx, userID, projectID, call)
 	case ToolDeleteEvent:
 		return s.toolDeleteEvent(ctx, userID, projectID, call)
+	case ToolReadComments:
+		return s.toolReadComments(ctx, userID, projectID, call)
+	case ToolProposeFragmentEdit:
+		return s.toolProposeFragmentEdit(ctx, userID, projectID, call)
 	case ToolGenerateImage:
 		return s.toolGenerateImage(ctx, actorID, userID, projectID, call, caps)
 	default:
@@ -286,6 +290,145 @@ func (s *Service) toolDeleteEvent(
 			"event_id":    event.ID.String(),
 			"status":      "ждёт подтверждения человеком",
 			"note":        proposalNote(store.AIChangeDeleteEvent),
+		},
+		proposal: change,
+	}
+}
+
+// toolReadComments отдаёт модели обсуждение кадра.
+//
+// Зачем инструмент. Без него помощник видит только текст и не знает, что просят исправить:
+// «здесь провал в логике» относится к конкретным двум строкам, и угадывать их по описанию —
+// ровно тот случай, когда модель перепишет не то. Лимит — 20 последних сообщений: читать
+// всю переписку под кадром модели не нужно, а контекст она занимает.
+func (s *Service) toolReadComments(
+	ctx context.Context, userID, projectID uuid.UUID, call ai.ToolCall,
+) toolResult {
+	if s.comments == nil {
+		return refusedCall(call, "обсуждение кадров недоступно на этом стенде")
+	}
+	rawID := argString(call.Arguments, "id")
+	eventID, err := uuid.Parse(rawID)
+	if err != nil {
+		return refusedCall(call, "нужен идентификатор кадра из list_events")
+	}
+	list, err := s.comments.ListComments(ctx, userID, projectID, eventID, 20)
+	if err != nil {
+		return refusedCall(call, "не удалось прочитать обсуждение: "+err.Error())
+	}
+	if len(list) == 0 {
+		return toolResult{
+			call:   call,
+			report: Call{Name: call.Name, OK: true, Detail: "в кадре нет замечаний"},
+			payload: map[string]any{
+				"comments": []any{},
+				"note":     "обсуждения в этом кадре нет — правку фрагмента по замечанию предложить нельзя",
+			},
+		}
+	}
+	rows := make([]map[string]any, 0, len(list))
+	lines := make([]string, 0, len(list))
+	for _, comment := range list {
+		if comment.Deleted {
+			continue
+		}
+		row := map[string]any{
+			"comment_id": comment.ID.String(),
+			"author":     comment.AuthorName,
+			"body":       comment.Body,
+		}
+		line := "#" + comment.ID.String() + " " + comment.AuthorName + ": " + comment.Body
+		if anchor, aerr := s.comments.CommentAnchor(ctx, userID, projectID, comment.ID); aerr == nil && anchor != nil {
+			row["quote"] = anchor.Quote
+			line += " (о фрагменте: «" + anchor.Quote + "»)"
+		}
+		rows = append(rows, row)
+		lines = append(lines, line)
+	}
+	return toolResult{
+		call:   call,
+		report: Call{Name: call.Name, OK: true, Detail: "прочитал замечания: " + fmt.Sprint(len(rows))},
+		payload: map[string]any{
+			"comments": rows,
+			"note": "правку фрагмента предлагай по идентификатору замечания (propose_fragment_edit); " +
+				"замечание к кадру целиком правится через update_event_text",
+		},
+	}
+}
+
+// toolProposeFragmentEdit предлагает заменить фрагмент, к которому относится замечание.
+//
+// Почему по замечанию, а не «где захотел». Свободная правка произвольного куска — это уже
+// update_event_text целиком, и модель, которой разрешено менять любой фрагмент, рано или
+// поздно перепишет не тот абзац. Привязка к замечанию даёт границы: меняется ровно то, о чём
+// человек написал, и ровно на то, что он подтвердит.
+//
+// «Фрагмент уже другой» — отказ, а не тихое предложение: если текст изменился, человек
+// должен увидеть замечание заново, а не подтверждать правку по устаревшему «было».
+func (s *Service) toolProposeFragmentEdit(
+	ctx context.Context, userID, projectID uuid.UUID, call ai.ToolCall,
+) toolResult {
+	if s.editor == nil || s.comments == nil {
+		return refusedCall(call, "правка фрагмента недоступна на этом стенде")
+	}
+	args, err := ParseFragmentEdit(call.Arguments, s.limits)
+	if err != nil {
+		return refusedCall(call, err.Error())
+	}
+	comment, err := s.comments.CommentByID(ctx, userID, projectID, args.CommentID)
+	if err != nil {
+		return refusedCall(call, "замечание не найдено в этом проекте: возьмите идентификатор из read_comments")
+	}
+	anchor, err := s.comments.CommentAnchor(ctx, userID, projectID, args.CommentID)
+	if err != nil {
+		return refusedCall(call, "не удалось прочитать якорь замечания: "+err.Error())
+	}
+	if anchor == nil {
+		return refusedCall(call, "это замечание к кадру целиком, а не к фрагменту: "+
+			"правь кадр через update_event_text")
+	}
+	span, ok, err := s.editor.SpanText(ctx, userID, projectID, comment.EventID.String(), anchor.Field,
+		anchor.Start, anchor.End)
+	if err != nil {
+		return refusedCall(call, "не удалось прочитать фрагмент: "+err.Error())
+	}
+	if !ok {
+		return refusedCall(call, "фрагмент больше не находится в тексте (его удалили или переписали): "+
+			"предложи человеку новое замечание к нужному месту")
+	}
+	if span == args.Replacement {
+		return refusedCall(call, "предлагать нечего: фрагмент уже такой")
+	}
+	event, found := s.findEvent(ctx, projectID, comment.EventID)
+	title := ""
+	if found {
+		title = event.Title
+	}
+	change, err := s.store.CreateAIChange(ctx, store.AIChange{
+		ProjectID: projectID, UserID: userID,
+		Kind: store.AIChangeUpdateSpan, EventID: comment.EventID, EventTitle: title,
+		CommentID: &comment.ID, AnchorStart: anchor.Start, AnchorEnd: anchor.End,
+		OldSpan: span, NewSpan: args.Replacement,
+	})
+	if err != nil {
+		return refusedCall(call, "не удалось сохранить предложение: "+err.Error())
+	}
+	s.logger.Info("ai: предложена правка фрагмента",
+		"project", projectID, "user", userID, "event", comment.EventID,
+		"comment", comment.ID, "change", change.ID)
+
+	return toolResult{
+		call: call,
+		report: Call{Name: call.Name, OK: true,
+			Detail: "предложил правку фрагмента"},
+		payload: map[string]any{
+			"proposal_id": change.ID.String(),
+			"event_id":    comment.EventID.String(),
+			"comment_id":  comment.ID.String(),
+			"old_span":    span,
+			"new_span":    args.Replacement,
+			"status":      "ждёт подтверждения человеком",
+			"note":        proposalNote(store.AIChangeUpdateSpan),
 		},
 		proposal: change,
 	}

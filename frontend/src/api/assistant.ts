@@ -179,6 +179,10 @@ export interface AIProposal {
   oldBody: string
   newTitle: string
   newBody: string
+  /** Фрагмент (kind=update_span): замечание и текст «было/станет» для куска. */
+  commentId?: string | null
+  oldSpan: string
+  newSpan: string
 }
 
 /** Одна роль агента, из которой выбирает владелец. */
@@ -899,6 +903,9 @@ export function parseProposal(raw: unknown): AIProposal | null {
     oldBody: asText(record?.old_body),
     newTitle: asText(record?.new_title),
     newBody: asText(record?.new_body),
+    commentId: asText(record?.comment_id) || null,
+    oldSpan: asText(record?.old_span),
+    newSpan: asText(record?.new_span),
   }
 }
 

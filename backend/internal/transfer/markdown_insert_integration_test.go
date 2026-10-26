@@ -666,3 +666,16 @@ func TestImportMarkdownIntoHTTP_Refusals(t *testing.T) {
 		t.Errorf("предупреждение серверной стороны не доехало: %+v", res.Warnings)
 	}
 }
+
+// DocForRead — заглушка чтения документа комнаты (см. LiveDoc). Здесь комнаты нет:
+// проверка якорей тогда идёт по снапшоту базы.
+func (s *stubLive) DocForRead(_ context.Context, _ uuid.UUID) *yjs.Doc { return nil }
+
+// ReplaceEventSpanCheckedLive — заглушка правки фрагмента (см. LiveDoc).
+func (s *stubLive) ReplaceEventSpanCheckedLive(
+	_ context.Context, _ uuid.UUID, _ uuid.UUID, eventID, field string,
+	start, end []byte, expect, replacement string,
+) (yjs.EditOutcome, []byte, []byte, error) {
+	s.calls++
+	return yjs.EditOutcome{Handled: true, Found: false}, nil, nil, nil
+}
