@@ -359,6 +359,37 @@
   padding: 6px 8px; border-radius: 6px; border: 1px solid var(--border);
   background: var(--bg-elev); color: var(--fg);
 }
+
+/* ── упоминания (0.58.0) ───────────────────────────────────────────────── */
+/* Ник в тексте — заметный, но не громче самого текста: это адресат, а не заголовок. */
+.fc__mention {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-radius: 4px; padding: 0 2px;
+  /* Длинный ник не должен растягивать строку за экран. */
+  overflow-wrap: anywhere;
+}
+.fc__field { position: relative; flex: 1; min-width: 0; display: flex; }
+.fc__field textarea { width: 100%; }
+/* Подсказка участников: над полем, а не под ним — под полем она уезжала бы за край
+   панели на телефоне. */
+.fc__mention-menu {
+  position: absolute; left: 0; right: 0; bottom: calc(100% + 4px); z-index: 40;
+  list-style: none; margin: 0; padding: 4px;
+  background: var(--bg-elev); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 20px 50px -20px rgba(0, 0, 0, 0.75);
+  max-height: 180px; overflow-y: auto;
+}
+.fc__mention-menu button {
+  display: block; width: 100%; text-align: left;
+  background: transparent; border: 0; border-radius: 6px; padding: 6px 8px;
+  color: var(--fg); font-size: 13px; cursor: pointer;
+  min-height: 30px;
+}
+.fc__mention-menu button:hover, .fc__mention-menu button:focus-visible { background: var(--bg); }
+/* Поле в общей форме: раньше textarea был прямым ребёнком .fc__form, теперь — внутри
+   .fc__field, и без этого правила он терял бы растяжение по ширине. */
+.fc__form > .fc__field { flex: 1; }
 .fc__meta { display: flex; align-items: baseline; gap: 8px; font-size: 12px; }
 .fc__author { font-weight: 600; }
 .fc__stamp { font-size: 11px; }

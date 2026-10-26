@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"unicode/utf8"
 
@@ -73,8 +74,7 @@ func (s *Service) AddComment(
 	comment, err := s.store.CreateEventComment(ctx, projectID, eventID, userID, text, parentID)
 	if err != nil {
 		return nil, err
-	}
-	// Письма о новом замечании — в очередь, а не в момент ответа (миграция 0020).
+	}	// Письма о новом замечании — в очередь, а не в момент ответа (миграция 0020).
 	// Сбой очереди не отменяет комментарий: он уже записан, и «письмо не ушло» — не повод
 	// отвечать автору ошибкой. Поэтому здесь только журнал.
 	if queued, queueErr := s.store.EnqueueCommentNotifications(
@@ -85,7 +85,104 @@ func (s *Service) AddComment(
 		s.logger.Info("events: замечание в очереди на уведомление",
 			"project", projectID, "comment", comment.ID, "recipients", queued)
 	}
+	// Упоминания — после записи комментария, и их сбой не отменяет комментарий: текст уже
+	// сохранён, а «никого не позвали» — не повод отвечать автору ошибкой.
+	s.saveMentions(ctx, projectID, comment, userID)
 	return comment, nil
+}
+
+// mentionPattern — `@ник` в тексте.
+//
+// Правила подогнаны под то, какие ники в проекте вообще бывают (`store.NormalizeUsername`:
+// латиница, цифры, `.`, `-`, `_`, от 3 до 32 знаков, без точки/дефиса/подчёркивания по
+// краям). Поэтому:
+//   - перед `@` не должно быть буквы, цифры или ещё одной собаки — иначе `editor@example.com`
+//     из текста превратился бы в «упоминание example.com»;
+//   - ник не заканчивается на `.`, `-`, `_` — `@editor.` в конце фразы это ник `editor`,
+//     а не `editor.`;
+//   - кириллица в ник не входит: `@Серёжа` остаётся текстом, и подсветка в интерфейсе это
+//     честно показывает (ник в проекте латинский).
+var mentionPattern = regexp.MustCompile(`(?:^|[^\w@])@([A-Za-z0-9_](?:[A-Za-z0-9_.-]{1,30}[A-Za-z0-9_])?)`)
+
+// mentionMinLen — с какого возраста строка после `@` считается ником. Три — тот же минимум,
+// что у самого ника: `@я` и `@ok` не упоминания, а «это никто».
+const mentionMinLen = 3
+
+// saveMentions находит в тексте упоминания участников проекта и сохраняет их.
+//
+// Почему только участники. Упоминание человека вне проекта — это и «уведомление в закрытую
+// дверь», и утечка: сам факт «тебя упомянули в проекте X» сообщает о существовании X.
+// Поэтому ник, которого нет среди участников, остаётся просто текстом в комментарии: автор
+// увидит свой текст, адресат — ничего. Ошибкой это не считаем: опечатка в нике не должна
+// отменять замечание, а список участников автору и так известен (подсказка в интерфейсе).
+//
+// Себя не сохраняем: `@свой ник` — это подпись, а не просьба обратить внимание.
+func (s *Service) saveMentions(
+	ctx context.Context, projectID uuid.UUID, comment *store.EventComment, authorID uuid.UUID,
+) {
+	handles := ParseMentions(comment.Body)
+	if len(handles) == 0 {
+		return
+	}
+	candidates, err := s.store.ProjectMentionCandidates(ctx, projectID)
+	if err != nil {
+		s.logger.Warn("events: участники для упоминаний не прочитаны",
+			"project", projectID, "comment", comment.ID, "err", err)
+		return
+	}
+	byUsername := make(map[string]uuid.UUID, len(candidates))
+	for _, candidate := range candidates {
+		byUsername[strings.ToLower(candidate.Username)] = candidate.UserID
+	}
+	seen := make(map[uuid.UUID]bool, len(handles))
+	targets := make([]uuid.UUID, 0, len(handles))
+	for _, handle := range handles {
+		id, ok := byUsername[strings.ToLower(handle)]
+		if !ok || id == authorID || seen[id] {
+			continue
+		}
+		seen[id] = true
+		targets = append(targets, id)
+	}
+	if len(targets) == 0 {
+		return
+	}
+	if err := s.store.AddCommentMentions(ctx, comment.ID, targets); err != nil {
+		s.logger.Warn("events: упоминания не сохранены",
+			"project", projectID, "comment", comment.ID, "err", err)
+		return
+	}
+	s.logger.Info("events: в замечании упомянуты участники",
+		"project", projectID, "comment", comment.ID, "mentioned", len(targets))
+}
+
+// ParseMentions — ники, упомянутые в тексте, в порядке появления и без повторов.
+//
+// Экспортируется, потому что тот же разбор нужен тестам и подсветке в интерфейсе: держать
+// две регулярки (одну в Go, другую в TypeScript) — значит гарантировать, что они разойдутся.
+func ParseMentions(text string) []string {
+	matches := mentionPattern.FindAllStringSubmatch(text, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	seen := make(map[string]bool, len(matches))
+	out := make([]string, 0, len(matches))
+	for _, match := range matches {
+		handle := match[1]
+		if len(handle) < mentionMinLen {
+			continue
+		}
+		key := strings.ToLower(handle)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, handle)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // checkReplyParent проверяет, что ответ вешают на живое корневое замечание ТОГО ЖЕ кадра.

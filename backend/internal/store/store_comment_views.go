@@ -29,7 +29,11 @@ type ProjectCommentUnread struct {
 	ProjectID uuid.UUID `db:"project_id" json:"project_id"`
 	Title     string    `db:"title" json:"title"`
 	Unread    int       `db:"unread" json:"unread"`
-	LastAt    time.Time `db:"last_at" json:"last_at"`
+	// Mentions — сколько из этих непрочитанных замечаний адресованы мне (`@ник`,
+	// миграция 0024). «В проекте что-то новое» и «в проекте позвали меня» — разные новости:
+	// первое можно отложить, второе обычно нельзя.
+	Mentions int       `db:"mentions" json:"mentions"`
+	LastAt   time.Time `db:"last_at" json:"last_at"`
 }
 
 // EventCommentsUnread — непрочитанное по кадрам одного проекта.
@@ -65,11 +69,14 @@ func (s *Store) ProjectsCommentsUnread(
 	ctx context.Context, userID uuid.UUID,
 ) ([]ProjectCommentUnread, error) {
 	return qAll[ProjectCommentUnread](ctx, s.Pool,
-		`SELECT c.project_id, p.title, count(*) AS unread, max(c.created_at) AS last_at
+		`SELECT c.project_id, p.title, count(*) AS unread,
+		        count(m.comment_id) AS mentions, max(c.created_at) AS last_at
 		   FROM event_comments c
 		   JOIN projects p ON p.id = c.project_id
 		   LEFT JOIN comment_views v
 		          ON v.user_id = $1 AND v.event_id = c.event_id
+		   LEFT JOIN comment_mentions m
+		          ON m.comment_id = c.id AND m.user_id = $1
 		  WHERE c.user_id <> $1
 		    AND c.deleted_at IS NULL
 		    AND c.created_at > COALESCE(v.seen_at, to_timestamp(0))

@@ -118,6 +118,9 @@ var schemaSteps = []struct{ probe, file string }{
 	                  WHERE table_schema='public' AND table_name='event_comments'
 	                    AND column_name='parent_id')`,
 		"0023_comment_threads.up.sql"},
+	{`SELECT EXISTS (SELECT 1 FROM information_schema.tables
+	                  WHERE table_schema='public' AND table_name='comment_mentions')`,
+		"0024_comment_mentions.up.sql"},
 }
 
 // Setup открывает отдельную БД для пакета (suffix), применяет миграции и

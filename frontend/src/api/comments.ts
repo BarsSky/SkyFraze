@@ -95,6 +95,11 @@ export interface ProjectUnseen {
   projectId: string
   title: string
   unread: number
+  /**
+   * Сколько из этих непрочитанных адресованы мне (`@ник`). «В проекте что-то новое» и «в
+   * проекте позвали меня» — разные новости: первое можно отложить, второе обычно нельзя.
+   */
+  mentions: number
   lastAt: string
 }
 
@@ -186,6 +191,7 @@ export function parseProjectUnseen(raw: unknown): ProjectUnseen[] {
       projectId,
       title: asText(row?.title),
       unread,
+      mentions: asWhole(row?.mentions),
       lastAt: asText(row?.last_at),
     })
   }

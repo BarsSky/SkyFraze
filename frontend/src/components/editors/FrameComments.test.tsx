@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   create: vi.fn(),
   remove: vi.fn(),
   seen: vi.fn(),
+  members: vi.fn(),
 }))
 
 vi.mock('../../api/comments', () => ({
@@ -24,6 +25,10 @@ vi.mock('../../api/comments', () => ({
   createComment: mocks.create,
   deleteComment: mocks.remove,
   markCommentsSeen: mocks.seen,
+}))
+
+vi.mock('../../api/teams', () => ({
+  listMembers: mocks.members,
 }))
 
 const ME = { id: 'u1', email: 'me@example.com', display_name: 'Я', is_admin: false }
@@ -65,6 +70,10 @@ beforeEach(() => {
   mocks.seen.mockResolvedValue(undefined)
   mocks.create.mockResolvedValue(comment({ id: 'c3', body: 'Новое замечание.', createdAt: '2026-10-25T12:00:00Z' }))
   mocks.remove.mockResolvedValue(undefined)
+  mocks.members.mockResolvedValue([
+    { project_id: 'p1', user_id: 'u1', role: 'owner', added_at: '', username: 'owner', display_name: 'Я' },
+    { project_id: 'p1', user_id: 'u2', role: 'editor', added_at: '', username: 'editor', display_name: 'Соавтор' },
+  ])
 })
 
 afterEach(() => {
@@ -193,8 +202,7 @@ describe('FrameComments', () => {
     expect(screen.getByText(/Читать обсуждение можно/)).toBeTruthy()
   })
 
-  it('ошибка отправки объясняется словами и не теряет текст', async () => {
-    mocks.create.mockRejectedValue(new Error('нет прав на изменение этого проекта'))
+  it('ошибка отправки объясняется словами и не теряет текст', async () => {    mocks.create.mockRejectedValue(new Error('нет прав на изменение этого проекта'))
     show()
     await screen.findByText('Согласен, перепишу.')
     fireEvent.change(screen.getByLabelText('Новый комментарий'), {
@@ -206,5 +214,44 @@ describe('FrameComments', () => {
     expect((screen.getByLabelText('Новый комментарий') as HTMLTextAreaElement).value).toBe(
       'Замечание, которое не уйдёт.',
     )
+  })
+
+  it('упоминание подсвечивается в тексте комментария', async () => {
+    mocks.list.mockResolvedValue([comment({ body: 'Смотри @editor, тут дыра' })])
+    show()
+    await screen.findByText(/Смотри/)
+    // Ник — отдельный элемент (подсветка), а не часть строки: по нему проверяется и цвет,
+    // и то, что разбор совпал с серверным.
+    expect(document.querySelector('[data-frame-mention="editor"]')).toBeTruthy()
+  })
+
+  it('при наборе @ предлагает участников и вставляет ник целиком', async () => {
+    const onCount = show()
+    const field = (await screen.findByLabelText('Новый комментарий')) as HTMLTextAreaElement
+    fireEvent.change(field, { target: { value: 'Смотри @ed', selectionStart: 10 } })
+
+    const menu = document.querySelector('[data-frame-mention-menu]')
+    expect(menu).toBeTruthy()
+    // В подсказке — только подходящий участник: ник живёт отдельно от имени.
+    expect(menu?.textContent).toContain('@editor')
+    expect(menu?.textContent).not.toContain('@owner')
+
+    fireEvent.click(menu?.querySelector('button') as HTMLButtonElement)
+    await waitFor(() => expect((screen.getByLabelText('Новый комментарий') as HTMLTextAreaElement).value).toBe('Смотри @editor '))
+    // Подсказка закрылась: набранный ник заменён, дальше пишется текст.
+    expect(document.querySelector('[data-frame-mention-menu]')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Написать' }))
+    await waitFor(() => expect(mocks.create).toHaveBeenCalledWith('p1', 'e1', 'Смотри @editor'))
+    expect(onCount).toHaveBeenCalled()
+  })
+
+  it('без участников с ником подсказка не открывается, текст пишется как есть', async () => {
+    mocks.members.mockResolvedValue([])
+    show()
+    const field = (await screen.findByLabelText('Новый комментарий')) as HTMLTextAreaElement
+    fireEvent.change(field, { target: { value: '@ed', selectionStart: 3 } })
+    expect(document.querySelector('[data-frame-mention-menu]')).toBeNull()
+    expect(field.value).toBe('@ed')
   })
 })

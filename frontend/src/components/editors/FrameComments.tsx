@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   createComment,
   deleteComment,
@@ -6,7 +6,14 @@ import {
   markCommentsSeen,
   type FrameComment,
 } from '../../api/comments'
+import { listMembers } from '../../api/teams'
 import { useAuthStore } from '../../store/auth'
+import {
+  applyMention,
+  matchMentionCandidates,
+  mentionQueryAt,
+  splitMentions,
+} from '../../lib/mentions'
 
 /**
  * Обсуждение кадра.
@@ -58,6 +65,123 @@ function liveCount(list: FrameComment[]): number {
   return list.filter((comment) => !comment.deleted).length
 }
 
+/** Кого можно упомянуть: участники проекта с ником (для подсказки после `@`). */
+interface MentionCandidate {
+  username: string
+  displayName: string
+}
+
+/**
+ * Текст с подсвеченными никами.
+ *
+ * Не `dangerouslySetInnerHTML`: комментарий — чужой текст, и единственный безопасный способ
+ * его показать — текстовые узлы, а подсветка остаётся разметкой вокруг них.
+ */
+function CommentBody({ text }: { text: string }) {
+  return (
+    <p className="fc__body">
+      {splitMentions(text).map((part, index) =>
+        part.mention ? (
+          <span className="fc__mention" key={index} data-frame-mention={part.text.slice(1)}>
+            {part.text}
+          </span>
+        ) : (
+          <span key={index}>{part.text}</span>
+        ),
+      )}
+    </p>
+  )
+}
+
+/**
+ * Поле ввода с подсказкой участников по `@`.
+ *
+ * Подсказка нужна не для красоты: ник — латиница, придуманная сервером из email (человека
+ * зовут «Сергей», а ник `sergey-2`), и набирать его по памяти никто не станет. Без подсказки
+ * упоминание осталось бы функцией для тех, кто помнит ники наизусть.
+ */
+function MentionInput({
+  label,
+  placeholder,
+  rows,
+  value,
+  onChange,
+  candidates,
+  disabled,
+  autoFocus,
+}: {
+  label: string
+  placeholder: string
+  rows: number
+  value: string
+  onChange: (next: string) => void
+  candidates: MentionCandidate[]
+  disabled?: boolean
+  autoFocus?: boolean
+}) {
+  const ref = useRef<HTMLTextAreaElement | null>(null)
+  const [query, setQuery] = useState<{ start: number; query: string } | null>(null)
+  const suggestions = query ? matchMentionCandidates(candidates, query.query) : []
+  const show = query !== null && suggestions.length > 0
+
+  const handleChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const next = event.target.value
+    onChange(next)
+    setQuery(mentionQueryAt(next, event.target.selectionStart ?? next.length))
+  }
+
+  const pick = (username: string) => {
+    if (!query) return
+    const caret = ref.current?.selectionStart ?? value.length
+    const applied = applyMention(value, query.start, caret, username)
+    onChange(applied.text)
+    setQuery(null)
+    // Каретку ставим после вставленного ника: иначе следующий символ уедет в начало.
+    requestAnimationFrame(() => {
+      const field = ref.current
+      if (!field) return
+      field.focus()
+      field.setSelectionRange(applied.caret, applied.caret)
+    })
+  }
+
+  return (
+    <div className="fc__field">
+      <textarea
+        ref={ref}
+        value={value}
+        onChange={handleChange}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape' && show) {
+            event.stopPropagation()
+            setQuery(null)
+          }
+        }}
+        placeholder={placeholder}
+        aria-label={label}
+        rows={rows}
+        maxLength={4000}
+        disabled={disabled}
+        autoFocus={autoFocus}
+      />
+      {show && (
+        <ul className="fc__mention-menu" data-frame-mention-menu aria-label="Участники проекта">
+          {suggestions.map((candidate) => (
+            <li key={candidate.username}>
+              <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => pick(candidate.username)}>
+                @{candidate.username}
+                {candidate.displayName && candidate.displayName !== candidate.username && (
+                  <span className="muted"> — {candidate.displayName}</span>
+                )}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
 /** Ветка: корневое замечание и его ответы (только живые родители могут получать ответы). */
 interface Thread {
   root: FrameComment
@@ -107,6 +231,8 @@ export function FrameComments({ projectId, eventId, canEdit, onCountChange }: Pr
   const [replyDraft, setReplyDraft] = useState('')
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState<string | null>(null)
+  /** Участники проекта для подсказки по `@` (ник живёт отдельно от имени). */
+  const [candidates, setCandidates] = useState<MentionCandidate[]>([])
 
   const load = useCallback(
     async (id: string) => {
@@ -140,6 +266,28 @@ export function FrameComments({ projectId, eventId, canEdit, onCountChange }: Pr
     setReplyDraft('')
     if (eventId) void load(eventId)
   }, [eventId, load])
+
+  // Участники для подсказки по `@`: один запрос на проект, а не на кадр. Ошибку не
+  // показываем — без подсказки обсуждение работает, ник можно набрать руками.
+  useEffect(() => {
+    let alive = true
+    listMembers(projectId)
+      .then((members) => {
+        if (!alive) return
+        setCandidates(
+          members
+            .filter((member) => Boolean(member.username))
+            .map((member) => ({
+              username: member.username as string,
+              displayName: member.display_name ?? member.username ?? '',
+            })),
+        )
+      })
+      .catch(() => undefined)
+    return () => {
+      alive = false
+    }
+  }, [projectId])
 
   const send = useCallback(async () => {
     const body = draft.trim()
@@ -249,7 +397,7 @@ export function FrameComments({ projectId, eventId, canEdit, onCountChange }: Pr
           </button>
         )}
       </div>
-      {!comment.deleted && <p className="fc__body">{comment.body}</p>}
+      {!comment.deleted && <CommentBody text={comment.body} />}
     </li>
   )
 
@@ -276,13 +424,14 @@ export function FrameComments({ projectId, eventId, canEdit, onCountChange }: Pr
                 <>
                   {replyTo === root.id ? (
                     <div className="fc__reply-form" data-frame-reply-form={root.id}>
-                      <textarea
-                        value={replyDraft}
-                        onChange={(e) => setReplyDraft(e.target.value)}
-                        placeholder="Ответ на замечание…"
-                        aria-label="Ответ на замечание"
+                      <MentionInput
+                        label="Ответ на замечание"
+                        placeholder="Ответ на замечание… (ник — через @)"
                         rows={2}
-                        maxLength={4000}
+                        value={replyDraft}
+                        onChange={setReplyDraft}
+                        candidates={candidates}
+                        disabled={busy}
                         autoFocus
                       />
                       <div className="row" style={{ gap: 8 }}>
@@ -330,13 +479,14 @@ export function FrameComments({ projectId, eventId, canEdit, onCountChange }: Pr
 
       {canEdit ? (
         <div className="fc__form">
-          <textarea
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            placeholder="Замечание к кадру…"
-            aria-label="Новый комментарий"
+          <MentionInput
+            label="Новый комментарий"
+            placeholder="Замечание к кадру… (ник — через @)"
             rows={2}
-            maxLength={4000}
+            value={draft}
+            onChange={setDraft}
+            candidates={candidates}
+            disabled={busy}
           />
           <button type="button" onClick={() => void send()} disabled={busy || draft.trim() === ''}>
             {busy ? 'Отправляю…' : 'Написать'}

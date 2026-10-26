@@ -47,10 +47,19 @@ test('замечание к кадру пишется, видно в дерев�
   await expect(comments).toContainText('пока пусто')
 
   // 3. Пишем замечание — оно появляется в блоке и счётчиком в дереве.
+  // Упоминание набирается через подсказку: ник — латиница из email, и по памяти его никто
+  // не набирает. Проверяем и подсказку, и подсветку: это единственное место, где разбор
+  // «@ник» живёт в двух реализациях (сервер и интерфейс).
   const comment = 'Тут герой не мог знать про маяк.'
-  await comments.getByLabel('Новый комментарий').fill(comment)
+  const field = comments.getByLabel('Новый комментарий')
+  await field.fill(`${comment} @`)
+  const mentionMenu = comments.locator('[data-frame-mention-menu]')
+  await expect(mentionMenu).toBeVisible()
+  await mentionMenu.locator('button').first().click()
+  await expect(field).toHaveValue(/@[a-z0-9_.-]+ $/)
   await comments.getByRole('button', { name: 'Написать' }).click()
-  await expect(comments.getByText(comment)).toBeVisible({ timeout: 30_000 })
+  await expect(comments.getByText(comment, { exact: false })).toBeVisible({ timeout: 30_000 })
+  await expect(comments.locator('[data-frame-mention]').first()).toBeVisible()
   // Поле очистилось: иначе второе нажатие отправило бы то же самое ещё раз.
   await expect(comments.getByLabel('Новый комментарий')).toHaveValue('')
   const badge = page.locator('.ed-row--chapter .ed-row__comments').first()

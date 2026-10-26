@@ -55,6 +55,14 @@
   flex: 0 0 auto; font-size: 0.78rem; color: var(--danger); white-space: nowrap;
 }
 
+/* «Вас упомянули» — отдельная новость, а не оттенок счётчика: сначала адресат,
+   потом «сколько всего нового». */
+.notify__mention {
+  margin-right: 6px; padding: 1px 6px; border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent); font-size: 0.72rem; white-space: nowrap;
+}
+
 @media (max-width: 860px) {
   /* На телефоне панель прижимается к правому краю экрана, а не к кнопке: у кнопки она
      уезжала бы за край. */

@@ -118,6 +118,11 @@ export function NotificationBell() {
                 >
                   <span className="notify__title">{row.title || 'Проект'}</span>
                   <span className="notify__count">
+                    {row.mentions > 0 && (
+                      <span className="notify__mention" data-notify-mention={row.mentions}>
+                        вас упомянули
+                      </span>
+                    )}
                     {row.unread} {plural(row.unread, 'новое', 'новых', 'новых')}
                   </span>
                 </Link>

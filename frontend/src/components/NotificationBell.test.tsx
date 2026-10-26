@@ -23,6 +23,7 @@ const row = (over: Record<string, unknown> = {}) => ({
   projectId: 'p1',
   title: 'Рукопись',
   unread: 3,
+  mentions: 0,
   lastAt: '2026-10-26T08:00:00Z',
   ...over,
 })
@@ -119,5 +120,21 @@ describe('NotificationBell', () => {
     const bell = await screen.findByRole('button', { name: 'Новые замечания' })
     expect(bell).toBeTruthy()
     expect(document.querySelector('[data-notify-count]')).toBeNull()
+  })
+
+  it('«вас упомянули» — отдельная новость, а не оттенок счётчика', async () => {
+    mocks.projects.mockResolvedValue([row({ unread: 4, mentions: 2 })])
+    renderBell()
+    fireEvent.click(await screen.findByRole('button', { name: 'Новые замечания: 4' }))
+    const chip = document.querySelector('[data-notify-mention="2"]')
+    expect(chip).toBeTruthy()
+    expect(chip?.textContent).toBe('вас упомянули')
+  })
+
+  it('без упоминаний плашки нет', async () => {
+    mocks.projects.mockResolvedValue([row({ unread: 2, mentions: 0 })])
+    renderBell()
+    fireEvent.click(await screen.findByRole('button', { name: 'Новые замечания: 2' }))
+    expect(document.querySelector('[data-notify-mention]')).toBeNull()
   })
 })
