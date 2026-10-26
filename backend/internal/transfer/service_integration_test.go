@@ -305,6 +305,60 @@ func TestImport_RejectsInvalidTree(t *testing.T) {
 	}
 }
 
+// Выгрузка проекта ИЗ КОРЗИНЫ: владелец может посмотреть, что удаляет, не возвращая проект
+// в список, а команда — нет (у неё доступ закрыт вместе с проектом, и выгрузка не должна
+// быть лазейкой).
+func TestExport_FromTrash(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	owner := e.user(t, "owner@example.com")
+	editor := e.user(t, "editor@example.com")
+	projectID, _, state := e.seedProject(t, owner)
+	if err := e.st.AddMembership(ctx, projectID, editor, store.RoleEditor); err != nil {
+		t.Fatalf("участие редактора: %v", err)
+	}
+
+	// Пока проект активен, архив выгружается и редактором (viewer+ — этого достаточно).
+	var active bytes.Buffer
+	if _, err := e.transfer.Export(ctx, editor, projectID, &active); err != nil {
+		t.Fatalf("экспорт активного проекта редактором: %v", err)
+	}
+
+	if err := e.proj.Delete(ctx, owner, projectID); err != nil {
+		t.Fatalf("удаление в корзину: %v", err)
+	}
+
+	// Владелец: архив тот же — с событиями, вложением и CRDT-снапшотом.
+	var trashed bytes.Buffer
+	info, err := e.transfer.Export(ctx, owner, projectID, &trashed)
+	if err != nil {
+		t.Fatalf("экспорт из корзины: %v", err)
+	}
+	if info.Events != 2 || info.Assets != 1 || !info.HasState {
+		t.Fatalf("архив из корзины неполный: %+v", info)
+	}
+	parsed, err := transfer.ParseBundle(bytes.NewReader(trashed.Bytes()), int64(trashed.Len()))
+	if err != nil {
+		t.Fatalf("разбор архива из корзины: %v", err)
+	}
+	if parsed.Manifest.Project.Title != "Мой проект" {
+		t.Errorf("заголовок в архиве из корзины: %q", parsed.Manifest.Project.Title)
+	}
+	if !bytes.Equal(parsed.State, state) {
+		t.Errorf("CRDT-снапшот в архиве из корзины изменился")
+	}
+
+	// Редактор: проект в корзине для него не существует, «выгрузить перед удалением» — право
+	// владельца, а не команды.
+	if _, err := e.transfer.Export(ctx, editor, projectID, &bytes.Buffer{}); !errors.Is(err, transfer.ErrForbidden) {
+		t.Fatalf("экспорт из корзины редактором должен запрещаться, получено %v", err)
+	}
+	// И вернуть он его тоже не может — права те же.
+	if err := e.proj.Restore(ctx, editor, projectID); !errors.Is(err, projects.ErrForbidden) {
+		t.Fatalf("возврат редактором: %v", err)
+	}
+}
+
 func TestSlugifyFileName(t *testing.T) {
 	cases := map[string]string{
 		"Galactic Story": "galactic-story",

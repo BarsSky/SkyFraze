@@ -40,6 +40,13 @@ test('проект уезжает в корзину и возвращается,
   // Срок — обещание, и он написан на экране, а не подразумевается.
   await expect(item).toContainText('вернуть можно ещё 30 дней')
 
+  // «Удалить можно, а посмотреть — нельзя» не порядок: архив скачивается и из корзины,
+  // не возвращая проект в список.
+  const download = page.waitForEvent('download')
+  await item.getByRole('button', { name: 'Скачать архив' }).click()
+  expect((await download).suggestedFilename()).toMatch(/\.zip$/)
+  await expect(item).toBeVisible() // проект остался в корзине
+
   await item.getByRole('button', { name: 'Вернуть' }).click()
   await expect(page.getByRole('link', { name: title })).toBeVisible()
   await expect(panel.locator('[data-trash-item]').filter({ hasText: title })).toHaveCount(0)

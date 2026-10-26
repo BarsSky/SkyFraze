@@ -80,11 +80,18 @@ func (h *Handler) Trash(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "failed")
 		return
 	}
+	// Вес — тем же агрегатом, что у списка проектов: «сколько места освободится» видно до
+	// необратимого действия, а не после. Ошибка веса не валит корзину: без числа проект
+	// вернуть всё равно можно, а показать «пусто» из-за одного агрегата было бы хуже.
+	weights, werr := h.svc.AssetBytesByProject(r.Context())
+	if werr != nil {
+		h.logger.Warn("project trash weights", "err", werr)
+	}
 	out := make([]map[string]any, 0, len(list))
 	for _, p := range list {
 		item := map[string]any{
 			"id": p.ID.String(), "title": p.Title, "description": p.Description,
-			"deleted_at": p.DeletedAt,
+			"deleted_at": p.DeletedAt, "asset_bytes": weights[p.ID],
 		}
 		// Сколько дней осталось до окончательного удаления — это и есть обещание корзины,
 		// и человек должен видеть срок, а не догадываться о нём.

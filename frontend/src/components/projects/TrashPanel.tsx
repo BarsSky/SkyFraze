@@ -1,4 +1,4 @@
-import { formatDaysLeft } from '../../lib/format'
+import { formatBytes, formatDaysLeft } from '../../lib/format'
 import type { TrashedProject } from '../../api/projects'
 
 /**
@@ -11,6 +11,10 @@ import type { TrashedProject } from '../../api/projects'
  *
  * Кнопка «Удалить навсегда» намеренно отдельная и спрашивает подтверждение: ошибка здесь
  * необратима, а «удалил дважды» — не то действие, которое стоит поощрять одной кнопкой.
+ *
+ * «Скачать архив» здесь потому, что «удалить можно, а посмотреть — нельзя» звучит как шутка:
+ * архив проекта (текст, вложения, история) собирается и для проекта в корзине, поэтому перед
+ * необратимым удалением человек может забрать своё, не возвращая проект в список.
  */
 export function TrashPanel({
   items,
@@ -18,12 +22,14 @@ export function TrashPanel({
   busyId,
   onRestore,
   onPurge,
+  onExport,
 }: {
   items: TrashedProject[]
   retentionDays: number
   busyId: string | null
   onRestore: (p: TrashedProject) => void
   onPurge: (p: TrashedProject) => void
+  onExport: (p: TrashedProject) => void
 }) {
   return (
     <div className="card trash-panel" data-project-trash>
@@ -47,6 +53,9 @@ export function TrashPanel({
                   {p.days_left > 0
                     ? `вернуть можно ещё ${formatDaysLeft(p.days_left)}`
                     : 'срок восстановления истёк — проект удалится при следующей уборке'}
+                  {typeof p.asset_bytes === 'number' && p.asset_bytes > 0 && (
+                    <> · файлы: {formatBytes(p.asset_bytes)}</>
+                  )}
                 </p>
               </div>
               <div className="row" style={{ flexWrap: 'wrap' }}>
@@ -57,6 +66,15 @@ export function TrashPanel({
                   onClick={() => onRestore(p)}
                 >
                   Вернуть
+                </button>
+                <button
+                  type="button"
+                  className="secondary"
+                  disabled={busyId === p.id}
+                  title="Скачать архив проекта, чтобы сохранить его перед окончательным удалением"
+                  onClick={() => onExport(p)}
+                >
+                  Скачать архив
                 </button>
                 <button
                   type="button"

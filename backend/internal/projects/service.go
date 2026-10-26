@@ -2,8 +2,8 @@ package projects
 
 import (
 	"context"
-	"time"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -177,6 +177,30 @@ func (s *Service) Delete(ctx context.Context, userID, projectID uuid.UUID) error
 		return ErrForbidden
 	}
 	return s.store.SoftDeleteProject(ctx, projectID)
+}
+
+// GetForExport — проект для выгрузки: активный (роль viewer и выше) или СВОЙ проект в
+// корзине.
+//
+// Почему корзина здесь исключение. «Удалить можно, а посмотреть перед возвратом — нельзя»
+// звучит как шутка: человек, удаливший проект по ошибке, должен иметь возможность выгрузить
+// его архивом, не возвращая в список. Право то же, что на возврат, — только владелец: у
+// команды доступ закрыт вместе с проектом, и выгрузка не должна быть лазейкой.
+//
+// Отличие от Get намеренное: остальные чтения корзину не видят (иначе удалённый проект
+// открывался бы по прямой ссылке), а выгрузка — это ровно «взять своё перед удалением».
+func (s *Service) GetForExport(ctx context.Context, userID, projectID uuid.UUID) (*store.Project, error) {
+	p, err := s.Get(ctx, userID, projectID)
+	if err == nil {
+		return p, nil
+	}
+	if !errors.Is(err, ErrForbidden) {
+		return nil, err
+	}
+	if trashed, derr := s.store.DeletedProject(ctx, projectID); derr == nil && trashed.OwnerID == userID {
+		return trashed, nil
+	}
+	return nil, ErrForbidden
 }
 
 // Trash — корзина владельца: что удалено и сколько осталось до окончательного удаления.

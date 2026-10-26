@@ -169,17 +169,16 @@ func SlugifyFileName(title string) string {
 }
 
 // Export собирает архив проекта в w. Требуется роль viewer+ (читатель и так видит
-// всё содержимое проекта, поэтому выгрузка не расширяет его права).
+// всё содержимое проекта, поэтому выгрузка не расширяет его права). Владельцу доступна и
+// выгрузка проекта ИЗ КОРЗИНЫ: посмотреть, что удаляешь, — часть права на возврат, а не
+// отдельное разрешение (см. projects.Service.GetForExport).
 func (s *Service) Export(ctx context.Context, userID, projectID uuid.UUID, w io.Writer) (*ExportInfo, error) {
-	if err := s.proj.RequireViewer(ctx, userID, projectID); err != nil {
+	p, err := s.proj.GetForExport(ctx, userID, projectID)
+	if err != nil {
 		if errors.Is(err, projects.ErrForbidden) {
 			return nil, ErrForbidden
 		}
-		return nil, err
-	}
-	p, err := s.store.GetProject(ctx, projectID)
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
+		if errors.Is(err, projects.ErrNotFound) || errors.Is(err, store.ErrNotFound) {
 			return nil, ErrNotFound
 		}
 		return nil, err

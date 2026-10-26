@@ -164,6 +164,24 @@ export function ProjectsPage() {
     }
   }
 
+  /**
+   * Сохранить архив проекта из корзины, не возвращая его в список: «удалить можно, а
+   * посмотреть — нельзя» — не порядок. Архив содержит текст, вложения и CRDT-снапшот
+   * (фон кадров, привязки), то есть весит столько же, сколько у активного проекта.
+   */
+  async function onExportTrashed(p: TrashedProject) {
+    setTrashBusyId(p.id)
+    setError(null)
+    try {
+      const name = await exportProject(p.id, p.title)
+      setNote(`Архив «${name}» скачан — проект остался в корзине`)
+    } catch (e) {
+      setError(e)
+    } finally {
+      setTrashBusyId(null)
+    }
+  }
+
   /** Экспорт: скачиваем архив проекта, чтобы перенести его на другой стенд. */
   async function onExport(p: Project) {
     setBusyId(p.id)
@@ -537,6 +555,7 @@ export function ProjectsPage() {
             retentionDays={trash?.retention_days ?? 30}
             busyId={trashBusyId}
             onRestore={(p) => void onRestore(p)}
+            onExport={(p) => void onExportTrashed(p)}
             onPurge={(p) => void onPurge(p)}
           />
         </div>

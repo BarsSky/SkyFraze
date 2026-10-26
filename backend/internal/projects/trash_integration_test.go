@@ -198,6 +198,52 @@ func TestProjectTrashHidesFromEveryoneAndRestores(t *testing.T) {
 	}
 }
 
+// TestTrashShowsWeight — «сколько места освободится» видно до необратимого действия.
+func TestTrashShowsWeight(t *testing.T) {
+	e := newTrashEnv(t)
+	p := e.mustProject(t, "С файлом", store.RoleViewer)
+	assetsSvc := assets.New(e.st, e.obj, e.svc)
+
+	const fileSize = 2048
+	content := bytes.Repeat([]byte("x"), fileSize)
+	if _, err := assetsSvc.Upload(e.ctx, e.owner.ID, p.ID, assets.UploadOpts{
+		Filename: "глава.txt", ContentType: "text/plain",
+		Size: int64(len(content)), Reader: bytes.NewReader(content),
+	}); err != nil {
+		t.Fatalf("вложение: %v", err)
+	}
+	if err := e.svc.Delete(e.ctx, e.owner.ID, p.ID); err != nil {
+		t.Fatalf("удаление: %v", err)
+	}
+
+	h := projects.NewHandler(e.svc, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	r := chi.NewRouter()
+	r.With(e.auth.WithUser).Get("/api/projects/trash", h.Trash)
+	req := httptest.NewRequest(http.MethodGet, "/api/projects/trash", nil)
+	req.Header.Set("Authorization", "Bearer "+accessToken(t, e, e.owner))
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("корзина: код %d, тело %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Projects []struct {
+			ID         uuid.UUID `json:"id"`
+			AssetBytes int64     `json:"asset_bytes"`
+		} `json:"projects"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("json корзины: %v (%s)", err, rec.Body.String())
+	}
+	if len(body.Projects) != 1 {
+		t.Fatalf("в корзине %d проектов, ожидался 1", len(body.Projects))
+	}
+	// Файлы в корзине не удаляются — и вес это подтверждает: он тот же, что был у активного.
+	if body.Projects[0].AssetBytes != fileSize {
+		t.Errorf("вес проекта в корзине %d, ожидался %d", body.Projects[0].AssetBytes, fileSize)
+	}
+}
+
 // TestProjectTrashHTTP — то, что видит браузер: срок, дни до конца, коды ответов.
 func TestProjectTrashHTTP(t *testing.T) {
 	e := newTrashEnv(t)

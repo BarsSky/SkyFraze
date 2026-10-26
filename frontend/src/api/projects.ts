@@ -57,6 +57,12 @@ export interface TrashedProject {
   description: string
   deleted_at: string
   days_left: number
+  /**
+   * Сколько занимают вложения проекта. Нужен до окончательного удаления: человек решает
+   * «вернуть или стереть» в том числе по цене вопроса, а файлы в корзине не удаляются —
+   * значит и вес там настоящий, а не «0, потому что удалено».
+   */
+  asset_bytes?: number
 }
 
 export interface TrashResponse {
