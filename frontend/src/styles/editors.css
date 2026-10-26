@@ -360,6 +360,33 @@
   background: var(--bg-elev); color: var(--fg);
 }
 
+/* ── реакции (0.59.0) ──────────────────────────────────────────────────── */
+/* Две маленькие кнопки под замечанием. Нажатая реакция залита акцентом: «я это отметил» —
+   состояние, а не украшение, и оно должно быть видно одним взглядом. */
+.fc__reactions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.fc__reaction {
+  display: inline-flex; align-items: center; gap: 4px;
+  /* Цель нажатия пальцем: кнопка короткая, промахнуться легко. */
+  min-height: 26px; padding: 2px 8px;
+  border-radius: 999px; border: 1px solid var(--border);
+  background: transparent; color: var(--fg-muted);
+  font-size: 12px; line-height: 1; cursor: pointer;
+}
+.fc__reaction:hover:not(:disabled) { border-color: var(--accent); color: var(--fg); }
+.fc__reaction--mine {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--fg);
+}
+.fc__reaction:disabled { cursor: default; opacity: 0.75; }
+.fc__reaction-count { font-variant-numeric: tabular-nums; font-weight: 600; }
+/* Подпись у кнопки видна всегда: иконка без слова «согласен» читается как «лайк», а это
+   ровно то представление о критике, которого мы избегаем. На узком экране прячем — там
+   важнее не переносить строку. */
+@media (max-width: 520px) {
+  .fc__reaction-label { display: none; }
+}
+
 /* ── упоминания (0.58.0) ───────────────────────────────────────────────── */
 /* Ник в тексте — заметный, но не громче самого текста: это адресат, а не заголовок. */
 .fc__mention {

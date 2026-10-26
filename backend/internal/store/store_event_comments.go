@@ -31,6 +31,9 @@ type EventComment struct {
 	// Deleted — комментарий удалён автором. Строка остаётся, тело вычищено: иначе вместе с
 	// замечанием исчезли бы и чужие ответы на него.
 	Deleted bool `db:"deleted" json:"deleted"`
+	// Reactions — реакции на замечание (миграция 0025). Не колонка таблицы: заполняется
+	// отдельным запросом на весь список (см. CommentReactionStats), чтобы не плодить N+1.
+	Reactions CommentReactions `db:"-" json:"reactions"`
 }
 
 const eventCommentColumns = `c.id, c.project_id, c.event_id, c.user_id,

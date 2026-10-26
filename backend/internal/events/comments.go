@@ -74,7 +74,7 @@ func (s *Service) AddComment(
 	comment, err := s.store.CreateEventComment(ctx, projectID, eventID, userID, text, parentID)
 	if err != nil {
 		return nil, err
-	}	// Письма о новом замечании — в очередь, а не в момент ответа (миграция 0020).
+	} // Письма о новом замечании — в очередь, а не в момент ответа (миграция 0020).
 	// Сбой очереди не отменяет комментарий: он уже записан, и «письмо не ушло» — не повод
 	// отвечать автору ошибкой. Поэтому здесь только журнал.
 	if queued, queueErr := s.store.EnqueueCommentNotifications(
@@ -213,13 +213,75 @@ func (s *Service) checkReplyParent(
 }
 
 // ListComments — обсуждение одного кадра в порядке написания (viewer+).
+//
+// Реакции подтягиваются одним запросом на весь список и раскладываются по комментариям здесь:
+// отдельный эндпоинт за реакциями означал бы ещё круг на каждый выбор строки дерева.
 func (s *Service) ListComments(
 	ctx context.Context, userID, projectID, eventID uuid.UUID, limit int,
 ) ([]store.EventComment, error) {
 	if err := s.proj.RequireViewer(ctx, userID, projectID); err != nil {
 		return nil, err
 	}
-	return s.store.ListEventComments(ctx, projectID, eventID, limit)
+	list, err := s.store.ListEventComments(ctx, projectID, eventID, limit)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]uuid.UUID, 0, len(list))
+	for i := range list {
+		ids = append(ids, list[i].ID)
+		list[i].Reactions = store.CommentReactions{Mine: []string{}}
+	}
+	stats, err := s.store.CommentReactionStats(ctx, ids, userID)
+	if err != nil {
+		// Реакции — не содержимое обсуждения: если их не удалось прочитать, показываем
+		// комментарии без счётчиков, а не падаем и не прячем разговор.
+		s.logger.Warn("events: реакции не прочитаны", "project", projectID, "err", err)
+		return list, nil
+	}
+	for i := range list {
+		if value, ok := stats[list[i].ID]; ok {
+			list[i].Reactions = value
+		}
+	}
+	return list, nil
+}
+
+// SetCommentReaction ставит или снимает реакцию на замечание (editor+).
+//
+// Права те же, что у написания: реакция — след в проекте, а читатель следов не оставляет.
+// Реакция на удалённое замечание запрещена: тела нет, реагировать не на что.
+//
+// Уведомлений реакция не создаёт намеренно: иначе одно нажатие «согласен» рассылало бы письма
+// и поднимало счётчики — ровно тот шум, ради устранения которого реакции и заведены.
+func (s *Service) SetCommentReaction(
+	ctx context.Context, userID, projectID, commentID uuid.UUID, kind store.ReactionKind, on bool,
+) (store.CommentReactions, error) {
+	if err := s.proj.RequireEditor(ctx, userID, projectID); err != nil {
+		return store.CommentReactions{}, err
+	}
+	comment, err := s.store.EventCommentByID(ctx, projectID, commentID)
+	if err != nil {
+		return store.CommentReactions{}, err
+	}
+	if comment.Deleted {
+		return store.CommentReactions{}, fmt.Errorf("%w: замечание удалено", ErrValidation)
+	}
+	if on {
+		err = s.store.AddCommentReaction(ctx, commentID, userID, kind)
+	} else {
+		err = s.store.RemoveCommentReaction(ctx, commentID, userID, kind)
+	}
+	if err != nil {
+		return store.CommentReactions{}, err
+	}
+	stats, err := s.store.CommentReactionStats(ctx, []uuid.UUID{commentID}, userID)
+	if err != nil {
+		return store.CommentReactions{}, err
+	}
+	if value, ok := stats[commentID]; ok {
+		return value, nil
+	}
+	return store.CommentReactions{Mine: []string{}}, nil
 }
 
 // CommentCounts — сколько комментариев у каждого кадра проекта (viewer+).

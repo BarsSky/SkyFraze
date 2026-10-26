@@ -24,7 +24,19 @@ export interface FrameComment {
    * Удаление мягкое намеренно — иначе вместе с замечанием пропали бы чужие ответы.
    */
   deleted: boolean
+  /** Реакции: сколько «согласен»/«сделано» и какие из них мои (миграция 0025). */
+  reactions: CommentReactions
 }
+
+/** Реакции на замечание. Два вида, оба про работу, а не про человека. */
+export interface CommentReactions {
+  agree: number
+  done: number
+  mine: string[]
+}
+
+/** Вид реакции: «согласен» (принято к работе) и «сделано» (правка внесена). */
+export type ReactionKind = 'agree' | 'done'
 
 /** Сколько комментариев у каждого кадра: ключ — идентификатор кадра. */
 export type CommentCounts = Record<string, number>
@@ -71,6 +83,25 @@ export async function deleteComment(projectId: string, commentId: string): Promi
   await http.delete(
     `projects/${encodeURIComponent(projectId)}/comments/${encodeURIComponent(commentId)}`,
   )
+}
+
+/**
+ * Поставить или снять реакцию. Явные PUT/DELETE, а не переключатель: повтор запроса безопасен,
+ * и двойное нажатие на телефоне не превращается в «поставил и снял».
+ *
+ * Возвращаются счётчики после изменения — их считает сервер, чтобы интерфейс не разошёлся с ним.
+ */
+export async function setCommentReaction(
+  projectId: string,
+  commentId: string,
+  kind: ReactionKind,
+  on: boolean,
+): Promise<CommentReactions> {
+  const path = `projects/${encodeURIComponent(projectId)}/comments/${encodeURIComponent(commentId)}/reactions/${kind}`
+  const raw = on
+    ? await http.put(path).json<unknown>()
+    : await http.delete(path).json<unknown>()
+  return parseReactions(asRecord(raw)?.reactions)
 }
 
 /** Непрочитанные замечания по кадрам проекта: ключ — кадр, значение — сколько новых. */
@@ -138,6 +169,20 @@ export function parseComment(raw: unknown): FrameComment | null {
     createdAt: asText(record?.created_at),
     parentId: parentId === '' ? null : parentId,
     deleted: record?.deleted === true,
+    reactions: parseReactions(record?.reactions),
+  }
+}
+
+/** Разбор реакций: нет поля — ноль реакций, а не падение разметки. */
+export function parseReactions(raw: unknown): CommentReactions {
+  const record = asRecord(raw)
+  const mine = Array.isArray(record?.mine)
+    ? record.mine.filter((value): value is string => typeof value === 'string')
+    : []
+  return {
+    agree: asWhole(record?.agree),
+    done: asWhole(record?.done),
+    mine,
   }
 }
 

@@ -31,6 +31,10 @@ func (h *Handler) MountComments(r chi.Router) {
 	r.Post("/comments", h.CreateComment)
 	r.Post("/comments/seen", h.MarkCommentsSeen)
 	r.Delete("/comments/{cid}", h.DeleteComment)
+	// Реакции: PUT/DELETE, а не переключатель. Повтор того же запроса безопасен, и это важно:
+	// двойное нажатие на телефоне не должно превращаться в «поставил и снял».
+	r.Put("/comments/{cid}/reactions/{kind}", h.SetCommentReaction(true))
+	r.Delete("/comments/{cid}/reactions/{kind}", h.SetCommentReaction(false))
 }
 
 // UnseenComments — GET /comments/unseen: сколько новых замечаний у каждого кадра.

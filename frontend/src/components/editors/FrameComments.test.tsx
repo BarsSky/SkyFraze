@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   remove: vi.fn(),
   seen: vi.fn(),
   members: vi.fn(),
+  react: vi.fn(),
 }))
 
 vi.mock('../../api/comments', () => ({
@@ -25,6 +26,7 @@ vi.mock('../../api/comments', () => ({
   createComment: mocks.create,
   deleteComment: mocks.remove,
   markCommentsSeen: mocks.seen,
+  setCommentReaction: mocks.react,
 }))
 
 vi.mock('../../api/teams', () => ({
@@ -46,6 +48,7 @@ const comment = (over: Partial<FrameComment> = {}): FrameComment => ({
   createdAt: '2026-10-25T10:00:00Z',
   parentId: null,
   deleted: false,
+  reactions: { agree: 0, done: 0, mine: [] },
   ...over,
 })
 
@@ -253,5 +256,50 @@ describe('FrameComments', () => {
     fireEvent.change(field, { target: { value: '@ed', selectionStart: 3 } })
     expect(document.querySelector('[data-frame-mention-menu]')).toBeNull()
     expect(field.value).toBe('@ed')
+  })
+
+  it('реакция ставится и снимается, счётчик берётся с сервера', async () => {
+    mocks.list.mockResolvedValue([comment({ reactions: { agree: 2, done: 0, mine: [] } })])
+    mocks.react.mockResolvedValue({ agree: 3, done: 0, mine: ['agree'] })
+    show()
+    await screen.findByText('Тут герой не мог знать про маяк.')
+
+    const agree = document.querySelector('[data-frame-reaction="agree:2"]') as HTMLButtonElement
+    expect(agree).toBeTruthy()
+    expect(agree.getAttribute('aria-pressed')).toBe('false')
+    fireEvent.click(agree)
+
+    await waitFor(() => expect(mocks.react).toHaveBeenCalledWith('p1', 'c1', 'agree', true))
+    // Счётчик и «моё» пришли с сервера: интерфейс не пересчитывает их сам.
+    const updated = document.querySelector('[data-frame-reaction="agree:3"]') as HTMLButtonElement
+    expect(updated).toBeTruthy()
+    expect(updated.getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('повторное нажатие снимает реакцию', async () => {
+    mocks.list.mockResolvedValue([comment({ reactions: { agree: 1, done: 0, mine: ['agree'] } })])
+    mocks.react.mockResolvedValue({ agree: 0, done: 0, mine: [] })
+    show()
+    await screen.findByText('Тут герой не мог знать про маяк.')
+
+    const agree = document.querySelector('[data-frame-reaction="agree:1"]') as HTMLButtonElement
+    fireEvent.click(agree)
+    await waitFor(() => expect(mocks.react).toHaveBeenCalledWith('p1', 'c1', 'agree', false))
+    expect(document.querySelector('[data-frame-reaction="agree:0"]')).toBeTruthy()
+  })
+
+  it('читателю реакции не нажимаются: реакция — след в проекте', async () => {
+    mocks.list.mockResolvedValue([comment({ reactions: { agree: 1, done: 0, mine: [] } })])
+    show(false)
+    await screen.findByText('Тут герой не мог знать про маяк.')
+    const agree = document.querySelector('[data-frame-reaction="agree:1"]') as HTMLButtonElement
+    expect(agree.disabled).toBe(true)
+  })
+
+  it('удалённое замечание реакций не показывает', async () => {
+    mocks.list.mockResolvedValue([comment({ deleted: true, body: '', reactions: { agree: 1, done: 0, mine: [] } })])
+    show()
+    await screen.findByText('Комментарий удалён')
+    expect(document.querySelector('[data-frame-reactions]')).toBeNull()
   })
 })

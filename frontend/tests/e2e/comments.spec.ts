@@ -82,6 +82,25 @@ test('замечание к кадру пишется, видно в дерев�
   await expect(page.locator('[data-frame-comments]')).toContainText(reply, { timeout: 45_000 })
   await expect(page.locator('.ed-row--chapter .ed-row__comments').first()).toHaveText('2')
 
+  // 4.1. Реакции: «согласен» ставится одним нажатием и переживает перезагрузку.
+  // Переписка ради «да, поправлю» — ровно тот шум, ради устранения которого они заведены.
+  const agree = comments.locator('[data-frame-reaction^="agree:"]').first()
+  await expect(agree).toHaveAttribute('aria-pressed', 'false')
+  await agree.click()
+  await expect(comments.locator('[data-frame-reaction="agree:1"]').first()).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  )
+  await page.reload()
+  await expect(
+    page.locator('[data-frame-comments] [data-frame-reaction="agree:1"]').first(),
+  ).toHaveAttribute('aria-pressed', 'true', { timeout: 45_000 })
+  // Снятие возвращает счётчик в ноль — реакция это состояние, а не след навсегда.
+  await page.locator('[data-frame-comments] [data-frame-reaction="agree:1"]').first().click()
+  await expect(
+    page.locator('[data-frame-comments] [data-frame-reaction="agree:0"]').first(),
+  ).toBeVisible()
+
   // 5. Свой комментарий можно удалить. Удаление мягкое: замечание остаётся строкой
   // «Комментарий удалён», а ответ на него — живым. Жёсткое удаление унесло бы чужой текст.
   await page

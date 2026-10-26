@@ -4,7 +4,10 @@ import {
   deleteComment,
   listComments,
   markCommentsSeen,
+  setCommentReaction,
+  type CommentReactions,
   type FrameComment,
+  type ReactionKind,
 } from '../../api/comments'
 import { listMembers } from '../../api/teams'
 import { useAuthStore } from '../../store/auth'
@@ -90,6 +93,63 @@ function CommentBody({ text }: { text: string }) {
         ),
       )}
     </p>
+  )
+}
+
+/**
+ * Реакции на замечание: «согласен» и «сделано».
+ *
+ * Нажатие — PUT/DELETE, а не переключатель на клиенте: повтор запроса безопасен, и двойное
+ * нажатие на телефоне не превращается в «поставил и снял». Счётчики после изменения приходят
+ * с сервера — интерфейс их не пересчитывает, иначе два человека с открытой панелью показывали
+ * бы разные числа.
+ *
+ * Читателю кнопки не показываются: реакция — след в проекте, а читатель следов не оставляет
+ * (то же правило, что у комментариев).
+ */
+const REACTIONS: Array<{ kind: ReactionKind; label: string; hint: string; icon: string }> = [
+  { kind: 'agree', label: 'согласен', hint: 'Замечание принято к работе', icon: '👍' },
+  { kind: 'done', label: 'сделано', hint: 'Правка внесена', icon: '✅' },
+]
+
+function ReactionBar({
+  reactions,
+  canEdit,
+  busy,
+  onToggle,
+}: {
+  reactions: CommentReactions
+  canEdit: boolean
+  busy: boolean
+  onToggle: (kind: ReactionKind, on: boolean) => void
+}) {
+  return (
+    <div className="fc__reactions" data-frame-reactions>
+      {REACTIONS.map((item) => {
+        const count = reactions[item.kind]
+        const mine = reactions.mine.includes(item.kind)
+        // Счётчик и кнопка — одно: у непрореагировавшего замечания с нулём реакций кнопка
+        // всё равно нужна, иначе поставить первую реакцию нечем.
+        if (!canEdit && count === 0) return null
+        return (
+          <button
+            key={item.kind}
+            type="button"
+            className={mine ? 'fc__reaction fc__reaction--mine' : 'fc__reaction'}
+            data-frame-reaction={`${item.kind}:${count}`}
+            aria-pressed={mine}
+            aria-label={`${item.label}: ${count}`}
+            title={canEdit ? item.hint : `${item.hint} (ставит участник проекта)`}
+            disabled={!canEdit || busy}
+            onClick={() => onToggle(item.kind, !mine)}
+          >
+            <span aria-hidden="true">{item.icon}</span>
+            {count > 0 && <span className="fc__reaction-count">{count}</span>}
+            <span className="fc__reaction-label">{item.label}</span>
+          </button>
+        )
+      })}
+    </div>
   )
 }
 
@@ -368,6 +428,26 @@ export function FrameComments({ projectId, eventId, canEdit, onCountChange }: Pr
     [projectId, eventId, load],
   )
 
+  /**
+   * Поставить или снять реакцию. Счётчики берём из ответа сервера, а не пересчитываем на
+   * клиенте: два человека с открытой панелью иначе показывали бы разные числа.
+   */
+  const toggleReaction = useCallback(
+    async (comment: FrameComment, kind: ReactionKind, on: boolean) => {
+      setBusy(true)
+      setNote(null)
+      try {
+        const reactions = await setCommentReaction(projectId, comment.id, kind, on)
+        setComments((list) => list.map((item) => (item.id === comment.id ? { ...item, reactions } : item)))
+      } catch {
+        setNote('Не удалось поставить реакцию.')
+      } finally {
+        setBusy(false)
+      }
+    },
+    [projectId],
+  )
+
   const { threads, orphans } = useMemo(() => buildThreads(comments), [comments])
   const total = liveCount(comments)
 
@@ -398,6 +478,14 @@ export function FrameComments({ projectId, eventId, canEdit, onCountChange }: Pr
         )}
       </div>
       {!comment.deleted && <CommentBody text={comment.body} />}
+      {!comment.deleted && (
+        <ReactionBar
+          reactions={comment.reactions}
+          canEdit={canEdit}
+          busy={busy}
+          onToggle={(kind, on) => void toggleReaction(comment, kind, on)}
+        />
+      )}
     </li>
   )
 
