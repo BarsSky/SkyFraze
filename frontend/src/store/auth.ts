@@ -26,6 +26,11 @@ export interface UserPublic {
   notify_comments?: boolean
   /** Включён ли второй фактор входа. */
   totp_enabled?: boolean
+  /**
+   * Настроены ли на стенде ключи доступа (docs/webauthn.md): по этому признаку профиль
+   * показывает раздел ключей, а не кнопку, которая всегда отвечает «не настроено».
+   */
+  passkeys_enabled?: boolean
 }
 
 interface AuthState {

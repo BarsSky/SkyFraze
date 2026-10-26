@@ -23,6 +23,12 @@ export interface UserPublic {
   notify_comments?: boolean
   /** Включён ли второй фактор входа (docs/security.md). */
   totp_enabled?: boolean
+  /**
+   * Настроены ли на стенде ключи доступа (docs/webauthn.md). Профиль по этому признаку
+   * показывает раздел ключей: предлагать кнопку, которая всегда отвечает «не настроено»,
+   * хуже, чем не предлагать её вовсе.
+   */
+  passkeys_enabled?: boolean
 }
 
 /** Как на этой инсталляции пускают новых пользователей. */
@@ -32,6 +38,8 @@ export interface AuthConfig {
   registration_mode: RegistrationMode
   /** Инсталляция ещё пустая: первый аккаунт создаёт её и становится администратором. */
   bootstrap?: boolean
+  /** На стенде настроены ключи доступа (WebAuthn). */
+  passkeys?: boolean
 }
 
 /** Публичная конфигурация входа: нужна до отправки формы регистрации. */
@@ -62,18 +70,28 @@ export async function requestRegistration(input: {
 
 /**
  * Вход. Два возможных ответа, и это не «неопределённость», а второй фактор:
- * сервер отвечает `{totp_required, challenge}` когда пароля мало, и токены выдаются только
- * после кода. Возвращаем размеченное объединение — пусть забыть проверить его нельзя.
+ * сервер отвечает `{totp_required, challenge, totp, passkeys}` когда пароля мало, и токены
+ * выдаются только после второго шага. Возвращаем размеченное объединение — пусть забыть
+ * проверить его нельзя.
+ *
+ * `totp` и `passkeys` говорят, ЧЕМ этот второй шаг можно пройти: кодом из приложения, ключом
+ * доступа или и тем и другим. Это не украшение ответа — от них зависит, какие кнопки показать
+ * (docs/webauthn.md §7). Старый сервер этих полей не присылает, тогда считаем «только код».
  */
 export type LoginResult =
-  | { kind: 'two-factor'; challenge: string }
+  | { kind: 'two-factor'; challenge: string; totp: boolean; passkeys: boolean }
   | { kind: 'ok'; user: UserPublic }
 
 export async function login(input: { email: string; password: string }): Promise<LoginResult> {
   const raw = await http.post('auth/login', { json: input }).json<unknown>()
   const record = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : null
   if (record?.totp_required === true) {
-    return { kind: 'two-factor', challenge: String(record.challenge ?? '') }
+    return {
+      kind: 'two-factor',
+      challenge: String(record.challenge ?? ''),
+      totp: record.totp === true,
+      passkeys: record.passkeys === true,
+    }
   }
   const r = raw as { user: UserPublic; tokens: { access: string; refresh: string } }
   useAuthStore.getState().setTokens(r.tokens.access, r.tokens.refresh)

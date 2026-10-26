@@ -174,3 +174,18 @@ span.craft-chip { cursor: default; }
 .twofa__codes ul { columns: 2; font-size: 13px; padding-left: 18px; }
 .twofa__sessions { font-size: 12px; margin: 6px 0 10px; padding-left: 18px; }
 .twofa__note { font-size: 12px; margin: 8px 0 0; }
+
+/* ─── ключи доступа (компонент PasskeySettings, 0.65.0) ──────────────────────
+   Список устройств, а не «галочка включено»: у ключа есть имя, дата привязки и дата
+   последнего входа — по ним видно, что старый телефон всё ещё открывает аккаунт. */
+.passkeys__list { list-style: none; margin: 8px 0; padding: 0; }
+.passkeys__item {
+  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+  padding: 6px 0; border-bottom: 1px dashed var(--border);
+}
+.passkeys__item:last-child { border-bottom: none; }
+.passkeys__name { font-weight: 600; }
+.passkeys__meta { font-size: 12px; flex: 1 1 auto; }
+.passkeys__confirm { display: flex; gap: 6px; }
+.passkeys__note { font-size: 12px; margin: 8px 0 0; }
+

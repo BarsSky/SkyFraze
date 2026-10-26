@@ -172,6 +172,10 @@ jobs:
       # auth) — здесь он не то, что мы тестируем, а то, что мешает.
       AUTH_RATE_PER_MINUTE: "0"
       AUTH_LOGIN_PER_EMAIL_PER_MINUTE: "0"
+      # Ключи доступа (docs/webauthn.md): RP ID и origin берутся из публичного адреса, а в
+      # e2e это адрес vite. Без этой строки раздел ключей в профиле скрыт, и сценарий
+      # zz-passkeys.spec.ts честно упал бы на «backend не настроен».
+      APP_BASE_URL: http://localhost:5173
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

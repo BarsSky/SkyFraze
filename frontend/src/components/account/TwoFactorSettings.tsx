@@ -8,6 +8,7 @@ import {
   type AuthSession,
 } from '../../api/auth'
 import { useAuthStore } from '../../store/auth'
+import { PasskeySettings } from './PasskeySettings'
 
 /**
  * Второй фактор входа и активные сеансы.
@@ -208,6 +209,9 @@ export function TwoFactorSettings() {
       <button type="button" className="secondary" onClick={() => void closeOthers()} disabled={busy} data-sessions-revoke>
         Выйти на всех устройствах, кроме этого
       </button>
+
+      {/* Ключи доступа — второй фактор рядом с кодом из приложения (0.65.0). */}
+      <PasskeySettings />
 
       {note !== null && (
         <p className="twofa__note" role="status" data-two-factor-note>
