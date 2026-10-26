@@ -2,6 +2,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../store/auth'
 import { useTheme } from '../store/theme'
 import { BrandMark } from './BrandMark'
+import { NotificationBell } from './NotificationBell'
 
 /**
  * Шапка приложения.
@@ -68,6 +69,10 @@ export function Header() {
             {user.username ? ` · @${user.username}` : ''}
           </Link>
         )}
+        {/* Колокольчик: где ждут новые замечания. Только для вошедших — у анонимного
+            человека нет ни проектов, ни обсуждений, а лишний значок в шапке ленты
+            выглядел бы поломкой. */}
+        {user && <NotificationBell />}
         <button
           className="secondary header-theme"
           onClick={() => setTheme(nextTheme)}

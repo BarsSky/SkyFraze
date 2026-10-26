@@ -1,0 +1,63 @@
+/* SkyFraze — колокольчик «где ждут новые замечания» (0.56.0).
+ *
+ * Счётчик висит на кнопке в шапке и обязан быть заметен, но не спорить с навигацией:
+ * поэтому это не отдельная пилюля, а маленький бейдж на круглой кнопке. Панель — та же
+ * геометрия, что у меню выгрузки проекта: один язык для всплывающих списков.
+ */
+
+.notify { position: relative; }
+
+.notify__button {
+  position: relative;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px; padding: 0;
+  /* Эмодзи-колокол рисуется системным шрифтом: размер фиксируем, иначе он «прыгает»
+     между темами и платформами. */
+  font-size: 16px; line-height: 1;
+}
+
+.notify__badge {
+  position: absolute; top: -6px; right: -6px;
+  min-width: 18px; height: 18px; padding: 0 4px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 9px;
+  background: var(--danger); color: #fff;
+  font-size: 11px; font-weight: 600; line-height: 1;
+  /* Бейдж не должен съедать клики по кнопке. */
+  pointer-events: none;
+}
+
+.notify__panel {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 70;
+  display: flex; flex-direction: column; gap: 2px;
+  width: min(320px, calc(100vw - 32px));
+  max-height: min(420px, 70vh); overflow-y: auto;
+  padding: 8px;
+  background: var(--bg-elev); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 24px 60px -24px rgba(0, 0, 0, 0.75);
+}
+
+.notify__hint, .notify__empty { margin: 2px 4px 6px; font-size: 0.78rem; }
+.notify__empty { margin-bottom: 0; }
+
+.notify__item {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  min-height: 34px; padding: 8px 10px;
+  border-radius: 8px; text-decoration: none; color: var(--fg);
+}
+.notify__item:hover, .notify__item:focus-visible { background: var(--bg); }
+.notify__item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.notify__title {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.notify__count {
+  flex: 0 0 auto; font-size: 0.78rem; color: var(--danger); white-space: nowrap;
+}
+
+@media (max-width: 860px) {
+  /* На телефоне панель прижимается к правому краю экрана, а не к кнопке: у кнопки она
+     уезжала бы за край. */
+  .notify__panel { position: fixed; top: 56px; right: 8px; left: 8px; width: auto; }
+  .notify__item { min-height: 40px; }
+}

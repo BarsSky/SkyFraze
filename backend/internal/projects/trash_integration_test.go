@@ -244,6 +244,46 @@ func TestTrashShowsWeight(t *testing.T) {
 	}
 }
 
+// TestTrashHidesUnreadComments — «новые замечания» не зовут в проект, которого уже нет.
+//
+// Счётчик непрочитанного считается по всем моим проектам, и проект в корзине обязан из него
+// выпасть: иначе колокольчик/список зовёт по ссылке, которая отдаёт 403, а сам проект в
+// списке не значится. Проверяем именно эту связку: замечание есть → проект в корзине →
+// счётчик пуст.
+func TestTrashHidesUnreadComments(t *testing.T) {
+	e := newTrashEnv(t)
+	p := e.mustProject(t, "С обсуждением", store.RoleViewer)
+
+	eventID := uuid.New()
+	if err := e.st.ReplaceEventTree(e.ctx, p.ID, e.owner.ID, []store.Event{
+		{ID: eventID, ProjectID: p.ID, Position: 0, Depth: 0, Title: "Глава", Body: "текст"},
+	}); err != nil {
+		t.Fatalf("кадр: %v", err)
+	}
+	// Замечание пишет ДРУГОЙ человек: своё замечание непрочитанным не считается.
+	if _, err := e.st.CreateEventComment(e.ctx, p.ID, eventID, e.other.ID, "поправь середину"); err != nil {
+		t.Fatalf("замечание: %v", err)
+	}
+	unread, err := e.st.ProjectsCommentsUnread(e.ctx, e.owner.ID)
+	if err != nil {
+		t.Fatalf("непрочитанное: %v", err)
+	}
+	if len(unread) != 1 || unread[0].ProjectID != p.ID || unread[0].Unread != 1 {
+		t.Fatalf("до удаления: %+v", unread)
+	}
+
+	if err := e.svc.Delete(e.ctx, e.owner.ID, p.ID); err != nil {
+		t.Fatalf("удаление в корзину: %v", err)
+	}
+	unread, err = e.st.ProjectsCommentsUnread(e.ctx, e.owner.ID)
+	if err != nil {
+		t.Fatalf("непрочитанное после удаления: %v", err)
+	}
+	if len(unread) != 0 {
+		t.Fatalf("проект в корзине остался в счётчике: %+v", unread)
+	}
+}
+
 // TestProjectTrashHTTP — то, что видит браузер: срок, дни до конца, коды ответов.
 func TestProjectTrashHTTP(t *testing.T) {
 	e := newTrashEnv(t)

@@ -56,7 +56,10 @@ func (s *Store) EventCommentsUnread(
 // ProjectsCommentsUnread — в каких моих проектах есть непрочитанные замечания.
 //
 // Учитываются только проекты, где человек участник (владелец или член команды): чужие
-// обсуждения ему не показываются, а «сколько там нового» — это уже утечка.
+// обсуждения ему не показываются, а «сколько там нового» — это уже утечка. Проекты в
+// корзине тоже исключены (`p.deleted_at IS NULL`, миграция 0022): иначе счётчик звал бы в
+// проект, который открывается 403 и из списка уже пропал. Правило одно и то же везде, где
+// считаются замечания «для меня».
 func (s *Store) ProjectsCommentsUnread(
 	ctx context.Context, userID uuid.UUID,
 ) ([]ProjectCommentUnread, error) {
@@ -68,6 +71,7 @@ func (s *Store) ProjectsCommentsUnread(
 		          ON v.user_id = $1 AND v.event_id = c.event_id
 		  WHERE c.user_id <> $1
 		    AND c.created_at > COALESCE(v.seen_at, to_timestamp(0))
+		    AND p.deleted_at IS NULL
 		    AND (p.owner_id = $1
 		         OR EXISTS (SELECT 1 FROM team_memberships tm
 		                     WHERE tm.project_id = p.id AND tm.user_id = $1))
