@@ -568,3 +568,35 @@
   color: var(--fg-muted); font-size: 13px; line-height: 1;
 }
 .ent__link-remove:hover { color: var(--danger); }
+
+/* ─── эго-граф связей (0.75.0) ───────────────────────────────────────────────
+   Рёбра — SVG (тонкие линии, подпись посередине), узлы — HTML-«пилюли» поверх: текст
+   остаётся резким и стилизуется тем же CSS, что и остальные карточки. */
+.egraph { margin-bottom: 16px; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+.egraph__head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.egraph__matches { display: flex; gap: 6px; flex-wrap: wrap; list-style: none; margin: 6px 0 0; padding: 0; }
+.egraph__match {
+  background: var(--bg-elev); border: 1px dashed var(--border); border-radius: 999px;
+  padding: 2px 10px; font-size: 12px; color: var(--fg); cursor: pointer;
+}
+.egraph__canvas { position: relative; height: 320px; margin-top: 8px; }
+.egraph__edges { position: absolute; inset: 0; }
+.egraph__edge { stroke: var(--border); stroke-width: 1.5; }
+.egraph__edge-label { fill: var(--fg-muted); font-size: 11px; }
+.egraph__node {
+  position: absolute; transform: translate(-50%, -50%);
+  background: var(--bg-elev); border: 1px solid var(--border); border-radius: 999px;
+  padding: 4px 12px; font-size: 12px; color: var(--fg); cursor: pointer; max-width: 160px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.egraph__node:hover { border-color: var(--accent); }
+.egraph__node--center { font-weight: 600; border-color: var(--accent); cursor: default; }
+.egraph__center { font-weight: 600; margin: 8px 0 4px; }
+.egraph__list { list-style: none; margin: 6px 0; padding: 0; display: grid; gap: 4px; }
+.egraph__row {
+  display: flex; align-items: baseline; gap: 8px; width: 100%; text-align: left;
+  background: var(--bg-elev); border: 1px solid var(--border); border-radius: 6px;
+  padding: 6px 10px; color: var(--fg); font-size: 12px; cursor: pointer;
+}
+.egraph__row-name { font-weight: 600; }
+.egraph__rail-controls { display: flex; align-items: center; gap: 8px; font-size: 12px; margin-top: 4px; }

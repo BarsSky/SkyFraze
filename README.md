@@ -1,4 +1,4 @@
-# SkyFraze
+﻿# SkyFraze
 
 Веб-платформа для совместной (по приглашениям) разработки сюжетов игр / кино / мультфильмов / книг:
 проект разбивается на главы и под-события, каждое событие показывается отдельным «кадром»
@@ -726,6 +726,9 @@ cd frontend && npx tsx tests/visual-matrix.ts
 
 # Регрессия шапки: уход к «Редакторам» и возврат (0.72.1) — docScroll и headerY должны быть 0
 cd frontend && npx tsx tests/visual-stage-fix.ts
+
+# Эго-граф связей (0.75.0): снимки канвы, перехода по клику и мобильного вида
+cd frontend && npx tsx tests/visual-graph.ts
 
 # E2E публичной ленты: права, просмотры, оценки
 cd frontend && npx tsx tests/public-feed.ts

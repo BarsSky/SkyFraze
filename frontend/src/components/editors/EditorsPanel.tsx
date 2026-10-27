@@ -14,6 +14,7 @@ import { FrameComments } from './FrameComments'
 import { FrameMentions } from './FrameMentions'
 import { EntitiesPanel } from '../entities/EntitiesPanel'
 import { scrollWithinMain } from '../../lib/scrollTo'
+import { EntityGraph } from '../entities/EntityGraph'
 import { useProjectEntities } from '../entities/useProjectEntities'
 import {
   entityUsage,
@@ -1698,6 +1699,9 @@ once — чтобы повторный
           links={entityLinks}
         />
       )}
+
+      {/* Эго-граф связей: между редактором и карточками, как и договаривались. */}
+      {entities.length > 0 && <EntityGraph entities={entities} links={entityLinks} />}
 
       <div className="ed-panel__grid">
         <nav
