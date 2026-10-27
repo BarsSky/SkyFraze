@@ -97,7 +97,14 @@ export function readEntity(raw: unknown): ProjectEntity | null {
 }
 
 /** Вид сущности по-русски: в интерфейсе не должно быть `character`. */
-export function kindLabel(kind: EntityKind): string {
+/**
+ * Русское название вида карточки.
+ *
+ * На входе строка, а не только `EntityKind`: вид приходит и из предложения помощника (0.77.0),
+ * где он ещё не проверен. Неизвестный вид показывается как «Персонаж» — сервер такую карточку
+ * всё равно не создаст, и подменять её названием вида из ответа модели незачем.
+ */
+export function kindLabel(kind: EntityKind | string): string {
   switch (kind) {
     case 'place':
       return 'Место'

@@ -157,6 +157,17 @@ type EntityReader interface {
 	Frames(ctx context.Context, userID, projectID, entityID uuid.UUID) ([]entities.EntityFrame, error)
 }
 
+// EntityWriter — создание карточек мира и связей между ними.
+//
+// Отдельный интерфейс, а не продолжение EntityReader: чтение карточек нужно всем, запись —
+// только применению подтверждённого предложения (propose_entities → «Добавить»). Так фейк для
+// тестов чтения не обязан уметь создавать, а стенд без карточек мира не получает запись
+// «на всякий случай».
+type EntityWriter interface {
+	Create(ctx context.Context, userID, projectID uuid.UUID, in entities.Input) (*store.ProjectEntity, error)
+	AddLink(ctx context.Context, userID, projectID, from, to uuid.UUID, label string) (*store.EntityLink, error)
+}
+
 // Service — беседы с моделью внутри проекта.
 type Service struct {
 	store    *store.Store
@@ -176,6 +187,10 @@ type Service struct {
 	// world — карточки мира проекта. Необязателен: без него list_entities модели не
 	// предлагается, и помощник работает как раньше.
 	world EntityReader
+	// worldWrite — создание карточек и связей (0.77.0). Отдельно от чтения: чтение нужно всем
+	// инструментам, запись — только применению подтверждённого предложения. Без него
+	// propose_entities модели не предлагается, а list_entities продолжает работать.
+	worldWrite EntityWriter
 }
 
 // New собирает сервис. Отсутствие вставки или прав не валит сервер: помощник —
@@ -203,6 +218,10 @@ func (s *Service) UseComments(reader CommentReader) { s.comments = reader }
 
 // UseEntities подключает карточки мира проекта (персонажи, места, темы).
 func (s *Service) UseEntities(reader EntityReader) { s.world = reader }
+
+// UseEntityWriter подключает создание карточек и связей: без него помощник карточки только
+// читает, а инструмент предложения карточек модели не предлагается.
+func (s *Service) UseEntityWriter(writer EntityWriter) { s.worldWrite = writer }
 
 // UseEditor подключает правку существующих кадров: без него помощник только создаёт.
 func (s *Service) UseEditor(editor EventEditor) { s.editor = editor }
@@ -509,6 +528,10 @@ type Turn struct {
 	// Proposals — правки существующих кадров, которые агент ПРЕДЛОЖИЛ, но не сделал:
 	// их применяет человек (см. proposals.go). Пусто — агент ничего не предлагал.
 	Proposals []Proposal `json:"proposals,omitempty"`
+	// EntityProposals — предложения карточек мира и связей (0.77.0, entity_proposals.go).
+	// Отдельным полем, а не внутри Proposals: там правка кадра, здесь пачка новых карточек, и
+	// общих полей у них нет ни одного.
+	EntityProposals []EntityProposalView `json:"entity_proposals,omitempty"`
 }
 
 // Send отправляет вопрос модели и выполняет то, что она попросила.
@@ -840,7 +863,7 @@ func (s *Service) converse(
 		reply, partial, err := ask(ai.Request{
 			Model:       model,
 			Messages:    messages,
-			Tools:       ToolDefs(caps, s.editor != nil, s.world != nil),
+			Tools:       ToolDefs(caps, s.editor != nil, s.world != nil, s.worldWrite != nil),
 			Temperature: 0.4,
 		})
 		if err != nil {
@@ -892,6 +915,9 @@ func (s *Service) converse(
 			}
 			if res.proposal != nil {
 				turn.Proposals = append(turn.Proposals, ProposalDTO(*res.proposal))
+			}
+			if res.entityProposal != nil {
+				turn.EntityProposals = append(turn.EntityProposals, EntityProposalDTO(*res.entityProposal))
 			}
 			payload = append(payload, toolPayload{
 				ToolCallID: res.call.ID, Name: res.call.Name, Result: res.payload,

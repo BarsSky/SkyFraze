@@ -55,6 +55,12 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Post("/ai/proposals/{pid}/apply", h.ApplyProposal)
 	r.Post("/ai/proposals/{pid}/revert", h.RevertProposal)
 	r.Post("/ai/proposals/{pid}/discard", h.DiscardProposal)
+
+	// Предложения карточек мира и связей (0.77.0): отдельный путь, потому что это не правка
+	// кадра — карточки живут в Postgres, и «применить» здесь значит создать строки.
+	r.Get("/ai/entity-proposals", h.ListEntityProposals)
+	r.Post("/ai/entity-proposals/{pid}/apply", h.ApplyEntityProposal)
+	r.Post("/ai/entity-proposals/{pid}/discard", h.DiscardEntityProposal)
 }
 
 // GetSettings — GET .../ai/settings: имя агента, роль, указания и права спрашивающего.
@@ -354,6 +360,65 @@ func (h *Handler) DiscardProposal(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.svc.DiscardProposal(r.Context(), uid, pid, proposalID); err != nil {
 		h.fail(w, "discard proposal", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ListEntityProposals — GET .../ai/entity-proposals: карточки, которые агент предложил завести.
+//
+// Отдельная ручка, а не общий список с правками кадров: у предложения карточек нет ни кадра,
+// ни «было/станет», и смешивать их в одном ответе значило бы отдавать интерфейсу половину
+// полей пустыми.
+func (h *Handler) ListEntityProposals(w http.ResponseWriter, r *http.Request) {
+	uid, pid, ok := h.scope(w, r)
+	if !ok {
+		return
+	}
+	list, err := h.svc.EntityProposals(r.Context(), uid, pid)
+	if err != nil {
+		h.fail(w, "list entity proposals", err)
+		return
+	}
+	if list == nil {
+		list = []EntityProposalView{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"proposals": list})
+}
+
+// ApplyEntityProposal — POST .../ai/entity-proposals/{pid}/apply: создать карточки и связи.
+//
+// Карточки создаёт человек (его идентификатор), а не агент: `created_by` карточки — это
+// «кто завёл», и отвечать за строку в проекте должен тот, кто нажал кнопку.
+func (h *Handler) ApplyEntityProposal(w http.ResponseWriter, r *http.Request) {
+	uid, pid, ok := h.scope(w, r)
+	if !ok {
+		return
+	}
+	proposalID, ok := h.proposalID(w, r)
+	if !ok {
+		return
+	}
+	proposal, result, err := h.svc.ApplyEntityProposal(r.Context(), uid, pid, proposalID)
+	if err != nil {
+		h.fail(w, "apply entity proposal", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"proposal": proposal, "result": result})
+}
+
+// DiscardEntityProposal — POST .../ai/entity-proposals/{pid}/discard: отказаться.
+func (h *Handler) DiscardEntityProposal(w http.ResponseWriter, r *http.Request) {
+	uid, pid, ok := h.scope(w, r)
+	if !ok {
+		return
+	}
+	proposalID, ok := h.proposalID(w, r)
+	if !ok {
+		return
+	}
+	if err := h.svc.DiscardEntityProposal(r.Context(), uid, pid, proposalID); err != nil {
+		h.fail(w, "discard entity proposal", err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

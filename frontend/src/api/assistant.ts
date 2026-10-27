@@ -158,6 +158,12 @@ export interface AITurn {
    * прежний.
    */
   proposals?: AIProposal[]
+  /**
+   * Предложения карточек мира (0.77.0): агент предложил завести персонажей, места, темы и
+   * связи между ними. Пока человек не нажал «Добавить», в проекте их нет — это главное
+   * отличие от `changes`.
+   */
+  entityProposals?: AIEntityProposal[]
 }
 
 /**
@@ -185,8 +191,56 @@ export interface AIProposal {
   newSpan: string
 }
 
-/** Одна роль агента, из которой выбирает владелец. */
-export interface AIRole {
+/** Карточка мира, которую предлагает завести агент (0.77.0). */
+export interface AIProposedCard {
+  kind: string
+  name: string
+  aliases: string[]
+  description: string
+}
+
+/**
+ * Связь между карточками — ИМЕНАМИ, а не идентификаторами: на момент предложения карточек ещё
+ * нет. Сервер разрешает имена в id при применении, и только тогда появляется связь.
+ */
+export interface AIProposedLink {
+  from: string
+  to: string
+  label: string
+}
+
+/** Предложение карточек мира: ждёт, пока человек нажмёт «Добавить». */
+export interface AIEntityProposal {
+  id: string
+  status: string
+  /** Почему агент это предлагает, его словами. */
+  note: string
+  cards: AIProposedCard[]
+  links: AIProposedLink[]
+  createdAt: string
+}
+
+/**
+ * Что получилось при применении: создано, уже было, не вышло.
+ *
+ * Три списка, а не «ok: true»: человек нажал «Добавить» и должен видеть, что появилось в
+ * проекте. «Занятое имя» попало в `existing` — это нормальный исход, а не ошибка.
+ */
+export interface AIEntityProposalResult {
+  created: string[]
+  existing: string[]
+  failed: AIProposalItemError[]
+  linksCreated: string[]
+  linksSkipped: AIProposalItemError[]
+}
+
+/** Строка отчёта: что именно и по какой причине не получилось. */
+export interface AIProposalItemError {
+  name: string
+  reason: string
+}
+
+/** Одна роль агента, из которой выбирает владелец. */export interface AIRole {
   id: string
   title: string
   hint: string
@@ -470,6 +524,61 @@ export async function discardAIProposal(projectId: string, proposalId: string): 
   await http.post(
     `projects/${encodeURIComponent(projectId)}/ai/proposals/${encodeURIComponent(proposalId)}/discard`,
   )
+}
+
+/**
+ * Предложения карточек мира, которые ждут решения.
+ *
+ * Отдельная ручка, а не общий список с правками кадров: у предложения карточек нет ни кадра,
+ * ни «было/станет», и общий разбор отдавал бы половину полей пустыми.
+ */
+export async function listAIEntityProposals(projectId: string): Promise<AIEntityProposal[]> {
+  const raw = await http
+    .get(`projects/${encodeURIComponent(projectId)}/ai/entity-proposals`)
+    .json<unknown>()
+  return parseEntityProposals(raw)
+}
+
+/** Добавить карточки из предложения. Карточки создаёт сервер, а не браузер. */
+export async function applyAIEntityProposal(
+  projectId: string,
+  proposalId: string,
+): Promise<{ proposal: AIEntityProposal | null; result: AIEntityProposalResult }> {
+  const raw = await http
+    .post(
+      `projects/${encodeURIComponent(projectId)}/ai/entity-proposals/${encodeURIComponent(proposalId)}/apply`,
+      { timeout: 30000 },
+    )
+    .json<unknown>()
+  const record = asRecord(raw)
+  return {
+    proposal: parseEntityProposal(record?.proposal),
+    result: parseEntityProposalResult(record?.result),
+  }
+}
+
+/** Отказаться от предложения карточек: в проекте ничего не появится. */
+export async function discardAIEntityProposal(
+  projectId: string,
+  proposalId: string,
+): Promise<void> {
+  await http.post(
+    `projects/${encodeURIComponent(projectId)}/ai/entity-proposals/${encodeURIComponent(proposalId)}/discard`,
+  )
+}
+
+/**
+ * Событие «карточки в проекте изменились» (0.77.0).
+ *
+ * Применение предложения включает карточки, о которых панель связей ещё не знает: она живёт в
+ * другом дереве компонентов и перечитывает список по этому событию. Альтернатива — общий стор
+ * карточек — на один случай с кнопкой не нужна.
+ */
+export const ENTITIES_CHANGED_EVENT = 'skyfraze:entities-changed'
+
+/** Сообщить панели связей, что карточки изменились. */
+export function notifyEntitiesChanged(): void {
+  window.dispatchEvent(new Event(ENTITIES_CHANGED_EVENT))
 }
 
 /** Разбор `GET /api/ai/endpoints`. */
@@ -884,7 +993,94 @@ export function parseAITurn(raw: unknown): AITurn {
           .map(parseProposal)
           .filter((item): item is AIProposal => item !== null)
       : [],
+    entityProposals: Array.isArray(record?.entity_proposals)
+      ? record.entity_proposals
+          .map(parseEntityProposal)
+          .filter((item): item is AIEntityProposal => item !== null)
+      : [],
   }
+}
+
+/** Разбор предложения карточек мира. */
+export function parseEntityProposal(raw: unknown): AIEntityProposal | null {
+  const record = asRecord(raw)
+  const id = asText(record?.id)
+  if (!id) return null
+  const cards: AIProposedCard[] = []
+  if (Array.isArray(record?.cards)) {
+    for (const item of record.cards) {
+      const card = asRecord(item)
+      const name = asText(card?.name)
+      if (!name) continue
+      cards.push({
+        kind: asText(card?.kind) || 'character',
+        name,
+        aliases: Array.isArray(card?.aliases)
+          ? card.aliases.filter((alias): alias is string => typeof alias === 'string')
+          : [],
+        description: asText(card?.description),
+      })
+    }
+  }
+  const links: AIProposedLink[] = []
+  if (Array.isArray(record?.links)) {
+    for (const item of record.links) {
+      const link = asRecord(item)
+      const from = asText(link?.from)
+      const to = asText(link?.to)
+      if (!from || !to) continue
+      links.push({ from, to, label: asText(link?.label) })
+    }
+  }
+  return {
+    id,
+    status: asText(record?.status) || 'pending',
+    note: asText(record?.note),
+    cards,
+    links,
+    createdAt: asText(record?.created_at),
+  }
+}
+
+/** Разбор `GET /api/projects/{id}/ai/entity-proposals`. */
+export function parseEntityProposals(raw: unknown): AIEntityProposal[] {
+  const record = asRecord(raw)
+  if (!Array.isArray(record?.proposals)) return []
+  const out: AIEntityProposal[] = []
+  for (const item of record.proposals) {
+    const proposal = parseEntityProposal(item)
+    if (proposal !== null) out.push(proposal)
+  }
+  return out
+}
+
+/** Разбор отчёта применения: что создано, что уже было, что не вышло. */
+export function parseEntityProposalResult(raw: unknown): AIEntityProposalResult {
+  const record = asRecord(raw)
+  return {
+    created: stringList(record?.created),
+    existing: stringList(record?.existing),
+    failed: itemErrors(record?.failed),
+    linksCreated: stringList(record?.links_created),
+    linksSkipped: itemErrors(record?.links_skipped),
+  }
+}
+
+function stringList(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  return raw.filter((item): item is string => typeof item === 'string')
+}
+
+function itemErrors(raw: unknown): AIProposalItemError[] {
+  if (!Array.isArray(raw)) return []
+  const out: AIProposalItemError[] = []
+  for (const item of raw) {
+    const record = asRecord(item)
+    const name = asText(record?.name)
+    if (!name) continue
+    out.push({ name, reason: asText(record?.reason) })
+  }
+  return out
 }
 
 /** Разбор одного предложения правки. */

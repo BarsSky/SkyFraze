@@ -14,14 +14,17 @@ vi.mock('./client', () => ({ http: { get: mocks.get, post: mocks.post, delete: m
 
 import {
   addAIEndpoint,
+  applyAIEntityProposal,
   applyAIProposal,
   changeLabel,
   deleteAIConsent,
   deleteAIEndpoint,
+  discardAIEntityProposal,
   discardAIProposal,
   getAIConfig,
   isCloudModelRef,
   listAIEndpoints,
+  listAIEntityProposals,
   listAIModels,
   listAIProposals,
   needsConsent,
@@ -213,6 +216,95 @@ describe('предложения правок', () => {
     expect(events[0].change).toBeUndefined()
   })
 })
+describe('предложения карточек мира (0.77.0)', () => {
+  it('читает предложение из ответа: карточки, алиасы и связи по именам', () => {
+    const turn = parseAITurn({
+      answer: 'Предлагаю завести героев.',
+      entity_proposals: [
+        {
+          id: 'ep1',
+          status: 'pending',
+          note: 'в главе появились новые герои',
+          cards: [
+            { kind: 'character', name: 'Анна', aliases: ['Аня'], description: 'героиня' },
+            { kind: 'place', name: 'Земля' },
+          ],
+          links: [{ from: 'Анна', to: 'Земля', label: 'живёт на' }],
+        },
+        // Без идентификатора предложение нельзя ни применить, ни отклонить.
+        { status: 'pending', cards: [{ kind: 'theme', name: 'Письмо' }] },
+      ],
+    })
+    expect(turn.entityProposals).toHaveLength(1)
+    const proposal = turn.entityProposals![0]
+    expect(proposal.id).toBe('ep1')
+    expect(proposal.note).toBe('в главе появились новые герои')
+    expect(proposal.cards).toEqual([
+      { kind: 'character', name: 'Анна', aliases: ['Аня'], description: 'героиня' },
+      // Вид по умолчанию — персонаж; алиасы без списка — пустые, а не падение разбора.
+      { kind: 'place', name: 'Земля', aliases: [], description: '' },
+    ])
+    expect(proposal.links).toEqual([{ from: 'Анна', to: 'Земля', label: 'живёт на' }])
+  })
+
+  it('без поля предложений карточек ответ читается как раньше', () => {
+    const turn = parseAITurn({ answer: 'Просто ответ.' })
+    expect(turn.entityProposals).toEqual([])
+    expect(turn.proposals).toEqual([])
+  })
+
+  it('список предложений читается отдельной ручкой', async () => {
+    mocks.get.mockReturnValueOnce(
+      reply({
+        proposals: [
+          {
+            id: 'ep1',
+            status: 'pending',
+            note: 'почему',
+            cards: [{ kind: 'character', name: 'Анна' }],
+            links: [],
+          },
+        ],
+      }),
+    )
+    const list = await listAIEntityProposals('p1')
+    expect(mocks.get).toHaveBeenCalledWith('projects/p1/ai/entity-proposals')
+    expect(list).toHaveLength(1)
+    expect(list[0].cards[0].name).toBe('Анна')
+  })
+
+  it('применение возвращает отчёт: что создано, что уже было, что пропущено', async () => {
+    mocks.post.mockReturnValueOnce(
+      reply({
+        proposal: { id: 'ep1', status: 'applied', cards: [], links: [] },
+        result: {
+          created: ['Земля'],
+          existing: ['Анна'],
+          failed: [{ name: 'Письмо', reason: 'имя от 2 до 80 знаков' }],
+          links_created: ['Анна → живёт на → Земля'],
+          links_skipped: [{ name: 'Анна → летит на → Марс', reason: 'карточки «Марс» нет в проекте' }],
+        },
+      }),
+    )
+    const { proposal, result } = await applyAIEntityProposal('p1', 'ep1')
+    expect(mocks.post).toHaveBeenCalledWith('projects/p1/ai/entity-proposals/ep1/apply', {
+      timeout: 30000,
+    })
+    expect(proposal?.status).toBe('applied')
+    expect(result.created).toEqual(['Земля'])
+    expect(result.existing).toEqual(['Анна'])
+    expect(result.failed[0].reason).toContain('2 до 80')
+    expect(result.linksCreated).toHaveLength(1)
+    expect(result.linksSkipped[0].name).toContain('Марс')
+  })
+
+  it('отказ уходит на свой адрес и ничего не возвращает', async () => {
+    mocks.post.mockReturnValueOnce(reply({}))
+    await discardAIEntityProposal('p1', 'ep1')
+    expect(mocks.post).toHaveBeenCalledWith('projects/p1/ai/entity-proposals/ep1/discard')
+  })
+})
+
 describe('changeLabel', () => {
   it('называет созданное по данным сервера, а не по тексту модели', () => {
     expect(changeLabel({ action: 'created_chapter', id: '1', title: 'Пролог' })).toBe(

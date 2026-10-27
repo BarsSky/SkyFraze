@@ -38,12 +38,14 @@ import (
 //
 // change и proposal взаимоисключающие: создание кадра — это изменение проекта (оно уже
 // случилось), а правка существующего — предложение (случится, когда человек подтвердит).
+// entityProposal — третий случай: предложение карточек мира (0.77.0), тоже ждёт человека.
 type toolResult struct {
-	call     ai.ToolCall
-	report   Call
-	payload  any
-	change   *Change
-	proposal *store.AIChange
+	call           ai.ToolCall
+	report         Call
+	payload        any
+	change         *Change
+	proposal       *store.AIChange
+	entityProposal *store.EntityProposal
 }
 
 // refusedCall — вызов, который не выполнялся (кончился лимит изменений).
@@ -83,6 +85,8 @@ func (s *Service) execute(
 		return s.toolListEntities(ctx, userID, projectID, call)
 	case ToolReadEntity:
 		return s.toolReadEntity(ctx, userID, projectID, call)
+	case ToolProposeEntities:
+		return s.toolProposeEntities(ctx, userID, projectID, call)
 	case ToolProposeFragmentEdit:
 		return s.toolProposeFragmentEdit(ctx, userID, projectID, call)
 	case ToolGenerateImage:
@@ -767,6 +771,49 @@ func (s *Service) toolCreate(
 		change: &Change{
 			Action: action, ID: created.ID, Title: created.Title, Parent: args.ParentID,
 		},
+	}
+}
+
+// toolProposeEntities предлагает карточки мира и связи между ними (0.77.0).
+//
+// Что здесь проверяется, а что нет. Структуру аргументов разбирает ParseEntityProposal, поля
+// карточек и подписи — ProposeEntities (теми же правилами, что создание). А вот «такая карточка
+// уже есть» здесь НЕ отказ: во-первых, между предложением и подтверждением могло пройти время;
+// во-вторых, занятое имя — повод сказать человеку «эти уже заведены», а не заставлять модель
+// переписывать пачку. Поэтому дубли просто попадут в отчёт при применении.
+func (s *Service) toolProposeEntities(
+	ctx context.Context, userID, projectID uuid.UUID, call ai.ToolCall,
+) toolResult {
+	if s.worldWrite == nil || s.world == nil {
+		return refusedCall(call, "предложение карточек мира недоступно на этом стенде")
+	}
+	args, err := ParseEntityProposal(call.Arguments)
+	if err != nil {
+		return refusedCall(call, err.Error())
+	}
+	proposal, err := s.ProposeEntities(ctx, userID, projectID, args.Cards, args.Links, args.Note)
+	if err != nil {
+		return refusedCall(call, entityErrorText(err))
+	}
+
+	detail := fmt.Sprintf("предложил карточек: %d", len(proposal.Cards))
+	if len(proposal.Links) > 0 {
+		detail += fmt.Sprintf(", связей: %d", len(proposal.Links))
+	}
+	return toolResult{
+		call:   call,
+		report: Call{Name: call.Name, OK: true, Detail: detail},
+		payload: map[string]any{
+			"proposal_id": proposal.ID.String(),
+			"status":      "ждёт подтверждения человеком",
+			"cards":       len(proposal.Cards),
+			"links":       len(proposal.Links),
+			// Модель должна понимать, что проект ещё не изменён: иначе она честно решит,
+			// что «не получилось», и предложит то же самое ещё три раза.
+			"note": "предложение сохранено и ждёт подтверждения человеком; карточки пока НЕ созданы " +
+				"и повторять вызов не нужно — скажи человеку, что он может добавить их в окне помощника",
+		},
+		entityProposal: proposal,
 	}
 }
 

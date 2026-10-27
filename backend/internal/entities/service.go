@@ -97,19 +97,36 @@ func (s *Service) Create(
 	if err := s.proj.RequireEditor(ctx, userID, projectID); err != nil {
 		return nil, err
 	}
+	entity, err := PrepareCard(in)
+	if err != nil {
+		return nil, err
+	}
+	entity.ProjectID = projectID
+	entity.CreatedBy = &userID
+	return s.store.CreateEntity(ctx, entity)
+}
+
+// PrepareCard проверяет и нормализует поля карточки, НЕ создавая её.
+//
+// Зачем отдельной функцией. У помощника появилось предложение карточек (propose_entities,
+// 0.77.0): он проверяет предложение ДО того, как человек его подтвердит, и проверять его
+// должен теми же правилами, что и создание, — иначе человек увидит «добавить», которое сервер
+// отвергнет. Нормализация имени и алиасов — ровно то место, где две копии правил разъехались
+// бы молча: падежи, минимальная длина алиаса, «алиас не повторяет имя».
+func PrepareCard(in Input) (store.ProjectEntity, error) {
 	kind, ok := store.ParseEntityKind(strings.TrimSpace(in.Kind))
 	if !ok {
-		return nil, fmt.Errorf("%w: вид должен быть character, place или theme", ErrInvalidEntity)
+		return store.ProjectEntity{}, fmt.Errorf("%w: вид должен быть character, place или theme", ErrInvalidEntity)
 	}
 	name := strings.TrimSpace(in.Name)
 	if utf8.RuneCountInString(name) < minNameRunes || utf8.RuneCountInString(name) > maxNameRunes {
-		return nil, fmt.Errorf("%w: имя от %d до %d знаков", ErrInvalidEntity, minNameRunes, maxNameRunes)
+		return store.ProjectEntity{}, fmt.Errorf("%w: имя от %d до %d знаков", ErrInvalidEntity, minNameRunes, maxNameRunes)
 	}
 	aliases := []string{}
 	if in.Aliases != nil {
 		cleaned, err := CleanAliases(*in.Aliases, name)
 		if err != nil {
-			return nil, err
+			return store.ProjectEntity{}, err
 		}
 		aliases = cleaned
 	}
@@ -117,21 +134,20 @@ func (s *Service) Create(
 	if in.Description != nil {
 		description = strings.TrimSpace(*in.Description)
 		if utf8.RuneCountInString(description) > maxDescriptionRunes {
-			return nil, fmt.Errorf("%w: описание не длиннее %d знаков", ErrInvalidEntity, maxDescriptionRunes)
+			return store.ProjectEntity{}, fmt.Errorf("%w: описание не длиннее %d знаков", ErrInvalidEntity, maxDescriptionRunes)
 		}
 	}
 	color := ""
 	if in.Color != nil {
 		color = strings.TrimSpace(*in.Color)
 		if color != "" && !validColor(color) {
-			return nil, fmt.Errorf("%w: цвет в виде #rrggbb", ErrInvalidEntity)
+			return store.ProjectEntity{}, fmt.Errorf("%w: цвет в виде #rrggbb", ErrInvalidEntity)
 		}
 	}
-	return s.store.CreateEntity(ctx, store.ProjectEntity{
-		ProjectID: projectID, Kind: string(kind), Name: name,
+	return store.ProjectEntity{
+		Kind: string(kind), Name: name,
 		Aliases: aliases, Description: description, Color: color,
-		CreatedBy: &userID,
-	})
+	}, nil
 }
 
 // Update — правка карточки (редактор и выше).
@@ -334,6 +350,18 @@ func (s *Service) Links(
 	return s.store.ListEntityLinks(ctx, projectID)
 }
 
+// ValidateLinkLabel — правила подписи связи, доступные снаружи.
+//
+// Вынесено ради помощника (0.77.0): предложение связи проверяется до подтверждения, а не
+// после. Правило одно и то же в двух местах, и второй его копии быть не должно.
+func ValidateLinkLabel(label string) error {
+	label = strings.TrimSpace(label)
+	if label == "" || utf8.RuneCountInString(label) > maxLinkLabelRunes {
+		return fmt.Errorf("%w: подпись связи от 1 до %d знаков", ErrInvalidEntity, maxLinkLabelRunes)
+	}
+	return nil
+}
+
 // AddLink связывает две карточки (редактор и выше).
 //
 // Правила: подпись 1–40 знаков, связь не с самой собой, не больше maxLinksPerEntity связей у
@@ -346,8 +374,8 @@ func (s *Service) AddLink(
 		return nil, err
 	}
 	label = strings.TrimSpace(label)
-	if label == "" || utf8.RuneCountInString(label) > maxLinkLabelRunes {
-		return nil, fmt.Errorf("%w: подпись связи от 1 до %d знаков", ErrInvalidEntity, maxLinkLabelRunes)
+	if err := ValidateLinkLabel(label); err != nil {
+		return nil, err
 	}
 	if from == to {
 		return nil, fmt.Errorf("%w: карточка не может быть связана сама с собой", ErrInvalidEntity)

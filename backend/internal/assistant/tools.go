@@ -31,6 +31,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/skyfraze/backend/internal/ai"
+	"github.com/skyfraze/backend/internal/store"
 )
 
 // Имена инструментов. Константами, а не строками по месту: имя приходит от модели, и
@@ -50,6 +51,8 @@ const (
 	ToolListEntities = "list_entities"
 	// Где карточка встречается (0.70.0): кадры и цитаты по имени.
 	ToolReadEntity = "read_entity"
+	// Предложение карточек мира и связей между ними (0.77.0): создаёт человек, не модель.
+	ToolProposeEntities = "propose_entities"
 )
 
 // ErrUnknownTool — модель попросила инструмент, которого нет. Это не падение сервера:
@@ -62,7 +65,7 @@ var ErrUnknownTool = errors.New("неизвестный инструмент")
 // правка кадров, `world` — карточки мира): инструмента, которого агент сейчас не может
 // выполнить, в списке НЕТ. Так модель физически не может пообещать нарисовать картинку,
 // когда генератора нет, — обещание, которое нельзя выполнить, хуже отказа.
-func ToolDefs(caps Capabilities, editing, world bool) []ai.ToolDef {
+func ToolDefs(caps Capabilities, editing, world, worldWrite bool) []ai.ToolDef {
 	defs := []ai.ToolDef{
 		{
 			Name: ToolListEvents,
@@ -120,6 +123,58 @@ func ToolDefs(caps Capabilities, editing, world bool) []ai.ToolDef {
 				},
 			},
 		)
+	}
+
+	// Предложение карточек и связей (0.77.0). Нужно И чтение, И запись: без чтения незачем
+	// (модель не увидит, что уже заведено), без записи нечего применять.
+	//
+	// Почему предложение, а не создание. Карточка меняет весь проект — упоминания в тексте,
+	// хронологию, матрицу, граф связей. Неверное имя испортит связи везде, где встретится, а
+	// не одну сцену; поэтому пачку проверяет и подтверждает человек.
+	if caps.Text && world && worldWrite {
+		defs = append(defs, ai.ToolDef{
+			Name: ToolProposeEntities,
+			Description: "Предложить завести карточки мира (персонажи, места, темы) и связи между ними. " +
+				"Вызывай, когда в тексте появляются важные герои или места, которых нет в списке карточек " +
+				"(сначала посмотри list_entities, чтобы не предлагать то, что уже есть). " +
+				"Карточки НЕ создаются: их добавит человек в окне помощника, так же как правку кадра. " +
+				"Связи описывай именами карточек — из этой же пачки или уже существующих; подпись — " +
+				"по-человечески («живёт на», «сестра»), направление — от первой карточки ко второй.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"cards": map[string]any{
+						"type":        "array",
+						"description": "Карточки, которые стоит завести (не больше 12)",
+						"items": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"kind":        map[string]any{"type": "string", "enum": []string{"character", "place", "theme"}, "description": "character — персонаж, place — место, theme — тема"},
+								"name":        map[string]any{"type": "string", "description": "Имя в именительном падеже: «Анна». От 2 до 80 знаков"},
+								"aliases":     map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Как ещё называют в тексте: падежи и краткие формы («Аня», «Анну») — по ним ищутся упоминания"},
+								"description": map[string]any{"type": "string", "description": "Одна-две строки о том, кто это или что это (необязательно)"},
+							},
+							"required": []string{"kind", "name"},
+						},
+					},
+					"links": map[string]any{
+						"type":        "array",
+						"description": "Связи между карточками (необязательно, не больше 24)",
+						"items": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"from":  map[string]any{"type": "string", "description": "Имя карточки-источника"},
+								"to":    map[string]any{"type": "string", "description": "Имя карточки-цели"},
+								"label": map[string]any{"type": "string", "description": "Подпись связи от источника к цели: «живёт на». От 1 до 40 знаков"},
+							},
+							"required": []string{"from", "to", "label"},
+						},
+					},
+					"note": map[string]any{"type": "string", "description": "Почему предлагаешь: это человек прочитает перед подтверждением"},
+				},
+				"required": []string{"cards"},
+			},
+		})
 	}
 
 	// Текстовые инструменты — только если текстом можно заниматься (режим «только
@@ -558,4 +613,87 @@ func ParseFragmentEdit(args map[string]any, limits Limits) (FragmentEditArgs, er
 	out.Replacement = text
 	out.Reason = argString(args, "reason")
 	return out, nil
+}
+
+// EntityProposalArgs — разобранные аргументы propose_entities.
+type EntityProposalArgs struct {
+	Cards []store.ProposedCard
+	Links []store.ProposedLink
+	// Note — почему предлагаю: человек прочитает это перед подтверждением.
+	Note string
+}
+
+// ParseEntityProposal разбирает аргументы propose_entities.
+//
+// Разбор здесь только структурный: имена, виды, алиасы и подписи проверяет ProposeEntities —
+// теми же правилами, что и создание карточки (entities.PrepareCard). Дублировать их в разборе
+// значило бы держать две копии, которые однажды разойдутся.
+func ParseEntityProposal(args map[string]any) (EntityProposalArgs, error) {
+	var out EntityProposalArgs
+	rawCards, ok := args["cards"]
+	if !ok || rawCards == nil {
+		return out, errors.New("нужен список карточек в поле cards")
+	}
+	list, isList := rawCards.([]any)
+	if !isList || len(list) == 0 {
+		return out, errors.New("cards должен быть непустым списком карточек")
+	}
+	out.Cards = make([]store.ProposedCard, 0, len(list))
+	for index, item := range list {
+		card, isCard := item.(map[string]any)
+		if !isCard {
+			return out, fmt.Errorf("карточка №%d: ожидался объект с полями kind, name, aliases", index+1)
+		}
+		name := strings.TrimSpace(argString(card, "name"))
+		if name == "" {
+			return out, fmt.Errorf("карточка №%d: не задано имя (name)", index+1)
+		}
+		out.Cards = append(out.Cards, store.ProposedCard{
+			Kind:        strings.TrimSpace(argString(card, "kind")),
+			Name:        name,
+			Aliases:     nonNilStrings(argStrings(card, "aliases")),
+			Description: strings.TrimSpace(argString(card, "description")),
+		})
+	}
+	if rawLinks, hasLinks := args["links"]; hasLinks && rawLinks != nil {
+		links, isList := rawLinks.([]any)
+		if !isList {
+			return out, errors.New("links должен быть списком связей")
+		}
+		out.Links = make([]store.ProposedLink, 0, len(links))
+		for index, item := range links {
+			link, isLink := item.(map[string]any)
+			if !isLink {
+				return out, fmt.Errorf("связь №%d: ожидался объект с полями from, to, label", index+1)
+			}
+			out.Links = append(out.Links, store.ProposedLink{
+				From:  strings.TrimSpace(argString(link, "from")),
+				To:    strings.TrimSpace(argString(link, "to")),
+				Label: strings.TrimSpace(argString(link, "label")),
+			})
+		}
+	}
+	out.Note = strings.TrimSpace(argString(args, "note"))
+	return out, nil
+}
+
+// argStrings читает массив строк из аргументов инструмента. Не-строки пропускаются: модель
+// иногда присылает числа или null в списке, и падать из-за этого незачем — мусор отсеет
+// проверка алиасов.
+func argStrings(args map[string]any, name string) []string {
+	raw, ok := args[name]
+	if !ok || raw == nil {
+		return []string{}
+	}
+	list, isList := raw.([]any)
+	if !isList {
+		return []string{}
+	}
+	out := make([]string, 0, len(list))
+	for _, item := range list {
+		if value, isString := item.(string); isString {
+			out = append(out, value)
+		}
+	}
+	return out
 }

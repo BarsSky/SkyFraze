@@ -32,6 +32,7 @@ import {
 } from '../../api/assistant'
 import { serverErrorMessage } from '../../api/client'
 import { MarkdownBlock } from '../MarkdownBlock'
+import { EntityProposals } from '../entities/EntityProposals'
 import { MAX_IMAGES, imageFileError, readImageFile } from './imageAttach'
 import { promptHints } from './promptHints'
 
@@ -128,6 +129,11 @@ export function AssistantPanel({
   const [proposalNote, setProposalNote] = useState<string | null>(null)
   /** Какую правку сейчас применяем — чтобы не применить две по двойному клику. */
   const [proposalBusy, setProposalBusy] = useState<string | null>(null)
+  /**
+   * Счётчик «пришёл ответ с предложением карточек» (0.77.0). Сам список читает компонент
+   * `EntityProposals` с сервера, а счётчик говорит ему: перечитай.
+   */
+  const [entitiesRefresh, setEntitiesRefresh] = useState(0)
   const [conversationId, setConversationId] = useState('new')
   const [messages, setMessages] = useState<AIMessage[]>([])
   const [changes, setChanges] = useState<AIChange[]>([])
@@ -699,6 +705,12 @@ export function AssistantPanel({
           const known = new Set(current.map((item) => item.id))
           return [...current, ...fromTurn.filter((item) => !known.has(item.id))]
         })
+      }
+      // Предложения карточек мира (0.77.0): компонент грузит их сам, ему нужен только сигнал
+      // «пришёл новый ответ». Счётчик, а не список: предложения живут на сервере, и второй
+      // копии в состоянии переписки быть не должно.
+      if ((turn.entityProposals?.length ?? 0) > 0) {
+        setEntitiesRefresh((current) => current + 1)
       }
       // Счётчик расхода обновляем локально: расход пришёл вместе с ответом, и лишний
       // запрос к серверу ради одной цифры не нужен.
@@ -1371,6 +1383,11 @@ export function AssistantPanel({
               </ul>
             </div>
           )}
+
+          {/* Предложения карточек мира (0.77.0). Отдельный компонент со своей загрузкой: карточки
+              живут в Postgres, а не в документе, и переживают перезагрузку страницы — значит,
+              список надо читать с сервера, а не держать в состоянии переписки. */}
+          <EntityProposals projectId={projectId} refreshKey={entitiesRefresh} />
 
           {/* Применённые: правка уже в документе, но «Вернуть» ещё имеет смысл — пока
               человек не закрыл окно. У удаления это возврат кадра по снимку, который

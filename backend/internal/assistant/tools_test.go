@@ -243,12 +243,12 @@ func TestParseTextToolCallsLooseJSONNeedsKnownTool(t *testing.T) {
 // Набор зависит от возможностей: проверяем полный вариант («текст и картинки»), а
 // урезанные — отдельным тестом ниже.
 func TestToolDefsAreWellFormed(t *testing.T) {
-	defs := ToolDefs(Capabilities{Text: true, Images: true}, true, true)
-	// 11 = чтение дерева и кадра, карточки мира (list_entities и read_entity), обсуждение кадров, создание
-	// главы и под-события, предложение правки кадра, правка фрагмента по замечанию, удаление,
-	// иллюстрация.
-	if len(defs) != 11 {
-		t.Fatalf("инструментов %d, ожидалось 11", len(defs))
+	defs := ToolDefs(Capabilities{Text: true, Images: true}, true, true, true)
+	// 12 = чтение дерева и кадра, карточки мира (list_entities и read_entity), предложение карточек
+	// (propose_entities), обсуждение кадров, создание главы и под-события, предложение правки кадра,
+	// правка фрагмента по замечанию, удаление, иллюстрация.
+	if len(defs) != 12 {
+		t.Fatalf("инструментов %d, ожидалось 12", len(defs))
 	}
 	seen := map[string]bool{}
 	for _, def := range defs {
@@ -263,7 +263,7 @@ func TestToolDefsAreWellFormed(t *testing.T) {
 			t.Fatalf("схема %s должна быть объектом: %+v", def.Name, def.Parameters)
 		}
 	}
-	for _, want := range []string{ToolListEvents, ToolReadEvent, ToolCreateChapter, ToolCreateSub, ToolListEntities, ToolReadEntity} {
+	for _, want := range []string{ToolListEvents, ToolReadEvent, ToolCreateChapter, ToolCreateSub, ToolListEntities, ToolReadEntity, ToolProposeEntities} {
 		if !seen[want] {
 			t.Fatalf("инструмент %s не объявлен", want)
 		}
@@ -273,11 +273,27 @@ func TestToolDefsAreWellFormed(t *testing.T) {
 // Карточки мира не предлагаются, когда на стенде их нет: обещать инструмент, который
 // отвечает «недоступно», хуже, чем не показывать его вовсе.
 func TestToolDefsWithoutEntities(t *testing.T) {
-	defs := ToolDefs(Capabilities{Text: true}, false, false)
+	defs := ToolDefs(Capabilities{Text: true}, false, false, false)
 	for _, def := range defs {
-		if def.Name == ToolListEntities {
-			t.Fatal("list_entities объявлен без подключённых карточек мира")
+		if def.Name == ToolListEntities || def.Name == ToolProposeEntities {
+			t.Fatalf("%s объявлен без подключённых карточек мира", def.Name)
 		}
+	}
+}
+
+// Предложение карточек требует и чтения, и записи: без записи применять нечего, поэтому
+// инструмент не показывается вовсе — иначе модель пообещает то, чего стенд не сделает.
+func TestToolDefsWithoutEntityWriter(t *testing.T) {
+	defs := ToolDefs(Capabilities{Text: true}, true, true, false)
+	seen := map[string]bool{}
+	for _, def := range defs {
+		seen[def.Name] = true
+	}
+	if seen[ToolProposeEntities] {
+		t.Fatal("propose_entities объявлен без создания карточек")
+	}
+	if !seen[ToolListEntities] {
+		t.Fatal("list_entities пропал: чтение карточек от записи не зависит")
 	}
 }
 

@@ -383,6 +383,42 @@
 /* Применённые — не зовут к действию, поэтому рамка спокойная. */
 .ai-proposals--applied { border-color: var(--border); }
 
+/* Предложения карточек мира (0.77.0). Рамка та же, что у предложенных правок: для человека
+   это одно и то же решение — «агент что-то предлагает, подтвердить или нет». */
+.ent-proposals {
+  display: grid;
+  gap: 8px;
+  margin: 0 12px 10px;
+  padding: 10px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  font-size: 13px;
+}
+.ent-proposals__item { display: grid; gap: 6px; }
+.ent-proposals__title { margin: 0; font-weight: 600; }
+.ent-proposals__note { margin: 0; color: var(--fg-soft); font-size: 12px; overflow-wrap: anywhere; }
+.ent-proposals__cards,
+.ent-proposals__links {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+.ent-proposals__card { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.ent-proposals__description { font-size: 12px; overflow-wrap: anywhere; }
+.ent-proposals__links li { font-size: 12px; }
+.ent-proposals__actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.ent-proposals__actions button { min-height: 32px; }
+/* Итог применения остаётся на экране: человек нажал «добавить» и должен видеть, что появилось. */
+.ent-proposals__applied {
+  padding: 6px 8px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 /* ── Поле ввода ───────────────────────────────────────────────────────── */
 
 .ai-composer {

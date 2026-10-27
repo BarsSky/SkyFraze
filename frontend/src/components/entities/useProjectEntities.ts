@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
-import { listEntities, listEntityLinks, type EntityLink, type ProjectEntity } from '../../api/entities'
+import {
+  listEntities,
+  listEntityLinks,
+  type EntityLink,
+  type ProjectEntity,
+} from '../../api/entities'
+import { ENTITIES_CHANGED_EVENT } from '../../api/assistant'
 
 /**
  * Карточки мира проекта, загруженные один раз для всей панели редакторов.
@@ -40,6 +46,15 @@ export function useProjectEntities(projectId?: string) {
   useEffect(() => {
     setLoaded(false)
     void reload()
+  }, [reload])
+
+  // Карточки мог создать не этот компонент: помощник предложил их из своего окна, человек
+  // нажал «Добавить» (0.77.0). Без этого события панель связей показывала бы старый список до
+  // перезагрузки страницы — ровно та жалоба, с которой начиналась вся эта ветка.
+  useEffect(() => {
+    const onChanged = () => void reload()
+    window.addEventListener(ENTITIES_CHANGED_EVENT, onChanged)
+    return () => window.removeEventListener(ENTITIES_CHANGED_EVENT, onChanged)
   }, [reload])
 
   return { entities, links, loaded, reload }

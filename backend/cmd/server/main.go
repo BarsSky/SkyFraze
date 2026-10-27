@@ -311,6 +311,10 @@ func main() {
 	// места, и пишет теми же именами. Без этой строки инструмент list_entities модели не
 	// предлагается — помощник работает как раньше, без словаря проекта.
 	assistantSvc.UseEntities(entitiesSvc)
+	// Создание карточек и связей (0.77.0): помощник их ПРЕДЛАГАЕТ (propose_entities), а создаёт
+	// человек кнопкой в окне помощника. Без этой строки инструмент предложения модели не
+	// предлагается, и помощник карточки только читает.
+	assistantSvc.UseEntityWriter(entitiesSvc)
 	assistantH := assistant.NewHandler(assistantSvc, logger)
 
 	collabHub := collab.NewHub(logger, cfg.JWTSecret, evSvc, cfg.CORSOrigins)
