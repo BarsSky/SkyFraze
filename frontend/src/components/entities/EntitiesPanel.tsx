@@ -1,23 +1,20 @@
 import { useCallback, useState } from 'react'
 import {
+  addEntityLink,
   aliasesText,
+  connectionsOf,
   createEntity,
   deleteEntity,
+  deleteEntityLink,
   kindLabel,
   listEntities,
   updateEntity,
   type EntityKind,
+  type EntityLink,
   type ProjectEntity,
 } from '../../api/entities'
 import { serverErrorMessage } from '../../api/client'
 import type { FrameWithMentions, Mention, MentionMatrix } from '../../collab/mentions'
-import {
-  addEntityLink,
-  connectionsOf,
-  deleteEntityLink,
-  type EntityLink,
-  type ProjectEntity as Entity,
-} from '../../api/entities'
 
 /**
  * «Связи проекта» — карточки персонажей, мест и тем (docs/entity-links.md, фаза 1).
@@ -88,6 +85,13 @@ export function EntitiesPanel({
   /** У какой карточки раскрыта хронология. Одна за раз: две открытые — это уже не список. */
   const [chronology, setChronology] = useState<string | null>(null)
   /**
+   * У какой карточки раскрывается «связать» (0.76.0): выбор второй карточки и подпись.
+   * Тоже одна за раз — форма занимает строку целиком.
+   */
+  const [linking, setLinking] = useState<string | null>(null)
+  const [linkTarget, setLinkTarget] = useState('')
+  const [linkLabel, setLinkLabel] = useState('')
+  /**
    * Раскрыт ли блок (0.72.1). По умолчанию — да, если карточек ещё нет: иначе фичу просто не
    * находят («не видно, где заводить персонажей» — так и было на практике). Выбор человека
    * запоминается, чтобы блок не раскрывался каждый раз заново.
@@ -111,6 +115,33 @@ export function EntitiesPanel({
     },
     [projectId, reload],
   )
+  /**
+   * Создать связь (0.76.0). До этого связь заводилась только через API: чипы связей
+   * рисовались, «убрать» работало, а «связать» — нет («связать негде»).
+   * Подпись человеческая («живёт на», «сестра»), направление задаёт карточка-источник.
+   */
+  const link = useCallback(
+    async (fromId: string) => {
+      const label = linkLabel.trim()
+      if (linkTarget === '' || label === '') return
+      setBusy(true)
+      setNote(null)
+      try {
+        await addEntityLink(projectId, fromId, linkTarget, label)
+        setLinking(null)
+        setLinkTarget('')
+        setLinkLabel('')
+        setNote({ kind: 'ok', text: 'Связь добавлена.' })
+        reload()
+      } catch (e) {
+        setNote({ kind: 'error', text: await explain(e, 'Не удалось связать карточки.') })
+      } finally {
+        setBusy(false)
+      }
+    },
+    [linkLabel, linkTarget, projectId, reload],
+  )
+
   const add = useCallback(async () => {
     setBusy(true)
     setNote(null)
@@ -303,6 +334,24 @@ export function EntitiesPanel({
                       >
                         Изменить
                       </button>
+                      {/* «Связать» — только если есть с чем: одна карточка связей не имеет. */}
+                      {entities.length > 1 && (
+                        <button
+                          type="button"
+                          className="secondary"
+                          onClick={() => {
+                            setLinking((current) => (current === entity.id ? null : entity.id))
+                            setLinkTarget('')
+                            setLinkLabel('')
+                            setNote(null)
+                          }}
+                          aria-expanded={linking === entity.id}
+                          aria-label={`Связать карточку ${entity.name}`}
+                          data-entity-link-add
+                        >
+                          {linking === entity.id ? 'Не связывать' : 'Связать'}
+                        </button>
+                      )}
                       {pendingDelete === entity.id ? (
                         <>
                           <button
@@ -336,6 +385,43 @@ export function EntitiesPanel({
                     </span>
                   )}
                 </>
+              )}
+              {/* Форма связи (0.76.0): вторая карточка и подпись. Направление — от этой
+                  карточки к выбранной, поэтому «→ живёт на» читается сверху вниз. */}
+              {canEdit && linking === entity.id && (
+                <span className="ent__link-form" data-entity-link-form>
+                  <select
+                    value={linkTarget}
+                    onChange={(e) => setLinkTarget(e.target.value)}
+                    aria-label={`С какой карточкой связать ${entity.name}`}
+                    data-entity-link-target
+                  >
+                    <option value="">карточка…</option>
+                    {entities
+                      .filter((other) => other.id !== entity.id)
+                      .map((other) => (
+                        <option key={other.id} value={other.id}>
+                          {kindLabel(other.kind)}: {other.name}
+                        </option>
+                      ))}
+                  </select>
+                  <input
+                    value={linkLabel}
+                    onChange={(e) => setLinkLabel(e.target.value)}
+                    placeholder="подпись: живёт на"
+                    aria-label={`Подпись связи от ${entity.name}`}
+                    maxLength={40}
+                    data-entity-link-label
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void link(entity.id)}
+                    disabled={busy || linkTarget === '' || linkLabel.trim() === ''}
+                    data-entity-link-save
+                  >
+                    {busy ? 'Связываю…' : 'Связать'}
+                  </button>
+                </span>
               )}
               {/* Хронология карточки: кадры по датам, потом без даты — в порядке дерева.
                   Кадр без даты не исчезает: он просто в конце, и это видно по отсутствию

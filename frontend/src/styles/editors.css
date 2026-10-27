@@ -568,6 +568,15 @@
   color: var(--fg-muted); font-size: 13px; line-height: 1;
 }
 .ent__link-remove:hover { color: var(--danger); }
+/* Форма «связать» (0.76.0): вторая карточка и подпись. Своя строка во всю ширину —
+   в ряд с «Изменить/Удалить» селект и поле не помещаются даже на широком экране. */
+.ent__link-form {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  flex: 1 0 100%; margin: 6px 0 2px; padding: 6px 8px;
+  border: 1px dashed var(--border); border-radius: 6px; font-size: 12px;
+}
+.ent__link-form select { max-width: 220px; }
+.ent__link-form input { min-width: 150px; flex: 1 1 150px; }
 
 /* ─── эго-граф связей (0.75.0) ───────────────────────────────────────────────
    Рёбра — SVG (тонкие линии, подпись посередине), узлы — HTML-«пилюли» поверх: текст

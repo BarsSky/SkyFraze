@@ -11,7 +11,13 @@ import type { ProjectEntity } from '../../api/entities'
  * что после создания вызывается `reload`, а не тихо правится локальная копия.
  */
 
-const mocks = vi.hoisted(() => ({ create: vi.fn(), update: vi.fn(), remove: vi.fn() }))
+const mocks = vi.hoisted(() => ({
+  create: vi.fn(),
+  update: vi.fn(),
+  remove: vi.fn(),
+  addLink: vi.fn(),
+  removeLink: vi.fn(),
+}))
 
 vi.mock('../../api/entities', async () => {
   const actual = await vi.importActual<typeof import('../../api/entities')>('../../api/entities')
@@ -20,6 +26,8 @@ vi.mock('../../api/entities', async () => {
     createEntity: mocks.create,
     updateEntity: mocks.update,
     deleteEntity: mocks.remove,
+    addEntityLink: mocks.addLink,
+    deleteEntityLink: mocks.removeLink,
   }
 })
 
@@ -47,6 +55,8 @@ beforeEach(() => {
   mocks.create.mockReset()
   mocks.update.mockReset()
   mocks.remove.mockReset().mockResolvedValue(undefined)
+  mocks.addLink.mockReset().mockResolvedValue(undefined)
+  mocks.removeLink.mockReset().mockResolvedValue(undefined)
 })
 
 afterEach(() => {
@@ -182,7 +192,6 @@ describe('describeUsage', () => {
   })
 })
 
-describe('EntitiesPanel — хронология (0.69.0)', () => {
 describe('хронология карточки (0.69.0)', () => {
   const frames = [
     {
@@ -235,7 +244,7 @@ describe('хронология карточки (0.69.0)', () => {
     expect(screen.queryByLabelText('Где встречается Анна')).toBeNull()
   })
 })
-})
+
 describe('EntitiesPanel — матрица связей (0.71.0)', () => {
   it('показывает таблицу с главами и количеством, а ноль — точкой', async () => {
     panel({
@@ -358,5 +367,79 @@ describe('EntitiesPanel — связи карточек (0.74.0)', () => {
     panel({ entities: [anna, earth], links: [link], canEdit: false })
     await screen.findAllByText('Аня')
     expect(screen.queryByLabelText('Убрать связь с Земля')).toBeNull()
+  })
+})
+
+describe('EntitiesPanel — «связать» из карточки (0.76.0)', () => {
+  const anna = entity({ id: 'e1', name: 'Аня', aliases: [] })
+  const earth = entity({ id: 'e2', name: 'Земля', aliases: [], kind: 'place' })
+
+  it('связь заводится из карточки: вторая карточка, подпись, перечитывание', async () => {
+    const { reload } = panel({ entities: [anna, earth] })
+    await screen.findAllByText('Аня')
+
+    fireEvent.click(screen.getByLabelText('Связать карточку Аня'))
+    // В списке выбора — только другие карточки: связать с собой нельзя (это и CHECK в БД).
+    const target = screen.getByLabelText('С какой карточкой связать Аня') as HTMLSelectElement
+    expect(Array.from(target.options).map((o) => o.value)).toEqual(['', 'e2'])
+
+    fireEvent.change(target, { target: { value: 'e2' } })
+    fireEvent.change(screen.getByLabelText('Подпись связи от Аня'), {
+      target: { value: '  живёт на  ' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Связать' }))
+
+    await waitFor(() => expect(mocks.addLink).toHaveBeenCalledWith('p1', 'e1', 'e2', 'живёт на'))
+    expect(await screen.findByText(/Связь добавлена/)).toBeTruthy()
+    expect(reload).toHaveBeenCalled()
+    // Форма закрылась: иначе легко нажать «Связать» второй раз и получить 409.
+    expect(screen.queryByLabelText('Подпись связи от Аня')).toBeNull()
+  })
+
+  it('без второй карточки кнопки нет: связывать не с чем', async () => {
+    panel({ entities: [anna] })
+    await screen.findAllByText('Аня')
+    expect(screen.queryByLabelText('Связать карточку Аня')).toBeNull()
+  })
+
+  it('пока не выбраны карточка и подпись, кнопка неактивна', async () => {
+    panel({ entities: [anna, earth] })
+    await screen.findAllByText('Аня')
+    fireEvent.click(screen.getByLabelText('Связать карточку Аня'))
+
+    const save = screen
+      .getAllByRole('button', { name: 'Связать' })
+      .find((b) => b.hasAttribute('data-entity-link-save')) as HTMLButtonElement
+    expect(save.disabled).toBe(true)
+
+    fireEvent.change(screen.getByLabelText('С какой карточкой связать Аня'), {
+      target: { value: 'e2' },
+    })
+    expect(save.disabled).toBe(true)
+    fireEvent.change(screen.getByLabelText('Подпись связи от Аня'), { target: { value: 'живёт на' } })
+    expect(save.disabled).toBe(false)
+  })
+
+  it('ошибку сервера объясняет словами, а не кодом', async () => {
+    mocks.addLink.mockRejectedValue({
+      response: {
+        clone: () => ({ json: async () => ({ error: 'такая связь уже есть' }) }),
+      },
+    })
+    panel({ entities: [anna, earth] })
+    await screen.findAllByText('Аня')
+    fireEvent.click(screen.getByLabelText('Связать карточку Аня'))
+    fireEvent.change(screen.getByLabelText('С какой карточкой связать Аня'), {
+      target: { value: 'e2' },
+    })
+    fireEvent.change(screen.getByLabelText('Подпись связи от Аня'), { target: { value: 'живёт на' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Связать' }))
+    expect(await screen.findByText('такая связь уже есть')).toBeTruthy()
+  })
+
+  it('читателю кнопки «связать» не показывают', async () => {
+    panel({ entities: [anna, earth], canEdit: false })
+    await screen.findAllByText('Аня')
+    expect(screen.queryByLabelText('Связать карточку Аня')).toBeNull()
   })
 })
