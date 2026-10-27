@@ -66,8 +66,8 @@ async function seed(page: Page) {
     const token = JSON.parse(localStorage.getItem('skyfraze-auth') ?? '{}')?.state?.accessToken ?? ''
     const headers = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }
     const base = '/api/projects/' + pid + '/entities'
-    const cards = (await fetch(base, { headers }).then((r) => r.json())).entities ?? []
-    const addLink = (from, to, label) =>
+    const cards: Array<{ id: string }> = (await fetch(base, { headers }).then((r) => r.json())).entities ?? []
+    const addLink = (from: string, to: string, label: string) =>
       fetch(base + '/' + from + '/links', {
         method: 'POST',
         headers,
@@ -81,7 +81,7 @@ async function seed(page: Page) {
       }
       return
     }
-    const create = async (kind, name) => {
+    const create = async (kind: string, name: string) => {
       const res = await fetch(base, { method: 'POST', headers, body: JSON.stringify({ kind, name }) })
       return (await res.json()).entity
     }
