@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
+﻿import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { buildEventTree, DEFAULT_MAX_DEPTH, type EventLike, type EventTreeNode } from '../../collab/eventTree'
 import { checkMove, type DropPlace, type MoveReject } from '../../collab/reorder'
@@ -11,7 +11,10 @@ import {
   type FrameAnchor,
 } from '../../api/comments'
 import { FrameComments } from './FrameComments'
+import { FrameMentions } from './FrameMentions'
 import { EntitiesPanel } from '../entities/EntitiesPanel'
+import { useProjectEntities } from '../entities/useProjectEntities'
+import { entityUsage, frameMentions, type Mention, type MentionFrame } from '../../collab/mentions'
 import {
   previewMarkdownImport,
   readImportErrorMessage,
@@ -40,7 +43,7 @@ import {
 } from '../../collab/yprovider'
 import type { Asset, AssetUsage } from '../../api/assets'
 import { ProjectFiles } from './ProjectFiles'
-import { EventEditor, type FrameFragment } from './EventEditor'
+import { EventEditor, type FocusRange, type FrameFragment } from './EventEditor'
 import type { BackgroundValue } from './BackgroundPicker'
 
 interface Props {
@@ -394,7 +397,7 @@ export function EditorsPanel({
 once — чтобы повторный
    * клик по тому же замечанию срабатывал снова.
    */
-  const [focusRange, setFocusRange] = useState<{ from: number; to: number; nonce: number } | null>(null)
+  const [focusRange, setFocusRange] = useState<FocusRange | null>(null)
   const syncTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const navRef = useRef<HTMLElement | null>(null)
   const gestureRef = useRef<DragGesture | null>(null)
@@ -595,6 +598,42 @@ once — чтобы повторный
     if (!events || !selectedId) return null
     return (events.toArray() as YMap[]).find((m) => (m.get('id') as string) === selectedId) ?? null
   }, [events, selectedId, version])
+
+  /**
+   * Карточки мира проекта — один список на всю панель (0.68.0).
+   *
+   * Нужны в двух местах: в блоке «Связи проекта» (список и счётчики) и в поиске упоминаний
+   * в тексте кадра. Две независимые загрузки одного списка разъезжались бы.
+   */
+  const { entities, loaded: entitiesLoaded, reload: reloadEntities } = useProjectEntities(projectId)
+
+  /**
+   * Тексты всех кадров для поиска упоминаний.
+   *
+   * Читаются тем же проходом, что и поиск по дереву: документ и так целиком в памяти. `version`
+   * в зависимостях — чтобы счётчики обновлялись после правок; пересчёт дешёвый (одно регулярное
+   * выражение на кадр), но всё равно не на каждое нажатие клавиши — только на изменение CRDT.
+   */
+  const mentionFrames = useMemo<MentionFrame[]>(() => {
+    void version
+    if (!events) return []
+    const out: MentionFrame[] = []
+    for (const map of events.toArray() as YMap[]) {
+      const id = (map.get('id') as string | undefined) ?? ''
+      if (!id) continue
+      out.push({ id, title: titleString(map), body: textString(map, 'body') })
+    }
+    return out
+  }, [events, version])
+
+  /** Сколько кадров и упоминаний у каждой карточки: по этому «сироту» и видно. */
+  const entityUse = useMemo(() => entityUsage(mentionFrames, entities), [mentionFrames, entities])
+
+  const selectedMentions = useMemo(() => {
+    if (!selectedId) return []
+    const frame = mentionFrames.find((f) => f.id === selectedId)
+    return frame ? frameMentions(frame, entities) : []
+  }, [entities, mentionFrames, selectedId])
 
   /**
    * Помещается ли разобранный кусок в проект.
@@ -1497,7 +1536,16 @@ once — чтобы повторный
           дерево кадров и редактор — про текст, карточки — про мир вокруг него, и в общем
           скролле они мешали бы друг другу. Без projectId панель не рисуется: карточки живут
           на сервере, и «локального» списка у них нет. */}
-      {projectId && <EntitiesPanel projectId={projectId} canEdit={canEdit === true} />}
+      {projectId && (
+        <EntitiesPanel
+          projectId={projectId}
+          canEdit={canEdit === true}
+          entities={entities}
+          loaded={entitiesLoaded}
+          reload={() => void reloadEntities()}
+          usage={entityUse}
+        />
+      )}
 
       <div className="ed-panel__grid">
         <nav
@@ -1639,6 +1687,19 @@ once — чтобы повторный
               <p className="muted ed-editor__hint">
                 Изменения сохраняются автоматически; дерево синхронизируется с сервером.
               </p>
+              {/* Упоминания карточек мира в этом кадре (0.68.0): кто здесь назван. Клик ведёт
+                  к самому месту в тексте, поэтому список — не «сводка», а навигация. */}
+              <FrameMentions
+                mentions={selectedMentions}
+                onShow={(mention: Mention) => {
+                  setFocusRange((current) => ({
+                    field: mention.field,
+                    from: mention.from,
+                    to: mention.to,
+                    nonce: (current?.nonce ?? 0) + 1,
+                  }))
+                }}
+              />
               {projectId && selectedId && (
                 <FrameComments
                   projectId={projectId}

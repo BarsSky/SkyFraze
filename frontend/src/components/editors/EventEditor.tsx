@@ -48,7 +48,20 @@ once
    * меняется при каждом нажатии: без него повторный клик по тому же замечанию не сдвинул бы
    * выделение, если оно уже стоит там.
    */
-  focusRange?: { from: number; to: number; nonce: number } | null
+  focusRange?: FocusRange | null
+}
+
+/**
+ * Диапазон, который надо выделить в поле кадра.
+ *
+ * `field` появился в 0.68.0 (упоминания карточки могут быть в заголовке), поэтому тип общий:
+ * панель формирует диапазон, редактор его применяет — и оба говорят об одном и том же.
+ */
+export interface FocusRange {
+  field?: TextField
+  from: number
+  to: number
+  nonce: number
 }
 
 const eventDateText = (value: unknown): string => {
@@ -129,19 +142,24 @@ export function EventEditor({
   // Выделение в поле текста запоминаем, чтобы кнопка «Замечание к фрагменту» появлялась только
   // когда есть что выделять. Храним номера, а не текст: текст берём из Y.Text в момент нажатия.
   const bodyRef = useRef<HTMLTextAreaElement | null>(null)
+  const titleRef = useRef<HTMLInputElement | null>(null)
   const [selection, setSelection] = useState<{ from: number; to: number } | null>(null)
 
   /**
-   * Показать замечание в тексте: выделяем фрагмент прямо в поле и прокручиваем к нему.
+   * Показать фрагмент в тексте: выделяем его прямо в поле и прокручиваем к нему.
    *
    * Почему выделение, а не подсветка поверх textarea. Подсветка потребовала бы зеркального
    * слоя под полем (своя разметка, синхронизация прокрутки и шрифта) — заметная сложность ради
    * того же результата. Нативное выделение видно сразу, прокручивается само и не расходится с
    * текстом ни на символ. Минус честно назван: выделение живёт, пока в поле не щёлкнули.
+   *
+   * `field` добавлен в 0.68.0: упоминание карточки может быть в ЗАГОЛОВКЕ кадра, и выделять
+   * тогда надо поле заголовка, а не текст (иначе человек видит выделение не там, где слово).
    */
   useEffect(() => {
     if (!focusRange) return
-    const el = bodyRef.current
+    const field = focusRange.field ?? 'body'
+    const el = field === 'title' ? titleRef.current : bodyRef.current
     if (!el) return
     el.focus()
     el.setSelectionRange(focusRange.from, focusRange.to)
@@ -200,6 +218,7 @@ export function EventEditor({
       <label className="ed-field">
         <span className="ed-field__label">Заголовок</span>
         <input
+          ref={titleRef}
           value={title}
           onFocus={titleField.onFocus}
           onBlur={titleField.onBlur}

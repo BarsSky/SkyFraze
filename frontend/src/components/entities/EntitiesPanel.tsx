@@ -25,15 +25,24 @@ import { serverErrorMessage } from '../../api/client'
 
 const KINDS: EntityKind[] = ['character', 'place', 'theme']
 
+// Panel получает карточки от владельца данных (панель редакторов) и после правок просит
+// перечитать список: карточки нужны ещё и поиску упоминаний в тексте, а два независимых
+// списка разъезжались бы — создал карточку, а упоминания не появились.
+
 interface Props {
   projectId: string
   /** Читатель видит карточки, но не меняет их: кнопки прячем, а не показываем и отказываем. */
   canEdit: boolean
+  entities: ProjectEntity[]
+  /** Данные уже загружены? До этого «пусто» и «не пришло» неразличимы. */
+  loaded: boolean
+  /** Перечитать список после создания/правки/удаления. */
+  reload: () => void
+  /** Сколько кадров и упоминаний у каждой карточки (считается по тексту, фаза 2). */
+  usage?: Record<string, { frames: number; mentions: number }>
 }
 
-export function EntitiesPanel({ projectId, canEdit }: Props) {
-  const [entities, setEntities] = useState<ProjectEntity[]>([])
-  const [loaded, setLoaded] = useState(false)
+export function EntitiesPanel({ projectId, canEdit, entities, loaded, reload, usage }: Props) {
   const [kind, setKind] = useState<EntityKind>('character')
   const [name, setName] = useState('')
   const [aliases, setAliases] = useState('')
@@ -45,22 +54,6 @@ export function EntitiesPanel({ projectId, canEdit }: Props) {
   const [draftAliases, setDraftAliases] = useState('')
   const [pendingDelete, setPendingDelete] = useState<string | null>(null)
 
-  const load = useCallback(async () => {
-    try {
-      // Сортируем и здесь, а не только на сервере: порядок карточек не должен зависеть от
-      // того, в каком порядке их вернул конкретный ответ.
-      setEntities((await listEntities(projectId)).slice().sort(byKindThenName))
-    } catch {
-      setEntities([])
-    } finally {
-      setLoaded(true)
-    }
-  }, [projectId])
-
-  useEffect(() => {
-    void load()
-  }, [load])
-
   const add = useCallback(async () => {
     setBusy(true)
     setNote(null)
@@ -70,36 +63,36 @@ export function EntitiesPanel({ projectId, canEdit }: Props) {
         name: name.trim(),
         aliases: splitAliases(aliases),
       })
-      setEntities((prev) => [...prev, created].sort(byKindThenName))
       setName('')
       setAliases('')
       setNote({ kind: 'ok', text: `Карточка «${created.name}» создана.` })
+      reload()
     } catch (e) {
       setNote({ kind: 'error', text: await explain(e, 'Не удалось создать карточку.') })
     } finally {
       setBusy(false)
     }
-  }, [aliases, kind, name, projectId])
+  }, [aliases, kind, name, projectId, reload])
 
   const save = useCallback(
     async (id: string) => {
       setBusy(true)
       setNote(null)
       try {
-        const updated = await updateEntity(projectId, id, {
+        await updateEntity(projectId, id, {
           name: draftName.trim(),
           aliases: splitAliases(draftAliases),
         })
-        setEntities((prev) => prev.map((e) => (e.id === id ? updated : e)).sort(byKindThenName))
         setEditing(null)
         setNote({ kind: 'ok', text: 'Изменения сохранены.' })
+        reload()
       } catch (e) {
         setNote({ kind: 'error', text: await explain(e, 'Не удалось сохранить.') })
       } finally {
         setBusy(false)
       }
     },
-    [draftAliases, draftName, projectId],
+    [draftAliases, draftName, projectId, reload],
   )
 
   const remove = useCallback(
@@ -108,16 +101,16 @@ export function EntitiesPanel({ projectId, canEdit }: Props) {
       setNote(null)
       try {
         await deleteEntity(projectId, id)
-        setEntities((prev) => prev.filter((e) => e.id !== id))
         setPendingDelete(null)
         setNote({ kind: 'ok', text: 'Карточка удалена.' })
+        reload()
       } catch (e) {
         setNote({ kind: 'error', text: await explain(e, 'Не удалось удалить.') })
       } finally {
         setBusy(false)
       }
     },
-    [projectId],
+    [projectId, reload],
   )
 
   return (
@@ -176,6 +169,13 @@ export function EntitiesPanel({ projectId, canEdit }: Props) {
                   <span className="ent__name">{entity.name}</span>
                   {entity.aliases.length > 0 && (
                     <span className="muted ent__aliases">({aliasesText(entity)})</span>
+                  )}
+                  {/* Сколько кадров и упоминаний: «сирота» (ноль) — повод либо добавить
+                      алиас, либо убрать карточку. */}
+                  {usage?.[entity.id] !== undefined && (
+                    <span className="muted ent__usage" data-entity-usage>
+                      {describeUsage(usage[entity.id])}
+                    </span>
                   )}
                   {canEdit && (
                     <span className="ent__actions">
@@ -290,11 +290,29 @@ export function splitAliases(raw: string): string[] {
     .filter(Boolean)
 }
 
-/** Порядок списка: персонажи, места, темы; внутри вида — по имени. */
-function byKindThenName(a: ProjectEntity, b: ProjectEntity): number {
-  const order: Record<EntityKind, number> = { character: 0, place: 1, theme: 2 }
-  if (order[a.kind] !== order[b.kind]) return order[a.kind] - order[b.kind]
-  return a.name.localeCompare(b.name, 'ru')
+/**
+ * Подпись использования карточки: «2 кадра · 3 упоминания» или честное «пока не упоминается».
+ *
+ * Ноль кадров — не мелочь: карточка, которую нигде не назвали, ничего не связывает, и человек
+ * должен это видеть, а не догадываться.
+ */
+export function describeUsage(usage: { frames: number; mentions: number }): string {
+  if (usage.frames === 0) return 'пока не упоминается'
+  const frames = plural(usage.frames, 'кадр', 'кадра', 'кадров')
+  const mentions = plural(usage.mentions, 'упоминание', 'упоминания', 'упоминаний')
+  return `${frames} · ${mentions}`
+}
+
+function plural(count: number, one: string, few: string, many: string): string {
+  const mod10 = count % 10
+  const mod100 = count % 100
+  const word =
+    mod10 === 1 && mod100 !== 11
+      ? one
+      : mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)
+        ? few
+        : many
+  return `${count} ${word}`
 }
 
 /**

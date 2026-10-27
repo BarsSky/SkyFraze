@@ -26,7 +26,12 @@ import (
 
 // Ограничения карточек.
 const (
+	// minNameRunes — 2, а не 1: имя из одного знака («Я») находится в каждом предложении, и
+	// упоминания от такой карточки — шум. Тот же предел у алиасов, и он же в поиске на клиенте
+	// (frontend/src/collab/mentions.ts, MIN_ALIAS_LENGTH): правило должно быть одно.
+	minNameRunes        = 2
 	maxNameRunes        = 80
+	minAliasRunes       = 2
 	maxAliasRunes       = 60
 	maxAliases          = 20
 	maxDescriptionRunes = 600
@@ -93,8 +98,8 @@ func (s *Service) Create(
 		return nil, fmt.Errorf("%w: вид должен быть character, place или theme", ErrInvalidEntity)
 	}
 	name := strings.TrimSpace(in.Name)
-	if name == "" || utf8.RuneCountInString(name) > maxNameRunes {
-		return nil, fmt.Errorf("%w: имя от 1 до %d знаков", ErrInvalidEntity, maxNameRunes)
+	if utf8.RuneCountInString(name) < minNameRunes || utf8.RuneCountInString(name) > maxNameRunes {
+		return nil, fmt.Errorf("%w: имя от %d до %d знаков", ErrInvalidEntity, minNameRunes, maxNameRunes)
 	}
 	aliases := []string{}
 	if in.Aliases != nil {
@@ -191,9 +196,11 @@ func (s *Service) Delete(ctx context.Context, userID, projectID, id uuid.UUID) e
 
 // CleanAliases чистит список алиасов.
 //
-// Зачем: алиасы — это то, по чему фаза 2 будет искать упоминания. «Анна» в алиасах при имени
-// «Анна» дала бы двойную связь на каждом упоминании, а пустая строка — упоминание на каждом
-// символе (подстрока пустоты). Дубли без учёта регистра схлопываем в первое написание.
+// Зачем: алиасы — это то, по чему ищутся упоминания. «Анна» в алиасах при имени «Анна» дала бы
+// двойную связь на каждом упоминании, пустая строка — совпадение на каждом символе, а алиас из
+// одного знака («Я») находился бы в каждом предложении. Дубли без учёта регистра схлопываем в
+// первое написание. Слишком короткие — отказ, а не тихий пропуск: человек должен узнать, почему
+// его алиас не работает.
 func CleanAliases(raw []string, name string) ([]string, error) {
 	nameKey := strings.ToLower(strings.TrimSpace(name))
 	out := make([]string, 0, len(raw))
@@ -203,7 +210,11 @@ func CleanAliases(raw []string, name string) ([]string, error) {
 		if alias == "" {
 			continue
 		}
-		if utf8.RuneCountInString(alias) > maxAliasRunes {
+		length := utf8.RuneCountInString(alias)
+		if length < minAliasRunes {
+			return nil, fmt.Errorf("%w: алиас короче %d знаков не ищется", ErrInvalidEntity, minAliasRunes)
+		}
+		if length > maxAliasRunes {
 			return nil, fmt.Errorf("%w: алиас не длиннее %d знаков", ErrInvalidEntity, maxAliasRunes)
 		}
 		key := strings.ToLower(alias)

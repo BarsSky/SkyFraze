@@ -146,6 +146,9 @@ func TestEntityValidation(t *testing.T) {
 	}{
 		{"неизвестный вид", entities.Input{Kind: "hero", Name: "Анна"}},
 		{"пустое имя", entities.Input{Kind: "character", Name: "   "}},
+		// Один знак — это «Я», и оно находилось бы в каждом предложении. Тот же предел у
+		// алиасов и в поиске на клиенте: правило одно с двух сторон.
+		{"имя из одного знака", entities.Input{Kind: "character", Name: "Я"}},
 		{"длинное имя", entities.Input{Kind: "character", Name: longString(81)}},
 		{"плохой цвет", entities.Input{Kind: "character", Name: "Анна", Color: strPtr("золотой")}},
 		{"длинное описание", entities.Input{Kind: "character", Name: "Анна", Description: strPtr(longString(601))}},
@@ -163,6 +166,14 @@ func TestEntityValidation(t *testing.T) {
 		Kind: "character", Name: "Анна", Aliases: &aliases,
 	}); !errors.Is(err, entities.ErrInvalidEntity) {
 		t.Fatalf("ожидался отказ по алиасу: %v", err)
+	}
+	// Алиас из одного знака — отказ, а не тихий пропуск: «Я» находилось бы в каждом
+	// предложении, и человек должен узнать, почему алиас не работает (0.68.0).
+	shortAlias := []string{"Я"}
+	if _, err := e.svc.Create(ctx, e.owner, e.project, entities.Input{
+		Kind: "character", Name: "Анна", Aliases: &shortAlias,
+	}); !errors.Is(err, entities.ErrInvalidEntity) {
+		t.Fatalf("ожидался отказ по короткому алиасу: %v", err)
 	}
 }
 
