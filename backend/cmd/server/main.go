@@ -22,6 +22,7 @@ import (
 	"github.com/skyfraze/backend/internal/auth"
 	"github.com/skyfraze/backend/internal/coauthors"
 	"github.com/skyfraze/backend/internal/collab"
+	"github.com/skyfraze/backend/internal/entities"
 	"github.com/skyfraze/backend/internal/events"
 	"github.com/skyfraze/backend/internal/feed"
 	"github.com/skyfraze/backend/internal/maintenance"
@@ -291,6 +292,8 @@ func main() {
 	// Беседы внутри проекта: контекст, инструменты и выполнение изменений. Помощник
 	// создаёт кадры ТЕМ ЖЕ путём, что импорт Markdown «в место» (transfer), поэтому
 	// открытые вкладки видят созданное сразу, а не после перезагрузки.
+	entitiesSvc := entities.New(st, projSvc)
+	entitiesH := entities.NewHandler(entitiesSvc, logger)
 	assistantSvc := assistant.New(st, aiSvc, projSvc, transferSvc, cfg.AIMaxToolCalls, logger)
 	// Иллюстрации помощника ложатся вложениями проекта: тот же путь загрузки, что у
 	// файлов из интерфейса (квота, пережатие в WebP, дедупликация).
@@ -302,6 +305,10 @@ func main() {
 	// Обсуждение кадров: помощник читает замечания и предлагает правку ИМЕННО того фрагмента,
 	// о котором написали. Без этой строки он снова правил бы кадр целиком.
 	assistantSvc.UseComments(evSvc)
+	// Карточки мира проекта (0.67.0): помощник видит, как в проекте названы персонажи и
+	// места, и пишет теми же именами. Без этой строки инструмент list_entities модели не
+	// предлагается — помощник работает как раньше, без словаря проекта.
+	assistantSvc.UseEntities(entitiesSvc)
 	assistantH := assistant.NewHandler(assistantSvc, logger)
 
 	collabHub := collab.NewHub(logger, cfg.JWTSecret, evSvc, cfg.CORSOrigins)
@@ -498,6 +505,10 @@ func main() {
 		// Обсуждение кадров (миграция 0018): чтение viewer+, запись editor+, удаление —
 		// только своё. Комментарии — не текст проекта: в документ и в книгу они не идут.
 		evH.MountComments(r)
+
+		// Карточки сущностей проекта (миграция 0030): персонажи, места, темы. Не текст:
+		// в CRDT-документ и в книгу они не попадают, поэтому читаются и пишутся напрямую.
+		entitiesH.Mount(r)
 
 		r.Post("/assets", assetsH.Upload(authSvc))
 		r.Get("/assets", assetsH.List(authSvc))

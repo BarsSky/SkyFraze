@@ -11,6 +11,7 @@ import {
   type FrameAnchor,
 } from '../../api/comments'
 import { FrameComments } from './FrameComments'
+import { EntitiesPanel } from '../entities/EntitiesPanel'
 import {
   previewMarkdownImport,
   readImportErrorMessage,
@@ -1491,6 +1492,12 @@ once — чтобы повторный
           {hintText}
         </p>
       )}
+
+      {/* Связи проекта (0.67.0): карточки персонажей, мест и тем. Над сеткой, а не внутри:
+          дерево кадров и редактор — про текст, карточки — про мир вокруг него, и в общем
+          скролле они мешали бы друг другу. Без projectId панель не рисуется: карточки живут
+          на сервере, и «локального» списка у них нет. */}
+      {projectId && <EntitiesPanel projectId={projectId} canEdit={canEdit === true} />}
 
       <div className="ed-panel__grid">
         <nav

@@ -147,6 +147,12 @@ type CommentReader interface {
 	CommentAnchor(ctx context.Context, userID, projectID, commentID uuid.UUID) (*store.CommentAnchor, error)
 }
 
+// EntityReader — карточки мира проекта (персонажи, места, темы): без них модель называет
+// одного персонажа по-разному в разных главах, и связи в тексте не сходятся.
+type EntityReader interface {
+	ListEntities(ctx context.Context, userID, projectID uuid.UUID) ([]store.ProjectEntity, error)
+}
+
 // Service — беседы с моделью внутри проекта.
 type Service struct {
 	store    *store.Store
@@ -163,6 +169,9 @@ type Service struct {
 	// comments — обсуждение кадров: источник замечаний, по которым предлагается правка
 	// фрагмента. Необязателен: без него инструменты обсуждения не предлагаются модели.
 	comments CommentReader
+	// world — карточки мира проекта. Необязателен: без него list_entities модели не
+	// предлагается, и помощник работает как раньше.
+	world EntityReader
 }
 
 // New собирает сервис. Отсутствие вставки или прав не валит сервер: помощник —
@@ -187,6 +196,9 @@ func (s *Service) UseAssets(store AssetStore) { s.assets = store }
 
 // UseComments подключает обсуждение кадров: без него помощник не видит замечаний.
 func (s *Service) UseComments(reader CommentReader) { s.comments = reader }
+
+// UseEntities подключает карточки мира проекта (персонажи, места, темы).
+func (s *Service) UseEntities(reader EntityReader) { s.world = reader }
 
 // UseEditor подключает правку существующих кадров: без него помощник только создаёт.
 func (s *Service) UseEditor(editor EventEditor) { s.editor = editor }
@@ -824,7 +836,7 @@ func (s *Service) converse(
 		reply, partial, err := ask(ai.Request{
 			Model:       model,
 			Messages:    messages,
-			Tools:       ToolDefs(caps, s.editor != nil),
+			Tools:       ToolDefs(caps, s.editor != nil, s.world != nil),
 			Temperature: 0.4,
 		})
 		if err != nil {

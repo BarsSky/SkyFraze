@@ -243,11 +243,12 @@ func TestParseTextToolCallsLooseJSONNeedsKnownTool(t *testing.T) {
 // Набор зависит от возможностей: проверяем полный вариант («текст и картинки»), а
 // урезанные — отдельным тестом ниже.
 func TestToolDefsAreWellFormed(t *testing.T) {
-	defs := ToolDefs(Capabilities{Text: true, Images: true}, true)
-	// 9 = чтение дерева и кадра, обсуждение кадров, создание главы и под-события,
-	// предложение правки кадра, правка фрагмента по замечанию, удаление, иллюстрация.
-	if len(defs) != 9 {
-		t.Fatalf("инструментов %d, ожидалось 9", len(defs))
+	defs := ToolDefs(Capabilities{Text: true, Images: true}, true, true)
+	// 10 = чтение дерева и кадра, карточки мира (list_entities), обсуждение кадров, создание
+	// главы и под-события, предложение правки кадра, правка фрагмента по замечанию, удаление,
+	// иллюстрация.
+	if len(defs) != 10 {
+		t.Fatalf("инструментов %d, ожидалось 10", len(defs))
 	}
 	seen := map[string]bool{}
 	for _, def := range defs {
@@ -262,9 +263,20 @@ func TestToolDefsAreWellFormed(t *testing.T) {
 			t.Fatalf("схема %s должна быть объектом: %+v", def.Name, def.Parameters)
 		}
 	}
-	for _, want := range []string{ToolListEvents, ToolReadEvent, ToolCreateChapter, ToolCreateSub} {
+	for _, want := range []string{ToolListEvents, ToolReadEvent, ToolCreateChapter, ToolCreateSub, ToolListEntities} {
 		if !seen[want] {
 			t.Fatalf("инструмент %s не объявлен", want)
+		}
+	}
+}
+
+// Карточки мира не предлагаются, когда на стенде их нет: обещать инструмент, который
+// отвечает «недоступно», хуже, чем не показывать его вовсе.
+func TestToolDefsWithoutEntities(t *testing.T) {
+	defs := ToolDefs(Capabilities{Text: true}, false, false)
+	for _, def := range defs {
+		if def.Name == ToolListEntities {
+			t.Fatal("list_entities объявлен без подключённых карточек мира")
 		}
 	}
 }

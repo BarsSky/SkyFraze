@@ -79,6 +79,8 @@ func (s *Service) execute(
 		return s.toolDeleteEvent(ctx, userID, projectID, call)
 	case ToolReadComments:
 		return s.toolReadComments(ctx, userID, projectID, call)
+	case ToolListEntities:
+		return s.toolListEntities(ctx, userID, projectID, call)
 	case ToolProposeFragmentEdit:
 		return s.toolProposeFragmentEdit(ctx, userID, projectID, call)
 	case ToolGenerateImage:
@@ -502,6 +504,79 @@ func (s *Service) toolListEvents(ctx context.Context, projectID uuid.UUID, call 
 }
 
 // toolReadEvent отдаёт текст одного кадра.
+// toolListEntities отдаёт модели карточки мира проекта: персонажи, места, темы.
+//
+// Зачем это модели. У неё есть текст кадров, но нет единого имени персонажа: в одной главе
+// она напишет «Анна», в другой «Аня», и упоминания в тексте перестанут сходиться с
+// карточками. Список карточек — это словарь проекта, и он дешевле, чем любые догадки.
+//
+// Только чтение: создание карточек — не правка одного кадра, а изменение связей во всём
+// проекте, и такое решение остаётся за человеком (docs/entity-links.md §4).
+func (s *Service) toolListEntities(
+	ctx context.Context, userID, projectID uuid.UUID, call ai.ToolCall,
+) toolResult {
+	if s.world == nil {
+		return refusedCall(call, "карточки мира недоступны на этом стенде")
+	}
+	list, err := s.world.ListEntities(ctx, userID, projectID)
+	if err != nil {
+		return refusedCall(call, "не удалось прочитать карточки мира: "+err.Error())
+	}
+	if len(list) == 0 {
+		return toolResult{
+			call:   call,
+			report: Call{Name: call.Name, OK: true, Detail: "карточек мира нет"},
+			payload: map[string]any{
+				"entities": []any{},
+				"note": "в проекте пока нет карточек персонажей, мест и тем — " +
+					"называй героев так, как они названы в кадре, и не выдумывай новые карточки",
+			},
+		}
+	}
+	rows := make([]map[string]any, 0, len(list))
+	lines := make([]string, 0, len(list))
+	for _, entity := range list {
+		row := map[string]any{
+			"kind":        entity.Kind,
+			"name":        entity.Name,
+			"description": entity.Description,
+		}
+		line := kindLabel(entity.Kind) + " «" + entity.Name + "»"
+		if len(entity.Aliases) > 0 {
+			row["aliases"] = entity.Aliases
+			line += " (также: " + strings.Join(entity.Aliases, ", ") + ")"
+		}
+		if entity.Description != "" {
+			line += " — " + entity.Description
+		}
+		rows = append(rows, row)
+		lines = append(lines, line)
+	}
+	return toolResult{
+		call:   call,
+		report: Call{Name: call.Name, OK: true, Detail: fmt.Sprintf("карточек: %d", len(rows))},
+		payload: map[string]any{
+			"entities": rows,
+			// Строки для промпта: модель читает текст лучше, чем вложенный JSON.
+			"summary": strings.Join(lines, "\n"),
+		},
+	}
+}
+
+// kindLabel — вид сущности по-русски (в базе и в API — английские имена).
+func kindLabel(kind string) string {
+	switch kind {
+	case "character":
+		return "персонаж"
+	case "place":
+		return "место"
+	case "theme":
+		return "тема"
+	default:
+		return "сущность"
+	}
+}
+
 func (s *Service) toolReadEvent(ctx context.Context, projectID uuid.UUID, call ai.ToolCall) toolResult {
 	id, err := ParseEventID(call.Arguments)
 	if err != nil {
