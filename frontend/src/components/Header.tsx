@@ -1,6 +1,8 @@
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../store/auth'
 import { useTheme } from '../store/theme'
+import { useMediaQuery } from '../lib/useMediaQuery'
 import { BrandMark } from './BrandMark'
 import { NotificationBell } from './NotificationBell'
 
@@ -12,7 +14,30 @@ import { NotificationBell } from './NotificationBell'
  * обеих темах, а не набором голубых ссылок. Кто вошёл — ссылка на свой профиль
  * (имя и ник без служебного email: он мешал навигации на средних экранах и
  * остаётся в подсказке).
+ *
+ * На телефоне шапка раньше прокручивалась ВБОК: «Резиденты» и «Админка» уезжали за правый
+ * край, полосы прокрутки не видно, и узнать о них было нельзя (замер: правый край ссылок —
+ * 469 и 562 px при экране 390). Теперь на узком экране в строке остаются два главных пункта, а
+ * остальные лежат в меню «Ещё»: ничего не спрятано за краем, и всё доступно с клавиатуры.
  */
+interface NavLink {
+  to: string
+  label: string
+  className?: string
+}
+
+/** С какого момента пункты уходят в меню: уже тесно, но ещё не «совсем узкий телефон». */
+const COMPACT_QUERY = '(max-width: 760px)'
+/**
+ * Совсем узкий экран (320 px): в строке не остаётся ни одного пункта, кроме «Ещё».
+ *
+ * Почему: на 320 px навигации достаётся ~80 px, а «Мои проекты» + «Ещё» требуют ~174. Прежде
+ * кнопка «Ещё» просто вылезала за свою полосу и перекрывала переключатель темы — клик по теме
+ * попадал в неё (нашёл аудит интерфейса после первой версии меню). В меню «Мои проекты» стоит
+ * первым, а логотип ведёт туда же.
+ */
+const NARROW_QUERY = '(max-width: 420px)'
+
 export function Header() {
   const user = useAuthStore((s) => s.user)
   const logout = useAuthStore((s) => s.logout)
@@ -20,11 +45,13 @@ export function Header() {
   const { pathname } = useLocation()
   const [theme, setTheme] = useTheme()
   const nextTheme = theme === 'dark' ? 'light' : 'dark'
+  const compact = useMediaQuery(COMPACT_QUERY)
+  const narrow = useMediaQuery(NARROW_QUERY)
 
   /** Раздел активен и на своих подстраницах: /projects и /projects/<id>. */
   const isActive = (to: string) => pathname === to || pathname.startsWith(`${to}/`)
 
-  const links: Array<{ to: string; label: string; className?: string }> = [
+  const links: NavLink[] = [
     // Лента доступна всем: это витрина опубликованных историй, вход не нужен
     { to: '/feed', label: 'Лента' },
     { to: '/projects', label: 'Мои проекты', className: 'header-nav__projects' },
@@ -32,6 +59,22 @@ export function Header() {
     // Каталог зарегистрированных: кто здесь есть и чем занимается
     { to: '/people', label: 'Резиденты' },
   ]
+  if (user?.is_admin) links.push({ to: '/admin', label: 'Админка' })
+
+  const visible = links.filter((link) => link.to === '/feed' || user)
+  // В строке на узком экране — те разделы, ради которых открывают приложение; на широком
+  // показываем всё. На совсем узком экране в строке остаётся только «Ещё»: две кнопки там уже
+  // не помещаются и перекрывали переключатель темы.
+  const inline = narrow
+    ? []
+    : compact
+      ? visible.filter((link) => link.to === '/projects' || (!user && link.to === '/feed'))
+      : visible
+  const inMenu = compact ? visible.filter((link) => !inline.includes(link)) : []
+  // Порядок в меню: главный раздел первым — на 320 px это единственный вход в проекты из строки.
+  if (inMenu.length > 0) {
+    inMenu.sort((a, b) => Number(b.to === '/projects') - Number(a.to === '/projects'))
+  }
 
   return (
     <header>
@@ -41,21 +84,17 @@ export function Header() {
           <span className="brand__name">SkyFraze</span>
         </Link>
         <nav className="auth-links" aria-label="Основная навигация">
-          {links
-            .filter((link) => link.to === '/feed' || user)
-            .map((link) => (
-              <Link
-                key={link.to}
-                to={link.to}
-                className={link.className}
-                aria-current={isActive(link.to) ? 'page' : undefined}
-              >
-                {link.label}
-              </Link>
-            ))}
-          {user?.is_admin && (
-            <Link to="/admin" aria-current={isActive('/admin') ? 'page' : undefined}>Админка</Link>
-          )}
+          {inline.map((link) => (
+            <Link
+              key={link.to}
+              to={link.to}
+              className={link.className}
+              aria-current={isActive(link.to) ? 'page' : undefined}
+            >
+              {link.label}
+            </Link>
+          ))}
+          {inMenu.length > 0 && <HeaderMenu links={inMenu} isActive={isActive} />}
         </nav>
       </div>
       <div className="row" style={{ gap: 8 }}>
@@ -91,5 +130,84 @@ export function Header() {
         )}
       </div>
     </header>
+  )
+}
+
+/**
+ * «Ещё» — пункты, которым не хватило места в строке.
+ *
+ * Почему кнопка с меню, а не прокрутка строки: прокрутка прячет пункты за краем без всякого
+ * признака, что они есть (нашлось на телефоне: «Резиденты» и «Админка» были за экраном, и
+ * полосы прокрутки не видно). Кнопка говорит «здесь ещё есть» и открывается пальцем.
+ *
+ * Доступность: `aria-expanded` и `aria-haspopup`, Escape закрывает и возвращает фокус на
+ * кнопку, клик мимо закрывает, переход закрывает сам себя.
+ */
+function HeaderMenu({ links, isActive }: { links: NavLink[]; isActive: (to: string) => boolean }) {
+  const [open, setOpen] = useState(false)
+  const wrapRef = useRef<HTMLDivElement | null>(null)
+  const buttonRef = useRef<HTMLButtonElement | null>(null)
+  const { pathname } = useLocation()
+
+  const close = useCallback((returnFocus = false) => {
+    setOpen(false)
+    if (returnFocus) buttonRef.current?.focus()
+  }, [])
+
+  // Переход закрывает меню: иначе оно оставалось бы висеть над новой страницей.
+  useEffect(() => {
+    setOpen(false)
+  }, [pathname])
+
+  useEffect(() => {
+    if (!open) return undefined
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') close(true)
+    }
+    const onPointer = (event: PointerEvent) => {
+      if (wrapRef.current?.contains(event.target as Node)) return
+      close()
+    }
+    window.addEventListener('keydown', onKey)
+    window.addEventListener('pointerdown', onPointer)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('pointerdown', onPointer)
+    }
+  }, [open, close])
+
+  return (
+    <div className="header-more" ref={wrapRef}>
+      <button
+        type="button"
+        className="secondary header-more__button"
+        aria-expanded={open}
+        aria-haspopup="menu"
+        aria-label="Ещё разделы"
+        onClick={() => setOpen((value) => !value)}
+        ref={buttonRef}
+        data-header-more
+      >
+        Ещё
+        <span aria-hidden="true" className="header-more__caret">
+          {open ? '▴' : '▾'}
+        </span>
+      </button>
+      {open && (
+        <div className="header-more__menu" role="menu" data-header-menu>
+          {links.map((link) => (
+            <Link
+              key={link.to}
+              to={link.to}
+              role="menuitem"
+              aria-current={isActive(link.to) ? 'page' : undefined}
+              onClick={() => close()}
+            >
+              {link.label}
+            </Link>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }

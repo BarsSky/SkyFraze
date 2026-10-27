@@ -611,6 +611,25 @@
 }
 .egraph__node:hover { border-color: var(--accent); }
 .egraph__node--center { font-weight: 600; border-color: var(--accent); cursor: default; }
+/* Карточка узла (0.78.0): имя, вид, алиасы и ближайшие связи. Появляется по нажатию на
+   «таблетку» — таблетка отвечает только «как зовут», а решение «та ли это карточка» требует
+   деталей. Лежит поверх холста снизу, чтобы не сдвигать раскладку узлов. */
+.egraph__card {
+  position: absolute; left: 8px; right: 8px; bottom: 8px; z-index: 5;
+  display: grid; gap: 6px; padding: 10px 12px;
+  background: var(--bg-elev); border: 1px solid var(--accent); border-radius: 10px;
+  box-shadow: 0 24px 60px -30px rgba(0, 0, 0, 0.8);
+  font-size: 12px; max-height: 78%; overflow-y: auto; overscroll-behavior: contain;
+}
+.egraph__card-head { display: flex; align-items: baseline; gap: 8px; }
+.egraph__card-name { flex: 1 1 auto; overflow-wrap: anywhere; }
+.egraph__card-close { min-width: 32px; min-height: 32px; line-height: 1; }
+.egraph__card-aliases { margin: 0; color: var(--fg-muted); overflow-wrap: anywhere; }
+.egraph__card-desc { margin: 0; overflow-wrap: anywhere; }
+.egraph__card-sub { margin: 0; }
+.egraph__card-links { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.egraph__card-link-name { font-weight: 600; }
+.egraph__card button { justify-self: start; }
 .egraph__center { font-weight: 600; margin: 8px 0 4px; }
 .egraph__list { list-style: none; margin: 6px 0; padding: 0; display: grid; gap: 4px; }
 .egraph__row {

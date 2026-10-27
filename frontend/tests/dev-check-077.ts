@@ -71,6 +71,7 @@ async function main() {
   await checkLinkForm(page)
   await screenshot(page, 'desktop')
   await checkMatrixAndMentions(page)
+  await checkNodeCard(page)
   await checkMobile(page)
   await checkAssistant(page)
   await checkHeaderStays(page)
@@ -356,8 +357,36 @@ async function checkMatrixAndMentions(page: Page) {
   if (cells === 0) problem('в матрице нет ни одной клетки-ссылки')
 }
 
-async function checkMobile(page: Page) {
-  await page.setViewportSize({ width: 390, height: 844 })
+/** Карточка узла графа (0.78.0): по нажатию на «таблетку» — имя, вид, алиасы и связи. */
+async function checkNodeCard(page: Page) {
+  const center = page.locator('[data-entity-graph-center]')
+  if ((await center.count()) === 0) {
+    problem('центрального узла графа нет — карточку не на чем проверить')
+    return
+  }
+  const name = await center.innerText()
+  await center.click()
+  await page.waitForTimeout(400)
+  const card = page.locator('[data-entity-graph-card]')
+  if ((await card.count()) === 0) {
+    problem(`карточка узла не раскрылась по нажатию на «${name}»`)
+    return
+  }
+  const text = (await card.innerText()).replace(/\s+/g, ' ').slice(0, 200)
+  const links = await page.locator('[data-entity-graph-card-links] li').count()
+  const aliases = await page.locator('[data-entity-graph-card-aliases]').innerText()
+  report.numbers.nodeCard = { name, text, links, aliases }
+  step(`карточка узла «${name}»: связей ${links}, алиасы «${aliases}»`)
+  if (links === 0) problem(`в карточке узла «${name}» нет списка связей`)
+  await card.screenshot({ path: `${OUT}\\node-card.png` })
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(300)
+  if ((await page.locator('[data-entity-graph-card]').count()) > 0) {
+    problem('Escape не закрыл карточку узла')
+  }
+}
+
+async function checkMobile(page: Page) {  await page.setViewportSize({ width: 390, height: 844 })
   await page.waitForTimeout(900)
   const block = page.locator('[data-entities]')
   const box = await block.boundingBox()

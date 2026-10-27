@@ -194,6 +194,32 @@ html.sf-stage-on .layout header {
   color: var(--fg); font-weight: 600;
 }
 
+/* «Ещё» — пункты, которым не хватило места в строке (0.78.0). Раньше строка шапки
+   прокручивалась вбок, и «Резиденты» с «Админкой» просто уезжали за край экрана: замер на
+   390 px показал их правый край на 469 и 562 px, а полосы прокрутки не видно. */
+.header-more { position: relative; display: inline-flex; }
+.header-more__button {
+  display: inline-flex; align-items: center; gap: 4px;
+  min-height: 34px; padding: 4px 12px; font-size: 0.94rem;
+}
+.header-more__caret { font-size: 0.7em; opacity: 0.75; }
+.header-more__menu {
+  position: absolute; left: 0; right: auto; top: calc(100% + 6px); z-index: 90;
+  min-width: 180px; max-width: calc(100vw - 20px); display: grid; gap: 2px; padding: 6px;
+  background: var(--bg-elev); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 24px 60px -28px rgba(0, 0, 0, 0.75);
+}
+.header-more__menu a {
+  display: flex; align-items: center; min-height: 36px;
+  padding: 6px 10px; border-radius: 8px;
+  color: var(--fg-muted); text-decoration: none; white-space: nowrap;
+}
+.header-more__menu a:hover { background: var(--chip-bg); color: var(--fg); text-decoration: none; }
+.header-more__menu a[aria-current='page'] {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--fg); font-weight: 600;
+}
+
 /* Знак SkyFraze рядом с названием: рисунок тот же, что в favicon.svg */
 .brand {
   display: inline-flex;
@@ -244,33 +270,37 @@ html.sf-stage-on .layout header {
      расширяет layout viewport и масштабирует страницу целиком — после чего
      фиксированные слои стадии, посчитанные от vh, оказываются за пределами
      видимой области: «элементы уходят за экран».
-     Раньше переносили строки, но с появлением ссылок «Соавторы» и «Админка» у
-     вошедшего администратора шапка стала занимать три строки — это четверть
-     экрана, и текст в кадре читать уже негде. Потом шапку целиком сделали
-     прокручиваемой — и вместе с ней за край уезжали переключатель темы и «Выйти»:
-     до них приходилось долистывать вбок (замечено на телефоне).
-     Теперь прокручивается ТОЛЬКО навигация, а бренд, тема и выход закреплены:
-     переполнение остаётся внутри полосы навигации, layout viewport не
-     расширяется, а нужные кнопки всегда на виду. */
+     История: сначала строки переносились (три строки — четверть экрана), потом шапку
+     целиком сделали прокручиваемой (тема и «Выйти» уезжали за край), затем прокручивалась
+     только полоса навигации — и «Резиденты»/«Админка» жили за правым краем без всякого
+     признака, что они есть (замер 0.78.0 на 390 px: правые края 469 и 562 px).
+     Теперь на узком экране лишние пункты уходят в меню «Ещё» (Header.tsx), поэтому
+     прокручивать вбок нечего: строка обязана уместиться, а не прокручиваться. */
   .layout header {
     flex-wrap: nowrap;
     gap: 8px;
     padding: 8px 10px;
-    overflow-x: auto;
-    scrollbar-width: none;
+    overflow-x: hidden;
   }
-  .layout header::-webkit-scrollbar { display: none; }
   .layout header > .row { flex-wrap: nowrap; }
   .layout header > .row:first-child { flex: 1 1 auto; min-width: 0; }
   .layout header > .row:last-child { flex: 0 0 auto; }
   .auth-links {
-    flex: 1 1 auto;
+    flex: 0 1 auto;
     min-width: 0;
     flex-wrap: nowrap;
-    overflow-x: auto;
-    scrollbar-width: none;
+    /* Обрезаем, а НЕ выпускаем наружу: при `overflow: visible` кнопка «Ещё» вылезала из своей
+       полосы и перекрывала переключатель темы — клик по теме попадал в неё (нашёл аудит 0.78.0).
+       Что именно не влезает — решает Header: лишние пункты уходят в меню, а на 320 px в строке
+       остаётся только «Ещё». */
+    overflow: hidden;
   }
-  .auth-links::-webkit-scrollbar { display: none; }
+  /* Прокрутка внутри полосы навигации больше не нужна: то, что не влезает, лежит в меню.
+     Оставлена как аварийный выход для языков с длинными названиями разделов — но уже
+     ВИДИМАЯ (тонкая полоса), чтобы спрятанное не выглядело отсутствующим. */
+  @supports (scrollbar-width: thin) {
+    .auth-links { scrollbar-width: thin; }
+  }
   .brand { min-height: 34px; }
   /* Узкая шапка: у переключателя темы остаётся только значок ☾/☀, слово
      «тёмная» отнимало 60px у ссылок. Минимальная ширина — чтобы цель нажатия
@@ -328,4 +358,29 @@ html.sf-stage-on .layout header {
 
 @media (prefers-reduced-motion: reduce) {
   * { scroll-behavior: auto !important; }
+}
+
+/* ── размытия на телефоне выключаем (0.78.0) ─────────────────────────────────
+   Замер (tests/diag-scroll-cost.ts, CPU замедлен вчетверо — как телефон среднего класса):
+   один и тот же жест пальцем на 400 px давал 11 «медленных» кадров (>32 мс) из 81 при
+   размытиях и 1 из 88 без них. `backdrop-filter` заставляет GPU пересчитывать блюр каждый
+   кадр, а на телефоне это и есть ощущение «прокрутка подтормаживает».
+   На десктопе размытие бесплатно и выглядит хорошо, поэтому выключаем только там, где
+   дорого: на узком экране и на устройствах с пальцевым вводом. Фон делаем непрозрачным —
+   полупрозрачный без блюра читается хуже, чем плотный. */
+@media (max-width: 760px), (pointer: coarse) {
+  .layout header,
+  .sf-topbar,
+  .sf-nav,
+  .sf-route,
+  .sf-copy,
+  .sf-chip,
+  .ai-window {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+  /* Плотный фон вместо полупрозрачного: без блюра «стекло» читается хуже, чем лист. */
+  .layout header { background: var(--bg); }
+  .sf-topbar, .sf-nav, .sf-route { background: var(--bg-elev); }
+  .sf-copy { background: var(--sf-bg, var(--bg)); }
 }

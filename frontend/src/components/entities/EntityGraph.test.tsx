@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { EntityGraph } from './EntityGraph'
+import { EntityGraph, shortLabel } from './EntityGraph'
 
 afterEach(() => {
   cleanup()
@@ -20,13 +20,57 @@ describe('EntityGraph — эго-граф связей (0.75.0)', () => {
     expect(screen.getByText('→ живёт на')).toBeTruthy()
   })
 
-  it('клик по соседу делает его центром, «назад» возвращает', async () => {
+  it('клик по соседу раскрывает карточку, «Сделать центром» центрирует, «назад» возвращает', async () => {
     render(<EntityGraph entities={[anna, earth]} links={[link]} />)
     fireEvent.click(await screen.findByRole('button', { name: 'Земля' }))
+    // Нажатие на узел больше НЕ перескакивает: сначала карточка, переход — отдельной кнопкой.
+    expect(await screen.findByRole('dialog', { name: 'Карточка Земля' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Сделать центром' }))
     // Теперь центр — Земля, а её сосед — Аня (обратная сторона связи).
     expect(await screen.findByText('← живёт на')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'назад' }))
     expect(await screen.findByText('→ живёт на')).toBeTruthy()
+  })
+
+  /**
+   * Карточка узла (0.78.0): по нажатию на «таблетку» видно, ТА ли это карточка и куда ведут её
+   * связи. Раньше таблетка сообщала только имя, а нажатие сразу уводило в другую карточку.
+   */
+  it('карточка узла показывает вид, алиасы и ближайшие связи', async () => {
+    const annaWithAliases = { ...anna, aliases: ['Аня', 'Анну'] }
+    const guard = { id: 'e3', kind: 'character' as const, name: 'Сторож', aliases: [], description: 'молчаливый', color: '', created_at: '', updated_at: '' }
+    const toLetter = { id: 'l2', from_entity: 'e1', to_entity: 'e3', label: 'боится', created_at: '' }
+    render(<EntityGraph entities={[annaWithAliases, earth, guard]} links={[link, toLetter]} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Аня' }))
+    const card = await screen.findByRole('dialog', { name: 'Карточка Аня' })
+    expect(card.textContent).toContain('Персонаж')
+    expect(card.textContent).toContain('также: Аня, Анну')
+    expect(card.textContent).toContain('связей: 2')
+    expect(card.textContent).toContain('живёт на')
+    expect(card.textContent).toContain('Земля')
+    expect(card.textContent).toContain('боится')
+    // Центр карточкой не переключается: перехода тут нет.
+    expect(screen.queryByRole('button', { name: 'Сделать центром' })).toBeNull()
+  })
+
+  it('Escape и «×» закрывают карточку', async () => {
+    render(<EntityGraph entities={[anna, earth]} links={[link]} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Земля' }))
+    expect(await screen.findByRole('dialog', { name: 'Карточка Земля' })).toBeTruthy()
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: 'Карточка Земля' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Земля' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Закрыть карточку' }))
+    expect(screen.queryByRole('dialog', { name: 'Карточка Земля' })).toBeNull()
+  })
+
+  it('карточка без алиасов говорит об этом словами, а не пустотой', async () => {
+    render(<EntityGraph entities={[anna, earth]} links={[link]} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Земля' }))
+    const card = await screen.findByRole('dialog', { name: 'Карточка Земля' })
+    expect(card.textContent).toContain('алиасов нет')
   })
 
   it('поиск находит карточку и Enter центрирует её', async () => {
@@ -93,5 +137,20 @@ describe('EntityGraph — эго-граф связей (0.75.0)', () => {
     expect(left).toBe(200)
     const neighbor = screen.getByRole('button', { name: 'Земля' })
     expect(Number.parseFloat(neighbor.style.left)).toBeLessThanOrEqual(400)
+  })
+})
+
+describe('shortLabel — подпись ребра на холсте (0.78.0)', () => {
+  it('короткая подпись остаётся целой', () => {
+    expect(shortLabel('→ живёт на')).toBe('→ живёт на')
+  })
+
+  it('длинная обрезается: подпись не вылезает за холст (замер: 366 px текста в 292 px холсте)', () => {
+    const long = '→ перехвачено · проверка связи · проверка 16:35:34 · проверка 16:35:54'
+    const short = shortLabel(long)
+    expect(short.length).toBeLessThanOrEqual(22)
+    expect(short.endsWith('…')).toBe(true)
+    // Обрезка по границе слова: «провер…» читается хуже, чем «проверка…».
+    expect(short).not.toMatch(/\s…$/)
   })
 })

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { EntityLink, ProjectEntity } from '../../api/entities'
-import { connectionsOf } from '../../api/entities'
+import { connectionsOf, kindLabel } from '../../api/entities'
 import {
   RAIL_WINDOW,
   edgeLabel,
@@ -31,6 +31,8 @@ export function EntityGraph({ entities, links }: Props) {
   /** Откуда пришли: стек последних центров, «назад» снимает верхний. */
   const [history, setHistory] = useState<string[]>([])
   const [centerId, setCenterId] = useState<string | null>(null)
+  /** Какая карточка раскрыта в окне графа: имя, вид, алиасы и ближайшие связи (0.78.0). */
+  const [expanded, setExpanded] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [windowStart, setWindowStart] = useState(0)
   const [size, setSize] = useState({ width: 720, height: 340 })
@@ -99,6 +101,22 @@ export function EntityGraph({ entities, links }: Props) {
     () => entities.find((entity) => entity.id === centerId) ?? null,
     [centerId, entities],
   )
+
+  /** Раскрытая карточка: ищем по id в актуальном списке — карточку могли переименовать. */
+  const expandedCard = useMemo(
+    () => entities.find((entity) => entity.id === expanded) ?? null,
+    [entities, expanded],
+  )
+
+  // Escape закрывает карточку: это окно поверх графа, и клавиатурой его тоже надо закрывать.
+  useEffect(() => {
+    if (expanded === null) return undefined
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setExpanded(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [expanded])
 
   const neighbors = useMemo<GraphNeighbor[]>(() => {
     if (!center) return []
@@ -251,7 +269,10 @@ export function EntityGraph({ entities, links }: Props) {
                 className="egraph__edge"
               />
               <text x={edge.labelAt.x} y={edge.labelAt.y} className="egraph__edge-label" textAnchor="middle">
-                {edgeLabel(edge)}
+                {/* Подпись на ребре — короткая: полный список связей показывает карточка.
+                    Иначе длинная подпись вылезает за холст (замер: 366 px текста в холсте
+                    292 px — обрезано с обеих сторон). */}
+                {shortLabel(edgeLabel(edge))}
               </text>
             </g>
           ))}
@@ -261,7 +282,9 @@ export function EntityGraph({ entities, links }: Props) {
           className="egraph__node egraph__node--center"
           style={{ left: layout.center.x, top: layout.center.y }}
           data-entity-graph-center
-          title={center.name}
+          aria-expanded={expanded === center.id}
+          title={`${center.name} — открыть карточку`}
+          onClick={() => setExpanded((current) => (current === center.id ? null : center.id))}
         >
           {center.name}
         </button>
@@ -271,13 +294,27 @@ export function EntityGraph({ entities, links }: Props) {
             type="button"
             className="egraph__node"
             style={{ left: positioned.x, top: positioned.y }}
-            onClick={() => go(positioned.node.id)}
+            onClick={() => setExpanded((current) => (current === positioned.node.id ? null : positioned.node.id))}
+            aria-expanded={expanded === positioned.node.id}
             data-entity-graph-node={positioned.node.id}
-            title={positioned.node.name}
+            title={`${positioned.node.name} — открыть карточку`}
           >
             {positioned.node.name}
           </button>
         ))}
+        {expandedCard !== null && (
+          <NodeCard
+            card={expandedCard}
+            links={links}
+            entities={entities}
+            isCenter={expandedCard.id === center.id}
+            onCenter={() => {
+              go(expandedCard.id)
+              setExpanded(null)
+            }}
+            onClose={() => setExpanded(null)}
+          />
+        )}
       </div>
       {neighbors.length === 0 && (
         <p className="muted" data-entity-graph-lonely>
@@ -287,6 +324,93 @@ export function EntityGraph({ entities, links }: Props) {
     </div>
   )
 }
+
+/**
+ * Карточка узла: имя, вид, алиасы и ближайшие связи (0.78.0).
+ *
+ * Зачем: таблетка с именем отвечает только «как зовут». Чтобы понять, ТА ли это карточка и
+ * куда ведут её связи, нужно раскрыть её — и это ожидаемое действие по нажатию на узел.
+ * Раньше нажатие на соседа сразу делало его центром: переход без права посмотреть.
+ * Теперь нажатие раскрывает карточку, а переход — отдельной кнопкой «Сделать центром».
+ */
+function NodeCard({
+  card,
+  links,
+  entities,
+  isCenter,
+  onCenter,
+  onClose,
+}: {
+  card: ProjectEntity
+  links: EntityLink[]
+  entities: ProjectEntity[]
+  isCenter: boolean
+  onCenter: () => void
+  onClose: () => void
+}) {
+  const connections = connectionsOf(card.id, links, entities)
+  const shown = connections.slice(0, MAX_CARD_LINKS)
+  return (
+    <div className="egraph__card" role="dialog" aria-label={`Карточка ${card.name}`} data-entity-graph-card>
+      <div className="egraph__card-head">
+        <span className="ent__kind">{kindLabel(card.kind)}</span>
+        <strong className="egraph__card-name">{card.name}</strong>
+        <button
+          type="button"
+          className="secondary egraph__card-close"
+          onClick={onClose}
+          aria-label="Закрыть карточку"
+          data-entity-graph-card-close
+        >
+          ×
+        </button>
+      </div>
+      <p className="egraph__card-aliases" data-entity-graph-card-aliases>
+        {card.aliases.length > 0 ? `также: ${card.aliases.join(', ')}` : 'алиасов нет'}
+      </p>
+      {card.description !== '' && <p className="egraph__card-desc">{card.description}</p>}
+      <p className="muted egraph__card-sub">
+        {connections.length === 0
+          ? 'связей нет'
+          : `связей: ${connections.length}${connections.length > shown.length ? ` (показаны ${shown.length})` : ''}`}
+      </p>
+      {shown.length > 0 && (
+        <ul className="egraph__card-links" data-entity-graph-card-links>
+          {shown.map((connection) => (
+            <li key={connection.link.id}>
+              <span className="muted">
+                {connection.direction === 'out' ? '→' : '←'} {connection.link.label}
+              </span>{' '}
+              <span className="egraph__card-link-name">{connection.other.name}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {!isCenter && (
+        <button type="button" className="secondary" onClick={onCenter} data-entity-graph-card-center>
+          Сделать центром
+        </button>
+      )}
+    </div>
+  )
+}
+
+/** Сколько связей показывать в карточке: остальное — по переходу в панель связей. */
+const MAX_CARD_LINKS = 8
+
+/**
+ * Короткая подпись ребра: одна связь целиком, несколько — первая и «+N».
+ *
+ * Длина в знаках, а не в пикселях: подпись рисуется в SVG, где измерить текст до отрисовки
+ * нельзя, а обрезка по знакам предсказуема и проверяется тестом. Полный список — в карточке.
+ */
+export function shortLabel(label: string): string {
+  if (label.length <= EDGE_LABEL_CHARS) return label
+  return `${label.slice(0, EDGE_LABEL_CHARS - 1).trimEnd()}…`
+}
+
+/** Предел подписи на ребре: при 12px шрифте это ~150 px, влезает в холст 248 px. */
+const EDGE_LABEL_CHARS = 22
 
 /** Поиск и «назад»: одинаковы в обоих режимах, поэтому отдельным блоком. */
 function GraphHeader({
