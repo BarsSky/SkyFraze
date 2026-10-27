@@ -25,6 +25,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/skyfraze/backend/internal/assets"
+	"github.com/skyfraze/backend/internal/auth"
 	"github.com/skyfraze/backend/internal/projects"
 	"github.com/skyfraze/backend/internal/storage"
 
@@ -289,6 +290,14 @@ func (s *Sweeper) scan(ctx context.Context, remove bool) (*Report, error) {
 			// ссылок, и следующий проход снимет их сам (карантин на свежие файлы здесь не
 			// мешает — они старые). Дублировать удаление здесь значило бы иметь два
 			// механизма уборки файлов, которые расходятся.
+		}
+
+		// Журнал входов (миграция 0029): срок хранения — обещание, а не пожелание. Убирает
+		// его тот же фон, что и корзину: иначе «90 дней» остались бы только в документации.
+		if purged, err := s.store.PurgeLoginAudit(ctx, auth.LoginAuditRetention); err != nil {
+			s.logger.Warn("storage sweep: журнал входов не убран", "err", err)
+		} else if purged > 0 {
+			s.logger.Info("storage sweep: убраны старые записи журнала входов", "count", purged)
 		}
 
 		// Церемонии ключей доступа (миграция 0028): строка появляется на каждый начатый

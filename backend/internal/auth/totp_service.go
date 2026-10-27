@@ -136,12 +136,28 @@ func (s *Service) RecoveryCodeCount(ctx context.Context, userID uuid.UUID) (int,
 	return s.store.UnusedRecoveryCodes(ctx, userID)
 }
 
-// checkTOTPOrRecovery — принимает код приложения ИЛИ код восстановления (одноразовый).
-func (s *Service) checkTOTPOrRecovery(ctx context.Context, userID uuid.UUID, secret, code string) bool {
-	if VerifyTOTP(secret, code, time.Now()) {
-		return true
+// verifySecondFactor проверяет код и говорит, ЧЕМ он был.
+//
+// Фактор нужен журналу входов: «вошёл по коду восстановления» — сигнал, что листок с кодами у
+// кого-то в руках, и его стоит видеть в списке последних входов. Пустой secret означает «кода
+// из приложения у человека нет» (TOTP не включён) — тогда принимается только код восстановления.
+func (s *Service) verifySecondFactor(
+	ctx context.Context, userID uuid.UUID, secret, code string,
+) (string, bool) {
+	if secret != "" && VerifyTOTP(secret, code, time.Now()) {
+		return loginFactorTOTP, true
 	}
-	return s.consumeRecoveryCode(ctx, userID, code)
+	if s.consumeRecoveryCode(ctx, userID, code) {
+		return loginFactorRecovery, true
+	}
+	return "", false
+}
+
+// checkTOTPOrRecovery — то же, но без указания фактора (нужно выключению второго фактора,
+// где журнал входа не ведётся).
+func (s *Service) checkTOTPOrRecovery(ctx context.Context, userID uuid.UUID, secret, code string) bool {
+	_, ok := s.verifySecondFactor(ctx, userID, secret, code)
+	return ok
 }
 
 // consumeRecoveryCode гасит код восстановления. Один раз и навсегда: повтор того же кода —
@@ -180,7 +196,10 @@ func (s *Service) BeginTOTPChallenge(userID uuid.UUID) (string, error) {
 // Если TOTP не включён, но привязаны ключи доступа, второй шаг всё равно был (ключи требуют
 // его), и код восстановления здесь — единственный путь внутрь для того, кто потерял устройство.
 // Поэтому в этом случае принимается ТОЛЬКО код восстановления: кода из приложения у него нет.
-func (s *Service) LoginTOTP(ctx context.Context, challenge, code string) (*store.User, *Tokens, error) {
+func (s *Service) LoginTOTP(
+	ctx context.Context, challenge, code string, meta ...LoginMeta,
+) (*store.User, *Tokens, error) {
+	attempt := metaOf(meta)
 	userID, err := s.parseTOTPChallenge(challenge)
 	if err != nil {
 		return nil, nil, ErrTOTPInvalid
@@ -189,18 +208,21 @@ func (s *Service) LoginTOTP(ctx context.Context, challenge, code string) (*store
 	if err != nil {
 		return nil, nil, ErrTOTPInvalid
 	}
-	secret, enabled, err := s.store.TOTPOf(ctx, userID)
+	// Ошибка здесь значит «секрета нет» — это не повод отказывать: у человека может быть ключ.
+	secret, enabled, _ := s.store.TOTPOf(ctx, userID)
 	hasPasskeys := s.WebAuthnPasskeyCount(ctx, userID) > 0
 	if !enabled && !hasPasskeys {
 		return nil, nil, ErrTOTPInvalid
 	}
-	ok := false
+	// Код из приложения принимается только если TOTP включён: иначе «секрета» нет, а код
+	// восстановления остаётся последним путём внутрь.
+	usableSecret := ""
 	if enabled {
-		ok = s.checkTOTPOrRecovery(ctx, userID, secret, code)
-	} else {
-		ok = s.consumeRecoveryCode(ctx, userID, code)
+		usableSecret = secret
 	}
+	factor, ok := s.verifySecondFactor(ctx, userID, usableSecret, code)
 	if !ok {
+		s.recordLogin(ctx, userID, loginOutcomeCode, "", attempt)
 		return nil, nil, ErrTOTPInvalid
 	}
 	// Сессия: тот же путь, что и при обычном входе (одна точка выдачи токенов).
@@ -208,6 +230,7 @@ func (s *Service) LoginTOTP(ctx context.Context, challenge, code string) (*store
 	if err != nil {
 		return nil, nil, err
 	}
+	s.recordLogin(ctx, userID, loginOutcomeOK, factor, attempt)
 	return u, tok, nil
 }
 

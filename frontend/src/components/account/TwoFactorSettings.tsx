@@ -8,6 +8,8 @@ import {
   type AuthSession,
 } from '../../api/auth'
 import { useAuthStore } from '../../store/auth'
+import { describeBrowser } from '../../lib/agent'
+import { LoginHistory } from './LoginHistory'
 import { PasskeySettings } from './PasskeySettings'
 
 /**
@@ -213,6 +215,9 @@ export function TwoFactorSettings() {
       {/* Ключи доступа — второй фактор рядом с кодом из приложения (0.65.0). */}
       <PasskeySettings />
 
+      {/* Журнал входов: «когда я входил» и «кто пытался» (0.66.0). */}
+      <LoginHistory />
+
       {note !== null && (
         <p className="twofa__note" role="status" data-two-factor-note>
           {note}
@@ -224,29 +229,7 @@ export function TwoFactorSettings() {
 
 /** Подпись сеанса: браузер из user-agent, адрес и дата входа. */
 export function sessionDescription(session: AuthSession): string {
-  const agent = session.userAgent || ''
-  const browser =
-    /Firefox/i.test(agent)
-      ? 'Firefox'
-      : /Edg\//i.test(agent)
-        ? 'Edge'
-        : /Chrome/i.test(agent)
-          ? 'Chrome'
-          : /Safari/i.test(agent)
-            ? 'Safari'
-            : 'Неизвестный браузер'
-  const platform = /Windows/i.test(agent)
-    ? 'Windows'
-    : /Android/i.test(agent)
-      ? 'Android'
-      : /iPhone|iPad/i.test(agent)
-        ? 'iOS'
-        : /Mac OS/i.test(agent)
-          ? 'macOS'
-          : /Linux/i.test(agent)
-            ? 'Linux'
-            : ''
-  const where = [browser, platform].filter(Boolean).join(' · ')
+  const where = describeBrowser(session.userAgent)
   const when = session.createdAt ? new Date(session.createdAt).toLocaleString('ru-RU') : ''
   const ip = session.ip ? ` · ${session.ip}` : ''
   return `${where}${ip}${when ? ` · ${when}` : ''}`

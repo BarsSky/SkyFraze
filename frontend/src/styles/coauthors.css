@@ -189,3 +189,16 @@ span.craft-chip { cursor: default; }
 .passkeys__confirm { display: flex; gap: 6px; }
 .passkeys__note { font-size: 12px; margin: 8px 0 0; }
 
+/* ─── журнал входов (компонент LoginHistory, 0.66.0) ─────────────────────────
+   Неудачные попытки помечены цветом текста, а не иконкой: в списке из двадцати строк
+   глаз должен находить их сразу, а не сравнивать подписи. */
+.logins__list { list-style: none; margin: 8px 0; padding: 0; }
+.logins__item {
+  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+  padding: 5px 0; border-bottom: 1px dashed var(--border);
+}
+.logins__item:last-child { border-bottom: none; }
+.logins__item--failed .logins__what { color: var(--danger, #c0392b); }
+.logins__what { font-size: 13px; }
+.logins__meta { font-size: 12px; flex: 1 1 auto; }
+

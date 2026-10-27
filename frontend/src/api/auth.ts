@@ -172,6 +172,49 @@ export async function me(): Promise<UserPublic> {
 }
 
 /**
+ * Одна попытка входа из журнала (сервер: миграция 0029).
+ *
+ * `outcome` — что получилось, `factor` — чем вошли (у неудач пусто). Разделение важнее, чем
+ * кажется: «вход по коду восстановления» и «неверный пароль» — разные события, и второе
+ * означает, что кто-то пробует чужой аккаунт.
+ */
+export interface LoginAttempt {
+  id: string
+  outcome: string
+  factor: string
+  ip: string
+  userAgent: string
+  createdAt: string
+}
+
+/**
+ * Последние входы в ЭТОТ аккаунт: успешные и неудачные, свежие сверху.
+ *
+ * `retentionDays` сервер отдаёт вместе с записями — чтобы интерфейс сказал, докуда журнал
+ * помнит, а не оставлял человека думать, что история началась с него.
+ */
+export async function listLogins(): Promise<{ attempts: LoginAttempt[]; retentionDays: number }> {
+  const raw = await http.get('auth/logins').json<unknown>()
+  const record = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : null
+  const list = Array.isArray(record?.logins) ? record?.logins : []
+  const attempts: LoginAttempt[] = []
+  for (const item of list as Array<Record<string, unknown>>) {
+    const id = typeof item?.id === 'string' ? item.id : ''
+    if (!id) continue
+    attempts.push({
+      id,
+      outcome: typeof item.outcome === 'string' ? item.outcome : '',
+      factor: typeof item.factor === 'string' ? item.factor : '',
+      ip: typeof item.ip === 'string' ? item.ip : '',
+      userAgent: typeof item.user_agent === 'string' ? item.user_agent : '',
+      createdAt: typeof item.created_at === 'string' ? item.created_at : '',
+    })
+  }
+  const retentionDays = typeof record?.retention_days === 'number' ? record.retention_days : 0
+  return { attempts, retentionDays }
+}
+
+/**
  * Что можно поменять в своём профиле.
  *
  * Контракт PATCH — по полям: поля нет в теле — сервер его не трогает; пришла

@@ -241,11 +241,14 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	if h.limiter != nil {
 		if ok, wait := h.limiter.AllowKey(req.Email); !ok {
 			h.logger.Warn("login: слишком много попыток для аккаунта", "email", req.Email)
+			// В журнал входов — по адресу аккаунта: «в мой аккаунт долбятся с одного адреса»
+			// человек должен увидеть у себя, а не только в логах сервера.
+			h.svc.RecordLocked(r.Context(), req.Email, MetaFromRequest(r))
 			ratelimit.WriteLimited(w, wait)
 			return
 		}
 	}
-	u, tok, err := h.svc.Login(r.Context(), req.Email, req.Password)
+	u, tok, err := h.svc.Login(r.Context(), req.Email, req.Password, MetaFromRequest(r))
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrTOTPRequired):

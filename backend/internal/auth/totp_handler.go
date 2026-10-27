@@ -28,6 +28,8 @@ func (h *Handler) MountTwoFactor(r interface {
 	r.Post("/2fa/disable", h.TOTPDisable)
 	r.Get("/sessions", h.ListSessions)
 	r.Post("/sessions/revoke-others", h.RevokeOtherSessions)
+	// Журнал входов (миграция 0029): последние 20 попыток — успешных и нет.
+	r.Get("/logins", h.ListLogins)
 }
 
 // TOTPSetup — POST /2fa/setup: выдать секрет (ещё не включённый).
@@ -150,7 +152,7 @@ func (h *Handler) LoginTOTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	u, tok, err := h.svc.LoginTOTP(r.Context(), req.Challenge, req.Code)
+	u, tok, err := h.svc.LoginTOTP(r.Context(), req.Challenge, req.Code, MetaFromRequest(r))
 	if err != nil {
 		if errors.Is(err, ErrTOTPInvalid) {
 			writeErr(w, http.StatusUnauthorized, "неверный или просроченный код")
@@ -190,6 +192,41 @@ func (h *Handler) ListSessions(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"sessions": out})
+}
+
+// ListLogins — GET /logins: последние попытки входа в ЭТОТ аккаунт.
+//
+// Только свои: ручки «все входы на инсталляции» нет намеренно. Администратору такая
+// возможность не нужна, а её наличие превратило бы журнал безопасности в слежку.
+func (h *Handler) ListLogins(w http.ResponseWriter, r *http.Request) {
+	uid, err := UserIDFromCtx(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	list, err := h.svc.Logins(r.Context(), uid)
+	if err != nil {
+		h.logger.Error("logins", "err", err)
+		writeErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	out := make([]map[string]any, 0, len(list))
+	for _, entry := range list {
+		out = append(out, map[string]any{
+			"id":         entry.ID.String(),
+			"outcome":    entry.Outcome,
+			"factor":     entry.Factor,
+			"ip":         entry.IP,
+			"user_agent": entry.UserAgent,
+			"created_at": entry.CreatedAt,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"logins": out,
+		// Сколько хранится журнал: интерфейс говорит это словами, а не оставляет человека
+		// гадать, почему «последних входов» не больше двадцати и докуда они помнятся.
+		"retention_days": int(LoginAuditRetention.Hours() / 24),
+	})
 }
 
 // RevokeOtherSessions — POST /sessions/revoke-others {"refresh"}: закрыть чужие входы.

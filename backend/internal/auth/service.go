@@ -312,16 +312,26 @@ func (s *Service) SubmitRegistrationRequest(ctx context.Context, email, password
 
 // Login. Если пользователя нет, но есть его заявка — сообщаем об этом: человек
 // ввёл те же данные, что и при заявке, значит это не утечка, а объяснение.
-func (s *Service) Login(ctx context.Context, email, password string) (*store.User, *Tokens, error) {
+//
+// meta — необязательные сведения о попытке (адрес и браузер) для журнала входов: HTTP-слой
+// передаёт их, остальные вызовы (тесты, скрипты) — нет. Вариативный параметр, а не отдельный
+// метод «LoginFrom»: два входа с разными правилами рано или поздно разошлись бы.
+func (s *Service) Login(
+	ctx context.Context, email, password string, meta ...LoginMeta,
+) (*store.User, *Tokens, error) {
+	attempt := metaOf(meta)
 	email = strings.TrimSpace(strings.ToLower(email))
 	u, err := s.store.GetUserByEmail(ctx, email)
 	if err != nil {
+		// Аккаунта нет — записывать нечего и не для кого: журнал ведётся только для
+		// существующих учётных записей (docs/security.md, приватность).
 		if err := s.explainMissingAccount(ctx, email, password); err != nil {
 			return nil, nil, err
 		}
 		return nil, nil, ErrInvalidCreds
 	}
 	if err := VerifyPassword(u.PasswordHash, password); err != nil {
+		s.recordLogin(ctx, u.ID, loginOutcomePassword, "", attempt)
 		return nil, nil, ErrInvalidCreds
 	}
 	// Даже при наличии аккаунта незакрытая заявка означает, что доступ ещё не дан.
@@ -344,6 +354,7 @@ func (s *Service) Login(ctx context.Context, email, password string) (*store.Use
 	if err != nil {
 		return nil, nil, err
 	}
+	s.recordLogin(ctx, u.ID, loginOutcomeOK, loginFactorPassword, attempt)
 	return u, tok, nil
 }
 

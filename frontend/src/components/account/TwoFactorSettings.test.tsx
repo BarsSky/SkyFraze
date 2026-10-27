@@ -24,6 +24,9 @@ vi.mock('../../api/auth', () => ({
   disableTOTP: mocks.disable,
   listSessions: mocks.sessions,
   revokeOtherSessions: mocks.revoke,
+  // Журнал входов живёт в том же блоке: без него компонент ловит TypeError и показывает
+  // пустой список, то есть тест проверял бы не то, что видит человек.
+  listLogins: async () => ({ attempts: [], retentionDays: 90 }),
 }))
 
 let currentUser: Record<string, unknown> = { id: 'u1', email: 'me@example.com', totp_enabled: false }

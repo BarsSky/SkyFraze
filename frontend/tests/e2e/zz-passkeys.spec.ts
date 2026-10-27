@@ -72,6 +72,13 @@ test('ключ доступа: привязка в профиле, вход им
   await expect(page.locator('[data-passkeys-list]')).toContainText('виртуальный ключ', {
     timeout: 30_000,
   })
+
+  // Журнал входов (0.66.0): вход ключом записан и виден человеку словами. Проверяется вся
+  // цепочка — сервис записал попытку, ручка её отдала, интерфейс показал.
+  const journal = page.locator('[data-logins-list]')
+  await expect(journal).toContainText('Вход по ключу доступа', { timeout: 15_000 })
+  await expect(journal).toContainText('Вход по паролю')
+
   await page.getByLabel('Удалить ключ виртуальный ключ').click()
   await page.getByRole('button', { name: 'Удалить' }).click()
   await expect(page.locator('[data-passkeys-empty]')).toBeVisible({ timeout: 15_000 })

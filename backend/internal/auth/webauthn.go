@@ -358,6 +358,9 @@ func (s *Service) WebAuthnLoginFinish(
 	if err := s.webAuthnReady(); err != nil {
 		return nil, nil, err
 	}
+	// Метаданные попытки — из запроса: журнал входов должен видеть адрес и браузер так же, как
+	// при входе паролем.
+	attempt := MetaFromRequest(r)
 	challenge, err := s.takeChallengeRaw(ctx, challengeID, "login")
 	if err != nil {
 		return nil, nil, err
@@ -375,6 +378,7 @@ func (s *Service) WebAuthnLoginFinish(
 	}
 	credential, err := s.webauthn.FinishLogin(user, session, r)
 	if err != nil {
+		s.recordLogin(ctx, *challenge.UserID, loginOutcomeKey, "", attempt)
 		return nil, nil, ErrInvalidCreds
 	}
 	// Нашли, какую строку обновить: по идентификатору ключа.
@@ -395,6 +399,7 @@ func (s *Service) WebAuthnLoginFinish(
 	if err != nil {
 		return nil, nil, err
 	}
+	s.recordLogin(ctx, u.ID, loginOutcomeOK, loginFactorPasskey, attempt)
 	return u, tokens, nil
 }
 
