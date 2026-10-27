@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { EntityLink, ProjectEntity } from '../../api/entities'
 import { connectionsOf } from '../../api/entities'
 import {
@@ -34,7 +34,16 @@ export function EntityGraph({ entities, links }: Props) {
   const [query, setQuery] = useState('')
   const [windowStart, setWindowStart] = useState(0)
   const [size, setSize] = useState({ width: 720, height: 340 })
-  const hostRef = useRef<HTMLDivElement | null>(null)
+  /**
+   * Холст берём состоянием, а не ref: карточки приходят с сервера ПОСЛЕ первого рендера, и до
+   * них компонент рисует строку «граф появится, когда будут карточки» — холста в дереве нет.
+   * Пока размер мерился эффектом с пустыми зависимостями, наблюдатель создавался в тот момент,
+   * когда `hostRef.current` был null, и больше не создавался никогда: раскладка навсегда
+   * оставалась в размере по умолчанию (720×340). На широком экране это выглядело как «граф
+   * прижат влево и пустует», а на телефоне (холст 318 px) узлы уезжали за правый край — граф
+   * казался пустым (нашлось живой проверкой 0.77.0).
+   */
+  const [host, setHost] = useState<HTMLDivElement | null>(null)
   /** На низком экране граф честно уступает место списку (см. рендер). */
   const [compact, setCompact] = useState(false)
 
@@ -56,16 +65,26 @@ export function EntityGraph({ entities, links }: Props) {
   }, [centerId, entities, links])
 
   // Размер холста по факту: жёсткая высота не годится — окно стоит в потоке страницы.
+  //
+  // Замер делается сразу при появлении холста и повторяется на каждое изменение размера:
+  // первый замер важен отдельно, потому что ResizeObserver при отсутствии (jsdom, старые
+  // браузеры) не сработает вовсе, а без замера раскладка осталась бы в размере по умолчанию.
   useEffect(() => {
-    const host = hostRef.current
-    if (!host || typeof ResizeObserver === 'undefined') return undefined
-    const ro = new ResizeObserver(() => {
+    if (!host) return undefined
+    const measure = () => {
       const rect = host.getBoundingClientRect()
-      setSize({ width: Math.round(rect.width), height: Math.round(rect.height) })
-    })
+      // Скрытый или ещё не разложенный холст даёт нули: такими размерами раскладку не портим.
+      if (rect.width < 1 || rect.height < 1) return
+      const width = Math.round(rect.width)
+      const height = Math.round(rect.height)
+      setSize((prev) => (prev.width === width && prev.height === height ? prev : { width, height }))
+    }
+    measure()
+    if (typeof ResizeObserver === 'undefined') return undefined
+    const ro = new ResizeObserver(measure)
     ro.observe(host)
     return () => ro.disconnect()
-  }, [])
+  }, [host])
 
   useEffect(() => {
     const media = window.matchMedia?.('(max-height: 480px)')
@@ -83,14 +102,31 @@ export function EntityGraph({ entities, links }: Props) {
 
   const neighbors = useMemo<GraphNeighbor[]>(() => {
     if (!center) return []
-    return connectionsOf(center.id, links, entities).map((connection) => ({
-      id: connection.other.id,
-      name: connection.other.name,
-      kind: connection.other.kind,
-      linkId: connection.link.id,
-      label: connection.link.label,
-      direction: connection.direction,
-    }))
+    // Карточка — ОДИН узел, сколько бы связей её ни соединяло с центром. Без этого две связи
+    // между одной парой давали два узла с одинаковым id («два ребёнка с одним ключом» в React,
+    // узлы рисуются друг на друге) и две линии с одной подписью. Подписи соединяем:
+    // «живёт на · получает». Направление берём у первой связи — при связях в обе стороны
+    // стрелка одна, а полный список с направлениями виден в чипах карточки.
+    const merged = new Map<string, GraphNeighbor>()
+    for (const connection of connectionsOf(center.id, links, entities)) {
+      const existing = merged.get(connection.other.id)
+      if (!existing) {
+        merged.set(connection.other.id, {
+          id: connection.other.id,
+          name: connection.other.name,
+          kind: connection.other.kind,
+          linkId: connection.link.id,
+          label: connection.link.label,
+          direction: connection.direction,
+        })
+        continue
+      }
+      const labels = existing.label.split(' · ')
+      if (!labels.includes(connection.link.label)) {
+        existing.label = `${existing.label} · ${connection.link.label}`
+      }
+    }
+    return [...merged.values()]
   }, [center, entities, links])
 
   const layout = useMemo(
@@ -203,7 +239,7 @@ export function EntityGraph({ entities, links }: Props) {
         onPick={go}
         onBack={history.length > 0 ? back : null}
       />
-      <div className="egraph__canvas" ref={hostRef} data-entity-graph-canvas>
+      <div className="egraph__canvas" ref={setHost} data-entity-graph-canvas>
         <svg className="egraph__edges" width="100%" height="100%" aria-hidden="true">
           {layout.edges.map((edge) => (
             <g key={edge.linkId}>

@@ -46,6 +46,10 @@
 }
 .feed-card__body { padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 8px; flex: 1; }
 .feed-card__title { margin: 0; font-size: 1.05rem; }
+/* Ссылка внутри заголовка — отдельная цель нажатия: без min-height она была 22 px в высоту, и
+   на телефоне по ней не попасть (нашёл живой аудит 0.77.0). Заголовок уже переносится, поэтому
+   min-height ничего не ломает на длинных названиях. */
+.feed-card__title a { display: inline-flex; align-items: center; min-height: 32px; }
 .feed-card__desc {
   margin: 0; font-size: 0.9rem; flex: 1;
   display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;

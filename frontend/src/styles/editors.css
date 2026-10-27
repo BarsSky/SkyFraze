@@ -566,8 +566,19 @@
 .ent__link-remove {
   background: none; border: none; padding: 0 2px; margin: 0; cursor: pointer;
   color: var(--fg-muted); font-size: 13px; line-height: 1;
+  /* Цель нажатия: «×» в чипе связи. Без min-размера она была 12×13 px — на телефоне в неё
+     невозможно попасть пальцем (нашёл живой аудит 0.77.0). 26 px — рабочий минимум на мыши,
+     на телефоне увеличивается в медиа-запросе ниже. */
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 26px; min-height: 26px; margin-left: 2px; border-radius: 6px;
 }
-.ent__link-remove:hover { color: var(--danger); }
+.ent__link-remove:hover { color: var(--danger); background: var(--bg-elev); }
+/* Медиа-запрос идёт ПОСЛЕ базового правила: при равной специфичности выигрывает то, что ниже.
+   Поставленный выше (в общем блоке медиа-запросов) он молча проигрывал базовым 26 px — так и
+   вышло на живой проверке 0.77.0. */
+@media (max-width: 520px) {
+  .ent__link-remove { min-width: 32px; min-height: 32px; }
+}
 /* Форма «связать» (0.76.0): вторая карточка и подпись. Своя строка во всю ширину —
    в ряд с «Изменить/Удалить» селект и поле не помещаются даже на широком экране. */
 .ent__link-form {
