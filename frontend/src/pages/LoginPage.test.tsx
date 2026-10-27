@@ -80,6 +80,31 @@ describe('LoginPage — второй шаг', () => {
     expect(screen.queryByRole('button', { name: 'Подтвердить' })).toBeNull()
   })
 
+  /**
+   * Ключ потерян, а коды восстановления у человека есть: их выдают при привязке ключа. Без
+   * этой кнопки последний путь в аккаунт существовал бы только в документации — поля для кода
+   * на экране нет, когда TOTP не включён (так и было до 0.66.1).
+   */
+  it('только ключ: код восстановления доступен по отдельной кнопке', async () => {
+    await reachSecondStep({ totp: false, passkeys: true })
+    fireEvent.click(screen.getByRole('button', { name: /Ввести код восстановления/ }))
+
+    const input = screen.getByLabelText('Код восстановления')
+    expect((input as HTMLInputElement).placeholder).toBe('код восстановления')
+
+    fireEvent.change(input, { target: { value: 'ABCDE-FGHJK' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Подтвердить' }))
+    await waitFor(() => expect(mocks.loginTOTP).toHaveBeenCalledWith('ticket-1', 'ABCDE-FGHJK'))
+  })
+
+  it('при включённом TOTP поле кода принимает и код восстановления — без лишней кнопки', async () => {
+    await reachSecondStep({ totp: true, passkeys: true })
+    expect(screen.queryByRole('button', { name: /Ввести код восстановления/ })).toBeNull()
+    // Само поле есть и подписано как код приложения: подсказку про коды восстановления
+    // серверный путь уже принимает (backend: verifySecondFactor).
+    expect(screen.getByLabelText('Код двухфакторного входа')).toBeTruthy()
+  })
+
   it('только код: кнопки ключа нет', async () => {
     await reachSecondStep({ totp: true, passkeys: false })
     expect(screen.getByLabelText('Код двухфакторного входа')).toBeTruthy()

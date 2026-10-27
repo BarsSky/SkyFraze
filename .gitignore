@@ -66,3 +66,6 @@ backend/cmd/server/projctx.go.bak
 # Текст коммита пишется в файл на время коммита (иначе кириллица в PowerShell
 # превращается в мусор) — в репозиторий он попадать не должен.
 /commitmsg.txt
+
+# снимки ручной визуальной проверки (frontend/tests/visual-profile.ts)
+visual-*.png

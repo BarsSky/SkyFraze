@@ -26,6 +26,15 @@ export function LoginPage() {
   /** Пропуск второго шага: не пустой — значит, пароль принят и ждём второй фактор. */
   const [second, setSecond] = useState<SecondStep | null>(null)
   const [code, setCode] = useState('')
+  /**
+   * Показать поле кода восстановления, когда включён только ключ.
+   *
+   * Зачем отдельное состояние: если у человека есть ключ и нет TOTP, поля кода на экране не
+   * должно быть «по умолчанию» (кода из приложения у него не существует), но коды
+   * восстановления у него ЕСТЬ — их выдали при привязке ключа. Без этой кнопки потерянный
+   * ключ означал бы потерянный аккаунт, хотя код лежит у него на листке.
+   */
+  const [useRecovery, setUseRecovery] = useState(false)
   const nav = useNavigate()
 
   const canUseKey = second?.passkeys === true && passkeysSupported()
@@ -119,18 +128,38 @@ export function LoginPage() {
             </div>
           )}
 
-          {canUseCode && (
+          {/* Ключ потерян — а коды восстановления у человека есть (их выдают при привязке
+              ключа). Без этой кнопки последний путь в аккаунт существовал бы только в
+              документации: поля для кода на экране нет, когда TOTP не включён. */}
+          {canUseKey && !canUseCode && !useRecovery && (
+            <p className="muted" style={{ marginBottom: 12 }}>
+              Нет ключа под рукой?{' '}
+              <button
+                type="button"
+                className="secondary"
+                onClick={() => setUseRecovery(true)}
+                disabled={loading}
+                data-login-use-recovery
+              >
+                Ввести код восстановления
+              </button>
+            </p>
+          )}
+
+          {(canUseCode || useRecovery) && (
             <form onSubmit={onSubmitCode}>
               <div style={{ marginBottom: 12 }}>
                 <input
-                  placeholder="код из приложения"
+                  placeholder={canUseCode ? 'код из приложения' : 'код восстановления'}
                   value={code}
                   onChange={(e) => setCode(e.target.value)}
-                  inputMode="numeric"
+                  inputMode={canUseCode ? 'numeric' : 'text'}
                   autoComplete="one-time-code"
                   autoFocus={!canUseKey}
                   required
-                  aria-label="Код двухфакторного входа"
+                  aria-label={
+                    canUseCode ? 'Код двухфакторного входа' : 'Код восстановления'
+                  }
                 />
               </div>
               <button type="submit" disabled={loading}>{loading ? '...' : 'Подтвердить'}</button>
@@ -147,6 +176,9 @@ export function LoginPage() {
                 setSecond(null)
                 setCode('')
                 setErr('')
+                // «Назад» возвращает к паролю: следующий вход снова начинается с того, что
+                // человек знает, а не с выбранного способа.
+                setUseRecovery(false)
               }}
             >
               Назад
