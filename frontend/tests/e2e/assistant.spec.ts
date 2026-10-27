@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { signIn } from './support'
+import { signIn, openEditorsTab } from './support'
 
 /**
  * Помощник в браузере: человек пишет в поле, модель просит создать главу, глава
@@ -74,6 +74,7 @@ test('помощник создаёт главу по просьбе в чате
   // добавляется браузер. На загруженном раннере CI этого не хватило: сценарий падал
   // на 15 секундах, а в следующем прогоне тот же шаг занимал 1.6 с (падение «помощник
   // создаёт главу» в CI 2026-10-02 — 1 из ~12 прогонов).
+  await openEditorsTab(page)
   await expect(page.locator('.ed-row--chapter', { hasText: 'Пролог' }).first()).toBeVisible({
     timeout: 30_000,
   })

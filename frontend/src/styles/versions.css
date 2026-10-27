@@ -14,6 +14,27 @@
   background: color-mix(in srgb, #000 62%, transparent);
   backdrop-filter: blur(3px);
 }
+/* Встроенный режим — вкладка «Версии» (0.83.0): та же история, но без окна поверх проекта.
+   position: fixed у родителя здесь недопустим: он накрыл бы строку вкладок, и переключиться
+   обратно на «Проект» стало бы невозможно. Поэтому подложка-оверлей снимается, а окно
+   становится обычной областью страницы, сохраняя вид карточки. */
+.sf-versions--embedded {
+  position: static;
+  inset: auto;
+  z-index: auto;
+  display: block;
+  padding: 0;
+  background: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.sf-versions--embedded .sf-versions__window {
+  width: 100%;
+  max-width: 1120px;
+  max-height: none;
+  margin: 0 auto;
+}
+
 .sf-versions__window {
   display: flex;
   flex-direction: column;

@@ -91,6 +91,11 @@ interface Props {
   /** Файл, который удаляется прямо сейчас. */
   assetBusyId?: string | null
   /**
+   * Переход к «Связям» из тулбара (0.83.0). У страницы с вкладками это мгновенное
+   * переключение режима; без колбэка панель прокручивает страницу к разделу (старый путь).
+   */
+  onOpenRelations?: () => void
+  /**
    * Импорт «в место»: вставить разобранный кусок md в этот проект. Возвращает
    * результат сервера (сколько событий и его предупреждения); саму вставку делает
    * страница — у неё есть id проекта и перечитывание состояния без realtime.
@@ -381,7 +386,7 @@ function dropClassFor(hint: DropHint): string {
  */
 export function EditorsPanel({
   events, assets, assetUrls, projectId, canEdit, syncNote, onChanged, onUpload, onImportInto,
-  presence, onEditing, assetUsage, onDeleteAsset, assetNote, assetBusyId,
+  presence, onEditing, assetUsage, onDeleteAsset, assetNote, assetBusyId, onOpenRelations,
 }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [filter, setFilter] = useState('')
@@ -709,16 +714,20 @@ once — чтобы повторный
     return mentionMatrix(mentionFrames, frameChapters, chapters, entities)
   }, [entities, mentionFrames, rows])
   /**
-   * Переход к области «Связи» из тулбара (0.72.1 → 0.79.0).
+   * Переход к «Связям» из тулбара (0.72.1 → 0.79.0 → 0.83.0).
    *
-   * С 0.79.0 карточки живут в отдельной области над панелью, поэтому кнопка не раскрывает
-   * блок внутри редакторов, а прокручивает страницу к разделу «Связи». Прокрутка — только
-   * `main`: `scrollIntoView` двигал документ и уводил шапку за экран (0.72.1).
+   * С 0.83.0 «Связи» — это ВКЛАДКА, а не блок ниже по странице: страница передаёт
+   * `onOpenRelations` и переключает режим мгновенно. Прокрутка осталась запасным путём на
+   * случай, когда панель встроена без вкладок (сценарии, которые рендерят её отдельно).
    */
   const openRelations = useCallback(() => {
+    if (onOpenRelations) {
+      onOpenRelations()
+      return
+    }
     const section = document.querySelector<HTMLElement>('[data-relations]')
     if (section) scrollWithinMain(section)
-  }, [])
+  }, [onOpenRelations])
   /** Открыть кадр из хронологии: выбрать его и подсветить упоминание. */
   const openFrameWithMention = useCallback((frameId: string, mention: Mention) => {
     setSelectedId(frameId)

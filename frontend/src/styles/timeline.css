@@ -11,7 +11,7 @@
      (~62px) и полосой чипов. Лист кадра центрируется и ограничивается по высоте
      именно этой областью, иначе на планшете он уезжал верхом под панель и название
      главы (первая строка листа) закрывалось пилюлей с названием проекта. */
-  --sf-free-top: calc(var(--sf-header-h, 46px) + 62px + var(--sf-chips-h, 0px));
+  --sf-free-top: calc(var(--sf-header-h, 46px) + var(--sf-tabs-h, 0px) + 62px + var(--sf-chips-h, 0px));
 }
 [data-theme='light'] .sf-root {
   --sf-bg: #f4f6ec;
@@ -46,7 +46,7 @@
    (--sf-header-h ставит TimelineStage через ResizeObserver): на телефоне шапка
    выше, и жёсткий top: 54px уводил панель с кнопкой «Редакторы» под неё. */
 .sf-topbar {
-  position: fixed; left: 0; right: 0; top: calc(var(--sf-header-h, 46px) + 8px); z-index: 46;
+  position: fixed; left: 0; right: 0; top: calc(var(--sf-header-h, 46px) + var(--sf-tabs-h, 0px) + 8px); z-index: 46;
   display: flex; align-items: center; justify-content: space-between;
   gap: 16px; padding: 8px clamp(16px, 4vw, 40px);
   pointer-events: none;
@@ -82,6 +82,41 @@
 .sf-nav__item:hover { color: var(--sf-ink); }
 /* Активная пилюля: тёмный текст на пастельном акценте читается, белый — нет */
 .sf-nav__item.is-active { color: var(--sf-bg); background: var(--sf-accent); }
+
+/* ── вкладки режима проекта (0.83.0) ─────────────────────────────────────────
+   Владелец и соавторы переключаются между «Проект / Редакторы / Связи / Версии» одним нажатием.
+   До этого это были кнопки, которые ПРОКРУЧИВАЛИ страницу к разделам, лежащим друг под другом, —
+   «Связи» наезжали на показ проекта, а правка текста жила в одной длинной колонке с карточками.
+   Вид — те же пилюли, что у кнопок стадии: в шапке стадии (вкладка «Проект») и отдельной строкой
+   на остальных вкладках, где стадии нет. */
+.sf-tabs { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+/* Строка вкладок — fixed под шапкой приложения, ПОВЕРХ сцены и её верхней панели.
+   Почему не внутри шапки стадии и не sticky в потоке: сцену можно перекрыть (плавающий помощник
+   стоит справа сверху), а sticky в потоке уезжает под fixed-сцену. Здесь вкладки всегда
+   нажимаемы, а высота строки уходит в --sf-tabs-h: стадия, её панель, чипы и лист кадра
+   сдвигаются ниже, поэтому ничего не накладывается (0.83.0). */
+.sf-tabs-row {
+  position: fixed; left: 0; right: 0; top: var(--sf-header-h, 46px); z-index: 55;
+  display: flex; justify-content: center;
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--bg) 96%, transparent);
+  border-bottom: 1px solid var(--border);
+}
+.sf-tabs__tab {
+  min-height: 32px; padding: 5px 13px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--bg-elev); color: var(--fg-muted);
+  font-size: 0.9rem; cursor: pointer;
+}
+.sf-tabs__tab:hover { color: var(--fg); border-color: var(--fg-muted); }
+.sf-tabs__tab.is-active {
+  background: var(--accent-strong, var(--accent)); border-color: transparent;
+  color: var(--bg); font-weight: 600;
+}
+@media (max-width: 860px) {
+  .sf-tabs { gap: 4px; }
+  .sf-tabs__tab { padding: 4px 10px; font-size: 0.82rem; }
+  .sf-tabs-row { padding: 8px; }
+}
 
 /* ── прогресс ───────────────────────────────────────────────────────── */
 .sf-progress {
@@ -535,7 +570,7 @@ html.sf-viewer-open body { overflow: hidden; }
     display: flex; position: fixed; left: 0; right: 0;
     /* Шапка приложения + верхняя панель стадии (~50px) + зазор: иначе чипы
        налезают на панель, и её кнопки перестают нажиматься. */
-    top: calc(var(--sf-header-h, 46px) + 62px); z-index: 45;
+    top: calc(var(--sf-header-h, 46px) + var(--sf-tabs-h, 0px) + 62px); z-index: 45;
     gap: 6px; padding: 8px 12px; overflow-x: auto; scrollbar-width: none;
     background: linear-gradient(to bottom, color-mix(in srgb, var(--sf-bg) 92%, transparent), transparent);
   }
@@ -543,7 +578,7 @@ html.sf-viewer-open body { overflow: hidden; }
   /* Сцена начинается ПОД полосой чипов (её высоту стадия измеряет в --sf-chips-h):
      картинка и фон главы рисуются ниже переключателя событий, поэтому при
      прокрутке чипы остаются на виду и ничего не перекрывают. */
-  .sf-stage { top: calc(var(--sf-header-h, 46px) + 62px + var(--sf-chips-h, 50px)); }
+  .sf-stage { top: calc(var(--sf-header-h, 46px) + var(--sf-tabs-h, 0px) + 62px + var(--sf-chips-h, 50px)); }
 }
 
 @media (max-width: 860px) {
@@ -552,7 +587,7 @@ html.sf-viewer-open body { overflow: hidden; }
   .sf-topbar__title { display: none; }
   .sf-topbar__actions { gap: 6px; }
   .sf-topbar__actions a { display: none; }
-  .sf-chips { top: calc(var(--sf-header-h, 46px) + 62px); }
+  .sf-chips { top: calc(var(--sf-header-h, 46px) + var(--sf-tabs-h, 0px) + 62px); }
   /* Скрим на телефоне нужен только под подписью кадра-картинки: сам лист кадра
      непрозрачный, и затемнять пол-экрана под ним незачем (раньше он гасил нижние
      64% снимка). [data-theme] в селекторе — чтобы правило перебивало светлую тему,
@@ -568,7 +603,7 @@ html.sf-viewer-open body { overflow: hidden; }
        кадром (см. .sf-copy--photo), делить высоту не с кем. Верх — под полосой
        чипов, низ — у края экрана, поэтому текст получает максимум строк, а не
        прокручивается внутри маленького листа. */
-    top: calc(var(--sf-header-h, 46px) + 62px + var(--sf-chips-h, 50px) + 8px);
+    top: calc(var(--sf-header-h, 46px) + var(--sf-tabs-h, 0px) + 62px + var(--sf-chips-h, 50px) + 8px);
     bottom: calc(10px + env(safe-area-inset-bottom));
     width: auto; max-width: 640px;
     /* На планшете лист уже не тянется во всю ширину: max-width ограничивает его,

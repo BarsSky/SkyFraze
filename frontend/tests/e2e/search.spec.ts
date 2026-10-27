@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { signIn } from './support'
+import { signIn, openEditorsTab } from './support'
 
 /**
  * Поиск по тексту проекта — через браузер.
@@ -37,6 +37,7 @@ test('поиск находит кадр по слову из текста, а �
   await input.fill('Добавь главу «Пролог» с описанием начала истории')
   await panel.getByRole('button', { name: 'Спросить' }).click()
   await expect(panel.getByText('Создал главу «Пролог».')).toBeVisible({ timeout: 90_000 })
+  await openEditorsTab(page)
   await expect(page.locator('.ed-row--chapter', { hasText: 'Пролог' }).first()).toBeVisible({
     timeout: 45_000,
   })
@@ -51,6 +52,7 @@ test('поиск находит кадр по слову из текста, а �
   await search.fill('начинается')
   const rows = page.locator('.ed-row')
   await expect(rows).toHaveCount(1, { timeout: 15_000 })
+  await openEditorsTab(page)
   await expect(page.locator('.ed-row--chapter', { hasText: 'Пролог' })).toBeVisible()
   // И показывает, ГДЕ совпадение: сниппет рядом со строкой.
   await expect(page.locator('[data-ed-snippet]').first()).toContainText('начинается')
@@ -68,6 +70,7 @@ test('поиск находит кадр по слову из текста, а �
 
   // 4. Очистка возвращает весь список: поиск — фильтр, а не режим.
   await search.fill('')
+  await openEditorsTab(page)
   await expect(page.locator('.ed-row--chapter', { hasText: 'Пролог' })).toBeVisible({
     timeout: 15_000,
   })

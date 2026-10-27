@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { signIn } from './support'
+import { signIn, openEditorsTab } from './support'
 
 /**
  * Правка существующего кадра по подтверждению — целиком через браузер.
@@ -40,6 +40,7 @@ test('агент предлагает правку, а применяет её �
   await input.fill('Добавь главу «Пролог» с описанием начала истории')
   await panel.getByRole('button', { name: 'Спросить' }).click()
   await expect(panel.getByText('Создал главу «Пролог».')).toBeVisible({ timeout: 90_000 })
+  await openEditorsTab(page)
   await expect(page.locator('.ed-row--chapter', { hasText: 'Пролог' }).first()).toBeVisible({
     timeout: 30_000,
   })
@@ -106,6 +107,8 @@ test('удалённый агентом кадр можно вернуть', asy
   await panel.getByRole('button', { name: 'Спросить' }).click()
   await expect(panel.getByText('Создал главу «Пролог».')).toBeVisible({ timeout: 90_000 })
   const chapterRow = page.locator('.ed-row--chapter', { hasText: 'Пролог' }).first()
+  // 0.83.0: дерево кадров живёт на вкладке «Редакторы».
+  await openEditorsTab(page)
   await expect(chapterRow).toBeVisible({ timeout: 45_000 })
 
   // 1. Агент удаление ПРЕДЛАГАЕТ: кадр на месте, дерево прежнее.
@@ -121,6 +124,7 @@ test('удалённый агентом кадр можно вернуть', asy
   const applied = panel.locator('[data-assistant-applied]')
   await expect(applied).toBeVisible({ timeout: 30_000 })
   await expect(applied).toContainText('Удалён кадр «Пролог»')
+  await openEditorsTab(page)
   await expect(page.locator('.ed-row--chapter', { hasText: 'Пролог' })).toHaveCount(0, {
     timeout: 30_000,
   })
@@ -132,6 +136,7 @@ test('удалённый агентом кадр можно вернуть', asy
     'Кадр вернулся на прежнее место.',
     { timeout: 30_000 },
   )
+  await openEditorsTab(page)
   await expect(page.locator('.ed-row--chapter', { hasText: 'Пролог' }).first()).toBeVisible({
     timeout: 30_000,
   })
@@ -165,6 +170,7 @@ test('отклонённое предложение не меняет текст
   await expect(panel.getByText('Создал главу «Пролог».')).toBeVisible({ timeout: 90_000 })
   // Строку дерева ждём ДО проверок текста: редактор рисует кадр не мгновенно, а
   // проверка текста без этой опоры падала на медленном раннере.
+  await openEditorsTab(page)
   await expect(page.locator('.ed-row--chapter', { hasText: 'Пролог' }).first()).toBeVisible({
     timeout: 45_000,
   })

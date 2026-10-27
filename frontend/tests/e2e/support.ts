@@ -26,6 +26,32 @@ export const E2E_ADMIN_EMAIL = 'assistant.e2e@example.com'
 
 export { PASSWORD }
 
+/**
+ * Открыть вкладку режима проекта (0.83.0).
+ *
+ * До 0.83.0 разделы «Редакторы» / «Связи» / «Версии» лежали друг под другом в одном длинном
+ * потоке, и дерево кадров было видно сразу после создания первой главы. Теперь это вкладки, и
+ * сценарий обязан её выбрать — иначе он честно не найдёт строк дерева. Если вкладок нет
+ * (читатель, пустой проект), помощник молча ничего не делает.
+ */
+export async function openProjectTab(
+  page: Page,
+  tab: 'project' | 'editors' | 'relations' | 'versions',
+): Promise<void> {
+  const button = page.locator(`[data-project-tab="${tab}"]`)
+  // Вкладки появляются, когда в проекте есть содержимое: после создания первой главы (в том
+  // числе помощником) это происходит на несколько мгновений позже. Ждём их, а не пропускаем
+  // клик молча — иначе сценарий падает на пустом дереве, и причина не видна.
+  await button.waitFor({ state: 'visible', timeout: 20_000 }).catch(() => undefined)
+  if ((await button.count()) === 0) return
+  await button.click()
+}
+
+/** Частый случай: нужны строки дерева кадров — значит вкладка «Редакторы». */
+export async function openEditorsTab(page: Page): Promise<void> {
+  await openProjectTab(page, 'editors')
+}
+
 export async function signIn(page: Page, email: string = E2E_ADMIN_EMAIL): Promise<boolean> {
   await page.goto('/register')
   const heading = await page.locator('h1').innerText()

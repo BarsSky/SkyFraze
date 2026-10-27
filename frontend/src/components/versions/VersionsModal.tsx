@@ -28,6 +28,15 @@ interface Props {
   onClose: () => void
   /** Проект изменился восстановлением — страница перечитывает состояние. */
   onRestored: () => void
+  /**
+   * Встроенный режим (0.83.0): история версий как ВКЛАДКА проекта, а не окно поверх него.
+   *
+   * Зачем: у владельца и соавторов «Редакторы», «Связи» и «Версии» — это режимы работы, и
+   * переключение между ними не должно требовать модального окна (или прокрутки через полпроекта).
+   * Разметка внутри та же (`.sf-versions__window`), поэтому вид не меняется: пропадает только
+   * подложка-окно и блокировка прокрутки страницы.
+   */
+  embedded?: boolean
 }
 
 /**
@@ -35,7 +44,8 @@ interface Props {
  *
  * Зачем отдельным окном, а не разделом в редакторах: версии нужны редко и в момент
  * неприятности («переписал главу и стёр нужное»), поэтому окно открывается по кнопке из
- * стадии и не занимает места в обычной работе.
+ * стадии и не занимает места в обычной работе. С 0.83.0 у владельца и соавторов то же
+ * содержимое показывается вкладкой — см. `embedded`.
  *
  * Что здесь принципиально:
  *   - версия восстанавливается НЕ вместо нынешнего состояния, а как обычная правка:
@@ -45,7 +55,13 @@ interface Props {
  *   - восстановление и удаление подтверждаются вторым нажатием, потому что первое уже
  *     меняет проект.
  */
-export function VersionsModal({ projectId, canEdit, onClose, onRestored }: Props) {
+export function VersionsModal({
+  projectId,
+  canEdit,
+  onClose,
+  onRestored,
+  embedded = false,
+}: Props) {
   const [versions, setVersions] = useState<ProjectVersion[]>([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
@@ -58,14 +74,17 @@ export function VersionsModal({ projectId, canEdit, onClose, onRestored }: Props
   const closeRef = useRef<HTMLButtonElement>(null)
 
   // Фокус уходит в окно, страница под ним не прокручивается (класс общий с другими
-  // окнами: html.sf-viewer-open запрещает прокрутку).
+  // окнами: html.sf-viewer-open запрещает прокрутку). Во встроенном режиме (вкладка) ни
+  // того, ни другого не нужно: страница — это и есть вкладка, и блокировать её прокрутку
+  // значило бы «заморозить» сам интерфейс.
   useEffect(() => {
+    if (embedded) return undefined
     document.documentElement.classList.add('sf-viewer-open')
     closeRef.current?.focus()
     return () => {
       document.documentElement.classList.remove('sf-viewer-open')
     }
-  }, [])
+  }, [embedded])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -172,9 +191,10 @@ export function VersionsModal({ projectId, canEdit, onClose, onRestored }: Props
     [projectId, preview, load],
   )
 
-  return createPortal(
-    <div className="sf-versions" role="dialog" aria-modal="true" aria-label="История версий">
-      <div className="sf-versions__window">
+  // Одна и та же разметка в обоих режимах: во вкладке пропадает только подложка-окно,
+  // поэтому вид истории не меняется (и e2e-селекторы `.sf-versions__window` тоже).
+  const body = (
+    <div className="sf-versions__window">
         <div className="sf-versions__head">
           <div className="sf-versions__titles">
             <strong>История версий</strong>
@@ -284,7 +304,27 @@ export function VersionsModal({ projectId, canEdit, onClose, onRestored }: Props
             </div>
           )}
         </div>
-      </div>
+    </div>
+  )
+
+  if (embedded) {
+    // Встроенный режим: обычная область страницы вкладки. `data-versions-embedded` — чтобы
+    // сценарии и аудит отличали эту форму от окна.
+    return (
+      <section
+        className="sf-versions sf-versions--embedded"
+        role="region"
+        aria-label="История версий"
+        data-versions-embedded
+      >
+        {body}
+      </section>
+    )
+  }
+
+  return createPortal(
+    <div className="sf-versions" role="dialog" aria-modal="true" aria-label="История версий">
+      {body}
     </div>,
     document.body,
   )

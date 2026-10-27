@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { scrollWithinMain } from '../lib/scrollTo'
 import { TimelineStage, type AssetLookup } from '../components/timeline/TimelineStage'
 import { ProjectLoading } from '../components/timeline/ProjectLoading'
 import { EditorsPanel } from '../components/editors/EditorsPanel'
@@ -26,6 +25,23 @@ import type { Project } from '../api/projects'
 import { getProject } from '../api/projects'
 
 /**
+ * Режим работы над проектом (0.83.0).
+ *
+ * «Проект» — показ с прокруткой: сцены и кадры так, как их увидит читатель. Остальные три —
+ * рабочие вкладки: правка текста, связи карточек и история версий. Переключение мгновенное,
+ * вкладки друг друга не перекрывают (в отличие от прежней прокрутки между разделами).
+ */
+type ProjectView = 'project' | 'editors' | 'relations' | 'versions'
+
+/** Подписи вкладок в порядке показа: сначала «как выглядит», потом «что править». */
+const PROJECT_TABS: Array<{ id: ProjectView; title: string }> = [
+  { id: 'project', title: 'Проект' },
+  { id: 'editors', title: 'Редакторы' },
+  { id: 'relations', title: 'Связи' },
+  { id: 'versions', title: 'Версии' },
+]
+
+/**
  * Страница проекта — только композиция и данные:
  *   TimelineStage (показ и навигация) + EditorsPanel (единственное место правок).
  * Связь односторонняя: редактор сообщает об изменении (`onChanged`), страница
@@ -46,10 +62,22 @@ export function ProjectTimelinePage() {
   const [connectionNote, setConnectionNote] = useState<string | null>(null)
   const [error, setError] = useState<unknown>(null)
   const [attempt, setAttempt] = useState(0)
-  /** Открыто ли плавающее окно помощника: кнопка «ИИ-помощник» в шапке стадии тоже его открывает. */
+  /**
+   * Открыто ли плавающее окно помощника.
+   *
+   * С 0.83.0 кнопки «ИИ-помощник» в шапке стадии нет: помощник — плавающий чат, доступный в
+   * любой вкладке, и отдельный пункт в строке режимов ему не нужен (просьба из отчёта).
+   */
   const [assistantOpen, setAssistantOpen] = useState(false)
-  /** Открыто окно истории версий: версии нужны редко, поэтому по кнопке. */
-  const [versionsOpen, setVersionsOpen] = useState(false)
+  /**
+   * Режим работы над проектом (0.83.0): «Проект» — показ с прокруткой, остальные три — рабочие
+   * вкладки владельца и соавторов. Раньше это были кнопки, которые прокручивали страницу к
+   * разделам, лежащим друг под другом; из-за этого «Связи» наезжали на показ проекта, а редактор
+   * и карточки жили в одной длинной колонке.
+   *
+   * У читателя вкладок нет: публичный показ остаётся прежним (прокрутка по сценам).
+   */
+  const [view, setView] = useState<ProjectView>('project')
 
   const collab = useCollab(projectId)
   const events = collab?.events
@@ -270,22 +298,21 @@ export function ProjectTimelinePage() {
     await pushTree()
   }, [events, pushTree])
 
-  const openEditors = useCallback(() => {
-    // Прокручиваем ТОЛЬКО main: scrollIntoView двигал ещё и документ, шапка уезжала за
-    // экран и не возвращалась (пользователю прокрутка документа запрещена). 0.72.1.
-    scrollWithinMain(document.querySelector<HTMLElement>('[data-editor-panel]'))
-  }, [])
-
   /**
-   * Переход к области «Связи» (0.79.0) — тем же способом, что и к редакторам: область стоит
-   * в потоке страницы между показом проекта и панелью редакторов.
+   * Переход к рабочим вкладкам (0.83.0) — переключение, а не прокрутка.
+   *
+   * Раньше обе функции прокручивали `main` к разделам, лежащим друг под другом: «Редакторы» к
+   * панели, «Связи» к карточкам. Это и давало наезд раздела на показ проекта. Теперь режим
+   * меняется мгновенно; прокрутка осталась только внутри вкладки «Проект» — там, где она и
+   * нужна: она и есть показ сцен.
    */
-  const openRelations = useCallback(() => {
-    scrollWithinMain(document.querySelector<HTMLElement>('[data-relations]'))
+  const openEditors = useCallback(() => {
+    setView('editors')
   }, [])
 
-  const openAssistant = useCallback(() => {
-    setAssistantOpen(true)
+  /** Тот же мгновенный переход к «Связям» — его вызывает и тулбар панели редакторов. */
+  const openRelations = useCallback(() => {
+    setView('relations')
   }, [])
 
   /**
@@ -348,6 +375,42 @@ export function ProjectTimelinePage() {
   const presenceBar = <PresenceBar peers={collab?.presence ?? []} events={eventTitles} />
   /** Панель редакторов: только тем, кто может править, и только с событиями. */
   const editorsShown = Boolean(events && eventsCount > 0 && showEditors)
+  /**
+   * Вкладки режимов (0.83.0): только владельцу и соавторам и только когда есть содержимое.
+   * Читатель видит прежний показ проекта без вкладок — публичная версия не меняется.
+   */
+  const tabsShown = editorsShown && !loading
+  /**
+   * Высота строки вкладок — в CSS-переменную `--sf-tabs-h` (0.83.0).
+   *
+   * Стадия, её верхняя панель, чипы и лист кадра стоят от верха экрана на `--sf-header-h`;
+   * строка вкладок — такая же fixed-полоса под шапкой, поэтому её высоту надо прибавить, иначе
+   * панель сцены окажется под вкладками. Меряем, а не задаём числом: на телефоне строка
+   * переносится и становится выше.
+   */
+  const tabsRowRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    const root = document.documentElement
+    if (!tabsShown) {
+      root.style.setProperty('--sf-tabs-h', '0px')
+      return undefined
+    }
+    const apply = () => {
+      const el = tabsRowRef.current
+      if (!el) return
+      root.style.setProperty('--sf-tabs-h', `${Math.round(el.getBoundingClientRect().height)}px`)
+    }
+    apply()
+    let observer: ResizeObserver | null = null
+    if (typeof ResizeObserver !== 'undefined' && tabsRowRef.current) {
+      observer = new ResizeObserver(apply)
+      observer.observe(tabsRowRef.current)
+    }
+    return () => {
+      observer?.disconnect()
+      root.style.setProperty('--sf-tabs-h', '0px')
+    }
+  }, [tabsShown])
 
   /**
    * Пока содержимое не приехало, страница не гадает: ни заглушки «таймлайн пуст», ни
@@ -405,84 +468,88 @@ export function ProjectTimelinePage() {
         </div>
       )}
 
-      {events && eventsCount > 0 && (
-        <TimelineStage
-          events={events}
-          assetsById={assetsById}
-          projectTitle={project?.title ?? 'Таймлайн'}
-          actions={
-            showEditors ? (
-              <>
-                <button className="secondary" onClick={openAssistant} data-assistant-open>
-                  ИИ-помощник
-                </button>
-                <button className="secondary" onClick={openEditors}>
-                  Редакторы
-                </button>
-                <button className="secondary" onClick={openRelations} data-relations-open>
-                  Связи
-                </button>
-                <button className="secondary" onClick={() => setVersionsOpen(true)} data-versions-open>
-                  Версии
-                </button>
-              </>
-            ) : undefined
-          }
-        />
+      {/* Вкладки режима — только владельцу и соавторам и только когда есть что править.
+          Читатель видит прежний показ: прокрутка по сценам, без панелей и вкладок (просьба:
+          «на публичную версию всё остаётся как есть»).
+          Строка стоит САМА ПО СЕБЕ, не внутри стадии: стадия — fixed-слой, и вкладки в нём
+          исчезали бы вместе с ней при переходе в другой режим. */}
+      {/* Строка вкладок. Всегда отдельной fixed-строкой под шапкой — и на «Проекте» тоже:
+          так она не попадает под fixed-слой сцены и под плавающее окно помощника, а её высота
+          уходит в `--sf-tabs-h`, сдвигая панель сцены, чипы и лист кадра ниже (0.83.0). */}
+      {tabsShown && (
+        <div className="sf-tabs-row" ref={tabsRowRef}>
+          <TabBar view={view} onChange={setView} />
+        </div>
       )}
 
-      {versionsOpen && (
-        <VersionsModal
-          projectId={projectId}
-          canEdit={showEditors}
-          onClose={() => setVersionsOpen(false)}
-          onRestored={assistantChanged}
-        />
-      )}
-
-      {/* Читателю и в пустом проекте панели редакторов нет, и бар остаётся
-          единственным местом про присутствие — в обычном потоке над стадией. У
-          редактора бар стоит рядом со строкой синхронизации, над панелью:
-          fixed-слои стадии (sf-stage, z-index 10, непрозрачный фон) закрывают
-          всё, что в потоке выше трека, поэтому «над стадией» у редактора было бы
-          не видно вовсе. */}
-      {/* Область «Связи» (0.79.0): карточки мира, граф, хронология и матрица — отдельным
-          разделом МЕЖДУ показом проекта (стадией) и панелью редакторов. Так сверху вниз
-          получается: смотрю проект → смотрю его связи → правлю текст. Раньше это жило внутри
-          редакторов, между кнопками правки кадров и деревом, и мешало обеим задачам.
-          Читателю тоже видно: карточки ему доступны на чтение.
-          С 0.80.0 раздел не ждёт снапшот документа: его данные — проекция и карточки, они
-          приходят своим запросом раньше, и страница показывает связи, пока грузится текст. */}
-      {project != null && (loading || eventsCount > 0) && (
-        <RelationsPanel projectId={projectId} canEdit={canEdit === true} />
-      )}
-
-      {!editorsShown && !loading && presenceBar}
-
-      {editorsShown && !loading && events && (
-        <>
-          {presenceBar}
-          <EditorsPanel
+      {/* Панель режима. Одна вкладка за раз — содержимое не наезжает друг на друга. */}
+      <div id="project-tab-panel" role="tabpanel" aria-labelledby={`project-tab-${view}`}>
+        {(!tabsShown || view === 'project') && events && eventsCount > 0 && (
+          <TimelineStage
             events={events}
-            assets={assets}
-            assetUrls={assetUrls}
-            projectId={projectId}
-            canEdit={canEdit === true}
-            syncNote={connectionNote ?? syncNote}
-            onChanged={() => {
-              void pushTree()
-            }}
-            onUpload={uploadFile}
-            onImportInto={canEdit ? importIntoProject : undefined}
-            presence={collab?.presence}
-            onEditing={collab?.setEditing}
-            assetUsage={assetUsageInfo}
-            onDeleteAsset={canEdit ? deleteFile : undefined}
-            assetNote={assetNote}
-            assetBusyId={assetBusyId}
+            assetsById={assetsById}
+            projectTitle={project?.title ?? 'Таймлайн'}
+            /* Кнопок режимов в шапке стадии больше нет: вкладки живут своей строкой сверху,
+               а помощник — плавающий чат, доступный в любом режиме. */
+            actions={undefined}
           />
-        </>
+        )}
+
+        {/* «Редакторы» — правка текста. Бар присутствия стоит здесь же: в этом режиме и
+            видно, кто из соавторов что правит. */}
+        {tabsShown && view === 'editors' && events && (
+          <>
+            {presenceBar}
+            <EditorsPanel
+              events={events}
+              assets={assets}
+              assetUrls={assetUrls}
+              projectId={projectId}
+              canEdit={canEdit === true}
+              syncNote={connectionNote ?? syncNote}
+              onChanged={() => {
+                void pushTree()
+              }}
+              onUpload={uploadFile}
+              onImportInto={canEdit ? importIntoProject : undefined}
+              presence={collab?.presence}
+              onEditing={collab?.setEditing}
+              assetUsage={assetUsageInfo}
+              onDeleteAsset={canEdit ? deleteFile : undefined}
+              assetNote={assetNote}
+              assetBusyId={assetBusyId}
+              onOpenRelations={openRelations}
+            />
+          </>
+        )}
+
+        {/* «Связи» — карточки мира, граф, хронология и матрица. С 0.80.0 раздел не ждёт
+            снапшот документа: его данные — проекция и карточки, они приходят своим запросом
+            раньше, и вкладка показывает связи, пока грузится текст. */}
+        {tabsShown && view === 'relations' && (
+          <RelationsPanel projectId={projectId} canEdit={canEdit === true} />
+        )}
+
+        {/* «Версии» — та же история, что была окном, но вкладкой: переключение мгновенное,
+            и окно больше не накрывает проект. */}
+        {tabsShown && view === 'versions' && (
+          <VersionsModal
+            projectId={projectId}
+            canEdit={showEditors}
+            onClose={() => setView('project')}
+            onRestored={assistantChanged}
+            embedded
+          />
+        )}
+      </div>
+
+      {/* Читателю и в пустом проекте панели редакторов нет, и карточки ему показываются в
+          обычном потоке под показом проекта — без вкладок, как и было до 0.83.0. */}
+      {!showEditors && !loading && eventsCount > 0 && project != null && (
+        <RelationsPanel projectId={projectId} canEdit={false} />
       )}
+
+      {!tabsShown && !loading && presenceBar}
 
       {/* Плавающий помощник: кнопка в углу и окно поверх проекта. Он есть и в пустом
           проекте — «собери проект по описанию» первый же осмысленный вопрос, — и
@@ -499,6 +566,36 @@ export function ProjectTimelinePage() {
         />
       )}
     </div>
+  )
+}
+
+/**
+ * Вкладки режима проекта (0.83.0).
+ *
+ * Живут в шапке стадии на вкладке «Проект» и отдельной строкой на остальных вкладках: стадия —
+ * fixed-слой, и вкладки внутри неё исчезали бы вместе с ней при переходе в другой режим.
+ */
+function TabBar({ view, onChange }: { view: ProjectView; onChange: (next: ProjectView) => void }) {
+  return (
+    <nav className="sf-tabs" role="tablist" aria-label="Режим проекта" data-project-tabs>
+      {PROJECT_TABS.map((tab) => (
+        <button
+          key={tab.id}
+          type="button"
+          role="tab"
+          id={`project-tab-${tab.id}`}
+          aria-selected={view === tab.id}
+          aria-controls="project-tab-panel"
+          className={view === tab.id ? 'sf-tabs__tab is-active' : 'sf-tabs__tab'}
+          onClick={() => onChange(tab.id)}
+          data-project-tab={tab.id}
+          data-versions-open={tab.id === 'versions' ? true : undefined}
+          data-relations-open={tab.id === 'relations' ? true : undefined}
+        >
+          {tab.title}
+        </button>
+      ))}
+    </nav>
   )
 }
 

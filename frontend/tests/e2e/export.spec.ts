@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import fs from 'node:fs/promises'
-import { signIn } from './support'
+import { signIn, openEditorsTab } from './support'
 
 /**
  * Книга файлом через браузер: меню «Книга» → скачивание → файл действительно архив нужного
@@ -24,6 +24,7 @@ test('книга скачивается как EPUB и DOCX', async ({ page }) =
   await page.getByRole('button', { name: 'Создать' }).click()
   await page.getByRole('link', { name: title }).click()
   await page.getByRole('button', { name: '+ Добавить первую главу' }).click()
+  await openEditorsTab(page)
   await expect(page.locator('.ed-row--chapter', { hasText: 'Новая глава' }).first()).toBeVisible({
     timeout: 30_000,
   })

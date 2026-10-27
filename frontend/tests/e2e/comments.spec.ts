@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { signIn } from './support'
+import { signIn, openEditorsTab } from './support'
 
 /**
  * Обсуждение кадра — целиком через браузер.
@@ -35,6 +35,7 @@ test('замечание к кадру пишется, видно в дерев�
   await input.fill('Добавь главу «Пролог» с описанием начала истории')
   await panel.getByRole('button', { name: 'Спросить' }).click()
   await expect(panel.getByText('Создал главу «Пролог».')).toBeVisible({ timeout: 90_000 })
+  await openEditorsTab(page)
   await expect(page.locator('.ed-row--chapter', { hasText: 'Пролог' }).first()).toBeVisible({
     timeout: 45_000,
   })
@@ -78,9 +79,11 @@ test('замечание к кадру пишется, видно в дерев�
 
   // 4. Обсуждение живёт на сервере, а не только в состоянии компонента.
   await page.reload()
+  await openEditorsTab(page)
   // После перезагрузки сначала ждём дерево: на пустой базе проекция доезжает не сразу, и
   // без этого ожидания панель обсуждения ещё не отрисована (падало «element(s) not found»,
   // хотя данные целы). Это ожидание состояния, а не «подождать на всякий случай».
+  await openEditorsTab(page)
   await expect(page.locator('.ed-row--chapter', { hasText: 'Пролог' }).first()).toBeVisible({
     timeout: 45_000,
   })
@@ -98,6 +101,7 @@ test('замечание к кадру пишется, видно в дерев�
     'true',
   )
   await page.reload()
+  await openEditorsTab(page)
   await expect(
     page.locator('[data-frame-comments] [data-frame-reaction="agree:1"]').first(),
   ).toHaveAttribute('aria-pressed', 'true', { timeout: 45_000 })
@@ -134,6 +138,7 @@ test('замечание к кадру пишется, видно в дерев�
   await expect(page.locator('[data-frame-anchor-pending]')).toHaveCount(0)
 
   await page.reload()
+  await openEditorsTab(page)
   await expect(
     page.locator('[data-frame-comments] [data-frame-anchor="ok"]').first(),
   ).toBeVisible({ timeout: 45_000 })

@@ -23,6 +23,8 @@ async function projectWithChapter(page: import('@playwright/test').Page): Promis
   await expect(page).toHaveURL(/\/projects\/[0-9a-f-]+$/)
   // Пустой проект: «Добавить первую главу» создаёт кадр «Новая глава» и синхронизирует его.
   await page.getByRole('button', { name: '+ Добавить первую главу' }).click()
+  // 0.83.0: правка живёт на вкладке «Редакторы» — до неё вкладки «Проект» не было вовсе.
+  await page.locator('[data-project-tab="editors"]').click()
   await expect(page.locator('.ed-row--chapter', { hasText: 'Новая глава' }).first()).toBeVisible({
     timeout: 30_000,
   })
@@ -32,6 +34,7 @@ async function projectWithChapter(page: import('@playwright/test').Page): Promis
   // Пользователю это не мешает: он нажимает «Сохранить версию» через секунды, а не
   // через миллисекунды после первой правки.
   await page.reload({ waitUntil: 'domcontentloaded' })
+  await page.locator('[data-project-tab="editors"]').click()
   await expect(page.locator('.ed-row--chapter', { hasText: 'Новая глава' }).first()).toBeVisible({
     timeout: 45_000,
   })
