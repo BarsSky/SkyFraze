@@ -30,6 +30,20 @@ import (
 // не настолько долго, чтобы журнал стал досье на человека. Та же константа — у уборщика.
 const LoginAuditRetention = 90 * 24 * time.Hour
 
+// LoginAuditPerUser — верхняя граница записей на человека (0.72.0).
+//
+// Срок хранения объём не ограничивает: активный вход раз в день даёт ~90 строк, а бот,
+// долбящийся в аккаунт, — тысячи за сутки. Двести записей — это месяцы обычной жизни и при
+// этом потолок, который не даёт журналу вырасти в базу перебора. Держит его уборщик.
+const LoginAuditPerUser = 200
+
+// loginAuditDedupWindow — окно подавления повторов.
+//
+// Одинаковое событие с того же адреса в пределах минуты не пишется второй раз: подбирающий
+// пароль не должен превращать журнал в тысячу одинаковых строк, а «долбятся с этого адреса» —
+// один факт, а не тысяча. Разные исходы и разные адреса по-прежнему пишутся отдельно.
+const loginAuditDedupWindow = time.Minute
+
 // loginAuditPageSize — сколько последних входов отдаётся профилю.
 const loginAuditPageSize = 20
 
@@ -78,7 +92,7 @@ func (s *Service) recordLogin(
 	if err := s.store.RecordLoginAudit(ctx, store.LoginAuditEntry{
 		UserID: userID, Outcome: outcome, Factor: factor,
 		IP: meta.IP, UserAgent: meta.UserAgent,
-	}); err != nil {
+	}, loginAuditDedupWindow); err != nil {
 		s.log().Warn("auth: вход не записан в журнал", "err", err, "outcome", outcome)
 	}
 }

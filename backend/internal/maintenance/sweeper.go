@@ -299,6 +299,13 @@ func (s *Sweeper) scan(ctx context.Context, remove bool) (*Report, error) {
 		} else if purged > 0 {
 			s.logger.Info("storage sweep: убраны старые записи журнала входов", "count", purged)
 		}
+		// И верхняя граница на человека (0.72.0): срок хранения объём не ограничивает, а бот,
+		// долбящийся в аккаунт, пишет тысячи строк в сутки. Двести — месяцы обычной жизни.
+		if trimmed, err := s.store.TrimLoginAudit(ctx, auth.LoginAuditPerUser); err != nil {
+			s.logger.Warn("storage sweep: журнал входов не подрезан", "err", err)
+		} else if trimmed > 0 {
+			s.logger.Info("storage sweep: подрезан журнал входов", "count", trimmed)
+		}
 
 		// Церемонии ключей доступа (миграция 0028): строка появляется на каждый начатый
 		// вход и на каждую попытку привязки — включая брошенные вкладки. Без уборки таблица
