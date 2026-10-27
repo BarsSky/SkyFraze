@@ -755,6 +755,9 @@ cd frontend && npx tsx tests/diag-relations.ts
 # затем `npx vite preview --port 4173`, затем
 cd frontend && npx tsx tests/diag-load.ts http://localhost:4173
 
+# Скорость БОЕВОГО адреса (0.80.1): холодный заход с пустым кешем и повторная перезагрузка
+cd frontend && npx tsx tests/diag-deployed-load.ts https://fraze.skynas.ru
+
 # E2E публичной ленты: права, просмотры, оценки
 cd frontend && npx tsx tests/public-feed.ts
 
