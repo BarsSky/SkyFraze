@@ -443,3 +443,50 @@ describe('EntitiesPanel — «связать» из карточки (0.76.0)', 
     expect(screen.queryByLabelText('Связать карточку Аня')).toBeNull()
   })
 })
+
+describe('EntitiesPanel — свои типы карточек (0.81.0)', () => {
+  const types = [
+    { key: 'character', title: 'Герой', color: '', icon: '', position: 0, is_default: true, created_at: '' },
+    { key: 'frakciya', title: 'Фракция', color: '', icon: '', position: 3, is_default: false, created_at: '' },
+  ]
+
+  it('в списке видов — типы проекта, включая свои', async () => {
+    panel({ types })
+    const select = (await screen.findByLabelText('Вид карточки')) as HTMLSelectElement
+    const titles = Array.from(select.options).map((option) => option.textContent)
+    expect(titles).toContain('Герой')
+    expect(titles).toContain('Фракция')
+  })
+
+  it('подпись карточки берётся из типа проекта', async () => {
+    const { container } = panel({
+      types,
+      entities: [entity({ id: 'f1', kind: 'frakciya', name: 'Дом Волка' })],
+    })
+    await screen.findByText('Дом Волка')
+    // «Фракция» — не константа: это название типа в проекте. Проверяем именно подпись КАРТОЧКИ
+    // (в списке видов то же слово — поэтому смотрим на строку карточки).
+    const row = container.querySelector('.ent__item')
+    expect(row?.querySelector('.ent__kind')?.textContent).toBe('Фракция')
+  })
+
+  it('«+ новый тип…» раскрывает форму и создаёт тип', async () => {
+    const onCreateType = vi.fn().mockResolvedValue(undefined)
+    panel({ types, onCreateType })
+    fireEvent.change(await screen.findByLabelText('Вид карточки'), {
+      target: { value: '__new_type__' },
+    })
+    const input = await screen.findByLabelText('Название нового типа')
+    fireEvent.change(input, { target: { value: 'Артефакт' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Создать тип' }))
+    await waitFor(() => expect(onCreateType).toHaveBeenCalledWith('Артефакт'))
+    expect(await screen.findByText(/Тип «Артефакт» создан/)).toBeTruthy()
+  })
+
+  it('без права создавать типы пункта «+ новый тип…» нет', async () => {
+    panel({ types, canEdit: false })
+    const select = (await screen.findByLabelText('Вид карточки').catch(() => null)) as HTMLSelectElement | null
+    // Формы создания карточки у читателя нет вовсе — и создавать типы ему тоже нечем.
+    expect(select).toBeNull()
+  })
+})

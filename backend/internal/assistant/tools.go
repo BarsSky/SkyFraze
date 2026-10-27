@@ -65,7 +65,7 @@ var ErrUnknownTool = errors.New("неизвестный инструмент")
 // правка кадров, `world` — карточки мира): инструмента, которого агент сейчас не может
 // выполнить, в списке НЕТ. Так модель физически не может пообещать нарисовать картинку,
 // когда генератора нет, — обещание, которое нельзя выполнить, хуже отказа.
-func ToolDefs(caps Capabilities, editing, world, worldWrite bool) []ai.ToolDef {
+func ToolDefs(caps Capabilities, editing, world, worldWrite bool, entityKinds []string, entityTitles map[string]string) []ai.ToolDef {
 	defs := []ai.ToolDef{
 		{
 			Name: ToolListEvents,
@@ -149,7 +149,7 @@ func ToolDefs(caps Capabilities, editing, world, worldWrite bool) []ai.ToolDef {
 						"items": map[string]any{
 							"type": "object",
 							"properties": map[string]any{
-								"kind":        map[string]any{"type": "string", "enum": []string{"character", "place", "theme"}, "description": "character — персонаж, place — место, theme — тема"},
+								"kind":        map[string]any{"type": "string", "enum": entityKindEnum(entityKinds), "description": kindEnumNote(entityKinds, entityTitles)},
 								"name":        map[string]any{"type": "string", "description": "Имя в именительном падеже: «Анна». От 2 до 80 знаков"},
 								"aliases":     map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Как ещё называют в тексте: падежи и краткие формы («Аня», «Анну») — по ним ищутся упоминания"},
 								"description": map[string]any{"type": "string", "description": "Одна-две строки о том, кто это или что это (необязательно)"},
@@ -613,6 +613,33 @@ func ParseFragmentEdit(args map[string]any, limits Limits) (FragmentEditArgs, er
 	out.Replacement = text
 	out.Reason = argString(args, "reason")
 	return out, nil
+}
+
+// entityKindEnum — какие виды карточек предложить модели (0.81.0).
+//
+// Enum собирается по ТИПАМ ПРОЕКТА: помощник не должен придумывать «фракцию», которой в проекте
+// нет, — иначе предложение пришлось бы отбрасывать уже после подтверждения. Пустой список (типы
+// не подключены) даёт стартовые три: так набор инструментов не зависит от данных.
+func entityKindEnum(kinds []string) []string {
+	if len(kinds) == 0 {
+		return []string{store.EntityTypeCharacter, store.EntityTypePlace, store.EntityTypeTheme}
+	}
+	return kinds
+}
+
+// kindEnumNote — человеческая расшифровка enum для модели: «character — персонаж» читается лучше,
+// чем список машинных ключей, особенно когда человек переименовал стартовые типы.
+func kindEnumNote(kinds []string, titles map[string]string) string {
+	list := entityKindEnum(kinds)
+	parts := make([]string, 0, len(list))
+	for _, key := range list {
+		if title := strings.TrimSpace(titles[key]); title != "" {
+			parts = append(parts, key+" — "+title)
+		} else {
+			parts = append(parts, key)
+		}
+	}
+	return "Вид карточки из списка типов проекта: " + strings.Join(parts, ", ")
 }
 
 // EntityProposalArgs — разобранные аргументы propose_entities.

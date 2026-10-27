@@ -45,6 +45,11 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Delete("/entities/{entityID}", h.Delete)
 	// Связи между карточками мира (миграция 0032).
 	h.linkRoutes(r)
+	// Свои типы карточек (0.81.0, миграция 0034).
+	r.Get("/entity-types", h.ListTypes)
+	r.Post("/entity-types", h.CreateType)
+	r.Patch("/entity-types/{key}", h.UpdateType)
+	r.Delete("/entity-types/{key}", h.DeleteType)
 }
 
 // entityInput — тело запроса; указатели у необязательных полей, чтобы «не прислали» не
@@ -166,11 +171,19 @@ func (h *Handler) entityID(w http.ResponseWriter, r *http.Request) (uuid.UUID, b
 
 // fail переводит ошибки сервиса в коды ответов.
 func (h *Handler) fail(w http.ResponseWriter, err error, op string) {
+	var hasCards ErrTypeHasCards
 	switch {
 	case errors.Is(err, ErrInvalidEntity):
 		writeErr(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, ErrEntityExists):
 		writeErr(w, http.StatusConflict, "сущность с таким именем уже есть в проекте")
+	case errors.Is(err, ErrTypeNotFound):
+		writeErr(w, http.StatusNotFound, "тип карточки не найден")
+	case errors.Is(err, ErrTypeDefault):
+		writeErr(w, http.StatusConflict, err.Error())
+	case errors.As(err, &hasCards):
+		// 409, а не 400: запрос правильный, конфликт в данных — и в тексте есть, что делать.
+		writeErr(w, http.StatusConflict, hasCards.Error())
 	case errors.Is(err, store.ErrNotFound), errors.Is(err, projects.ErrNotFound):
 		writeErr(w, http.StatusNotFound, "not found")
 	case errors.Is(err, projects.ErrForbidden):

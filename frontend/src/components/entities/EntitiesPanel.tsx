@@ -14,6 +14,7 @@ import {
   type ProjectEntity,
 } from '../../api/entities'
 import { serverErrorMessage } from '../../api/client'
+import { typeTitle, type EntityType } from '../../api/entityTypes'
 import type { FrameWithMentions, Mention, MentionMatrix } from '../../collab/mentions'
 
 /**
@@ -28,7 +29,16 @@ import type { FrameWithMentions, Mention, MentionMatrix } from '../../collab/men
  * Поведение раскрытия при этом бесплатное и доступное с клавиатуры.
  */
 
-const KINDS: EntityKind[] = ['character', 'place', 'theme']
+/**
+ * Три стартовых ключа — резервный список, пока типы проекта не приехали (0.81.0).
+ *
+ * Нужен, чтобы форма создания карточки не была пустым списком в первые миллисекунды: подписи
+ * берём из `typeTitle`, а они для трёх стартовых ключей известны и без сервера.
+ */
+const DEFAULT_TYPE_KEYS = ['character', 'place', 'theme']
+
+/** Значение пункта «+ новый тип…» в списке видов. */
+const NEW_TYPE = '__new_type__'
 
 // Panel получает карточки от владельца данных (панель редакторов) и после правок просит
 // перечитать список: карточки нужны ещё и поиску упоминаний в тексте, а два независимых
@@ -61,6 +71,13 @@ interface Props {
    * встречается», и прятать её за свёрнутым заголовком значит заставлять искать.
    */
   matrixOpen?: boolean
+  /**
+   * Типы карточек проекта (0.81.0). Три стартовых есть всегда; свои человек заводит здесь же.
+   * Подписи видов берутся отсюда, а не из констант: «Фракция» — это название из его проекта.
+   */
+  types?: EntityType[]
+  /** Завести свой тип: вызывает владелец данных и перечитывает список (появится в выборе). */
+  onCreateType?: (title: string) => Promise<void>
   /** Связи карточек проекта (0.74.0): чипы «Аня — живёт на → Земля». */
   links?: EntityLink[]
 }
@@ -76,9 +93,16 @@ export function EntitiesPanel({
   onOpenFrame,
   matrix,
   matrixOpen = false,
+  types = [],
+  onCreateType,
   links,
 }: Props) {
-  const [kind, setKind] = useState<EntityKind>('character')
+  // Вид новой карточки — первый тип проекта (у стартовых это «Персонаж»). Состояние хранит КЛЮЧ
+  // типа: человек мог переименовать «Персонаж» в «Героя», и ключ остаётся `character`.
+  const [kind, setKind] = useState<string>('character')
+  /** Раскрыта ли форма нового типа (0.81.0). */
+  const [typeDraftOpen, setTypeDraftOpen] = useState(false)
+  const [typeDraft, setTypeDraft] = useState('')
   const [name, setName] = useState('')
   const [aliases, setAliases] = useState('')
   const [busy, setBusy] = useState(false)
@@ -106,6 +130,36 @@ export function EntitiesPanel({
 
   /** Связи карточки в обе стороны: прямые и обратные (0.74.0). */
   const entityLinks = (entityId: string) => connectionsOf(entityId, links ?? [], entities)
+
+  /**
+   * Название вида для человека (0.81.0): из типов проекта, а не из констант. Если типы ещё не
+   * приехали, `typeTitle` покажет стартовую подпись — она совпадает с прежним поведением.
+   */
+  const kindTitle = (key: string) => typeTitle(types, key)
+
+  /**
+   * Завести свой тип. Название вводит человек («Фракция»), ключ придумывает сервер.
+   *
+   * Почему форма раскрывается в том же списке видов: тип придумывают В МОМЕНТ, когда заводят
+   * карточку, а не в настройках проекта. Отдельный экран «управление типами» заставил бы уйти
+   * с формы и вернуться.
+   */
+  const createType = useCallback(async () => {
+    const title = typeDraft.trim()
+    if (!title || !onCreateType) return
+    setBusy(true)
+    setNote(null)
+    try {
+      await onCreateType(title)
+      setTypeDraft('')
+      setTypeDraftOpen(false)
+      setNote({ kind: 'ok', text: `Тип «${title}» создан.` })
+    } catch (e) {
+      setNote({ kind: 'error', text: await explain(e, 'Не удалось создать тип.') })
+    } finally {
+      setBusy(false)
+    }
+  }, [onCreateType, typeDraft])
 
   /** Убрать связь. Спрашиваем подтверждение браузером? Нет: связь — не данные человека, а
    *  метка между карточками, и вернуть её — одно действие. */
@@ -268,7 +322,7 @@ export function EntitiesPanel({
                 </div>
               ) : (
                 <>
-                  <span className="ent__kind">{kindLabel(entity.kind)}</span>
+                  <span className="ent__kind">{kindTitle(entity.kind)}</span>
                   <span className="ent__name">{entity.name}</span>
                   {entity.aliases.length > 0 && (
                     <span className="muted ent__aliases">({aliasesText(entity)})</span>
@@ -407,7 +461,7 @@ export function EntitiesPanel({
                       .filter((other) => other.id !== entity.id)
                       .map((other) => (
                         <option key={other.id} value={other.id}>
-                          {kindLabel(other.kind)}: {other.name}
+                          {kindTitle(other.kind)}: {other.name}
                         </option>
                       ))}
                   </select>
@@ -460,14 +514,25 @@ export function EntitiesPanel({
         <div className="ent__form">
           <select
             value={kind}
-            onChange={(e) => setKind(e.target.value as EntityKind)}
+            onChange={(e) => {
+              // «+ новый тип…» в списке: открываем форму названия вместо выбора вида.
+              if (e.target.value === NEW_TYPE) {
+                setTypeDraftOpen(true)
+                return
+              }
+              setKind(e.target.value)
+            }}
             aria-label="Вид карточки"
+            data-entity-kind-select
           >
-            {KINDS.map((value) => (
-              <option key={value} value={value}>
-                {kindLabel(value)}
-              </option>
-            ))}
+            {(types.length > 0 ? types : DEFAULT_TYPE_KEYS.map((key) => ({ key, title: kindTitle(key) }))).map(
+              (item) => (
+                <option key={item.key} value={item.key}>
+                  {item.title}
+                </option>
+              ),
+            )}
+            {onCreateType && <option value={NEW_TYPE}>+ новый тип…</option>}
           </select>
           <input
             value={name}
@@ -489,6 +554,39 @@ export function EntitiesPanel({
             data-entity-add
           >
             {busy ? 'Сохраняю…' : 'Добавить'}
+          </button>
+        </div>
+      )}
+
+      {/* Новый тип карточки (0.81.0). Форма в той же строке, где заводят карточку: тип
+          придумывают в этот момент, а не в настройках проекта. */}
+      {canEdit && onCreateType && typeDraftOpen && (
+        <div className="ent__form ent__form--type" data-entity-type-form>
+          <input
+            value={typeDraft}
+            onChange={(e) => setTypeDraft(e.target.value)}
+            placeholder="название типа: Фракция"
+            aria-label="Название нового типа"
+            maxLength={40}
+            autoFocus
+          />
+          <button
+            type="button"
+            onClick={() => void createType()}
+            disabled={busy || typeDraft.trim() === ''}
+            data-entity-type-add
+          >
+            {busy ? 'Создаю…' : 'Создать тип'}
+          </button>
+          <button
+            type="button"
+            className="secondary"
+            onClick={() => {
+              setTypeDraftOpen(false)
+              setTypeDraft('')
+            }}
+          >
+            Отмена
           </button>
         </div>
       )}

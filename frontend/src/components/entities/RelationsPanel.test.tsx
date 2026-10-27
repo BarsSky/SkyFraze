@@ -12,13 +12,24 @@ import { OPEN_FRAME_EVENT } from '../../lib/openFrame'
  * событием, а не колбэком через страницу.
  */
 
-const mocks = vi.hoisted(() => ({ rows: vi.fn(), entities: vi.fn(), links: vi.fn() }))
+const mocks = vi.hoisted(() => ({ rows: vi.fn(), entities: vi.fn(), links: vi.fn(), types: vi.fn() }))
 
 vi.mock('../../api/events', () => ({ listEventRows: mocks.rows }))
 
 vi.mock('../../api/entities', async () => {
   const actual = await vi.importActual<typeof import('../../api/entities')>('../../api/entities')
   return { ...actual, listEntities: mocks.entities, listEntityLinks: mocks.links }
+})
+
+vi.mock('../../api/entityTypes', async () => {
+  const actual = await vi.importActual<typeof import('../../api/entityTypes')>(
+    '../../api/entityTypes',
+  )
+  return {
+    ...actual,
+    listEntityTypes: mocks.types,
+    createEntityType: vi.fn(),
+  }
 })
 
 const eventRow = (over: Partial<FlatEventNode>): FlatEventNode => ({
@@ -49,6 +60,12 @@ beforeEach(() => {
   ])
   mocks.entities.mockReset().mockResolvedValue([card(), card({ id: 'c2', kind: 'place', name: 'Земля', aliases: [] })])
   mocks.links.mockReset().mockResolvedValue([])
+  // Типы карточек: три стартовых есть в каждом проекте (0.81.0).
+  mocks.types.mockReset().mockResolvedValue([
+    { key: 'character', title: 'Персонаж', color: '', icon: '', position: 0, is_default: true, created_at: '' },
+    { key: 'place', title: 'Место', color: '', icon: '', position: 1, is_default: true, created_at: '' },
+    { key: 'theme', title: 'Тема', color: '', icon: '', position: 2, is_default: true, created_at: '' },
+  ])
 })
 
 afterEach(() => {

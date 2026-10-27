@@ -243,7 +243,7 @@ func TestParseTextToolCallsLooseJSONNeedsKnownTool(t *testing.T) {
 // Набор зависит от возможностей: проверяем полный вариант («текст и картинки»), а
 // урезанные — отдельным тестом ниже.
 func TestToolDefsAreWellFormed(t *testing.T) {
-	defs := ToolDefs(Capabilities{Text: true, Images: true}, true, true, true)
+	defs := ToolDefs(Capabilities{Text: true, Images: true}, true, true, true, nil, nil)
 	// 12 = чтение дерева и кадра, карточки мира (list_entities и read_entity), предложение карточек
 	// (propose_entities), обсуждение кадров, создание главы и под-события, предложение правки кадра,
 	// правка фрагмента по замечанию, удаление, иллюстрация.
@@ -273,7 +273,7 @@ func TestToolDefsAreWellFormed(t *testing.T) {
 // Карточки мира не предлагаются, когда на стенде их нет: обещать инструмент, который
 // отвечает «недоступно», хуже, чем не показывать его вовсе.
 func TestToolDefsWithoutEntities(t *testing.T) {
-	defs := ToolDefs(Capabilities{Text: true}, false, false, false)
+	defs := ToolDefs(Capabilities{Text: true}, false, false, false, nil, nil)
 	for _, def := range defs {
 		if def.Name == ToolListEntities || def.Name == ToolProposeEntities {
 			t.Fatalf("%s объявлен без подключённых карточек мира", def.Name)
@@ -284,7 +284,7 @@ func TestToolDefsWithoutEntities(t *testing.T) {
 // Предложение карточек требует и чтения, и записи: без записи применять нечего, поэтому
 // инструмент не показывается вовсе — иначе модель пообещает то, чего стенд не сделает.
 func TestToolDefsWithoutEntityWriter(t *testing.T) {
-	defs := ToolDefs(Capabilities{Text: true}, true, true, false)
+	defs := ToolDefs(Capabilities{Text: true}, true, true, false, nil, nil)
 	seen := map[string]bool{}
 	for _, def := range defs {
 		seen[def.Name] = true

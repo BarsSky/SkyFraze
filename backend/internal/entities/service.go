@@ -101,6 +101,11 @@ func (s *Service) Create(
 	if err != nil {
 		return nil, err
 	}
+	// Вид обязан быть заведён в проекте (0.81.0): «Фракция» существует только там, где человек её
+	// создал. Проверка ДО вставки — ради текста ошибки; БД страхует внешним ключом.
+	if err := s.typeExists(ctx, projectID, entity.Kind); err != nil {
+		return nil, err
+	}
 	entity.ProjectID = projectID
 	entity.CreatedBy = &userID
 	return s.store.CreateEntity(ctx, entity)
@@ -114,9 +119,12 @@ func (s *Service) Create(
 // отвергнет. Нормализация имени и алиасов — ровно то место, где две копии правил разъехались
 // бы молча: падежи, минимальная длина алиаса, «алиас не повторяет имя».
 func PrepareCard(in Input) (store.ProjectEntity, error) {
-	kind, ok := store.ParseEntityKind(strings.TrimSpace(in.Kind))
-	if !ok {
-		return store.ProjectEntity{}, fmt.Errorf("%w: вид должен быть character, place или theme", ErrInvalidEntity)
+	// Вид — машинный ключ типа проекта (0.81.0): строчная латиница, цифры, дефис, подчёркивание.
+	// Существование типа проверяет сервис по конкретному проекту; здесь — только форма, потому что
+	// этой же функцией проверяет предложения помощник, у которого проекта под рукой может не быть.
+	kind := strings.TrimSpace(in.Kind)
+	if !store.ValidEntityKindKey(kind) {
+		return store.ProjectEntity{}, fmt.Errorf("%w: вид карточки — ключ типа из списка проекта", ErrInvalidEntity)
 	}
 	name := strings.TrimSpace(in.Name)
 	if utf8.RuneCountInString(name) < minNameRunes || utf8.RuneCountInString(name) > maxNameRunes {
@@ -145,7 +153,7 @@ func PrepareCard(in Input) (store.ProjectEntity, error) {
 		}
 	}
 	return store.ProjectEntity{
-		Kind: string(kind), Name: name,
+		Kind: kind, Name: name,
 		Aliases: aliases, Description: description, Color: color,
 	}, nil
 }
@@ -159,11 +167,14 @@ func (s *Service) Update(
 	}
 	upd := store.EntityUpdate{}
 	if raw := strings.TrimSpace(in.Kind); raw != "" {
-		kind, ok := store.ParseEntityKind(raw)
-		if !ok {
-			return nil, fmt.Errorf("%w: вид должен быть character, place или theme", ErrInvalidEntity)
+		// Смена типа карточки (0.81.0): вид — ключ типа в ЭТОМ проекте.
+		if !store.ValidEntityKindKey(raw) {
+			return nil, fmt.Errorf("%w: вид карточки — ключ типа из списка проекта", ErrInvalidEntity)
 		}
-		value := string(kind)
+		if err := s.typeExists(ctx, projectID, raw); err != nil {
+			return nil, err
+		}
+		value := raw
 		upd.Kind = &value
 	}
 	if raw := strings.TrimSpace(in.Name); raw != "" {

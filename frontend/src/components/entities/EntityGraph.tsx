@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { EntityLink, ProjectEntity } from '../../api/entities'
-import { connectionsOf, kindLabel } from '../../api/entities'
+import { connectionsOf } from '../../api/entities'
+import { typeTitle, type EntityType } from '../../api/entityTypes'
 import {
   RAIL_WINDOW,
   edgeLabel,
@@ -29,11 +30,16 @@ interface Props {
    * включается только на телефоне в альбомной ориентации.
    */
   tall?: boolean
+  /**
+   * Типы карточек проекта (0.81.0): подпись вида в карточке узла берётся из них, а не из
+   * констант — «Фракция» это название из проекта человека.
+   */
+  types?: EntityType[]
 }
 
 const HISTORY_LIMIT = 10
 
-export function EntityGraph({ entities, links, tall = false }: Props) {
+export function EntityGraph({ entities, links, tall = false, types = [] }: Props) {
   /** Откуда пришли: стек последних центров, «назад» снимает верхний. */
   const [history, setHistory] = useState<string[]>([])
   const [centerId, setCenterId] = useState<string | null>(null)
@@ -108,13 +114,20 @@ export function EntityGraph({ entities, links, tall = false }: Props) {
     [centerId, entities],
   )
 
-  /** Раскрытая карточка: ищем по id в актуальном списке — карточку могли переименовать. */
+  /**
+   * Карточки, которых нет в эго-графе: у них нет ни одной связи.
+   *
+   * Показываем их строкой под холстом: иначе добавленная карточка «исчезает» до тех пор, пока
+   * её с кем-нибудь не свяжут, и выглядит это как «область не обновилась» (0.81.0).
+   */
+  const isolated = useMemo(
+    () => entities.filter((entity) => connectionsOf(entity.id, links, entities).length === 0),
+    [entities, links],
+  )
   const expandedCard = useMemo(
     () => entities.find((entity) => entity.id === expanded) ?? null,
     [entities, expanded],
-  )
-
-  // Escape закрывает карточку: это окно поверх графа, и клавиатурой его тоже надо закрывать.
+  )  // Escape закрывает карточку: это окно поверх графа, и клавиатурой его тоже надо закрывать.
   useEffect(() => {
     if (expanded === null) return undefined
     const onKey = (event: KeyboardEvent) => {
@@ -282,6 +295,22 @@ export function EntityGraph({ entities, links, tall = false }: Props) {
       <div className="egraph__canvas" ref={setHost} data-entity-graph-canvas>
         <div className="egraph__space" aria-hidden="true" />
         <svg className="egraph__edges" width="100%" height="100%" aria-hidden="true">
+          {/* Наконечник стрелки (0.81.0): без него линия есть, а направления не видно — и связь
+              читается как «просто линия», хотя подпись у неё направленная. `currentColor` —
+              цвет темы: стрелки не должны выбиваться из палитры. */}
+          <defs>
+            <marker
+              id="egraph-arrow"
+              viewBox="0 0 10 10"
+              refX="9"
+              refY="5"
+              markerWidth="6"
+              markerHeight="6"
+              orient="auto-start-reverse"
+            >
+              <path d="M0,0 L10,5 L0,10 z" fill="currentColor" />
+            </marker>
+          </defs>
           {layout.edges.map((edge) => (
             <g key={edge.linkId}>
               <line
@@ -290,6 +319,9 @@ export function EntityGraph({ entities, links, tall = false }: Props) {
                 x2={edge.to.x}
                 y2={edge.to.y}
                 className="egraph__edge"
+                /* Направление: «→» — стрелка у соседа, «←» — у центра. */
+                markerEnd={edge.direction === 'out' ? 'url(#egraph-arrow)' : undefined}
+                markerStart={edge.direction === 'in' ? 'url(#egraph-arrow)' : undefined}
               />
               <text x={edge.labelAt.x} y={edge.labelAt.y} className="egraph__edge-label" textAnchor="middle">
                 {/* Подпись на ребре — короткая: полный список связей показывает карточка.
@@ -330,6 +362,7 @@ export function EntityGraph({ entities, links, tall = false }: Props) {
             card={expandedCard}
             links={links}
             entities={entities}
+            types={types}
             /* Карточка раскрывается РЯДОМ с узлом, а не полосой внизу холста (0.79.0):
                полоса читалась как подпись к графу, а не как карточка. Позицию считаем по
                координатам узла и прижимаем к краям, чтобы карточка не уезжала за холст. */
@@ -350,6 +383,31 @@ export function EntityGraph({ entities, links, tall = false }: Props) {
           У карточки пока нет связей. Их задают в карточке — «связана с».
         </p>
       )}
+      {/* Карточки вне графа (0.81.0). Эго-граф показывает только соседей центра, поэтому
+          добавленная карточка без связей в нём не появлялась — и выглядело так, будто область
+          не обновилась после создания (отчёт). Теперь связи-сироты видны строкой, и по нажатию
+          становятся центром: карточка не «пропадает», даже пока у неё нет ни одной связи. */}
+      {isolated.length > 0 && (
+        <div className="egraph__isolated" data-entity-graph-isolated>
+          <span className="muted">вне связей: {isolated.length}</span>
+          <ul className="egraph__isolated-list">
+            {isolated.slice(0, 12).map((entity) => (
+              <li key={entity.id}>
+                <button
+                  type="button"
+                  className="egraph__isolated-chip"
+                  onClick={() => go(entity.id)}
+                  title={`${entity.name} — сделать центром графа`}
+                  data-entity-graph-isolated-item
+                >
+                  {entity.name}
+                </button>
+              </li>
+            ))}
+            {isolated.length > 12 && <li className="muted">и ещё {isolated.length - 12}</li>}
+          </ul>
+        </div>
+      )}
     </div>
   )
 }
@@ -369,6 +427,7 @@ function NodeCard({
   card,
   links,
   entities,
+  types,
   anchor,
   canvasWidth,
   canvasHeight,
@@ -379,6 +438,7 @@ function NodeCard({
   card: ProjectEntity
   links: EntityLink[]
   entities: ProjectEntity[]
+  types: EntityType[]
   anchor: { x: number; y: number }
   canvasWidth: number
   canvasHeight: number
@@ -405,7 +465,7 @@ function NodeCard({
       style={{ left, top, width: CARD_WIDTH }}
     >
       <div className="egraph__card-head">
-        <span className="ent__kind">{kindLabel(card.kind)}</span>
+        <span className="ent__kind">{typeTitle(types, card.kind)}</span>
         <strong className="egraph__card-name">{card.name}</strong>
         <button
           type="button"

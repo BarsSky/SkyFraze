@@ -859,11 +859,15 @@ func (s *Service) converse(
 		return fillTokens(req, reply), gate.visibleText(), err
 	}
 
+	// Виды карточек — из ТИПОВ ПРОЕКТА (0.81.0): enum инструмента должен совпадать со списком,
+	// который человек видит в панели, иначе модель предложит тип, которого нет.
+	entityKinds, entityTitles := s.entityKindOptions(ctx, conversation.ProjectID)
+
 	for round := 0; round < s.limits.MaxRounds; round++ {
 		reply, partial, err := ask(ai.Request{
 			Model:       model,
 			Messages:    messages,
-			Tools:       ToolDefs(caps, s.editor != nil, s.world != nil, s.worldWrite != nil),
+			Tools:       ToolDefs(caps, s.editor != nil, s.world != nil, s.worldWrite != nil, entityKinds, entityTitles),
 			Temperature: 0.4,
 		})
 		if err != nil {

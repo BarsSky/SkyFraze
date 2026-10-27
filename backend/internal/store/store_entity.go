@@ -28,7 +28,11 @@ const (
 	EntityTheme EntityKind = "theme"
 )
 
-// ParseEntityKind разбирает вид из запроса или из инструмента модели.
+// ParseEntityKind разбирает СТАРТОВЫЙ вид сущности (character/place/theme).
+//
+// С 0.81.0 виды карточек — строки таблицы `project_entity_types`, и этой функцией проверять
+// карточку нельзя: она знает только три стартовых ключа. Оставлена для мест, где речь именно о
+// стартовых типах (значения по умолчанию, обратная совместимость).
 func ParseEntityKind(raw string) (EntityKind, bool) {
 	switch EntityKind(raw) {
 	case EntityCharacter:
@@ -40,6 +44,26 @@ func ParseEntityKind(raw string) (EntityKind, bool) {
 	default:
 		return "", false
 	}
+}
+
+// ValidEntityKindKey проверяет ФОРМУ ключа типа карточки (0.81.0).
+//
+// Существование типа проверяется по проекту отдельно; здесь — только то, что ключ вообще может
+// быть ключом: строчная латиница, цифры, дефис, подчёркивание, до 32 знаков. Миграция 0034 держит
+// то же правило CHECK-ом, поэтому ключ, прошедший эту проверку, не упрётся в базу.
+func ValidEntityKindKey(raw string) bool {
+	if raw == "" || len(raw) > 32 {
+		return false
+	}
+	for i, r := range raw {
+		lower := r >= 'a' && r <= 'z'
+		digit := r >= '0' && r <= '9'
+		extra := i > 0 && (r == '-' || r == '_')
+		if !lower && !digit && !extra {
+			return false
+		}
+	}
+	return true
 }
 
 // ProjectEntity — карточка сущности.
@@ -160,4 +184,13 @@ func (s *Store) DeleteEntity(ctx context.Context, projectID, id uuid.UUID) error
 func isUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}
+
+// isForeignKeyViolation — нарушение внешнего ключа (SQLSTATE 23503).
+//
+// Нужно удалению типа карточки: вид карточки ссылается на тип, и БД отказывает, если у типа
+// ещё есть карточки. Это не сбой, а правило — им сервис отвечает человеку списком карточек.
+func isForeignKeyViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23503"
 }

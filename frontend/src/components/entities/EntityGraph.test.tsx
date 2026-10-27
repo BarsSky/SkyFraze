@@ -73,6 +73,20 @@ describe('EntityGraph — эго-граф связей (0.75.0)', () => {
     expect(card.textContent).toContain('алиасов нет')
   })
 
+  /**
+   * Карточки вне эго-графа (0.81.0): добавленная карточка без связей не появлялась в графе, и
+   * это выглядело как «область не обновилась после создания». Теперь они видны строкой и по
+   * нажатию становятся центром.
+   */
+  it('карточки без связей видны строкой и становятся центром по нажатию', async () => {
+    const lonely = { id: 'e4', kind: 'character' as const, name: 'Мельник', aliases: [], description: '', color: '', created_at: '', updated_at: '' }
+    render(<EntityGraph entities={[anna, earth, lonely]} links={[link]} />)
+    expect(await screen.findByText(/вне связей: 1/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Мельник' }))
+    // Центр переключился: у Мельника связей нет, и об этом сказано словами.
+    expect(await screen.findByText(/У карточки пока нет связей/)).toBeTruthy()
+  })
+
   it('поиск находит карточку и Enter центрирует её', async () => {
     render(<EntityGraph entities={[anna, earth]} links={[link]} />)
     const search = await screen.findByLabelText('Поиск по карточкам в графе')

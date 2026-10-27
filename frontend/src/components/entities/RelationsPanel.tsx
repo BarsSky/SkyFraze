@@ -21,6 +21,7 @@ import { EntityGraph } from './EntityGraph'
 import { EntitiesPanel } from './EntitiesPanel'
 import { requestOpenFrame } from '../../lib/openFrame'
 import { ENTITIES_CHANGED_EVENT } from '../../api/assistant'
+import { createEntityType } from '../../api/entityTypes'
 
 /**
  * Область «Связи» (0.79.0): всё про карточки мира — в одном месте.
@@ -57,7 +58,7 @@ interface RelationsRow {
 }
 
 export function RelationsPanel({ projectId, canEdit }: Props) {
-  const { entities, links, loaded, reload } = useProjectEntities(projectId)
+  const { entities, links, types, loaded, reload } = useProjectEntities(projectId)
   const [rows, setRows] = useState<RelationsRow[]>([])
   const [eventsLoaded, setEventsLoaded] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -171,7 +172,7 @@ export function RelationsPanel({ projectId, canEdit }: Props) {
       {error !== null && <p className="ed-danger">{error}</p>}
 
       {entities.length > 0 ? (
-        <EntityGraph entities={entities} links={links} tall />
+        <EntityGraph entities={entities} links={links} types={types} tall />
       ) : (
         <p className="muted relations__empty" data-relations-empty>
           {eventsLoaded && loaded
@@ -191,6 +192,15 @@ export function RelationsPanel({ projectId, canEdit }: Props) {
         onOpenFrame={openFrame}
         matrix={matrix}
         matrixOpen
+        types={types}
+        onCreateType={
+          canEdit
+            ? async (title: string) => {
+                await createEntityType(projectId, { title })
+                await reload()
+              }
+            : undefined
+        }
         links={links}
       />
     </section>

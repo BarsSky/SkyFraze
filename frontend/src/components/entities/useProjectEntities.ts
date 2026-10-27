@@ -5,15 +5,16 @@ import {
   type EntityLink,
   type ProjectEntity,
 } from '../../api/entities'
+import { listEntityTypes, type EntityType } from '../../api/entityTypes'
 import { ENTITIES_CHANGED_EVENT } from '../../api/assistant'
 
 /**
- * Карточки мира проекта, загруженные один раз для всей панели редакторов.
+ * Карточки мира проекта, их связи и ТИПЫ — один список на всю страницу (0.68.0 → 0.81.0).
  *
- * Почему хук, а не загрузка внутри компонента-панели: карточки нужны в ДВУХ местах сразу —
- * в списке «Связи проекта» и в поиске упоминаний в тексте кадра. Две независимые загрузки
- * одного и того же списка разъезжались бы: создал карточку — упоминания появились бы только
- * после перезагрузки страницы.
+ * Почему хук, а не загрузка внутри компонента-панели: карточки нужны в ДВУХ местах сразу — в
+ * области «Связи» (список, граф, матрица) и в поиске упоминаний в тексте кадра (панель
+ * редакторов). Две независимые загрузки одного и того же списка разъезжались бы: создал карточку —
+ * упоминания появились бы только после перезагрузки страницы.
  *
  * `reload` дёргает панель после своих правок (создать/переименовать/удалить): список один, и
  * обновляет его владелец данных, а не каждый потребитель.
@@ -21,23 +22,33 @@ import { ENTITIES_CHANGED_EVENT } from '../../api/assistant'
 export function useProjectEntities(projectId?: string) {
   const [entities, setEntities] = useState<ProjectEntity[]>([])
   const [links, setLinks] = useState<EntityLink[]>([])
+  const [types, setTypes] = useState<EntityType[]>([])
   const [loaded, setLoaded] = useState(false)
 
   const reload = useCallback(async () => {
     if (!projectId) {
       setEntities([])
+      setLinks([])
+      setTypes([])
       setLoaded(true)
       return
     }
     try {
-      // Карточки и связи грузим вместе: граф и чипы связей — одна картина, и два запроса
-      // подряд разъезжались бы в момент открытия проекта.
-      const [cards, links] = await Promise.all([listEntities(projectId), listEntityLinks(projectId)])
+      // Карточки, связи и типы грузим вместе: граф, чипы и подписи видов — одна картина, и
+      // три запроса подряд разъезжались бы в момент открытия проекта.
+      const [cards, entityLinks, entityTypes] = await Promise.all([
+        listEntities(projectId),
+        listEntityLinks(projectId),
+        listEntityTypes(projectId),
+      ])
       setEntities(cards)
-      setLinks(links)
+      setLinks(entityLinks)
+      setTypes(entityTypes)
     } catch {
       // Проект может быть недоступен (закрыт доступ): пустой список лучше вечной загрузки.
       setEntities([])
+      setLinks([])
+      setTypes([])
     } finally {
       setLoaded(true)
     }
@@ -57,5 +68,5 @@ export function useProjectEntities(projectId?: string) {
     return () => window.removeEventListener(ENTITIES_CHANGED_EVENT, onChanged)
   }, [reload])
 
-  return { entities, links, loaded, reload }
+  return { entities, links, types, loaded, reload }
 }

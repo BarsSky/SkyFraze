@@ -84,6 +84,33 @@ type EntityProposalResult struct {
 	LinksSkipped []ProposalItemError `json:"links_skipped"`
 }
 
+// entityKindOptions — ключи и названия типов карточек проекта (0.81.0).
+//
+// Нужны инструменту: его `enum` должен совпадать с тем, что человек видит в панели «Связи».
+// Ошибку чтения не считаем фатальной — помощник получит стартовые три типа: отказывать в работе
+// из-за одного запроса было бы хуже.
+func (s *Service) entityKindOptions(ctx context.Context, projectID uuid.UUID) ([]string, map[string]string) {
+	if s.store == nil {
+		return nil, nil
+	}
+	if err := s.store.EnsureEntityTypes(ctx, projectID); err != nil {
+		s.logger.Warn("ai: типы карточек не прочитаны", "project", projectID, "err", err)
+		return nil, nil
+	}
+	list, err := s.store.ListEntityTypes(ctx, projectID)
+	if err != nil {
+		s.logger.Warn("ai: типы карточек не прочитаны", "project", projectID, "err", err)
+		return nil, nil
+	}
+	kinds := make([]string, 0, len(list))
+	titles := make(map[string]string, len(list))
+	for _, item := range list {
+		kinds = append(kinds, item.Key)
+		titles[item.Key] = item.Title
+	}
+	return kinds, titles
+}
+
 // EntityProposalDTO переводит запись в вид для интерфейса.
 func EntityProposalDTO(p store.EntityProposal) EntityProposalView {
 	cards := p.Cards
@@ -115,6 +142,14 @@ func (s *Service) ProposeEntities(
 	if len(cards) > maxProposedCards || len(links) > maxProposedLinks {
 		return nil, ErrEntityProposalTooMany
 	}
+	// Вид обязан быть типом ЭТОГО проекта (0.81.0): модель видела enum, но полагаться на это
+	// нельзя — предложение с чужим видом всё равно не применится, а узнать об этом человек
+	// должен сразу, до подтверждения.
+	kinds, _ := s.entityKindOptions(ctx, projectID)
+	allowed := make(map[string]bool, len(kinds))
+	for _, key := range kinds {
+		allowed[key] = true
+	}
 	// Имена в пачке не должны повторяться: две «Анны» в одном предложении — это не две
 	// карточки (уникальность имени в проекте), а путаница при применении связей.
 	seen := make(map[string]bool, len(cards))
@@ -128,6 +163,10 @@ func (s *Service) ProposeEntities(
 		})
 		if err != nil {
 			return nil, err
+		}
+		if len(allowed) > 0 && !allowed[entity.Kind] {
+			return nil, fmt.Errorf("%w: вид «%s» не заведён в проекте — возьмите из list_entities или стартовые character/place/theme",
+				entities.ErrInvalidEntity, entity.Kind)
 		}
 		key := strings.ToLower(entity.Name)
 		if seen[key] {

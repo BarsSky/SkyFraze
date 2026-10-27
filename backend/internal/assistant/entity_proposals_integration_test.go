@@ -350,3 +350,32 @@ func TestEntityProposalRejectsInvalidCardAtProposeTime(t *testing.T) {
 		t.Fatalf("отказа с объяснением про длину имени нет: %+v", turn.Calls)
 	}
 }
+
+// Вид карточки обязан быть типом ЭТОГО проекта (0.81.0): модель видела enum, но полагаться на
+// это нельзя — «дракон» без заведённого типа не должен доехать до кнопки «Добавить».
+func TestEntityProposalRejectsForeignKind(t *testing.T) {
+	e, _ := worldEnv(t,
+		ai.Reply{ToolCalls: []ai.ToolCall{proposeCall([]any{card("dragon", "Смауг")}, nil)}},
+		ai.Reply{Content: "Понял, возьму тип из проекта."},
+	)
+	ctx := context.Background()
+	owner := e.user(t, "owner@example.com")
+	projectID, _, _ := e.seedProject(t, owner)
+
+	turn, err := e.asst.Send(ctx, owner, projectID, uuid.Nil, "stub:stub-1", "Кто в главе?")
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if len(turn.EntityProposals) != 0 {
+		t.Fatalf("предложение с чужим видом сохранено: %+v", turn.EntityProposals)
+	}
+	refused := false
+	for _, call := range turn.Calls {
+		if call.Name == assistant.ToolProposeEntities && !call.OK && strings.Contains(call.Error, "не заведён") {
+			refused = true
+		}
+	}
+	if !refused {
+		t.Fatalf("отказа с объяснением про вид нет: %+v", turn.Calls)
+	}
+}

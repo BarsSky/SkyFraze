@@ -8,11 +8,17 @@ import { http } from './client'
  * «где на таймлайне появляется Анна».
  */
 
+/**
+ * Стартовые виды карточек. С 0.81.0 вид — не перечисление, а ключ ТИПА из проекта
+ * (`src/api/entityTypes.ts`): у каждой книги свои «Фракции» и «Артефакты». Тип оставлен ради
+ * мест, где речь именно о трёх стартовых (подписи по умолчанию, обратная совместимость).
+ */
 export type EntityKind = 'character' | 'place' | 'theme'
 
 export interface ProjectEntity {
   id: string
-  kind: EntityKind
+  /** Ключ типа: стартовый (`character`/`place`/`theme`) или свой из проекта (0.81.0). */
+  kind: string
   name: string
   aliases: string[]
   description: string
@@ -23,7 +29,7 @@ export interface ProjectEntity {
 
 /** Что можно задать при создании и правке (поля необязательные — «не прислали — не меняем»). */
 export interface EntityInput {
-  kind?: EntityKind
+  kind?: string
   name?: string
   aliases?: string[]
   description?: string
@@ -80,7 +86,11 @@ export function readEntity(raw: unknown): ProjectEntity | null {
   const id = typeof record.id === 'string' ? record.id : ''
   const name = typeof record.name === 'string' ? record.name : ''
   if (!id || !name) return null
-  const kind = record.kind === 'place' || record.kind === 'theme' ? record.kind : 'character'
+  // Вид — ключ ТИПА карточки (0.81.0), а не перечисление: «Фракция» приходит с сервера как
+  // `frakciya`, и приводить её к «character» значило бы терять тип при разборе ответа (этим и
+  // объяснялось «создал тип, а карточка всё равно персонаж»). Храним строку как есть; подпись
+  // для человека берёт `typeTitle` из типов проекта.
+  const kind = typeof record.kind === 'string' ? record.kind : ''
   const aliases = Array.isArray(record.aliases)
     ? record.aliases.filter((alias): alias is string => typeof alias === 'string' && alias !== '')
     : []
@@ -96,22 +106,24 @@ export function readEntity(raw: unknown): ProjectEntity | null {
   }
 }
 
-/** Вид сущности по-русски: в интерфейсе не должно быть `character`. */
 /**
- * Русское название вида карточки.
+ * Русское название СТАРТОВОГО вида карточки.
  *
- * На входе строка, а не только `EntityKind`: вид приходит и из предложения помощника (0.77.0),
- * где он ещё не проверен. Неизвестный вид показывается как «Персонаж» — сервер такую карточку
- * всё равно не создаст, и подменять её названием вида из ответа модели незачем.
+ * С 0.81.0 виды — это типы проекта (`api/entityTypes.ts`), и правильная подпись берётся из
+ * `typeTitle`. Здесь только три стартовых ключа; для любого другого возвращаем ключ КАК ЕСТЬ, а
+ * не «Персонаж»: подставлять стартовую подпись — значит врать о данных (у человека «Фракция»
+ * стала бы персонажем в отчётах и предложениях помощника).
  */
 export function kindLabel(kind: EntityKind | string): string {
   switch (kind) {
+    case 'character':
+      return 'Персонаж'
     case 'place':
       return 'Место'
     case 'theme':
       return 'Тема'
     default:
-      return 'Персонаж'
+      return kind
   }
 }
 
