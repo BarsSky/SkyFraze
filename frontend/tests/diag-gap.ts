@@ -27,6 +27,18 @@ async function main() {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
   await signIn(page)
   await page.goto(`${BASE}/projects/${PROJECT_ID}`)
+
+  // С 0.83.0 у владельца проект — вкладки: сцена и «Связи» больше не стоят друг под другом, и
+  // пустой полосы между ними быть не может по построению. Скрипт остаётся полезным для
+  // ПУБЛИЧНОЙ версии и гостя: там прокручиваемый поток сохранён и полосу мерить есть где.
+  await page.waitForTimeout(2500)
+  const tabs = await page.locator('[data-project-tab]').count()
+  if (tabs > 0) {
+    console.log('вкладки: у владельца сцена и «Связи» — разные вкладки; пустая полоса невозможна.')
+    console.log('для замера прокручиваемого потока откройте проект гостем или в публичной версии.')
+    await browser.close()
+    return
+  }
   await page.locator('[data-relations]').waitFor({ state: 'visible', timeout: 45_000 })
   await page.waitForTimeout(1500)
 

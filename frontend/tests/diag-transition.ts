@@ -8,6 +8,16 @@ await p.getByPlaceholder('пароль').fill('hunter22!')
 await p.getByRole('button', { name: /Войти/ }).click()
 await p.waitForURL(/\/projects$/)
 await p.goto(`${BASE}/projects/167edf2e-876a-4ef2-bd04-155efb648343`)
+// С 0.83.0 у владельца проект — вкладки: перехода «сцена → раздел» прокруткой больше нет.
+await p.waitForTimeout(2500)
+if ((await p.locator('[data-project-tab]').count()) > 0) {
+  await p.locator('[data-project-tab="relations"]').click()
+  await p.waitForTimeout(900)
+  await p.screenshot({ path: '..\\_dev_shots\\transition-tab-relations.png' })
+  console.log('вкладки: раздел открывается вкладкой, а не прокруткой — кадры перехода не снимаем')
+  await b.close()
+  process.exit(0)
+}
 await p.locator('[data-relations]').waitFor({ state: 'visible', timeout: 45000 })
 await p.waitForTimeout(1500)
 const shots = []

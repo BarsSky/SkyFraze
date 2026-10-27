@@ -685,15 +685,45 @@
   opacity: 0.85;
   filter: drop-shadow(0 0 3px color-mix(in srgb, var(--accent) 35%, transparent));
 }
+/* Подпись ребра (0.84.0): стоит В РАЗРЫВЕ линии, а не поверх неё. Раньше это была «плашка»
+   цветом фона под текстом — на градиенте холста она читалась как замазка, а длинная подпись
+   выглядела обрубком связи (отчёт: «сделать разрыв в линии где идёт подпись»). Обводка осталась
+   тонкой: ею закрываются только точки сетки и концы соседних линий. */
 .egraph__edge-label {
-  fill: var(--fg);
+  fill: color-mix(in srgb, var(--fg) 90%, var(--accent) 10%);
   font-size: 11px;
-  /* Подпись лежит ПОВЕРХ линии: рисуем «плашку» цветом фона, иначе линия проходит сквозь текст. */
+  font-weight: 500;
+  letter-spacing: 0.2px;
   paint-order: stroke;
   stroke: var(--bg);
-  stroke-width: 4px;
+  stroke-width: 3px;
   stroke-linejoin: round;
+  user-select: none;
 }
+/* Перелетающая «пилюля» выбранной карточки (0.84.0): летит из места узла в центр холста.
+   Координаты старта — inline (left/top), финал — 50%/50% в keyframes: так старт знает компонент,
+   а конец — вёрстка. */
+.egraph__fly {
+  position: absolute; z-index: 4; transform: translate(-50%, -50%);
+  max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 4px 12px; font-size: 12px; font-weight: 600; color: var(--fg);
+  background: var(--bg-elev); border: 1px solid var(--accent); border-radius: 999px;
+  box-shadow: 0 18px 36px -22px rgba(0, 0, 0, 0.9);
+  pointer-events: none;
+  animation: egraph-fly 320ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+@keyframes egraph-fly {
+  from { opacity: 0.9; }
+  to { left: 50%; top: 50%; opacity: 1; }
+}
+/* Пока карточка летит, граф отступает: видно, что происходит переход, а не мигание. */
+.egraph__canvas.is-focusing .egraph__edges,
+.egraph__canvas.is-focusing .egraph__node {
+  opacity: 0.3;
+  transition: opacity 140ms ease-out;
+}
+.egraph__edges,
+.egraph__node { transition: opacity 180ms ease-out; }
 .egraph__node {
   position: absolute; transform: translate(-50%, -50%);
   background: var(--bg-elev); border: 1px solid var(--border); border-radius: 999px;
@@ -702,21 +732,36 @@
 }
 .egraph__node:hover { border-color: var(--accent); }
 .egraph__node--center { font-weight: 600; border-color: var(--accent); cursor: default; }
-/* Карточка узла (0.78.0 → 0.79.0): имя, вид, алиасы и ближайшие связи. Раскрывается РЯДОМ с
-   узлом — полоса во всю ширину холста читалась как подпись к графу, а не как карточка.
-   Позицию считает компонент (по координатам узла, с прижатием к краям). */
+/* Карточка узла (0.78.0 → 0.79.0 → 0.84.0): имя, вид, алиасы, описание и ближайшие связи.
+   С 0.84.0 раскрывается В ЦЕНТРЕ холста — туда же перелетает выбранная карточка, поэтому
+   содержимое видно всегда и не ложится поверх соседей. */
 .egraph__card {
-  position: absolute; z-index: 5; transform: translateY(-50%);
+  position: absolute; z-index: 5;
   display: grid; gap: 6px; padding: 12px 14px;
   background: var(--bg-elev); border: 1px solid var(--accent); border-radius: 12px;
   box-shadow: 0 26px 60px -30px rgba(0, 0, 0, 0.8);
   font-size: 12px; max-height: calc(100% - 16px); overflow-y: auto; overscroll-behavior: contain;
 }
-/* На телефоне карточка становится «листом» снизу холста: рядом с узлом в 288 px она не читается. */
+.egraph__card--center {
+  left: 50%; top: 50%; transform: translate(-50%, -50%);
+  animation: egraph-card-in 200ms ease-out;
+}
+@keyframes egraph-card-in {
+  from { opacity: 0; transform: translate(-50%, calc(-50% + 10px)) scale(0.97); }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+/* Уважение к «меньше движения»: без перелёта и без всплытия — карточка просто появляется. */
+@media (prefers-reduced-motion: reduce) {
+  .egraph__fly { display: none; }
+  .egraph__card--center { animation: none; }
+  .egraph__edges, .egraph__node { transition: none; }
+}
+/* На телефоне карточка становится «листом» снизу холста: в центре 288 px она закрывает весь граф. */
 @media (max-width: 640px) {
-  .egraph__card {
+  .egraph__card,
+  .egraph__card--center {
     left: 8px !important; right: 8px; top: auto !important; bottom: 8px;
-    transform: none; width: auto !important;
+    transform: none; animation: none; width: auto !important;
   }
 }
 .egraph__card-head { display: flex; align-items: baseline; gap: 8px; }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { MAX_RING, RAIL_WINDOW, edgeLabel, layoutEgoGraph, type GraphNeighbor } from './graph'
+import { MAX_RING, RAIL_WINDOW, edgeLabel, edgePieces, layoutEgoGraph, type GraphNeighbor } from './graph'
 
 /**
  * Раскладка эго-графа — спецификация правил из обсуждения.
@@ -100,5 +100,80 @@ describe('layoutEgoGraph', () => {
     const labels = layout.edges.map(edgeLabel)
     expect(labels).toContain('← связь 1')
     expect(labels).toContain('→ связь 2')
+  })
+
+  /**
+   * Подпись стоит В РАЗРЫВЕ линии (0.84.0): подпись на середине ребра, без подъёма над линией —
+   * компонент центрирует текст по линии (`dominant-baseline: middle`) и вырезает под него
+   * промежуток. Тест держит это соглашение: поднимешь `labelAt` обратно над линией — разрыв
+   * окажется не под текстом.
+   */
+  it('подпись ребра — ровно на середине линии, а не над ней', () => {
+    const layout = layoutEgoGraph({ width: 800, height: 600, center, neighbors: [neighbor(1)] })
+    const edge = layout.edges[0]
+    expect(edge.labelAt.x).toBeCloseTo((edge.from.x + edge.to.x) / 2, 6)
+    expect(edge.labelAt.y).toBeCloseTo((edge.from.y + edge.to.y) / 2, 6)
+  })
+})
+
+/**
+ * Разрыв в линии под подписью (0.84.0).
+ *
+ * Заказ: «сделать разрыв в линии где идёт подпись». Геометрия вынесена из компонента, чтобы
+ * проверять её числами, а не глазами: разрыв по центру, достаточно широкий под текст, но не
+ * съедающий ребро целиком.
+ */
+describe('edgePieces — линия с разрывом под подписью', () => {
+  const horizontal = { from: { x: 0, y: 100 }, to: { x: 400, y: 100 } }
+
+  it('горизонтальная линия рвётся по центру, обе половины на месте', () => {
+    const { before, after } = edgePieces(horizontal, 10)
+    expect(before.x1).toBe(0)
+    expect(before.x2).toBeLessThan(200)
+    expect(after.x1).toBeGreaterThan(200)
+    expect(after.x2).toBe(400)
+    // Симметрия: разрыв центрирован.
+    expect(200 - before.x2).toBeCloseTo(after.x1 - 200, 6)
+    expect(before.y1).toBe(100)
+    expect(after.y2).toBe(100)
+  })
+
+  it('длинная подпись даёт более широкий разрыв', () => {
+    const narrow = edgePieces(horizontal, 4)
+    const wide = edgePieces(horizontal, 20)
+    expect(wide.after.x1 - wide.before.x2).toBeGreaterThan(narrow.after.x1 - narrow.before.x2)
+  })
+
+  it('разрыв не съедает ребро целиком: короткая связь остаётся видимой', () => {
+    const short = { from: { x: 0, y: 0 }, to: { x: 40, y: 0 } }
+    const { before, after } = edgePieces(short, 22)
+    expect(before.x2).toBeGreaterThanOrEqual(0)
+    expect(before.x2).toBeLessThan(after.x1)
+    // Не больше 60%: по 20% линии остаётся с каждой стороны.
+    expect(before.x2).toBeCloseTo(40 * 0.2, 6)
+  })
+
+  /**
+   * Угол учитывается по габаритам текста, а не «на глаз»: подпись горизонтальная, поэтому у
+   * вертикальной связи она ложится ПОПЕРЁК линии и разрыв нужен всего в высоту строки, а у
+   * горизонтальной — во всю ширину текста.
+   */
+  it('разрыв зависит от угла: горизонтальной связи нужен широкий, вертикальной — узкий', () => {
+    const vertical = { from: { x: 100, y: 0 }, to: { x: 100, y: 400 } }
+    const steep = edgePieces(vertical, 10)
+    const flat = edgePieces(horizontal, 10)
+    const steepGap = steep.after.y1 - steep.before.y2
+    const flatGap = flat.after.x1 - flat.before.x2
+    expect(flatGap).toBeCloseTo(10 * 6.3 + 14, 6)
+    expect(steepGap).toBeCloseTo(12 + 14, 6)
+    expect(steepGap).toBeLessThan(flatGap)
+    // И всё равно не больше 60% длины.
+    expect(steepGap).toBeLessThanOrEqual(400 * 0.6 + 0.001)
+  })
+
+  it('вырожденное ребро не даёт линии из NaN', () => {
+    const { before, after } = edgePieces({ from: { x: 5, y: 5 }, to: { x: 5, y: 5 } }, 10)
+    expect(before).toEqual({ x1: 5, y1: 5, x2: 5, y2: 5 })
+    expect(after).toEqual({ x1: 5, y1: 5, x2: 5, y2: 5 })
   })
 })

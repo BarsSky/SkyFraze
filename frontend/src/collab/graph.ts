@@ -179,7 +179,14 @@ function railLayout(
   }
 }
 
-/** Ребро с подписью посередине (чуть выше линии, чтобы не читать по буквам). */
+/**
+ * Ребро с подписью посередине.
+ *
+ * С 0.84.0 подпись стоит В РАЗРЫВЕ линии (а не над ней): линия рвётся там, где идёт текст, —
+ * как подпись на дорожном указателе. Поэтому `labelAt` — ровно середина отрезка, без подъёма:
+ * текст центрируется по линии (`dominant-baseline: middle`), а `edgePieces` вырезает под него
+ * промежуток.
+ */
 function edgeFor(neighbor: GraphNeighbor, center: PositionedNode, target: PositionedNode): GraphEdge {
   return {
     linkId: neighbor.linkId,
@@ -188,7 +195,72 @@ function edgeFor(neighbor: GraphNeighbor, center: PositionedNode, target: Positi
     targetId: neighbor.id,
     from: { x: center.x, y: center.y },
     to: { x: target.x, y: target.y },
-    labelAt: { x: (center.x + target.x) / 2, y: (center.y + target.y) / 2 - 6 },
+    labelAt: { x: (center.x + target.x) / 2, y: (center.y + target.y) / 2 },
+  }
+}
+
+/** Отрезок линии: пара точек. */
+export interface EdgePiece {
+  x1: number
+  y1: number
+  x2: number
+  y2: number
+}
+
+/** Ширина одного знака подписи при 11 px — та же оценка, что у `shortLabel`. */
+export const LABEL_CHAR_PX = 6.3
+/** Высота строки подписи: текст рисуется горизонтально, поэтому поперёк линии он занимает её. */
+export const LABEL_LINE_PX = 12
+/** Воздух подписи: столько линии срезается сверх габаритов текста. */
+export const LABEL_PAD_PX = 14
+/** Предел разрыва: короткая связь должна оставаться видимой. */
+const GAP_LIMIT = 0.6
+
+/**
+ * Две половины ребра — линия с разрывом под подписью (0.84.0).
+ *
+ * Зачем: подпись лежала поверх линии с «плашкой» цвета фона, и на градиенте холста плашка
+ * читалась как замазка, а на длинных подписях — как обрубок линии. Разрыв честнее: линия
+ * прерывается там, где стоит текст, и продолжается после него.
+ *
+ * Длина разрыва зависит от угла не «на глаз», а по габаритам текста. Подпись горизонтальная,
+ * поэтому вдоль линии она занимает `ширина·|cos| + высота·|sin|`: у горизонтальной связи разрыв
+ * должен быть во всю ширину текста, у вертикальной — всего в его высоту (текст и так лежит
+ * поперёк линии). Разрыв не съедает больше 60% ребра.
+ */
+export function edgePieces(
+  edge: { from: { x: number; y: number }; to: { x: number; y: number } },
+  labelChars: number,
+): { before: EdgePiece; after: EdgePiece } {
+  const dx = edge.to.x - edge.from.x
+  const dy = edge.to.y - edge.from.y
+  const length = Math.hypot(dx, dy)
+  if (length < 1) {
+    // Вырожденное ребро: рисовать нечего, но пустые отрезки честнее «нулевой» линии.
+    const zero = { x1: edge.from.x, y1: edge.from.y, x2: edge.from.x, y2: edge.from.y }
+    return { before: zero, after: { ...zero } }
+  }
+  const ux = dx / length
+  const uy = dy / length
+  const midX = (edge.from.x + edge.to.x) / 2
+  const midY = (edge.from.y + edge.to.y) / 2
+  const textWidth = Math.max(0, labelChars) * LABEL_CHAR_PX
+  const needAlong = textWidth * Math.abs(ux) + LABEL_LINE_PX * Math.abs(uy) + LABEL_PAD_PX
+  const gap = Math.min(length * GAP_LIMIT, needAlong)
+  const half = gap / 2
+  return {
+    before: {
+      x1: edge.from.x,
+      y1: edge.from.y,
+      x2: midX - ux * half,
+      y2: midY - uy * half,
+    },
+    after: {
+      x1: midX + ux * half,
+      y1: midY + uy * half,
+      x2: edge.to.x,
+      y2: edge.to.y,
+    },
   }
 }
 

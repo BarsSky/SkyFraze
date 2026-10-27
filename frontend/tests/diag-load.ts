@@ -58,8 +58,9 @@ async function measureReload(page: Page, label: string, readySelector: string) {
         ['projectsList', '[data-projects-list], h3 a'],
         ['projectTitle', '.sf-topbar__name, .sf-topbar'],
         ['stage', '[data-stage], .sf-stage'],
-        ['relations', '[data-relations]'],
-        ['editors', '[data-editor-panel]'],
+        // С 0.83.0 «Связи» и «Редакторы» — вкладки: в разметке их нет, пока вкладку не открыли.
+        // Их время меряет отдельный заход с переключением, а здесь фиксируем появление полосы.
+        ['tabs', '[data-project-tabs]'],
         ['assistantFab', '[data-assistant-fab]'],
         ['boot', '[data-boot]']
       ]

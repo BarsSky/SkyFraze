@@ -35,6 +35,8 @@ async function main() {
 
   await signIn(page)
   await page.goto(`${BASE}/projects/${PROJECT_ID}`)
+  // С 0.83.0 «Связи» — вкладка: раздел появляется после переключения.
+  await page.locator('[data-project-tab="relations"]').click()
   await page.locator('[data-relations]').waitFor({ state: 'visible', timeout: 45_000 })
   await page.waitForTimeout(1500)
 

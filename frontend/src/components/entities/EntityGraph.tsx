@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { EntityLink, ProjectEntity } from '../../api/entities'
 import { connectionsOf } from '../../api/entities'
 import { typeTitle, type EntityType } from '../../api/entityTypes'
 import {
   RAIL_WINDOW,
   edgeLabel,
+  edgePieces,
   layoutEgoGraph,
   type GraphNeighbor,
 } from '../../collab/graph'
@@ -38,13 +39,44 @@ interface Props {
 }
 
 const HISTORY_LIMIT = 10
+/**
+ * Сколько длится перелёт выбранной карточки в центр (0.84.0).
+ *
+ * 320 мс — как у обычного перехода в интерфейсе: заметно, но не заставляет ждать. Дольше — уже
+ * «анимация ради анимации», короче — не читается как перелёт.
+ */
+const FLY_MS = 320
+
+/** Уважает ли система «меньше движения»: тогда перелёт не рисуется вовсе. */
+function useReducedMotion(): boolean {
+  const [reduced, setReduced] = useState(false)
+  useEffect(() => {
+    const media = window.matchMedia?.('(prefers-reduced-motion: reduce)')
+    if (!media) return undefined
+    const apply = () => setReduced(media.matches)
+    apply()
+    media.addEventListener('change', apply)
+    return () => media.removeEventListener('change', apply)
+  }, [])
+  return reduced
+}
 
 export function EntityGraph({ entities, links, tall = false, types = [] }: Props) {
   /** Откуда пришли: стек последних центров, «назад» снимает верхний. */
   const [history, setHistory] = useState<string[]>([])
   const [centerId, setCenterId] = useState<string | null>(null)
-  /** Какая карточка раскрыта в окне графа: имя, вид, алиасы и ближайшие связи (0.78.0). */
+  /**
+   * Какая карточка раскрыта в окне графа (0.78.0 → 0.84.0).
+   *
+   * С 0.84.0 раскрытая карточка всегда одна — та, что стоит в центре холста: нажатие на узел
+   * переводит его в центр и разворачивает значения (имя, вид, алиасы, описание, связи), поэтому
+   * содержимое видно всегда и не приходится читать его «сбоку», поверх соседей.
+   */
   const [expanded, setExpanded] = useState<string | null>(null)
+  /** Карточка, которая сейчас летит в центр: откуда и куда — считает раскладка. */
+  const [flying, setFlying] = useState<{ id: string; from: { x: number; y: number } } | null>(null)
+  const flyTimer = useRef<number | null>(null)
+  const reducedMotion = useReducedMotion()
   const [query, setQuery] = useState('')
   const [windowStart, setWindowStart] = useState(0)
   const [size, setSize] = useState({ width: 720, height: 340 })
@@ -172,17 +204,17 @@ export function EntityGraph({ entities, links, tall = false, types = [] }: Props
   )
 
   /**
-   * Точка, у которой раскрывать карточку: центр холста для центральной карточки и место узла
-   * для соседа. В режиме «рулетки» соседи стоят списком справа — карточка прижмётся к своему
-   * узлу так же.
+   * Где сейчас нарисован узел: у центра — середина холста, у соседа — его место в раскладке.
+   * `null` означает «узла на холсте нет» (карточка вне связей, результат поиска) — для неё
+   * перелёт не рисуем, она появляется сразу в центре.
    */
-  const anchorFor = useCallback(
-    (id: string) => {
+  const positionOf = useCallback(
+    (id: string): { x: number; y: number } | null => {
       if (layout.center.node.id === id) return { x: layout.center.x, y: layout.center.y }
       const neighbor = layout.neighbors.find((positioned) => positioned.node.id === id)
-      return neighbor ? { x: neighbor.x, y: neighbor.y } : { x: size.width / 2, y: size.height / 2 }
+      return neighbor ? { x: neighbor.x, y: neighbor.y } : null
     },
-    [layout.center, layout.neighbors, size.height, size.width],
+    [layout.center, layout.neighbors],
   )
 
   const go = useCallback(
@@ -195,7 +227,56 @@ export function EntityGraph({ entities, links, tall = false, types = [] }: Props
     [centerId],
   )
 
+  /**
+   * Выбор карточки: перелёт в центр с разворотом значений (0.84.0).
+   *
+   * Заказ: «по выбору карточки делать её анимированный переход в центр с развёртыванием
+   * значений — так всегда будет видно содержимое карточки». Раньше (0.78.0) нажатие только
+   * раскрывало карточку СБОКУ от узла, а переход был отдельной кнопкой: на узком холсте карточка
+   * ложилась поверх соседей и центра, и её содержимое читалось плохо.
+   *
+   * Теперь нажатие на соседа: карточка сразу показывается (значения развёрнуты), её «пилюля»
+   * летит в центр холста, а по окончании перелёта центр графа становится этой карточкой — и
+   * карточка остаётся открытой уже в центре. Нажатие на центральный узел просто раскрывает или
+   * сворачивает карточку: двигать нечего.
+   *
+   * При «меньше движения» перелёт не рисуется: переход происходит сразу.
+   */
+  const select = useCallback(
+    (id: string) => {
+      if (!id) return
+      if (id === centerId) {
+        setExpanded((current) => (current === id ? null : id))
+        return
+      }
+      setExpanded(id)
+      const from = positionOf(id)
+      if (from === null || reducedMotion) {
+        go(id)
+        return
+      }
+      setFlying({ id, from })
+      if (flyTimer.current !== null) window.clearTimeout(flyTimer.current)
+      flyTimer.current = window.setTimeout(() => {
+        flyTimer.current = null
+        setFlying(null)
+        go(id)
+      }, FLY_MS)
+    },
+    [centerId, go, positionOf, reducedMotion],
+  )
+
+  // Таймер перелёта — не «висящий»: уход со страницы или смена центра не должны оставить
+  // отложенный setState, который переключит центр уже после ухода.
+  useEffect(
+    () => () => {
+      if (flyTimer.current !== null) window.clearTimeout(flyTimer.current)
+    },
+    [],
+  )
+
   const back = useCallback(() => {
+    setExpanded(null)
     setHistory((prev) => {
       const last = prev[prev.length - 1]
       if (last === undefined) return prev
@@ -287,12 +368,16 @@ export function EntityGraph({ entities, links, tall = false, types = [] }: Props
         query={query}
         setQuery={setQuery}
         matches={matches}
-        onPick={go}
+        onPick={select}
         onBack={history.length > 0 ? back : null}
       />
       {/* Холст — «пространство»: у него свой фон с сеткой и звёздами (0.79.0). Сеть карточек
           читается как карта, а не как белое поле, и не сливается с полотном страницы. */}
-      <div className="egraph__canvas" ref={setHost} data-entity-graph-canvas>
+      <div
+        className={flying === null ? 'egraph__canvas' : 'egraph__canvas is-focusing'}
+        ref={setHost}
+        data-entity-graph-canvas
+      >
         <div className="egraph__space" aria-hidden="true" />
         <svg className="egraph__edges" width="100%" height="100%" aria-hidden="true">
           {/* Наконечник стрелки (0.81.0): без него линия есть, а направления не видно — и связь
@@ -311,26 +396,42 @@ export function EntityGraph({ entities, links, tall = false, types = [] }: Props
               <path d="M0,0 L10,5 L0,10 z" fill="currentColor" />
             </marker>
           </defs>
-          {layout.edges.map((edge) => (
-            <g key={edge.linkId}>
-              <line
-                x1={edge.from.x}
-                y1={edge.from.y}
-                x2={edge.to.x}
-                y2={edge.to.y}
-                className="egraph__edge"
-                /* Направление: «→» — стрелка у соседа, «←» — у центра. */
-                markerEnd={edge.direction === 'out' ? 'url(#egraph-arrow)' : undefined}
-                markerStart={edge.direction === 'in' ? 'url(#egraph-arrow)' : undefined}
-              />
-              <text x={edge.labelAt.x} y={edge.labelAt.y} className="egraph__edge-label" textAnchor="middle">
-                {/* Подпись на ребре — короткая: полный список связей показывает карточка.
-                    Иначе длинная подпись вылезает за холст (замер: 366 px текста в холсте
-                    292 px — обрезано с обеих сторон). */}
-                {shortLabel(edgeLabel(edge))}
-              </text>
-            </g>
-          ))}
+          {/* Рёбра — ДВУМЯ половинами с разрывом под подписью (0.84.0). Подпись лежала поверх
+              линии, и её «плашка» цветом фона на градиенте холста читалась как замазка, а длинная
+              подпись — как обрубок связи. Теперь линия прерывается там, где стоит текст. */}
+          {layout.edges.map((edge) => {
+            const label = shortLabel(edgeLabel(edge))
+            const pieces = edgePieces(edge, label.length)
+            return (
+              <g key={edge.linkId} data-entity-graph-edge={edge.linkId}>
+                <line
+                  {...pieces.before}
+                  className="egraph__edge"
+                  /* Направление: «→» — стрелка у соседа, «←» — у центра. Наконечник ставится на
+                     тот конец, где связь заканчивается, поэтому у «входящей» он у центра. */
+                  markerStart={edge.direction === 'in' ? 'url(#egraph-arrow)' : undefined}
+                />
+                <line
+                  {...pieces.after}
+                  className="egraph__edge"
+                  markerEnd={edge.direction === 'out' ? 'url(#egraph-arrow)' : undefined}
+                />
+                <text
+                  x={edge.labelAt.x}
+                  y={edge.labelAt.y}
+                  className="egraph__edge-label"
+                  textAnchor="middle"
+                  dominantBaseline="middle"
+                  /* Подпись на ребре — короткая: полный список связей показывает карточка.
+                     Иначе длинная подпись вылезает за холст (замер: 366 px текста в холсте
+                     292 px — обрезано с обеих сторон). */
+                  data-entity-graph-edge-label
+                >
+                  {label}
+                </text>
+              </g>
+            )
+          })}
         </svg>
         <button
           type="button"
@@ -338,8 +439,8 @@ export function EntityGraph({ entities, links, tall = false, types = [] }: Props
           style={{ left: layout.center.x, top: layout.center.y }}
           data-entity-graph-center
           aria-expanded={expanded === center.id}
-          title={`${center.name} — открыть карточку`}
-          onClick={() => setExpanded((current) => (current === center.id ? null : center.id))}
+          title={`${center.name} — ${expanded === center.id ? 'свернуть' : 'открыть'} карточку`}
+          onClick={() => select(center.id)}
         >
           {center.name}
         </button>
@@ -349,31 +450,38 @@ export function EntityGraph({ entities, links, tall = false, types = [] }: Props
             type="button"
             className="egraph__node"
             style={{ left: positioned.x, top: positioned.y }}
-            onClick={() => setExpanded((current) => (current === positioned.node.id ? null : positioned.node.id))}
+            /* Нажатие на соседа — перелёт в центр с развёрнутой карточкой (0.84.0). */
+            onClick={() => select(positioned.node.id)}
             aria-expanded={expanded === positioned.node.id}
             data-entity-graph-node={positioned.node.id}
-            title={`${positioned.node.name} — открыть карточку`}
+            title={`${positioned.node.name} — открыть карточку и перейти в центр`}
           >
             {positioned.node.name}
           </button>
         ))}
+        {/* Перелетающая «пилюля» (0.84.0): летит из места узла в центр холста, пока идёт
+            переход. Ключ — id карточки, чтобы React не переиспользовал чужой узел. */}
+        {flying !== null && (
+          <div
+            key={flying.id}
+            className="egraph__fly"
+            style={{ left: flying.from.x, top: flying.from.y }}
+            data-entity-graph-fly
+            aria-hidden="true"
+          >
+            {entities.find((entity) => entity.id === flying.id)?.name ?? ''}
+          </div>
+        )}
         {expandedCard !== null && (
           <NodeCard
             card={expandedCard}
             links={links}
             entities={entities}
             types={types}
-            /* Карточка раскрывается РЯДОМ с узлом, а не полосой внизу холста (0.79.0):
-               полоса читалась как подпись к графу, а не как карточка. Позицию считаем по
-               координатам узла и прижимаем к краям, чтобы карточка не уезжала за холст. */
-            anchor={anchorFor(expandedCard.id)}
-            canvasWidth={size.width}
-            canvasHeight={size.height}
-            isCenter={expandedCard.id === center.id}
-            onCenter={() => {
-              go(expandedCard.id)
-              setExpanded(null)
-            }}
+            /* Карточка раскрыта В ЦЕНТРЕ холста (0.84.0): выбранная карточка туда же и перелетает,
+               поэтому содержимое («что за карточка», алиасы, описание, связи) всегда на виду и не
+               ложится поверх соседей. */
+            width={size.width}
             onClose={() => setExpanded(null)}
           />
         )}
@@ -396,7 +504,7 @@ export function EntityGraph({ entities, links, tall = false, types = [] }: Props
                 <button
                   type="button"
                   className="egraph__isolated-chip"
-                  onClick={() => go(entity.id)}
+                  onClick={() => select(entity.id)}
                   title={`${entity.name} — сделать центром графа`}
                   data-entity-graph-isolated-item
                 >
@@ -418,51 +526,41 @@ export function EntityGraph({ entities, links, tall = false, types = [] }: Props
  * Зачем: таблетка с именем отвечает только «как зовут». Чтобы понять, ТА ли это карточка и
  * куда ведут её связи, нужно раскрыть её — и это ожидаемое действие по нажатию на узел.
  * Раньше нажатие на соседа сразу делало его центром: переход без права посмотреть.
- * Теперь нажатие раскрывает карточку, а переход — отдельной кнопкой «Сделать центром».
  *
- * С 0.79.0 карточка раскрывается РЯДОМ с узлом: полоса во всю ширину холста читалась как
+ * 0.79.0: карточка раскрывалась РЯДОМ с узлом — полоса во всю ширину холста читалась как
  * подпись к графу, а не как карточка (отчёт: «лучше не подпись, а раскрывающаяся карточка»).
+ *
+ * 0.84.0: карточка раскрывается В ЦЕНТРЕ холста, а выбранная карточка туда перелетает (заказ:
+ * «по выбору карточки — анимированный переход в центр с развёртыванием значений, так всегда
+ * будет видно содержимое карточки»). Сбоку карточка ложилась поверх соседей и центра: на холсте
+ * 300–400 px её приходилось читать «сквозь» граф.
  */
 function NodeCard({
   card,
   links,
   entities,
   types,
-  anchor,
-  canvasWidth,
-  canvasHeight,
-  isCenter,
-  onCenter,
+  width,
   onClose,
 }: {
   card: ProjectEntity
   links: EntityLink[]
   entities: ProjectEntity[]
   types: EntityType[]
-  anchor: { x: number; y: number }
-  canvasWidth: number
-  canvasHeight: number
-  isCenter: boolean
-  onCenter: () => void
+  /** Ширина холста: на узком экране карточка не должна вылезать за него. */
+  width: number
   onClose: () => void
 }) {
   const connections = connectionsOf(card.id, links, entities)
   const shown = connections.slice(0, MAX_CARD_LINKS)
-  // Карточка ставится справа от узла; если справа не хватает места — слева. По вертикали
-  // центрируется на узле и прижимается к краям: узел у нижней кромки не должен тянуть карточку
-  // за холст.
-  const preferRight = anchor.x + CARD_WIDTH + 24 <= canvasWidth
-  const left = preferRight
-    ? Math.min(anchor.x + 22, Math.max(8, canvasWidth - CARD_WIDTH - 8))
-    : Math.max(8, anchor.x - CARD_WIDTH - 22)
-  const top = Math.min(Math.max(anchor.y, 60), Math.max(60, canvasHeight - 60))
+  const cardWidth = Math.max(220, Math.min(CARD_WIDTH, width - 16))
   return (
     <div
-      className="egraph__card"
+      className="egraph__card egraph__card--center"
       role="dialog"
       aria-label={`Карточка ${card.name}`}
       data-entity-graph-card
-      style={{ left, top, width: CARD_WIDTH }}
+      style={{ width: cardWidth }}
     >
       <div className="egraph__card-head">
         <span className="ent__kind">{typeTitle(types, card.kind)}</span>
@@ -498,16 +596,16 @@ function NodeCard({
           ))}
         </ul>
       )}
-      {!isCenter && (
-        <button type="button" className="secondary" onClick={onCenter} data-entity-graph-card-center>
-          Сделать центром
-        </button>
-      )}
     </div>
   )
 }
 
-/** Сколько связей показывать в карточке: остальное — по переходу в панель связей. */
+/**
+ * Сколько связей показывать в карточке: остальное — по переходу в панель связей.
+ *
+ * 8, а не всё: карточка стоит в центре холста высотой 320–620 px, и список из двадцати связей
+ * вытолкнул бы её за край. Остаток назван числом, полный список — в панели связей.
+ */
 const MAX_CARD_LINKS = 8
 
 /** Ширина раскрывающейся карточки узла: 320 px — как у обычной карточки в интерфейсе. */

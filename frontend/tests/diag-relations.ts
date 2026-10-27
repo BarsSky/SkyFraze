@@ -36,10 +36,11 @@ async function main() {
 
   await signIn(page)
   await page.goto(`${BASE}/projects/${PROJECT_ID}`)
-  await page.locator('[data-relations]').waitFor({ state: 'visible', timeout: 45_000 })
-  await page.waitForTimeout(1500)
+  await page.locator('[data-project-tabs]').waitFor({ state: 'visible', timeout: 45_000 })
+  await page.waitForTimeout(1200)
 
-  // Кнопка «Связи» рядом с «Редакторами» — и куда она прокручивает.
+  // Кнопка «Связи» рядом с «Редакторами» (0.83.0): переключает ВКЛАДКУ, а не прокручивает
+  // страницу — поэтому проверяем и переход, и то, что страница не уехала.
   const jump = page.locator('[data-relations-open]')
   console.log('кнопка «Связи» на стадии:', (await jump.count()) > 0)
   if ((await jump.count()) === 0) problems.push('кнопки «Связи» в строке действий нет')
@@ -50,38 +51,40 @@ async function main() {
     `var m = document.querySelector('main'); return Math.round(m.scrollTop)`,
   )
   await jump.first().click()
-  await page.waitForTimeout(1200)
+  await page.locator('[data-relations]').waitFor({ state: 'visible', timeout: 20_000 })
+  await page.waitForTimeout(800)
   const after = await evalIn<number>(
     page,
     `var m = document.querySelector('main'); return Math.round(m.scrollTop)`,
   )
-  console.log(`прокрутка к «Связям»: ${before} → ${after}`)
-  if (after <= before) problems.push('кнопка «Связи» не прокрутила страницу к разделу')
+  const activeTab = await page.locator('[data-project-tab].is-active').getAttribute('data-project-tab')
+  console.log(`переход: вкладка «${activeTab}», прокрутка ${before} → ${after}`)
+  if (activeTab !== 'relations') problems.push(`кнопка «Связи» открыла вкладку «${activeTab}»`)
+  // Прокрутка может уменьшиться сама: панель вкладки короче прежней страницы, и браузер
+  // прижимает scrollTop к её высоте. Плохо — если переход УВЁЛ страницу вниз (человек теряет место).
+  if (after > before + 4) problems.push('переход к «Связям» увёл страницу вниз — он должен быть мгновенным')
 
   const section = page.locator('[data-relations]')
   await section.screenshot({ path: `${OUT}\\relations-dark.png` })
 
-  // Раскрывающаяся карточка: рядом с узлом, а не полосой внизу.
+  // Раскрывающаяся карточка (0.84.0): в ЦЕНТРЕ холста, не полосой и не сбоку от узла.
   const center = page.locator('[data-entity-graph-center]')
   await center.click()
   await page.waitForTimeout(500)
-  const card = page.locator('[data-entity-graph-card]')
   const geometry = await evalIn<Record<string, unknown>>(
     page,
     `
-    var node = document.querySelector('[data-entity-graph-center]')
     var card = document.querySelector('[data-entity-graph-card]')
     var canvas = document.querySelector('[data-entity-graph-canvas]')
-    if (!node || !card || !canvas) return { missing: true }
-    var n = node.getBoundingClientRect()
+    if (!card || !canvas) return { missing: true }
     var c = card.getBoundingClientRect()
     var k = canvas.getBoundingClientRect()
     return {
-      node: { x: Math.round(n.left - k.left), y: Math.round(n.top - k.top) },
-      card: { x: Math.round(c.left - k.left), y: Math.round(c.top - k.top), w: Math.round(c.width), h: Math.round(c.height) },
+      card: { w: Math.round(c.width), h: Math.round(c.height) },
       canvas: { w: Math.round(k.width), h: Math.round(k.height) },
       insideCanvas: c.left >= k.left - 1 && c.right <= k.right + 1 && c.top >= k.top - 1 && c.bottom <= k.bottom + 1,
-      gapX: Math.round(c.left - n.right),
+      offsetX: Math.round(c.left + c.width / 2 - (k.left + k.width / 2)),
+      offsetY: Math.round(c.top + c.height / 2 - (k.top + k.height / 2)),
       fullWidth: Math.round(c.width) >= Math.round(k.width) - 24,
     }
     `,
@@ -92,6 +95,9 @@ async function main() {
   }
   if ((geometry as { insideCanvas?: boolean }).insideCanvas === false) {
     problems.push('карточка узла выходит за холст')
+  }
+  if (Math.abs((geometry as { offsetX?: number }).offsetX ?? 99) > 4) {
+    problems.push(`карточка стоит не по центру холста: смещение ${(geometry as { offsetX?: number }).offsetX} px`)
   }
   await section.screenshot({ path: `${OUT}\\relations-card-dark.png` })
   await page.keyboard.press('Escape')

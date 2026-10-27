@@ -62,8 +62,17 @@ async function main() {
 
   await signInUi(page)
   await page.goto(`${BASE}/projects/${projectId}`)
-  // В пустом проекте панели «Редакторы» нет: она рисуется только там, где уже есть кадры.
-  await page.locator('[data-editor-panel]').waitFor({ state: 'visible', timeout: 45_000 })
+  // С 0.83.0 у владельца проект — вкладки: «Редакторы» и «Связи» показываются по одной.
+  // Полоса вкладок появляется асинхронно (проект догружается), поэтому сначала ждём её.
+  const tabs = page.locator('[data-project-tab="editors"]')
+  await tabs.waitFor({ state: 'visible', timeout: 45_000 }).catch(() => undefined)
+  if ((await tabs.count()) > 0) {
+    await tabs.click()
+    await page.locator('[data-editor-panel]').waitFor({ state: 'visible', timeout: 45_000 })
+  } else {
+    // В пустом проекте панели «Редакторы» нет: она рисуется только там, где уже есть кадры.
+    await page.locator('[data-editor-panel]').waitFor({ state: 'visible', timeout: 45_000 })
+  }
   await page.waitForTimeout(1800)
 
   await openEntities(page)
@@ -234,6 +243,15 @@ async function signInUi(page: Page) {
 
 /** Блок «Связи проекта» раскрыт — иначе карточки и граф не видны. */
 async function openEntities(page: Page) {
+  // С 0.83.0 «Связи» — вкладка: сначала переключаем режим, потом ищем блок.
+  if ((await page.locator('[data-relations]').count()) === 0) {
+    const tab = page.locator('[data-project-tab="relations"]')
+    if ((await tab.count()) > 0) {
+      await tab.click()
+      await page.locator('[data-relations]').waitFor({ state: 'visible', timeout: 20_000 })
+      await page.waitForTimeout(600)
+    }
+  }
   const block = page.locator('[data-entities]')
   if ((await block.count()) === 0) {
     problem('блок «Связи проекта» не смонтирован на странице редакторов')
@@ -263,7 +281,8 @@ async function checkGraph(page: Page, label: string) {
   const center = await page.locator('[data-entity-graph-center]').innerText()
   const nodes = await page.locator('[data-entity-graph-node]').count()
   const edges = await page.locator('.egraph__edge').count()
-  const edgeLabels = await page.locator('.egraph__edge-label').allInnerTexts()
+  // Подписи читаем `textContent`: у SVG-элементов `innerText` не определён и даёт пустые строки.
+  const edgeLabels = await page.locator('.egraph__edge-label').allTextContents()
   const listRows = await page.locator('[data-entity-graph-list] .egraph__row').count()
   report.numbers[`graph_${label}`] = { mode, center, nodes, edges, edgeLabels, listRows }
   step(

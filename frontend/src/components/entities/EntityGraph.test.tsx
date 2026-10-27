@@ -1,6 +1,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { EntityGraph, shortLabel } from './EntityGraph'
+
+/**
+ * Подписи рёбер с холста. Ищем их в SVG, а не `getByText`: с 0.84.0 те же слова есть ещё и в
+ * раскрытой карточке (там «← живёт на» — строка списка связей), и текстовый запрос находил бы
+ * два элемента.
+ */
+function edgeLabels(root: ParentNode): string[] {
+  return Array.from(root.querySelectorAll('[data-entity-graph-edge-label]')).map(
+    (node) => node.textContent ?? '',
+  )
+}
 
 afterEach(() => {
   cleanup()
@@ -20,23 +31,34 @@ describe('EntityGraph — эго-граф связей (0.75.0)', () => {
     expect(screen.getByText('→ живёт на')).toBeTruthy()
   })
 
-  it('клик по соседу раскрывает карточку, «Сделать центром» центрирует, «назад» возвращает', async () => {
-    render(<EntityGraph entities={[anna, earth]} links={[link]} />)
+  /**
+   * 0.84.0: нажатие на соседа уводит его в ЦЕНТР и сразу раскрывает карточку со значениями
+   * (заказ: «по выбору карточки — анимированный переход в центр с развёртыванием значений, так
+   * всегда будет видно содержимое карточки»). До этого карточка раскрывалась сбоку, а переход был
+   * отдельной кнопкой — на узком холсте боковая карточка лежала поверх соседей и центра.
+   */
+  it('клик по соседу уводит его в центр с раскрытой карточкой, «назад» возвращает', async () => {
+    const view = render(<EntityGraph entities={[anna, earth]} links={[link]} />)
     fireEvent.click(await screen.findByRole('button', { name: 'Земля' }))
-    // Нажатие на узел больше НЕ перескакивает: сначала карточка, переход — отдельной кнопкой.
+    // Значения развёрнуты сразу — ещё до конца перелёта, поэтому содержимое не «мигает».
     expect(await screen.findByRole('dialog', { name: 'Карточка Земля' })).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Сделать центром' }))
-    // Теперь центр — Земля, а её сосед — Аня (обратная сторона связи).
-    expect(await screen.findByText('← живёт на')).toBeTruthy()
+    expect(document.querySelector('[data-entity-graph-fly]')).not.toBeNull()
+    // После перелёта центр — Земля, связь читается в обратную сторону.
+    await waitFor(() => expect(edgeLabels(view.container)).toEqual(['← живёт на']))
+    expect(document.querySelector('[data-entity-graph-fly]')).toBeNull()
+    // Карточка осталась открытой: содержимое видно и после перехода.
+    expect(screen.getByRole('dialog', { name: 'Карточка Земля' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'назад' }))
-    expect(await screen.findByText('→ живёт на')).toBeTruthy()
+    await waitFor(() => expect(edgeLabels(view.container)).toEqual(['→ живёт на']))
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 
   /**
-   * Карточка узла (0.78.0): по нажатию на «таблетку» видно, ТА ли это карточка и куда ведут её
-   * связи. Раньше таблетка сообщала только имя, а нажатие сразу уводило в другую карточку.
+   * Карточка узла (0.78.0 → 0.84.0): по нажатию на «таблетку» видно, ТА ли это карточка и куда
+   * ведут её связи. Карточка стоит в центре холста (0.84.0) — там же, куда приходит выбранный
+   * узел, поэтому её не приходится читать «сквозь» граф.
    */
-  it('карточка узла показывает вид, алиасы и ближайшие связи', async () => {
+  it('карточка узла показывает вид, алиасы и ближайшие связи в центре холста', async () => {
     const annaWithAliases = { ...anna, aliases: ['Аня', 'Анну'] }
     const guard = { id: 'e3', kind: 'character' as const, name: 'Сторож', aliases: [], description: 'молчаливый', color: '', created_at: '', updated_at: '' }
     const toLetter = { id: 'l2', from_entity: 'e1', to_entity: 'e3', label: 'боится', created_at: '' }
@@ -44,14 +66,54 @@ describe('EntityGraph — эго-граф связей (0.75.0)', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: 'Аня' }))
     const card = await screen.findByRole('dialog', { name: 'Карточка Аня' })
+    expect(card.className).toContain('egraph__card--center')
     expect(card.textContent).toContain('Персонаж')
     expect(card.textContent).toContain('также: Аня, Анну')
     expect(card.textContent).toContain('связей: 2')
     expect(card.textContent).toContain('живёт на')
     expect(card.textContent).toContain('Земля')
     expect(card.textContent).toContain('боится')
-    // Центр карточкой не переключается: перехода тут нет.
+    // Отдельной кнопки «Сделать центром» больше нет: выбранная карточка уже в центре.
     expect(screen.queryByRole('button', { name: 'Сделать центром' })).toBeNull()
+  })
+
+  it('при «меньше движения» переход мгновенный: без перелетающей пилюли', async () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: query.includes('prefers-reduced-motion'),
+      media: query,
+      onchange: null,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+      addListener: () => undefined,
+      removeListener: () => undefined,
+      dispatchEvent: () => false,
+    }))
+    render(<EntityGraph entities={[anna, earth]} links={[link]} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Земля' }))
+    // Центр сменился сразу, перелёта нет — но карточка открыта.
+    expect(edgeLabels(document.body)).toEqual(['← живёт на'])
+    expect(document.querySelector('[data-entity-graph-fly]')).toBeNull()
+    expect(screen.getByRole('dialog', { name: 'Карточка Земля' })).toBeTruthy()
+  })
+
+  /**
+   * Разрыв в линии под подписью (0.84.0). Подпись раньше лежала поверх линии на «плашке» цвета
+   * фона — на градиенте холста это читалось как замазка, а длинная подпись — как обрубок связи.
+   */
+  it('линия рвётся там, где стоит подпись: две половины ребра, а не одна', async () => {
+    const view = render(<EntityGraph entities={[anna, earth]} links={[link]} />)
+    await screen.findByRole('button', { name: 'Аня' })
+    const pieces = view.container.querySelectorAll('line.egraph__edge')
+    expect(pieces).toHaveLength(2)
+    const [before, after] = Array.from(pieces)
+    const beforeEnd = Number(before.getAttribute('x2'))
+    const afterStart = Number(after.getAttribute('x1'))
+    expect(afterStart).toBeGreaterThan(beforeEnd)
+    // Подпись — ровно в промежутке.
+    const label = view.container.querySelector('[data-entity-graph-edge-label]')
+    expect(label).not.toBeNull()
+    expect(Number(label?.getAttribute('x'))).toBeGreaterThan(beforeEnd)
+    expect(Number(label?.getAttribute('x'))).toBeLessThan(afterStart + 1)
   })
 
   it('Escape и «×» закрывают карточку', async () => {
@@ -88,11 +150,11 @@ describe('EntityGraph — эго-граф связей (0.75.0)', () => {
   })
 
   it('поиск находит карточку и Enter центрирует её', async () => {
-    render(<EntityGraph entities={[anna, earth]} links={[link]} />)
+    const view = render(<EntityGraph entities={[anna, earth]} links={[link]} />)
     const search = await screen.findByLabelText('Поиск по карточкам в графе')
     fireEvent.change(search, { target: { value: 'зем' } })
     fireEvent.keyDown(search, { key: 'Enter' })
-    expect(await screen.findByText('← живёт на')).toBeTruthy()
+    await waitFor(() => expect(edgeLabels(view.container)).toEqual(['← живёт на']))
   })
 
   it('карточка без связей объясняет, где их завести', async () => {
