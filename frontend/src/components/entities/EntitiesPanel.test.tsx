@@ -246,8 +246,8 @@ describe('EntitiesPanel — матрица связей (0.71.0)', () => {
           { id: 'ch2', title: 'Развязка', number: '02' },
         ],
         rows: [
-          { entity: { id: 'e1', name: 'Анна', aliases: [] }, cells: [2, 0], total: 2 },
-          { entity: { id: 'e2', name: 'Письмо', aliases: [] }, cells: [0, 1], total: 1 },
+          { entity: { id: 'e1', name: 'Анна', aliases: [] }, cells: [{ count: 2 }, { count: 0 }], total: 2 },
+          { entity: { id: 'e2', name: 'Письмо', aliases: [] }, cells: [{ count: 0 }, { count: 1 }], total: 1 },
         ],
       },
     })
@@ -262,6 +262,9 @@ describe('EntitiesPanel — матрица связей (0.71.0)', () => {
     // Нули — точкой: пустая клетка читается как «не загрузилось».
     expect(screen.getAllByText('·').length).toBe(2)
     expect(screen.getByText('всего')).toBeTruthy()
+    // Клетка с упоминаниями — ссылка в кадр (0.73.0).
+    expect(screen.getByRole('button', { name: '2' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '·' })).toBeNull()
   })
 
   it('без глав матрицы нет: раскрывать нечего', async () => {
@@ -291,5 +294,37 @@ describe('EntitiesPanel — раскрытие блока (0.72.1)', () => {
     const { container } = panel({ entities: [entity()] })
     await screen.findByText('Анна')
     expect((container.querySelector('[data-entities]') as HTMLDetailsElement).open).toBe(true)
+  })
+})
+
+describe('EntitiesPanel — клетка матрицы ведёт в кадр (0.73.0)', () => {
+  it('клик по числу открывает кадр и упоминание', async () => {
+    const onOpenFrame = vi.fn()
+    const mention = {
+      entityId: 'e1',
+      entityName: 'Анна',
+      field: 'body' as const,
+      from: 3,
+      to: 7,
+      quote: 'Анны',
+    }
+    panel({
+      entities: [entity({ id: 'e1' })],
+      onOpenFrame,
+      matrix: {
+        chapters: [{ id: 'ch1', title: 'Пролог', number: '01' }],
+        rows: [
+          {
+            entity: { id: 'e1', name: 'Анна', aliases: [] },
+            cells: [{ count: 2, first: { frameId: 'f9', mention } }],
+            total: 2,
+          },
+        ],
+      },
+    })
+    await screen.findAllByText('Анна')
+    fireEvent.click(screen.getByText(/Матрица: персонажи × главы/))
+    fireEvent.click(await screen.findByRole('button', { name: '2' }))
+    expect(onOpenFrame).toHaveBeenCalledWith('f9', expect.objectContaining({ quote: 'Анны' }))
   })
 })

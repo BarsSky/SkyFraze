@@ -548,3 +548,9 @@
 .ent__matrix-table thead th { font-weight: 600; }
 
 .frame-mentions__empty { margin: 8px 0 0; font-size: 12px; }
+/* Клетка матрицы — ссылка в кадр, поэтому кнопка выглядит как число, а не как кнопка. */
+.ent__matrix-link {
+  background: none; border: none; padding: 0 2px; margin: 0;
+  color: var(--accent); font: inherit; cursor: pointer; text-decoration: underline dotted;
+}
+.ent__matrix-link:hover { text-decoration: underline; }

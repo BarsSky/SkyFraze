@@ -200,11 +200,18 @@ export interface MatrixChapter {
   number: string
 }
 
+/** Клетка матрицы: сколько упоминаний и куда вести по клику (0.73.0). */
+export interface MatrixCell {
+  count: number
+  /** Первое упоминание в этой главе: по нему открывается кадр и выделяется слово. */
+  first?: { frameId: string; mention: Mention }
+}
+
 /** Строка матрицы: карточка и её упоминания по главам (в порядке столбцов). */
 export interface MatrixRow {
   entity: MentionEntity
-  /** Число упоминаний в каждой главе; 0 — не встречается. */
-  cells: number[]
+  /** Клетки по главам; `count = 0` — не встречается. */
+  cells: MatrixCell[]
   total: number
 }
 
@@ -237,26 +244,40 @@ export function mentionMatrix(
   entities: MentionEntity[],
 ): MentionMatrix {
   const chapterByFrame = new Map(frameChapters.map((row) => [row.frameId, row.chapterId]))
-  const counts = new Map<string, Map<string, number>>()
+  // Для каждой (глава, карточка) храним счётчик и ПЕРВОЕ упоминание: по нему клетка становится
+  // ссылкой в кадр. Без этого матрица отвечала «сколько», но не давала перейти туда, где это
+  // видно, — а именно перехода не хватало в отчёте.
+  const cells = new Map<string, Map<string, MatrixCell>>()
 
   for (const frame of frames) {
     const mentions = frameMentions(frame, entities)
     if (mentions.length === 0) continue
     const chapterId = chapterByFrame.get(frame.id)
     if (!chapterId) continue
-    const perEntity = counts.get(chapterId) ?? new Map<string, number>()
+    const perEntity = cells.get(chapterId) ?? new Map<string, MatrixCell>()
     for (const mention of mentions) {
-      perEntity.set(mention.entityId, (perEntity.get(mention.entityId) ?? 0) + 1)
+      const cell = perEntity.get(mention.entityId)
+      if (!cell) {
+        perEntity.set(mention.entityId, {
+          count: 1,
+          first: { frameId: frame.id, mention },
+        })
+      } else {
+        cell.count += 1
+      }
     }
-    counts.set(chapterId, perEntity)
+    cells.set(chapterId, perEntity)
   }
 
   // Столбцы — только главы, где что-то нашлось, в порядке дерева: пустые столбцы делают
   // таблицу шире экрана и не сообщают ничего.
-  const used = chapters.filter((chapter) => counts.has(chapter.id))
+  const used = chapters.filter((chapter) => cells.has(chapter.id))
   const rows: MatrixRow[] = entities.map((entity) => {
-    const cells = used.map((chapter) => counts.get(chapter.id)?.get(entity.id) ?? 0)
-    return { entity, cells, total: cells.reduce((sum, value) => sum + value, 0) }
+    const row = used.map(
+      (chapter) => cells.get(chapter.id)?.get(entity.id) ?? { count: 0 },
+    )
+    const total = row.reduce((sum, cell) => sum + cell.count, 0)
+    return { entity, cells: row, total }
   })
   // Строки — по числу упоминаний: «сироты» и редкие внизу, главные сверху.
   rows.sort((a, b) => b.total - a.total)

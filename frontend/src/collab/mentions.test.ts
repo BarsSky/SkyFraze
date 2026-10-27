@@ -176,9 +176,9 @@ describe('mentionMatrix — персонажи × главы (0.71.0)', () => {
     expect(matrix.chapters.map((c) => c.id)).toEqual(['ch1', 'ch2'])
     // Анна: два упоминания в первой главе; Дом: по одному в каждой; Письмо — ни разу.
     expect(matrix.rows[0].entity.id).toBe('e1')
-    expect(matrix.rows[0].cells).toEqual([2, 0])
+    expect(matrix.rows[0].cells.map((cell) => cell.count)).toEqual([2, 0])
     expect(matrix.rows[1].entity.id).toBe('e2')
-    expect(matrix.rows[1].cells).toEqual([1, 1])
+    expect(matrix.rows[1].cells.map((cell) => cell.count)).toEqual([1, 1])
     expect(matrix.rows[2].entity.id).toBe('e3')
     expect(matrix.rows[2].total).toBe(0)
   })

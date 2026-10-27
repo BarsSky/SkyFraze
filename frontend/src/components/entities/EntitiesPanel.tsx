@@ -375,12 +375,26 @@ export function EntitiesPanel({
                 {matrix.rows.map((row) => (
                   <tr key={`${row.entity.id}-matrix`} data-matrix-row={row.entity.id}>
                     <th scope="row">{row.entity.name}</th>
-                    {row.cells.map((count, index) => (
+                    {row.cells.map((cell, index) => (
                       <td
                         key={`${row.entity.id}-${matrix.chapters[index].id}`}
-                        className={count === 0 ? 'muted' : undefined}
+                        className={cell.count === 0 ? 'muted' : undefined}
                       >
-                        {count === 0 ? '·' : count}
+                        {cell.count === 0 ? (
+                          '·'
+                        ) : (
+                          <button
+                            type="button"
+                            className="ent__matrix-link"
+                            title={`Открыть кадр и показать «${cell.first?.mention.quote ?? ''}»`}
+                            onClick={() =>
+                              cell.first && onOpenFrame?.(cell.first.frameId, cell.first.mention)
+                            }
+                            data-matrix-cell={matrix.chapters[index].id}
+                          >
+                            {cell.count}
+                          </button>
+                        )}
                       </td>
                     ))}
                     <td>{row.total}</td>
