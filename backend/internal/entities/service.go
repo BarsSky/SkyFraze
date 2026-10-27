@@ -35,6 +35,10 @@ const (
 	maxAliasRunes       = 60
 	maxAliases          = 20
 	maxDescriptionRunes = 600
+	// maxLinkLabelRunes — подпись связи печатается на ребре графа и рядом с чипом: короткая.
+	maxLinkLabelRunes = 40
+	// maxLinksPerEntity — предел связей у одной карточки: больше двадцати уже не связь, а список.
+	maxLinksPerEntity = 20
 )
 
 // Ошибки сервиса.
@@ -318,4 +322,52 @@ func validColor(color string) bool {
 		}
 	}
 	return true
+}
+
+// Links — связи карточек проекта (читает любой участник).
+func (s *Service) Links(
+	ctx context.Context, userID, projectID uuid.UUID,
+) ([]store.EntityLink, error) {
+	if err := s.proj.RequireViewer(ctx, userID, projectID); err != nil {
+		return nil, err
+	}
+	return s.store.ListEntityLinks(ctx, projectID)
+}
+
+// AddLink связывает две карточки (редактор и выше).
+//
+// Правила: подпись 1–40 знаков, связь не с самой собой, не больше maxLinksPerEntity связей у
+// карточки. Сами карточки проверяет store — в том же запросе, чтобы нельзя было связать
+// карточку чужого проекта.
+func (s *Service) AddLink(
+	ctx context.Context, userID, projectID, from, to uuid.UUID, label string,
+) (*store.EntityLink, error) {
+	if err := s.proj.RequireEditor(ctx, userID, projectID); err != nil {
+		return nil, err
+	}
+	label = strings.TrimSpace(label)
+	if label == "" || utf8.RuneCountInString(label) > maxLinkLabelRunes {
+		return nil, fmt.Errorf("%w: подпись связи от 1 до %d знаков", ErrInvalidEntity, maxLinkLabelRunes)
+	}
+	if from == to {
+		return nil, fmt.Errorf("%w: карточка не может быть связана сама с собой", ErrInvalidEntity)
+	}
+	count, err := s.store.CountEntityLinks(ctx, from)
+	if err != nil {
+		return nil, err
+	}
+	if count >= maxLinksPerEntity {
+		return nil, fmt.Errorf("%w: у карточки уже %d связей — больше не нужно", ErrInvalidEntity, maxLinksPerEntity)
+	}
+	return s.store.AddEntityLink(ctx, store.EntityLink{
+		ProjectID: projectID, FromEntity: from, ToEntity: to, Label: label, CreatedBy: &userID,
+	})
+}
+
+// DeleteLink удаляет связь (редактор и выше).
+func (s *Service) DeleteLink(ctx context.Context, userID, projectID, id uuid.UUID) error {
+	if err := s.proj.RequireEditor(ctx, userID, projectID); err != nil {
+		return err
+	}
+	return s.store.DeleteEntityLink(ctx, projectID, id)
 }

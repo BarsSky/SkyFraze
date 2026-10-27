@@ -43,6 +43,8 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/entities", h.Create)
 	r.Patch("/entities/{entityID}", h.Update)
 	r.Delete("/entities/{entityID}", h.Delete)
+	// Связи между карточками мира (миграция 0032).
+	h.linkRoutes(r)
 }
 
 // entityInput — тело запроса; указатели у необязательных полей, чтобы «не прислали» не

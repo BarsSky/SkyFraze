@@ -624,7 +624,8 @@ once — чтобы повторный
    * Нужны в двух местах: в блоке «Связи проекта» (список и счётчики) и в поиске упоминаний
    * в тексте кадра. Две независимые загрузки одного списка разъезжались бы.
    */
-  const { entities, loaded: entitiesLoaded, reload: reloadEntities } = useProjectEntities(projectId)
+  const { entities, links: entityLinks, loaded: entitiesLoaded, reload: reloadEntities } =
+    useProjectEntities(projectId)
 
   /**
    * Тексты всех кадров для поиска упоминаний.
@@ -1694,6 +1695,7 @@ once — чтобы повторный
           framesByEntity={entityFrames}
           onOpenFrame={openFrameWithMention}
           matrix={entityMatrix}
+          links={entityLinks}
         />
       )}
 

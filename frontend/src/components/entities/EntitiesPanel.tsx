@@ -11,6 +11,13 @@ import {
 } from '../../api/entities'
 import { serverErrorMessage } from '../../api/client'
 import type { FrameWithMentions, Mention, MentionMatrix } from '../../collab/mentions'
+import {
+  addEntityLink,
+  connectionsOf,
+  deleteEntityLink,
+  type EntityLink,
+  type ProjectEntity as Entity,
+} from '../../api/entities'
 
 /**
  * «Связи проекта» — карточки персонажей, мест и тем (docs/entity-links.md, фаза 1).
@@ -52,6 +59,8 @@ interface Props {
    * что два «главных» персонажа ни разу не встречаются вместе.
    */
   matrix?: MentionMatrix
+  /** Связи карточек проекта (0.74.0): чипы «Аня — живёт на → Земля». */
+  links?: EntityLink[]
 }
 
 export function EntitiesPanel({
@@ -64,6 +73,7 @@ export function EntitiesPanel({
   framesByEntity,
   onOpenFrame,
   matrix,
+  links,
 }: Props) {
   const [kind, setKind] = useState<EntityKind>('character')
   const [name, setName] = useState('')
@@ -84,6 +94,23 @@ export function EntitiesPanel({
    */
   const [open, setOpen] = useState(() => readEntitiesOpen(projectId) ?? entities.length === 0)
 
+  /** Связи карточки в обе стороны: прямые и обратные (0.74.0). */
+  const entityLinks = (entityId: string) => connectionsOf(entityId, links ?? [], entities)
+
+  /** Убрать связь. Спрашиваем подтверждение браузером? Нет: связь — не данные человека, а
+   *  метка между карточками, и вернуть её — одно действие. */
+  const removeLink = useCallback(
+    async (linkId: string) => {
+      setNote(null)
+      try {
+        await deleteEntityLink(projectId, linkId)
+        reload()
+      } catch (e) {
+        setNote({ kind: 'error', text: await explain(e, 'Не удалось убрать связь.') })
+      }
+    },
+    [projectId, reload],
+  )
   const add = useCallback(async () => {
     setBusy(true)
     setNote(null)
@@ -208,6 +235,36 @@ export function EntitiesPanel({
                   <span className="ent__name">{entity.name}</span>
                   {entity.aliases.length > 0 && (
                     <span className="muted ent__aliases">({aliasesText(entity)})</span>
+                  )}
+                  {/* Связи с другими карточками (0.74.0): чип показывает подпись и сторону. */}
+                  {!editing && entityLinks(entity.id).length > 0 && (
+                    <span className="ent__links" data-entity-links>
+                      {entityLinks(entity.id).map((connection) => (
+                        <span
+                          key={connection.link.id}
+                          className="ent__link"
+                          data-entity-link={connection.link.id}
+                        >
+                          <span className="ent__link-label">
+                            {connection.direction === 'out'
+                              ? `→ ${connection.link.label}`
+                              : `← ${connection.link.label}`}
+                          </span>
+                          <span className="ent__link-name">{connection.other.name}</span>
+                          {canEdit && (
+                            <button
+                              type="button"
+                              className="ent__link-remove"
+                              onClick={() => void removeLink(connection.link.id)}
+                              aria-label={`Убрать связь с ${connection.other.name}`}
+                              title="Убрать связь"
+                            >
+                              ×
+                            </button>
+                          )}
+                        </span>
+                      ))}
+                    </span>
                   )}
                   {/* Сколько кадров и упоминаний: «сирота» (ноль) — повод либо добавить
                       алиас, либо убрать карточку. */}

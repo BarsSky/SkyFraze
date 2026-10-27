@@ -328,3 +328,35 @@ describe('EntitiesPanel — клетка матрицы ведёт в кадр (
     expect(onOpenFrame).toHaveBeenCalledWith('f9', expect.objectContaining({ quote: 'Анны' }))
   })
 })
+
+describe('EntitiesPanel — связи карточек (0.74.0)', () => {
+  const anna = entity({ id: 'e1', name: 'Аня', aliases: [] })
+  const earth = entity({ id: 'e2', name: 'Земля', aliases: [] })
+  const link = {
+    id: 'l1',
+    from_entity: 'e1',
+    to_entity: 'e2',
+    label: 'живёт на',
+    created_at: '2026-10-27T10:00:00Z',
+  }
+
+  it('чип показывает подпись и карточку на другом конце', async () => {
+    panel({ entities: [anna, earth], links: [link] })
+    await screen.findAllByText('Аня')
+    expect(screen.getByText('→ живёт на')).toBeTruthy()
+    // «Земля» есть и в карточке, и в чипе связи — проверяем, что чип её называет.
+    expect(screen.getAllByText('Земля').length).toBeGreaterThan(1)
+  })
+
+  it('обратная сторона тоже видна: у Земли — «← живёт на · Аня»', async () => {
+    panel({ entities: [anna, earth], links: [link] })
+    await screen.findAllByText('Земля')
+    expect(screen.getByText('← живёт на')).toBeTruthy()
+  })
+
+  it('читатель видит связь, но не может её убрать', async () => {
+    panel({ entities: [anna, earth], links: [link], canEdit: false })
+    await screen.findAllByText('Аня')
+    expect(screen.queryByLabelText('Убрать связь с Земля')).toBeNull()
+  })
+})

@@ -112,3 +112,83 @@ export function kindLabel(kind: EntityKind): string {
 export function aliasesText(entity: ProjectEntity): string {
   return entity.aliases.join(', ')
 }
+
+/** Связь двух карточек: «Аня — живёт на → Земля» (миграция 0032). */
+export interface EntityLink {
+  id: string
+  from_entity: string
+  to_entity: string
+  label: string
+  created_at: string
+}
+
+export async function listEntityLinks(projectId: string): Promise<EntityLink[]> {
+  const raw = await http.get(`projects/${projectId}/entities/links`).json<{ links?: unknown }>()
+  const list = Array.isArray(raw?.links) ? raw.links : []
+  const out: EntityLink[] = []
+  for (const item of list) {
+    if (typeof item !== 'object' || item === null) continue
+    const record = item as Record<string, unknown>
+    const id = typeof record.id === 'string' ? record.id : ''
+    const from = typeof record.from_entity === 'string' ? record.from_entity : ''
+    const to = typeof record.to_entity === 'string' ? record.to_entity : ''
+    const label = typeof record.label === 'string' ? record.label : ''
+    if (!id || !from || !to) continue
+    out.push({
+      id,
+      from_entity: from,
+      to_entity: to,
+      label,
+      created_at: typeof record.created_at === 'string' ? record.created_at : '',
+    })
+  }
+  return out
+}
+
+export async function addEntityLink(
+  projectId: string,
+  fromId: string,
+  toId: string,
+  label: string,
+): Promise<EntityLink> {
+  const raw = await http
+    .post(`projects/${projectId}/entities/${encodeURIComponent(fromId)}/links`, {
+      json: { to: toId, label },
+    })
+    .json<{ link?: EntityLink }>()
+  if (!raw?.link) throw new Error('сервер не вернул связь')
+  return raw.link
+}
+
+export async function deleteEntityLink(projectId: string, linkId: string): Promise<void> {
+  await http.delete(`projects/${projectId}/entities/links/${encodeURIComponent(linkId)}`)
+}
+
+/** Связи карточки в обе стороны: с подписью и с тем, кто на другом конце. */
+export interface EntityConnection {
+  link: EntityLink
+  /** Карточка на другом конце. */
+  other: ProjectEntity
+  /** Направление: «→» — от этой карточки, «←» — к этой. */
+  direction: 'out' | 'in'
+}
+
+/** Собирает связи одной карточки: чипы показывают обе стороны. */
+export function connectionsOf(
+  entityId: string,
+  links: EntityLink[],
+  entities: ProjectEntity[],
+): EntityConnection[] {
+  const byId = new Map(entities.map((entity) => [entity.id, entity]))
+  const out: EntityConnection[] = []
+  for (const link of links) {
+    if (link.from_entity === entityId) {
+      const other = byId.get(link.to_entity)
+      if (other) out.push({ link, other, direction: 'out' })
+    } else if (link.to_entity === entityId) {
+      const other = byId.get(link.from_entity)
+      if (other) out.push({ link, other, direction: 'in' })
+    }
+  }
+  return out
+}

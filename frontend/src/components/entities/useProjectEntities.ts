@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { listEntities, type ProjectEntity } from '../../api/entities'
+import { listEntities, listEntityLinks, type EntityLink, type ProjectEntity } from '../../api/entities'
 
 /**
  * Карточки мира проекта, загруженные один раз для всей панели редакторов.
@@ -14,6 +14,7 @@ import { listEntities, type ProjectEntity } from '../../api/entities'
  */
 export function useProjectEntities(projectId?: string) {
   const [entities, setEntities] = useState<ProjectEntity[]>([])
+  const [links, setLinks] = useState<EntityLink[]>([])
   const [loaded, setLoaded] = useState(false)
 
   const reload = useCallback(async () => {
@@ -23,7 +24,11 @@ export function useProjectEntities(projectId?: string) {
       return
     }
     try {
-      setEntities(await listEntities(projectId))
+      // Карточки и связи грузим вместе: граф и чипы связей — одна картина, и два запроса
+      // подряд разъезжались бы в момент открытия проекта.
+      const [cards, links] = await Promise.all([listEntities(projectId), listEntityLinks(projectId)])
+      setEntities(cards)
+      setLinks(links)
     } catch {
       // Проект может быть недоступен (закрыт доступ): пустой список лучше вечной загрузки.
       setEntities([])
@@ -37,5 +42,5 @@ export function useProjectEntities(projectId?: string) {
     void reload()
   }, [reload])
 
-  return { entities, loaded, reload }
+  return { entities, links, loaded, reload }
 }
