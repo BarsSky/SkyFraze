@@ -39,13 +39,19 @@ export function stageIsActive(input: StageVisibilityInput): boolean {
   const visibleTrack =
     Math.min(input.trackBottom, input.boxBottom) - Math.max(input.trackTop, input.boxTop)
 
-  const minShare = input.minTrackShare ?? 0.5
+  // Первое правило: сколько трека ещё на экране. Было 0.5 — и тогда стадия гасла, пока на
+  // экране оставалось полэкрана трека, а следующий раздел занимал лишь нижнюю часть: над ним
+  // оставалась пустая полоса. Теперь блоки под сценой идут ПОВЕРХ её слоя (см. комментарий
+  // ниже), поэтому стадия может жить, пока трек виден хотя бы полоской: 0.1 экрана.
+  const minShare = input.minTrackShare ?? 0.1
   if (visibleTrack <= viewport * minShare) return false
 
   if (input.nextTop === null) return true
-  // Следующий блок входит в экран (его верх поднялся выше «линии входа») — стадия
-  // гаснет, чтобы не перекрывать редактор. Линия чуть выше низа экрана: пока блок
-  // только-только показался снизу, стадия уже не нужна.
-  const enterLine = input.boxTop + viewport * (input.nextEnterRatio ?? 0.9)
+  // Следующий блок (область «Связи», панель редакторов, бар присутствия) въезжает НА сцену: он
+  // выше её fixed-слоя по z-index (`.relations, .ed-panel, .presence` в editors.css). Поэтому
+  // стадия гаснет только когда блок полностью накрыл экран. Раньше она гасла, как только блок
+  // показывался снизу (0.9 экрана), и между хвостом сцены и блоком оставалась пустая полоса —
+  // «слишком много места при прокрутке, границу перехода сделать ближе» (отчёт 0.82.0).
+  const enterLine = input.boxTop + viewport * (input.nextEnterRatio ?? 0)
   return input.nextTop > enterLine
 }

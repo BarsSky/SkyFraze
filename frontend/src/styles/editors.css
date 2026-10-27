@@ -6,6 +6,12 @@
   padding: 40px 12px;
   border-top: 1px solid var(--border);
   margin-top: 40px;
+  /* Как и «Связи»: панель редакторов едет ПОВЕРХ fixed-слоя сцены, поэтому стадия гаснет
+     только когда панель накрыла экран (0.82.0). Раньше она гасла заранее — и между ними
+     оставалась пустая полоса. */
+  position: relative;
+  z-index: 20;
+  background: var(--bg);
 }
 .ed-panel__head {
   display: flex; align-items: center; justify-content: space-between;
@@ -609,6 +615,11 @@
   border: 1px solid var(--border);
   border-radius: 14px;
   background: var(--bg-elev);
+  /* Блоки под сценой идут ПОВЕРХ её fixed-слоя (z-index 10): так раздел въезжает на экран,
+     накрывая показ проекта, а не появляется из пустой полосы (0.82.0). От этого же зависит
+     правило `stageIsActive`: стадия гаснет, только когда блок накрыл экран целиком. */
+  position: relative;
+  z-index: 20;
 }
 .relations__head {
   display: flex; align-items: flex-start; justify-content: space-between;

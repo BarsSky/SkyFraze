@@ -764,6 +764,11 @@ cd frontend && npx tsx tests/diag-deployed-load.ts https://fraze.skynas.ru
 # её в «вне связей», проверить цвет/толщину линий графа и наконечники, отсутствие скролла на 390 px
 cd frontend && npx tsx tests/diag-types.ts
 
+# Переход «показ проекта → Связи» (0.82.0): пустая полоса при погашенной стадии — считаем в
+# пикселях по всей прокрутке (было 810 px, стало ≤20) и состояние сцены на каждом шаге
+cd frontend && npx tsx tests/diag-gap.ts
+cd frontend && npx tsx tests/diag-transition.ts
+
 # E2E публичной ленты: права, просмотры, оценки
 cd frontend && npx tsx tests/public-feed.ts
 
