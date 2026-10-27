@@ -270,3 +270,26 @@ describe('EntitiesPanel — матрица связей (0.71.0)', () => {
     expect(screen.queryByText(/Матрица: персонажи/)).toBeNull()
   })
 })
+
+describe('EntitiesPanel — раскрытие блока (0.72.1)', () => {
+  beforeEach(() => window.localStorage.clear())
+
+  it('без карточек блок раскрыт по умолчанию: фичу иначе не находят', async () => {
+    const { container } = panel()
+    await screen.findByText(/Карточек пока нет/)
+    expect((container.querySelector('[data-entities]') as HTMLDetailsElement).open).toBe(true)
+  })
+
+  it('с карточками блок закрыт, пока человек сам не раскроет', async () => {
+    const { container } = panel({ entities: [entity()] })
+    await screen.findByText('Анна')
+    expect((container.querySelector('[data-entities]') as HTMLDetailsElement).open).toBe(false)
+  })
+
+  it('выбор запоминается для проекта', async () => {
+    window.localStorage.setItem('skyfraze-entities-open:p1', '1')
+    const { container } = panel({ entities: [entity()] })
+    await screen.findByText('Анна')
+    expect((container.querySelector('[data-entities]') as HTMLDetailsElement).open).toBe(true)
+  })
+})

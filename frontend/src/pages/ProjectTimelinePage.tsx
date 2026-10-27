@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+﻿import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
+import { scrollWithinMain } from '../lib/scrollTo'
 import { TimelineStage, type AssetLookup } from '../components/timeline/TimelineStage'
 import { ProjectLoading } from '../components/timeline/ProjectLoading'
 import { EditorsPanel } from '../components/editors/EditorsPanel'
@@ -269,7 +270,9 @@ export function ProjectTimelinePage() {
   }, [events, pushTree])
 
   const openEditors = useCallback(() => {
-    document.querySelector<HTMLElement>('[data-editor-panel]')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    // Прокручиваем ТОЛЬКО main: scrollIntoView двигал ещё и документ, шапка уезжала за
+    // экран и не возвращалась (пользователю прокрутка документа запрещена). 0.72.1.
+    scrollWithinMain(document.querySelector<HTMLElement>('[data-editor-panel]'))
   }, [])
 
   const openAssistant = useCallback(() => {

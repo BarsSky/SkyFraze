@@ -16,6 +16,12 @@ interface Props {
   mentions: Mention[]
   /** Показать упоминание в тексте: панель выставит выделение и прокрутит к нему. */
   onShow: (mention: Mention) => void
+  /**
+   * Есть ли у проекта карточки (0.72.1). Нужно для подсказки в кадре без упоминаний: молчание
+   * здесь читается как «фича не работает», хотя на самом деле в тексте просто нет имён из
+   * карточек — и лечится это алиасом.
+   */
+  hasEntities?: boolean
 }
 
 /**
@@ -28,8 +34,18 @@ export function differs(quote: string, name: string): boolean {
   return quote.toLowerCase() !== name.toLowerCase()
 }
 
-export function FrameMentions({ mentions, onShow }: Props) {
-  if (mentions.length === 0) return null
+export function FrameMentions({ mentions, onShow, hasEntities }: Props) {
+  if (mentions.length === 0) {
+    // Подсказка вместо молчания: карточки есть, а в кадре ни одного имени из них. Человек
+    // должен узнать, что делать (добавить падеж в алиасы), а не решить, что связи сломаны.
+    if (!hasEntities) return null
+    return (
+      <p className="muted frame-mentions__empty" data-frame-mentions-empty>
+        В этом кадре не названо ни одной карточки. Если герой здесь под другим именем — добавьте
+        его в алиасы карточки, и связь появится.
+      </p>
+    )
+  }
 
   return (
     <div className="frame-mentions" data-frame-mentions>

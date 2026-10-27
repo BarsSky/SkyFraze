@@ -84,3 +84,14 @@ describe('FrameMentions', () => {
     expect(screen.getAllByRole('button')).toHaveLength(2)
   })
 })
+
+  it('кадр без упоминаний: подсказка про алиасы вместо молчания (0.72.1)', () => {
+    render(<FrameMentions mentions={[]} onShow={() => {}} hasEntities />)
+    expect(screen.getByText(/не названо ни одной карточки/)).toBeTruthy()
+    expect(screen.getByText(/алиасы/)).toBeTruthy()
+  })
+
+  it('без карточек подсказки нет: подсказывать нечего', () => {
+    const { container } = render(<FrameMentions mentions={[]} onShow={() => {}} />)
+    expect(container.textContent).toBe('')
+  })

@@ -546,3 +546,5 @@
 .ent__matrix-table th, .ent__matrix-table td { padding: 4px 8px; border-bottom: 1px dashed var(--border); text-align: right; }
 .ent__matrix-table th[scope="row"], .ent__matrix-table thead th:first-child { text-align: left; }
 .ent__matrix-table thead th { font-weight: 600; }
+
+.frame-mentions__empty { margin: 8px 0 0; font-size: 12px; }

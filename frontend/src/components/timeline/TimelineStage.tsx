@@ -129,6 +129,55 @@ export function TimelineStage({ events, assetsById, projectTitle, actions, copyF
     return () => root.classList.remove('sf-stage-on')
   }, [stageActive])
 
+  /**
+   * Пересчёт «сцена на экране» по факту положения, а не только по кадровому циклу (0.72.1).
+   *
+   * Зачем отдельно от rAF-цикла: цикл крутится постоянно, но у него есть состояния, в которых
+   * он не успевает — фоновая вкладка (браузер душит requestAnimationFrame), тяжёлая отрисовка,
+   * программный скролл. Если в такой момент сцена уже ушла с экрана, её полоска гасла и
+   * возвращалась только после перезагрузки: состояние менялось лишь внутри цикла, а
+   * CSS-переход оставался в «погашенном» виде. Теперь то же вычисление вызывается ещё и на
+   * scroll/resize/visibilitychange, поэтому возврат наверх возвращает полоску всегда.
+   */
+  const applyStageVisibility = useCallback(() => {
+    const track = trackRef.current
+    if (!track) return
+    const box = visibleBox(null)
+    const rect = track.getBoundingClientRect()
+    const nextBlock = nextBlockAfter(track)
+    const inView = stageIsActive({
+      trackTop: rect.top,
+      trackBottom: rect.bottom,
+      boxTop: box.top,
+      boxBottom: box.bottom,
+      nextTop: nextBlock ? nextBlock.getBoundingClientRect().top : null,
+    })
+    if (inView !== stageActiveRef.current) {
+      stageActiveRef.current = inView
+      setStageActive(inView)
+    }
+  }, [])
+
+  useEffect(() => {
+    applyStageVisibility()
+    const root = trackRef.current ? getScrollRoot(trackRef.current) : null
+    const onScroll = () => applyStageVisibility()
+    // scroll не всплывает — ловим на фазе перехвата, иначе прокрутка вложенного `main`
+    // не была бы слышна на document.
+    document.addEventListener('scroll', onScroll, { passive: true, capture: true })
+    if (root && root !== document.documentElement) {
+      root.addEventListener('scroll', onScroll, { passive: true })
+    }
+    window.addEventListener('resize', onScroll)
+    document.addEventListener('visibilitychange', onScroll)
+    return () => {
+      document.removeEventListener('scroll', onScroll, { capture: true })
+      if (root && root !== document.documentElement) root.removeEventListener('scroll', onScroll)
+      window.removeEventListener('resize', onScroll)
+      document.removeEventListener('visibilitychange', onScroll)
+    }
+  }, [applyStageVisibility])
+
   // Фиксированные слои стадии не должны заезжать под шапку приложения: на телефоне
   // шапка переносится и становится выше, и кнопка «Редакторы» оказывалась под ней.
   // Поэтому высоту шапки измеряем и отдаём в CSS переменной --sf-header-h.

@@ -77,6 +77,12 @@ export function EntitiesPanel({
   const [pendingDelete, setPendingDelete] = useState<string | null>(null)
   /** У какой карточки раскрыта хронология. Одна за раз: две открытые — это уже не список. */
   const [chronology, setChronology] = useState<string | null>(null)
+  /**
+   * Раскрыт ли блок (0.72.1). По умолчанию — да, если карточек ещё нет: иначе фичу просто не
+   * находят («не видно, где заводить персонажей» — так и было на практике). Выбор человека
+   * запоминается, чтобы блок не раскрывался каждый раз заново.
+   */
+  const [open, setOpen] = useState(() => readEntitiesOpen(projectId) ?? entities.length === 0)
 
   const add = useCallback(async () => {
     setBusy(true)
@@ -138,7 +144,16 @@ export function EntitiesPanel({
   )
 
   return (
-    <details className="ent" data-entities>
+    <details
+      className="ent"
+      data-entities
+      open={open}
+      onToggle={(e) => {
+        const next = (e.currentTarget as HTMLDetailsElement).open
+        setOpen(next)
+        writeEntitiesOpen(projectId, next)
+      }}
+    >
       <summary className="ent__summary">
         Связи проекта
         <span className="muted ent__count" data-entities-count>
@@ -423,4 +438,31 @@ function plural(count: number, one: string, few: string, many: string): string {
  */
 async function explain(e: unknown, fallback: string): Promise<string> {
   return (await serverErrorMessage(e)) ?? fallback
+}
+
+/**
+ * Запомненное состояние раскрытия блока «Связи проекта» (0.72.1).
+ *
+ * `null` — человек ещё ничего не решал: тогда блок раскрыт, если карточек нет (надо показать,
+ * где их заводить). Ключ по проекту: в одном проекте блок может быть открыт, в другом закрыт.
+ */
+const ENTITIES_OPEN_PREFIX = 'skyfraze-entities-open:'
+
+export function readEntitiesOpen(projectId: string): boolean | null {
+  try {
+    const raw = window.localStorage.getItem(ENTITIES_OPEN_PREFIX + projectId)
+    if (raw === '1') return true
+    if (raw === '0') return false
+  } catch {
+    // Приватный режим или запрет хранилища — не повод падать: просто нет запомненного выбора.
+  }
+  return null
+}
+
+export function writeEntitiesOpen(projectId: string, open: boolean): void {
+  try {
+    window.localStorage.setItem(ENTITIES_OPEN_PREFIX + projectId, open ? '1' : '0')
+  } catch {
+    // Молча: состояние блока — удобство, а не данные.
+  }
 }

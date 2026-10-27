@@ -143,6 +143,10 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
   gap: 12px;
   background: color-mix(in srgb, var(--bg) 88%, transparent);
   backdrop-filter: blur(10px);
+  /* position: relative обязателен: z-index не действует на static, и без этого шапка
+     оказывалась ПОД fixed-слоями сцены таймлайна (0.72.1). Симптом: полоска меню
+     пропадала при работе с проектом и возвращалась только после перезагрузки. */
+  position: relative;
   z-index: 70;
   transition: padding 0.2s ease;
 }

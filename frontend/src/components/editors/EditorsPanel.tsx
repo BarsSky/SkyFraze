@@ -13,6 +13,7 @@ import {
 import { FrameComments } from './FrameComments'
 import { FrameMentions } from './FrameMentions'
 import { EntitiesPanel } from '../entities/EntitiesPanel'
+import { scrollWithinMain } from '../../lib/scrollTo'
 import { useProjectEntities } from '../entities/useProjectEntities'
 import {
   entityUsage,
@@ -706,6 +707,21 @@ once — чтобы повторный
     }
     return mentionMatrix(mentionFrames, frameChapters, chapters, entities)
   }, [entities, mentionFrames, rows])
+  /**
+   * Открыть блок связей из тулбара (0.72.1): раскрыть и прокрутить к нему.
+   *
+   * `details` раскрываем через DOM, а не пропом: блок живёт в своём компоненте и запоминает
+   * выбор сам. Так кнопка в тулбаре не превращается во второй владелец этого состояния.
+   */
+  const openEntitiesBlock = useCallback(() => {
+    const block = document.querySelector<HTMLDetailsElement>('[data-entities]')
+    if (!block) return
+    block.open = true
+    // Только main: scrollIntoView двигал документ и уводил шапку за экран (0.72.1).
+    scrollWithinMain(block)
+    const firstInput = block.querySelector<HTMLInputElement>('input[aria-label="Имя карточки"]')
+    firstInput?.focus({ preventScroll: true })
+  }, [])
   /** Открыть кадр из хронологии: выбрать его и подсветить упоминание. */
   const openFrameWithMention = useCallback((frameId: string, mention: Mention) => {
     setSelectedId(frameId)
@@ -1503,6 +1519,15 @@ once — чтобы повторный
           <button type="button" onClick={createChapter}>+ глава</button>
           <button type="button" className="secondary" onClick={createChild} disabled={!selectedId}>+ подсобытие</button>
           <button type="button" className="secondary ed-danger" onClick={removeSelected} disabled={!selectedId}>удалить</button>
+          {/* Вход в связи: блок карточек выше панели, и без кнопки его не находят */}
+          <button
+            type="button"
+            className="secondary"
+            onClick={openEntitiesBlock}
+            data-ed-entities-jump
+          >
+            связи проекта
+          </button>
         </div>
         <div className="ed-panel__meta">
           <input
@@ -1815,6 +1840,7 @@ once — чтобы повторный
               {/* Упоминания карточек мира в этом кадре (0.68.0): кто здесь назван. Клик ведёт
                   к самому месту в тексте, поэтому список — не «сводка», а навигация. */}
               <FrameMentions
+                hasEntities={entities.length > 0}
                 mentions={selectedMentions}
                 onShow={(mention: Mention) => {
                   setFocusRange((current) => ({
