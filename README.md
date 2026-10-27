@@ -718,6 +718,9 @@ cd frontend && npx tsx tests/visual-profile.ts
 # То же для блока «Связи проекта» (карточки персонажей, мест и тем) на 1280 и 390 px
 cd frontend && npx tsx tests/visual-entities.ts
 
+# И для хронологии карточки + фильтра дерева по карточке (0.69.0)
+cd frontend && npx tsx tests/visual-chronology.ts
+
 # E2E публичной ленты: права, просмотры, оценки
 cd frontend && npx tsx tests/public-feed.ts
 

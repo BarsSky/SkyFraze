@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { buildEventTree, DEFAULT_MAX_DEPTH, type EventLike, type EventTreeNode } from '../../collab/eventTree'
 import { checkMove, type DropPlace, type MoveReject } from '../../collab/reorder'
@@ -14,7 +14,16 @@ import { FrameComments } from './FrameComments'
 import { FrameMentions } from './FrameMentions'
 import { EntitiesPanel } from '../entities/EntitiesPanel'
 import { useProjectEntities } from '../entities/useProjectEntities'
-import { entityUsage, frameMentions, type Mention, type MentionFrame } from '../../collab/mentions'
+import {
+  entityUsage,
+  frameMentions,
+  framesByEntity,
+  type DatedFrame,
+  type MentionFrame,
+  type FrameWithMentions,
+  type Mention,
+} from '../../collab/mentions'
+import { dateFromServer } from '../../collab/eventDate'
 import {
   previewMarkdownImport,
   readImportErrorMessage,
@@ -373,6 +382,13 @@ export function EditorsPanel({
 }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [filter, setFilter] = useState('')
+  /**
+   * Фильтр дерева по карточке мира: «только кадры с Анной» (0.69.0).
+   *
+   * Отдельное состояние, а не часть поисковой строки: это не «найти», а «показать линию
+   * персонажа», и сбрасывать его вместе с очисткой поиска было бы неправильно.
+   */
+  const [entityFilter, setEntityFilter] = useState<string | null>(null)
   const [version, setVersion] = useState(0) // перерисовка после правок CRDT
   const [filesNote, setFilesNote] = useState<string | null>(null)
   /** Сколько комментариев у кадров: бейдж у строки дерева и счётчик обсуждения. */
@@ -617,11 +633,16 @@ once — чтобы повторный
   const mentionFrames = useMemo<MentionFrame[]>(() => {
     void version
     if (!events) return []
-    const out: MentionFrame[] = []
+    const out: DatedFrame[] = []
     for (const map of events.toArray() as YMap[]) {
       const id = (map.get('id') as string | undefined) ?? ''
       if (!id) continue
-      out.push({ id, title: titleString(map), body: textString(map, 'body') })
+      out.push({
+        id,
+        title: titleString(map),
+        body: textString(map, 'body'),
+        date: dateFromServer(map.get('event_date')),
+      })
     }
     return out
   }, [events, version])
@@ -629,11 +650,43 @@ once — чтобы повторный
   /** Сколько кадров и упоминаний у каждой карточки: по этому «сироту» и видно. */
   const entityUse = useMemo(() => entityUsage(mentionFrames, entities), [mentionFrames, entities])
 
+  /**
+   * Хронология по карточкам (фаза 3): где она встречается.
+   *
+   * `order` берём из дерева (`rows`), а не из массива документа: номер кадра «01.2» считается
+   * обходом дерева, и порядок «без даты — как в дереве» должен совпадать с тем, что человек
+   * видит в списке слева.
+   */
+  const entityFrames = useMemo<Record<string, FrameWithMentions[]>>(() => {
+    const order = new Map<string, { number: string; order: number }>()
+    rows.forEach((row, index) => order.set(row.id, { number: row.number, order: index }))
+    const withOrder = mentionFrames.map((frame, index) => {
+      const meta = order.get(frame.id)
+      return {
+        ...frame,
+        number: meta?.number ?? '',
+        order: meta?.order ?? index,
+      }
+    })
+    return framesByEntity(withOrder, entities)
+  }, [entities, mentionFrames, rows])
+
   const selectedMentions = useMemo(() => {
     if (!selectedId) return []
     const frame = mentionFrames.find((f) => f.id === selectedId)
     return frame ? frameMentions(frame, entities) : []
   }, [entities, mentionFrames, selectedId])
+
+  /** Открыть кадр из хронологии: выбрать его и подсветить упоминание. */
+  const openFrameWithMention = useCallback((frameId: string, mention: Mention) => {
+    setSelectedId(frameId)
+    setFocusRange((current) => ({
+      field: mention.field,
+      from: mention.from,
+      to: mention.to,
+      nonce: (current?.nonce ?? 0) + 1,
+    }))
+  }, [])
 
   /**
    * Помещается ли разобранный кусок в проект.
@@ -660,6 +713,12 @@ once — чтобы повторный
    */
   const hits = useMemo(() => searchProject(rows, filter), [rows, filter])
   const visibleRows = useMemo(() => {
+    // Фильтр по карточке мира (фаза 3): «только кадры с Анной». Он СИЛЬНЕЕ поиска — два
+    // фильтра одновременно показали бы пересечение, которого человек не просил.
+    if (entityFilter !== null) {
+      const allowed = new Set((entityFrames[entityFilter] ?? []).map((frame) => frame.frameId))
+      return rows.filter((row) => allowed.has(row.id))
+    }
     if (!isSearchQuery(filter)) return rows
     const byId = new Map(rows.map((row) => [row.id, row]))
     const out: NavRow[] = []
@@ -668,7 +727,7 @@ once — чтобы повторный
       if (row) out.push(row)
     }
     return out
-  }, [rows, hits, filter])
+  }, [rows, hits, filter, entityFilter, entityFrames])
   // Сниппет показываем только у попаданий в текст: у попадания в название он повторяет
   // начало кадра и только удлиняет строку.
   const snippets = useMemo(() => {
@@ -1426,11 +1485,45 @@ once — чтобы повторный
             data-ed-search
           />
           <span className="muted ed-panel__count">
-            {isSearchQuery(filter)
-              ? `найдено ${visibleRows.length} из ${rows.length}`
-              : `событий: ${rows.length}`}
+            {entityFilter !== null
+              ? `кадров с карточкой: ${visibleRows.length}`
+              : isSearchQuery(filter)
+                ? `найдено ${visibleRows.length} из ${rows.length}`
+                : `событий: ${rows.length}`}
           </span>
         </div>
+
+        {/* Линия карточки: «показать только кадры, где появляется Анна». Список карточек
+            берётся из того же хука, что и «Связи проекта», поэтому новая карточка сразу
+            доступна фильтру. */}
+        {entities.length > 0 && (
+          <label className="ed-entity-filter">
+            <span className="muted">Только с карточкой:</span>
+            <select
+              value={entityFilter ?? ''}
+              onChange={(e) => setEntityFilter(e.target.value === '' ? null : e.target.value)}
+              aria-label="Фильтр по карточке мира"
+              data-ed-entity-filter
+            >
+              <option value="">все кадры</option>
+              {entities.map((entity) => (
+                <option key={entity.id} value={entity.id}>
+                  {entity.name}
+                </option>
+              ))}
+            </select>
+            {entityFilter !== null && (
+              <button
+                type="button"
+                className="secondary"
+                onClick={() => setEntityFilter(null)}
+                data-ed-entity-filter-clear
+              >
+                Сбросить
+              </button>
+            )}
+          </label>
+        )}
       </div>
 
       {onImportInto && (
@@ -1544,6 +1637,8 @@ once — чтобы повторный
           loaded={entitiesLoaded}
           reload={() => void reloadEntities()}
           usage={entityUse}
+          framesByEntity={entityFrames}
+          onOpenFrame={openFrameWithMention}
         />
       )}
 

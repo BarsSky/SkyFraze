@@ -23,6 +23,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/skyfraze/backend/internal/entities"
 	"github.com/skyfraze/backend/internal/events"
 	"github.com/skyfraze/backend/internal/projects"
 	"github.com/skyfraze/backend/internal/storage"
@@ -73,7 +74,24 @@ type Manifest struct {
 	Project    ProjectMeta   `json:"project"`
 	Events     []EventRecord `json:"events"`
 	Assets     []AssetRecord `json:"assets"`
-	HasState   bool          `json:"has_state"`
+	// Entities — карточки персонажей, мест и тем (0.69.0). Поле добавлено в ТУ ЖЕ версию
+	// формата: старые архивы читаются (поля просто нет), а старые сборки, встретив его,
+	// проигнорируют. Повышать версию значило бы «новые архивы не открываются старыми
+	// сборками» ради поля, которое можно не заметить.
+	Entities []EntityRecord `json:"entities,omitempty"`
+	HasState bool           `json:"has_state"`
+}
+
+// EntityRecord — карточка сущности в архиве.
+//
+// Идентификатор не переносим: при импорте карточка — это имя в НОВОМ проекте, и её id всё
+// равно будет свой (упоминания пока не хранятся на сервере, ссылаться не на что).
+type EntityRecord struct {
+	Kind        string   `json:"kind"`
+	Name        string   `json:"name"`
+	Aliases     []string `json:"aliases,omitempty"`
+	Description string   `json:"description,omitempty"`
+	Color       string   `json:"color,omitempty"`
 }
 
 type ProjectMeta struct {
@@ -119,6 +137,8 @@ type Result struct {
 	Events   int            `json:"events"`
 	Assets   int            `json:"assets"`
 	HasState bool           `json:"has_state"`
+	// Entities — сколько карточек мира перенесено (0.69.0).
+	Entities int `json:"entities"`
 }
 
 type Service struct {
@@ -135,6 +155,8 @@ type Service struct {
 	// quotaSource — предел вложений проекта: предпросмотр показывает его человеку
 	// (см. UseQuota). Без источника предел считается unlimited (0).
 	quotaSource QuotaSource
+	// entities — карточки мира: импорт архива переносит их вместе с проектом (0.69.0).
+	entities *entities.Service
 }
 
 func New(s *store.Store, obj storage.ObjectStore, proj *projects.Service) *Service {
@@ -216,6 +238,17 @@ func (s *Service) Export(ctx context.Context, userID, projectID uuid.UUID, w io.
 			ID: a.ID, Filename: a.Filename, Mime: a.Mime, Size: a.Size, Kind: a.Kind,
 			Width: a.Width, Height: a.Height, File: assetsDir + a.ID.String(),
 		})
+	}
+	// Карточки мира едут вместе с проектом (0.69.0): без них импорт терял бы связи, ради
+	// которых их и заводили.
+	if list, err := s.store.ListEntities(ctx, projectID); err == nil {
+		m.Entities = make([]EntityRecord, 0, len(list))
+		for _, entity := range list {
+			m.Entities = append(m.Entities, EntityRecord{
+				Kind: entity.Kind, Name: entity.Name, Aliases: entity.Aliases,
+				Description: entity.Description, Color: entity.Color,
+			})
+		}
 	}
 	var stateBytes []byte
 	if state != nil && len(state.YjsState) > 0 {
@@ -483,7 +516,24 @@ func (s *Service) Import(ctx context.Context, userID uuid.UUID, b *ParsedBundle)
 		}
 	}
 
-	return &Result{Project: p, Events: len(rows), Assets: len(m.Assets), HasState: hasState}, nil
+	// 7. Карточки мира (0.69.0). Ошибка одной карточки не отменяет импорт: занятое имя или
+	//    неизвестный вид — это дефект архива, а не повод потерять весь проект. Пропущенные
+	//    считаем и отдаём в результате, чтобы «импорт прошёл» не было полуправдой.
+	importedEntities := 0
+	for _, entity := range m.Entities {
+		if _, err := s.entities.Create(ctx, userID, p.ID, entities.Input{
+			Kind: entity.Kind, Name: entity.Name,
+			Aliases: &entity.Aliases, Description: &entity.Description, Color: &entity.Color,
+		}); err != nil {
+			continue
+		}
+		importedEntities++
+	}
+
+	return &Result{
+		Project: p, Events: len(rows), Assets: len(m.Assets), HasState: hasState,
+		Entities: importedEntities,
+	}, nil
 }
 
 // ---------- вспомогательное ----------

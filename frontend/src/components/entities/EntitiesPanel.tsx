@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useState } from 'react'
 import {
   aliasesText,
   createEntity,
@@ -10,6 +10,7 @@ import {
   type ProjectEntity,
 } from '../../api/entities'
 import { serverErrorMessage } from '../../api/client'
+import type { FrameWithMentions, Mention } from '../../collab/mentions'
 
 /**
  * «Связи проекта» — карточки персонажей, мест и тем (docs/entity-links.md, фаза 1).
@@ -40,9 +41,24 @@ interface Props {
   reload: () => void
   /** Сколько кадров и упоминаний у каждой карточки (считается по тексту, фаза 2). */
   usage?: Record<string, { frames: number; mentions: number }>
+  /**
+   * Хронология: где карточка появляется (фаза 3). Список раскрывается у карточки, а клик
+   * ведёт в кадр и подсвечивает упоминание — это и есть «где на таймлайне появляется Анна».
+   */
+  framesByEntity?: Record<string, FrameWithMentions[]>
+  onOpenFrame?: (frameId: string, mention: Mention) => void
 }
 
-export function EntitiesPanel({ projectId, canEdit, entities, loaded, reload, usage }: Props) {
+export function EntitiesPanel({
+  projectId,
+  canEdit,
+  entities,
+  loaded,
+  reload,
+  usage,
+  framesByEntity,
+  onOpenFrame,
+}: Props) {
   const [kind, setKind] = useState<EntityKind>('character')
   const [name, setName] = useState('')
   const [aliases, setAliases] = useState('')
@@ -53,6 +69,8 @@ export function EntitiesPanel({ projectId, canEdit, entities, loaded, reload, us
   const [draftName, setDraftName] = useState('')
   const [draftAliases, setDraftAliases] = useState('')
   const [pendingDelete, setPendingDelete] = useState<string | null>(null)
+  /** У какой карточки раскрыта хронология. Одна за раз: две открытые — это уже не список. */
+  const [chronology, setChronology] = useState<string | null>(null)
 
   const add = useCallback(async () => {
     setBusy(true)
@@ -179,6 +197,20 @@ export function EntitiesPanel({ projectId, canEdit, entities, loaded, reload, us
                   )}
                   {canEdit && (
                     <span className="ent__actions">
+                      {(framesByEntity?.[entity.id]?.length ?? 0) > 0 && (
+                        <button
+                          type="button"
+                          className="secondary"
+                          onClick={() =>
+                            setChronology((current) => (current === entity.id ? null : entity.id))
+                          }
+                          aria-expanded={chronology === entity.id}
+                          aria-label={`Где встречается ${entity.name}`}
+                          data-entity-chronology
+                        >
+                          {chronology === entity.id ? 'Скрыть кадры' : 'Где встречается'}
+                        </button>
+                      )}
                       <button
                         type="button"
                         className="secondary"
@@ -226,6 +258,28 @@ export function EntitiesPanel({ projectId, canEdit, entities, loaded, reload, us
                     </span>
                   )}
                 </>
+              )}
+              {/* Хронология карточки: кадры по датам, потом без даты — в порядке дерева.
+                  Кадр без даты не исчезает: он просто в конце, и это видно по отсутствию
+                  даты в строке. */}
+              {chronology === entity.id && (framesByEntity?.[entity.id]?.length ?? 0) > 0 && (
+                <ol className="ent__chronology" data-entity-frames>
+                  {framesByEntity?.[entity.id].map((frame) => (
+                    <li key={frame.frameId} className="ent__frame">
+                      <button
+                        type="button"
+                        className="ent__frame-open"
+                        onClick={() => onOpenFrame?.(frame.frameId, frame.mentions[0])}
+                        title={`Открыть кадр и показать «${frame.mentions[0]?.quote ?? ''}»`}
+                        data-entity-frame={frame.frameId}
+                      >
+                        <span className="ent__frame-number">{frame.number || '—'}</span>
+                        <span className="ent__frame-title">{frame.title || 'без названия'}</span>
+                        {frame.date !== '' && <span className="muted ent__frame-date">{frame.date}</span>}
+                      </button>
+                    </li>
+                  ))}
+                </ol>
               )}
             </li>
           ))}

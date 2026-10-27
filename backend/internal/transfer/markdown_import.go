@@ -69,6 +69,7 @@ import (
 
 	"github.com/skyfraze/backend/internal/assets"
 	"github.com/skyfraze/backend/internal/collab/yjs"
+	"github.com/skyfraze/backend/internal/entities"
 	"github.com/skyfraze/backend/internal/events"
 	"github.com/skyfraze/backend/internal/projects"
 	"github.com/skyfraze/backend/internal/store"
@@ -1689,6 +1690,10 @@ type FileStore interface {
 
 // UseFileStore подключает запись файлов проекта.
 func (s *Service) UseFileStore(files FileStore) { s.files = files }
+
+// UseEntities подключает карточки мира: импорт архива переносит их вместе с проектом
+// (0.69.0). Без этого связи, ради которых карточки и заводили, терялись бы при переносе.
+func (s *Service) UseEntities(service *entities.Service) { s.entities = service }
 
 // QuotaSource — кто знает предел вложений проекта (реализует assets.Service).
 type QuotaSource interface {

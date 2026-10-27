@@ -1,4 +1,4 @@
-﻿import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { EntitiesPanel, describeUsage, splitAliases } from './EntitiesPanel'
 import type { ProjectEntity } from '../../api/entities'
@@ -180,4 +180,59 @@ describe('describeUsage', () => {
   it('ноль кадров — словами: карточка ничего не связывает', () => {
     expect(describeUsage({ frames: 0, mentions: 0 })).toBe('пока не упоминается')
   })
+})
+
+describe('EntitiesPanel — хронология (0.69.0)', () => {
+describe('хронология карточки (0.69.0)', () => {
+  const frames = [
+    {
+      frameId: 'f1',
+      title: 'Встреча',
+      number: '01.2',
+      date: '2026-03-02',
+      order: 1,
+      mentions: [
+        { entityId: 'e1', entityName: 'Анна', field: 'body' as const, from: 5, to: 9, quote: 'Анны' },
+      ],
+    },
+    {
+      frameId: 'f2',
+      title: 'Пролог',
+      number: '01',
+      date: '',
+      order: 0,
+      mentions: [
+        { entityId: 'e1', entityName: 'Анна', field: 'title' as const, from: 0, to: 4, quote: 'Анна' },
+      ],
+    },
+  ]
+
+  it('«Где встречается» раскрывает кадры с номерами и датами', async () => {
+    panel({ entities: [entity()], framesByEntity: { e1: frames } })
+    await screen.findByText('Анна')
+
+    fireEvent.click(screen.getByLabelText('Где встречается Анна'))
+    expect(await screen.findByText('Встреча')).toBeTruthy()
+    expect(screen.getByText('01.2')).toBeTruthy()
+    expect(screen.getByText('2026-03-02')).toBeTruthy()
+    // Кадр без даты в списке есть, но даты у него нет — так и должно выглядеть.
+    expect(screen.getByText('Пролог')).toBeTruthy()
+  })
+
+  it('клик по кадру отдаёт кадр и упоминание: панель выделит место', async () => {
+    const onOpenFrame = vi.fn()
+    panel({ entities: [entity()], framesByEntity: { e1: frames }, onOpenFrame })
+    await screen.findByText('Анна')
+
+    fireEvent.click(screen.getByLabelText('Где встречается Анна'))
+    fireEvent.click(await screen.findByText('Встреча'))
+    expect(onOpenFrame).toHaveBeenCalledWith('f1', expect.objectContaining({ quote: 'Анны' }))
+  })
+
+  it('без упоминаний кнопки «Где встречается» нет: раскрывать нечего', async () => {
+    panel({ entities: [entity()], framesByEntity: { e1: [] } })
+    await screen.findByText('Анна')
+    expect(screen.queryByLabelText('Где встречается Анна')).toBeNull()
+  })
+})
 })

@@ -118,6 +118,81 @@ export function entityUsage(
   return usage
 }
 
+/** Кадр в хронологии сущности: где она появляется и каким словом названа. */
+export interface FrameWithMentions {
+  frameId: string
+  title: string
+  /** Номер кадра в дереве («01.2») — по нему человек находит его в списке. */
+  number: string
+  /** Дата кадра «ГГГГ-ММ-ДД» или пусто. */
+  date: string
+  /** Порядок в дереве: он же порядок для кадров без даты. */
+  order: number
+  mentions: Mention[]
+}
+
+/** Кадр с метаданными, нужными хронологии. */
+export interface DatedFrame extends MentionFrame {
+  number?: string
+  date?: string
+  order?: number
+}
+
+/**
+ * Кадры по карточкам, в хронологическом порядке.
+ *
+ * Порядок — решение, а не деталь: **сначала кадры с датой, по возрастанию даты, затем кадры
+ * без даты в порядке дерева**. Смешивать их одним компаратором нельзя: у кадра без даты нет
+ * «места» на шкале, и любой выбор («в конце», «по структуре») приходится называть вслух.
+ * Выбрано так потому, что человек, спрашивающий «где появляется Анна», думает датами, а
+ * кадры без даты — это то, что ещё не расставлено по времени.
+ */
+export function framesByEntity(
+  frames: DatedFrame[],
+  entities: MentionEntity[],
+): Record<string, FrameWithMentions[]> {
+  const out: Record<string, FrameWithMentions[]> = {}
+  for (const entity of entities) out[entity.id] = []
+  frames.forEach((frame, index) => {
+    const found = frameMentions(frame, entities)
+    if (found.length === 0) return
+    const byEntity = new Map<string, Mention[]>()
+    for (const mention of found) {
+      const list = byEntity.get(mention.entityId) ?? []
+      list.push(mention)
+      byEntity.set(mention.entityId, list)
+    }
+    for (const [entityId, mentions] of byEntity) {
+      const row = out[entityId]
+      if (!row) continue
+      row.push({
+        frameId: frame.id,
+        title: frame.title,
+        number: frame.number ?? '',
+        date: frame.date ?? '',
+        order: frame.order ?? index,
+        mentions,
+      })
+    }
+  })
+  for (const id of Object.keys(out)) out[id] = orderChronologically(out[id])
+  return out
+}
+
+/**
+ * Хронология: с датой — по дате, без даты — в порядке дерева, следом.
+ *
+ * `YYYY-MM-DD` сравнивается как строка: это ровно тот случай, когда лексикографический порядок
+ * совпадает с календарным, и приводить дату к `Date` ради сравнения не нужно.
+ */
+export function orderChronologically(list: FrameWithMentions[]): FrameWithMentions[] {
+  const dated = list.filter((frame) => frame.date !== '')
+  const undated = list.filter((frame) => frame.date === '')
+  dated.sort((a, b) => (a.date === b.date ? a.order - b.order : a.date < b.date ? -1 : 1))
+  undated.sort((a, b) => a.order - b.order)
+  return [...dated, ...undated]
+}
+
 /**
  * Собирает одно регулярное выражение из всех алиасов.
  *

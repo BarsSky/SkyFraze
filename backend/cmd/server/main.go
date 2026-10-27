@@ -294,6 +294,8 @@ func main() {
 	// открытые вкладки видят созданное сразу, а не после перезагрузки.
 	entitiesSvc := entities.New(st, projSvc)
 	entitiesH := entities.NewHandler(entitiesSvc, logger)
+	// Карточки мира едут в архиве проекта (0.69.0): без этого импорт терял бы связи.
+	transferSvc.UseEntities(entitiesSvc)
 	assistantSvc := assistant.New(st, aiSvc, projSvc, transferSvc, cfg.AIMaxToolCalls, logger)
 	// Иллюстрации помощника ложатся вложениями проекта: тот же путь загрузки, что у
 	// файлов из интерфейса (квота, пережатие в WebP, дедупликация).

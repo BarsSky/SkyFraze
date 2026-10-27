@@ -4,6 +4,8 @@ import {
   entityUsage,
   findMentions,
   frameMentions,
+  framesByEntity,
+  orderChronologically,
   type MentionEntity,
 } from './mentions'
 
@@ -107,5 +109,47 @@ describe('entityUsage', () => {
 
   it('пустой проект — все карточки с нулями', () => {
     expect(entityUsage([], [anna])).toEqual({ e1: { frames: 0, mentions: 0 } })
+  })
+})
+
+describe('framesByEntity / хронология', () => {
+  const frames = [
+    // Порядок в списке — порядок дерева: order задан явно, чтобы тест не зависел от индексов.
+    { id: 'f1', title: 'Пролог', body: 'Анна', date: '', order: 0 },
+    { id: 'f2', title: 'Встреча', body: 'Анна и Дом на холме', date: '2026-03-02', order: 1 },
+    { id: 'f3', title: 'Письмо', body: 'Письмо для Анны', date: '2026-01-15', order: 2 },
+    { id: 'f4', title: 'Развязка', body: 'Письмо', date: '', order: 3 },
+  ]
+
+  it('сначала кадры с датой по возрастанию, затем без даты в порядке дерева', () => {
+    const byEntity = framesByEntity(frames, [anna, home, letter])
+    expect(byEntity.e1.map((f) => f.frameId)).toEqual(['f3', 'f2', 'f1'])
+    expect(byEntity.e2.map((f) => f.frameId)).toEqual(['f2'])
+    expect(byEntity.e3.map((f) => f.frameId)).toEqual(['f3', 'f4'])
+  })
+
+  it('в кадре сохраняются все упоминания: по ним видно, каким словом названо', () => {
+    const byEntity = framesByEntity(
+      [{ id: 'f1', title: 'Анна', body: 'Анна и Анны подруги', date: '', order: 0 }],
+      [anna],
+    )
+    expect(byEntity.e1[0].mentions.map((m) => [m.field, m.quote])).toEqual([
+      ['title', 'Анна'],
+      ['body', 'Анна'],
+      ['body', 'Анны'],
+    ])
+  })
+
+  it('карточка без упоминаний остаётся с пустым списком, а не исчезает', () => {
+    const byEntity = framesByEntity(frames, [anna, { id: 'e9', name: 'Сторож', aliases: [] }])
+    expect(byEntity.e9).toEqual([])
+  })
+
+  it('одинаковые даты упорядочены по дереву, а не случайно', () => {
+    const same = [
+      { frameId: 'b', title: '', number: '', date: '2026-05-05', order: 5, mentions: [] },
+      { frameId: 'a', title: '', number: '', date: '2026-05-05', order: 1, mentions: [] },
+    ]
+    expect(orderChronologically(same).map((f) => f.frameId)).toEqual(['a', 'b'])
   })
 })
