@@ -721,6 +721,9 @@ cd frontend && npx tsx tests/visual-entities.ts
 # И для хронологии карточки + фильтра дерева по карточке (0.69.0)
 cd frontend && npx tsx tests/visual-chronology.ts
 
+# И для матрицы «персонажи × главы» (0.71.0)
+cd frontend && npx tsx tests/visual-matrix.ts
+
 # E2E публичной ленты: права, просмотры, оценки
 cd frontend && npx tsx tests/public-feed.ts
 

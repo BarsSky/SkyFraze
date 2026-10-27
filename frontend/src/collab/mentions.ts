@@ -193,6 +193,76 @@ export function orderChronologically(list: FrameWithMentions[]): FrameWithMentio
   return [...dated, ...undated]
 }
 
+/** Глава для матрицы: столбец «персонажи × главы». */
+export interface MatrixChapter {
+  id: string
+  title: string
+  number: string
+}
+
+/** Строка матрицы: карточка и её упоминания по главам (в порядке столбцов). */
+export interface MatrixRow {
+  entity: MentionEntity
+  /** Число упоминаний в каждой главе; 0 — не встречается. */
+  cells: number[]
+  total: number
+}
+
+/** Матрица связей «персонажи × главы». */
+export interface MentionMatrix {
+  chapters: MatrixChapter[]
+  rows: MatrixRow[]
+}
+
+/** Глава, к которой относится кадр: нужен родитель кадра и цепочка до корня. */
+export interface FrameChapter {
+  frameId: string
+  chapterId: string
+}
+
+/**
+ * Матрица «персонажи × главы» — ответ на «кто с кем в одной главе».
+ *
+ * Зачем отдельным видом, если есть хронология: хронология отвечает «когда», а матрица — «кто
+ * рядом». Это единственный экран, где видно, что два персонажа ни разу не встречаются в одной
+ * главе, хотя оба «главные».
+ *
+ * Кадры без главы (потерянный родитель, корневой под-кадр) в матрицу не попадают: столбца для
+ * них нет, а придумывать «бесхозную» колонку значило бы показывать структуру, которой нет.
+ */
+export function mentionMatrix(
+  frames: DatedFrame[],
+  frameChapters: FrameChapter[],
+  chapters: MatrixChapter[],
+  entities: MentionEntity[],
+): MentionMatrix {
+  const chapterByFrame = new Map(frameChapters.map((row) => [row.frameId, row.chapterId]))
+  const counts = new Map<string, Map<string, number>>()
+
+  for (const frame of frames) {
+    const mentions = frameMentions(frame, entities)
+    if (mentions.length === 0) continue
+    const chapterId = chapterByFrame.get(frame.id)
+    if (!chapterId) continue
+    const perEntity = counts.get(chapterId) ?? new Map<string, number>()
+    for (const mention of mentions) {
+      perEntity.set(mention.entityId, (perEntity.get(mention.entityId) ?? 0) + 1)
+    }
+    counts.set(chapterId, perEntity)
+  }
+
+  // Столбцы — только главы, где что-то нашлось, в порядке дерева: пустые столбцы делают
+  // таблицу шире экрана и не сообщают ничего.
+  const used = chapters.filter((chapter) => counts.has(chapter.id))
+  const rows: MatrixRow[] = entities.map((entity) => {
+    const cells = used.map((chapter) => counts.get(chapter.id)?.get(entity.id) ?? 0)
+    return { entity, cells, total: cells.reduce((sum, value) => sum + value, 0) }
+  })
+  // Строки — по числу упоминаний: «сироты» и редкие внизу, главные сверху.
+  rows.sort((a, b) => b.total - a.total)
+  return { chapters: used, rows }
+}
+
 /**
  * Собирает одно регулярное выражение из всех алиасов.
  *

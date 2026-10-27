@@ -5,6 +5,7 @@ import {
   findMentions,
   frameMentions,
   framesByEntity,
+  mentionMatrix,
   orderChronologically,
   type MentionEntity,
 } from './mentions'
@@ -151,5 +152,51 @@ describe('framesByEntity / хронология', () => {
       { frameId: 'a', title: '', number: '', date: '2026-05-05', order: 1, mentions: [] },
     ]
     expect(orderChronologically(same).map((f) => f.frameId)).toEqual(['a', 'b'])
+  })
+})
+
+describe('mentionMatrix — персонажи × главы (0.71.0)', () => {
+  const chapters = [
+    { id: 'ch1', title: 'Пролог', number: '01' },
+    { id: 'ch2', title: 'Развязка', number: '02' },
+  ]
+  const frames = [
+    { id: 'f1', title: 'Пролог', body: 'Анна вошла', date: '', order: 0 },
+    { id: 'f2', title: 'Сцена', body: 'Анна и Дом на холме', date: '', order: 1 },
+    { id: 'f3', title: 'Развязка', body: 'Дом на холме пуст', date: '', order: 2 },
+  ]
+  const frameChapters = [
+    { frameId: 'f1', chapterId: 'ch1' },
+    { frameId: 'f2', chapterId: 'ch1' },
+    { frameId: 'f3', chapterId: 'ch2' },
+  ]
+
+  it('считает упоминания по главам и ставит главных сверху', () => {
+    const matrix = mentionMatrix(frames, frameChapters, chapters, [anna, home, letter])
+    expect(matrix.chapters.map((c) => c.id)).toEqual(['ch1', 'ch2'])
+    // Анна: два упоминания в первой главе; Дом: по одному в каждой; Письмо — ни разу.
+    expect(matrix.rows[0].entity.id).toBe('e1')
+    expect(matrix.rows[0].cells).toEqual([2, 0])
+    expect(matrix.rows[1].entity.id).toBe('e2')
+    expect(matrix.rows[1].cells).toEqual([1, 1])
+    expect(matrix.rows[2].entity.id).toBe('e3')
+    expect(matrix.rows[2].total).toBe(0)
+  })
+
+  it('пустые главы не становятся столбцами: таблица не шире экрана зря', () => {
+    const matrix = mentionMatrix(
+      [frames[2]],
+      [{ frameId: 'f3', chapterId: 'ch2' }],
+      chapters,
+      [home],
+    )
+    expect(matrix.chapters.map((c) => c.id)).toEqual(['ch2'])
+  })
+
+  it('кадр без главы в матрицу не попадает: столбца для него нет', () => {
+    const matrix = mentionMatrix(frames, [], chapters, [anna])
+    expect(matrix.chapters).toEqual([])
+    expect(matrix.rows[0].cells).toEqual([])
+    expect(matrix.rows[0].total).toBe(0)
   })
 })

@@ -236,3 +236,37 @@ describe('хронология карточки (0.69.0)', () => {
   })
 })
 })
+describe('EntitiesPanel — матрица связей (0.71.0)', () => {
+  it('показывает таблицу с главами и количеством, а ноль — точкой', async () => {
+    panel({
+      entities: [entity({ id: 'e1' }), entity({ id: 'e2', name: 'Письмо', aliases: [] })],
+      matrix: {
+        chapters: [
+          { id: 'ch1', title: 'Пролог', number: '01' },
+          { id: 'ch2', title: 'Развязка', number: '02' },
+        ],
+        rows: [
+          { entity: { id: 'e1', name: 'Анна', aliases: [] }, cells: [2, 0], total: 2 },
+          { entity: { id: 'e2', name: 'Письмо', aliases: [] }, cells: [0, 1], total: 1 },
+        ],
+      },
+    })
+    // «Анна» встречается дважды — в списке карточек и в матрице: таблица есть в DOM, даже
+    // когда `details` закрыт, поэтому ищем все совпадения.
+    await screen.findAllByText('Анна')
+    fireEvent.click(screen.getByText(/Матрица: персонажи × главы/))
+    // В шапке столбца — номер главы (название в title): в узкой таблице номер короче.
+    expect(await screen.findByText('01')).toBeTruthy()
+    expect(screen.getByText('02')).toBeTruthy()
+    expect(screen.getByTitle('Пролог')).toBeTruthy()
+    // Нули — точкой: пустая клетка читается как «не загрузилось».
+    expect(screen.getAllByText('·').length).toBe(2)
+    expect(screen.getByText('всего')).toBeTruthy()
+  })
+
+  it('без глав матрицы нет: раскрывать нечего', async () => {
+    panel({ entities: [entity()], matrix: { chapters: [], rows: [] } })
+    await screen.findByText('Анна')
+    expect(screen.queryByText(/Матрица: персонажи/)).toBeNull()
+  })
+})

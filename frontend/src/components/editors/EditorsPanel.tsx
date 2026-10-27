@@ -18,7 +18,9 @@ import {
   entityUsage,
   frameMentions,
   framesByEntity,
+  mentionMatrix,
   type DatedFrame,
+  type FrameChapter,
   type MentionFrame,
   type FrameWithMentions,
   type Mention,
@@ -677,6 +679,33 @@ once — чтобы повторный
     return frame ? frameMentions(frame, entities) : []
   }, [entities, mentionFrames, selectedId])
 
+  /**
+   * Матрица «персонажи × главы» (0.71.0).
+   *
+   * Главу кадра ищем подъёмом по родителям до корня: в дереве кадр лежит на любой глубине, а
+   * матрица считается по главам. Кадр без главы (потерянный родитель) в матрицу не попадает —
+   * столбца для него нет, и придумывать его значило бы показывать структуру, которой нет.
+   */
+  const entityMatrix = useMemo(() => {
+    const byId = new Map(rows.map((row) => [row.id, row]))
+    const chapters = rows
+      .filter((row) => row.isChapter)
+      .map((row) => ({ id: row.id, title: row.title, number: row.number }))
+    const frameChapters: FrameChapter[] = []
+    for (const row of rows) {
+      let current:
+        | { id: string; parentId: string | null; isChapter: boolean }
+        | undefined = row
+      // Предохранитель от цикла: битое дерево не должно вешать панель.
+      let guard = 0
+      while (current && !current.isChapter && guard < 16) {
+        current = current.parentId ? byId.get(current.parentId) : undefined
+        guard += 1
+      }
+      if (current?.isChapter) frameChapters.push({ frameId: row.id, chapterId: current.id })
+    }
+    return mentionMatrix(mentionFrames, frameChapters, chapters, entities)
+  }, [entities, mentionFrames, rows])
   /** Открыть кадр из хронологии: выбрать его и подсветить упоминание. */
   const openFrameWithMention = useCallback((frameId: string, mention: Mention) => {
     setSelectedId(frameId)
@@ -1639,6 +1668,7 @@ once — чтобы повторный
           usage={entityUse}
           framesByEntity={entityFrames}
           onOpenFrame={openFrameWithMention}
+          matrix={entityMatrix}
         />
       )}
 

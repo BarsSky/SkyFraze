@@ -10,7 +10,7 @@ import {
   type ProjectEntity,
 } from '../../api/entities'
 import { serverErrorMessage } from '../../api/client'
-import type { FrameWithMentions, Mention } from '../../collab/mentions'
+import type { FrameWithMentions, Mention, MentionMatrix } from '../../collab/mentions'
 
 /**
  * «Связи проекта» — карточки персонажей, мест и тем (docs/entity-links.md, фаза 1).
@@ -47,6 +47,11 @@ interface Props {
    */
   framesByEntity?: Record<string, FrameWithMentions[]>
   onOpenFrame?: (frameId: string, mention: Mention) => void
+  /**
+   * Матрица «персонажи × главы» (0.71.0): кто с кем в одной главе. Единственный вид, где видно,
+   * что два «главных» персонажа ни разу не встречаются вместе.
+   */
+  matrix?: MentionMatrix
 }
 
 export function EntitiesPanel({
@@ -58,6 +63,7 @@ export function EntitiesPanel({
   usage,
   framesByEntity,
   onOpenFrame,
+  matrix,
 }: Props) {
   const [kind, setKind] = useState<EntityKind>('character')
   const [name, setName] = useState('')
@@ -331,6 +337,48 @@ export function EntitiesPanel({
         >
           {note.text}
         </p>
+      )}
+      {/* Матрица связей: строки — карточки, столбцы — главы, в клетке число упоминаний.
+          «Точка» у нуля вместо пустоты: пустая клетка читается как «не загрузилось». */}
+      {matrix !== undefined && matrix.chapters.length > 0 && matrix.rows.length > 0 && (
+        <details className="ent__matrix" data-entity-matrix>
+          <summary className="ent__matrix-summary">Матрица: персонажи × главы</summary>
+          <div className="ent__matrix-scroll">
+            <table className="ent__matrix-table">
+              <thead>
+                <tr>
+                  <th scope="col">Карточка</th>
+                  {matrix.chapters.map((chapter) => (
+                    <th key={chapter.id} scope="col" title={chapter.title}>
+                      {chapter.number || chapter.title}
+                    </th>
+                  ))}
+                  <th scope="col">всего</th>
+                </tr>
+              </thead>
+              <tbody>
+                {matrix.rows.map((row) => (
+                  <tr key={`${row.entity.id}-matrix`} data-matrix-row={row.entity.id}>
+                    <th scope="row">{row.entity.name}</th>
+                    {row.cells.map((count, index) => (
+                      <td
+                        key={`${row.entity.id}-${matrix.chapters[index].id}`}
+                        className={count === 0 ? 'muted' : undefined}
+                      >
+                        {count === 0 ? '·' : count}
+                      </td>
+                    ))}
+                    <td>{row.total}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="muted ent__note">
+            Число — упоминания в главе. «·» — не встречается: так и видно, кто ни разу не был в
+            одной сцене с другими.
+          </p>
+        </details>
       )}
     </details>
   )
