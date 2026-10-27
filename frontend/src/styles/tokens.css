@@ -337,6 +337,57 @@ html.sf-stage-on .layout header {
   .brand { min-width: 44px; justify-content: center; }
 }
 
+/* ── заставка загрузки (0.80.0) ──────────────────────────────────────────────
+   Первую копию этих правил содержит `index.html`: она нужна ДО загрузки CSS, чтобы вместо
+   чёрного экрана на перезагрузке сразу была видна заставка. Здесь — те же классы для React
+   (проверка входа, загрузка проекта), чтобы переход не мигал разными экранами. */
+.boot {
+  min-height: 100vh;
+  box-sizing: border-box;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 10px;
+  padding: 24px;
+  background: var(--bg);
+  color: var(--fg);
+}
+.boot__mark {
+  width: 44px; height: 44px; display: grid; place-items: center;
+  border-radius: 12px; color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.boot__title { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: 0.02em; }
+.boot__note { margin: 0; color: var(--fg-muted); }
+.boot__spinner {
+  width: 22px; height: 22px; border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  border-top-color: var(--accent);
+  animation: boot-spin 0.9s linear infinite;
+}
+@keyframes boot-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .boot__spinner { animation: none; }
+}
+
+/* Полоска загрузки раздела (0.80.0): шапка уже на экране, страница догружается — без пустоты
+   и без полноэкранной заставки, которая выглядела бы как перезагрузка приложения. */
+.page-fallback { display: grid; gap: 10px; padding: 24px; justify-items: start; }
+.page-fallback__bar {
+  width: min(280px, 60vw); height: 6px; border-radius: 999px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  background-size: 200% 100%;
+  animation: page-fallback-slide 1.2s ease-in-out infinite;
+}
+.page-fallback__note { margin: 0; font-size: 13px; }
+@keyframes page-fallback-slide {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .page-fallback__bar { animation: none; background: var(--accent); }
+}
+
 /* Empty-state страницы проекта */
 .sf-empty {
   margin: 24px 0;

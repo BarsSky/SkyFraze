@@ -750,6 +750,11 @@ cd frontend && npx tsx tests/diag-header-stage.ts
 # рядом с узлом (внутри холста, не во всю ширину), светлая тема и телефон 390 px
 cd frontend && npx tsx tests/diag-relations.ts
 
+# Скорость перезагрузки (0.80.0): таймлайн запросов, FCP/LCP, когда появляется каждый блок.
+# Мерить надо ПРОД-СБОРКУ (дев-сервер отдаёт сотни модулей и врёт): сначала `npm run build`,
+# затем `npx vite preview --port 4173`, затем
+cd frontend && npx tsx tests/diag-load.ts http://localhost:4173
+
 # E2E публичной ленты: права, просмотры, оценки
 cd frontend && npx tsx tests/public-feed.ts
 
