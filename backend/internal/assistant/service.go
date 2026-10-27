@@ -32,6 +32,7 @@ import (
 
 	"github.com/skyfraze/backend/internal/ai"
 	"github.com/skyfraze/backend/internal/collab/yjs"
+	"github.com/skyfraze/backend/internal/entities"
 	"github.com/skyfraze/backend/internal/events"
 	"github.com/skyfraze/backend/internal/projects"
 	"github.com/skyfraze/backend/internal/store"
@@ -151,6 +152,9 @@ type CommentReader interface {
 // одного персонажа по-разному в разных главах, и связи в тексте не сходятся.
 type EntityReader interface {
 	ListEntities(ctx context.Context, userID, projectID uuid.UUID) ([]store.ProjectEntity, error)
+	// Frames — кадры, где карточка встречается (0.70.0): по ним помощник отвечает
+	// «где появляется Анна», не читая документ в браузере.
+	Frames(ctx context.Context, userID, projectID, entityID uuid.UUID) ([]entities.EntityFrame, error)
 }
 
 // Service — беседы с моделью внутри проекта.

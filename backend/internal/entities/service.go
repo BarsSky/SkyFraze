@@ -194,6 +194,79 @@ func (s *Service) Delete(ctx context.Context, userID, projectID, id uuid.UUID) e
 	return s.store.DeleteEntity(ctx, projectID, id)
 }
 
+// Usage — где каждая карточка встречается в проекте (0.70.0).
+//
+// Считается по проекции дерева (`events`), а не по хранимым упоминаниям: текст кадров там уже
+// есть, и выводить из него связи дешевле, чем поддерживать вторую таблицу с якорями и её
+// синхронизацию. Заодно это работает без открытой вкладки — именно поэтому метод нужен
+// помощнику, а не только интерфейсу.
+func (s *Service) Usage(
+	ctx context.Context, userID, projectID uuid.UUID,
+) ([]EntityUsageRow, error) {
+	if err := s.proj.RequireViewer(ctx, userID, projectID); err != nil {
+		return nil, err
+	}
+	list, err := s.store.ListEntities(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	if len(list) == 0 {
+		return nil, nil
+	}
+	events, err := s.store.ListEvents(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	frames := make([]TextFrame, 0, len(events))
+	for _, e := range events {
+		frames = append(frames, TextFrame{ID: e.ID.String(), Title: e.Title, Body: e.Body})
+	}
+	return Usage(frames, list), nil
+}
+
+// EntityFrames — кадры, где встречается одна карточка, с цитатами (для помощника).
+//
+// Порядок — как в проекции дерева (глубина, позиция): это тот же порядок, что человек видит в
+// списке кадров, и он стабилен между вызовами.
+type EntityFrame struct {
+	FrameID string
+	Title   string
+	Quotes  []string
+}
+
+// Frames — кадры одной карточки по её имени.
+func (s *Service) Frames(
+	ctx context.Context, userID, projectID uuid.UUID, entityID uuid.UUID,
+) ([]EntityFrame, error) {
+	if err := s.proj.RequireViewer(ctx, userID, projectID); err != nil {
+		return nil, err
+	}
+	entity, err := s.store.EntityByID(ctx, projectID, entityID)
+	if err != nil {
+		return nil, err
+	}
+	events, err := s.store.ListEvents(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]EntityFrame, 0, 8)
+	for _, e := range events {
+		mentions := FrameMentions(
+			TextFrame{ID: e.ID.String(), Title: e.Title, Body: e.Body},
+			[]store.ProjectEntity{*entity},
+		)
+		if len(mentions) == 0 {
+			continue
+		}
+		quotes := make([]string, 0, len(mentions))
+		for _, mention := range mentions {
+			quotes = append(quotes, mention.Quote)
+		}
+		out = append(out, EntityFrame{FrameID: e.ID.String(), Title: e.Title, Quotes: quotes})
+	}
+	return out, nil
+}
+
 // CleanAliases чистит список алиасов.
 //
 // Зачем: алиасы — это то, по чему ищутся упоминания. «Анна» в алиасах при имени «Анна» дала бы

@@ -81,6 +81,8 @@ func (s *Service) execute(
 		return s.toolReadComments(ctx, userID, projectID, call)
 	case ToolListEntities:
 		return s.toolListEntities(ctx, userID, projectID, call)
+	case ToolReadEntity:
+		return s.toolReadEntity(ctx, userID, projectID, call)
 	case ToolProposeFragmentEdit:
 		return s.toolProposeFragmentEdit(ctx, userID, projectID, call)
 	case ToolGenerateImage:
@@ -559,6 +561,76 @@ func (s *Service) toolListEntities(
 			"entities": rows,
 			// Строки для промпта: модель читает текст лучше, чем вложенный JSON.
 			"summary": strings.Join(lines, "\n"),
+		},
+	}
+}
+
+// toolReadEntity отвечает на «где появляется Анна»: кадры и цитаты.
+//
+// Почему это ценно именно помощнику. Читая текст кадра за кадром, модель не видит линию героя;
+// список кадров с цитатами даёт ей структуру, по которой можно дописать сцену, не повторяя
+// то, что уже было. Имя берём из list_entities — по идентификатору модель ошибалась бы чаще.
+func (s *Service) toolReadEntity(
+	ctx context.Context, userID, projectID uuid.UUID, call ai.ToolCall,
+) toolResult {
+	if s.world == nil {
+		return refusedCall(call, "карточки мира недоступны на этом стенде")
+	}
+	name := strings.TrimSpace(argString(call.Arguments, "name"))
+	if name == "" {
+		return refusedCall(call, "нужно имя карточки из list_entities")
+	}
+	list, err := s.world.ListEntities(ctx, userID, projectID)
+	if err != nil {
+		return refusedCall(call, "не удалось прочитать карточки мира: "+err.Error())
+	}
+	var target *store.ProjectEntity
+	for i := range list {
+		if strings.EqualFold(list[i].Name, name) {
+			target = &list[i]
+			break
+		}
+	}
+	if target == nil {
+		return refusedCall(call, fmt.Sprintf(
+			"карточки «%s» нет в проекте: возьми имя из list_entities", name))
+	}
+	frames, err := s.world.Frames(ctx, userID, projectID, target.ID)
+	if err != nil {
+		return refusedCall(call, "не удалось найти упоминания: "+err.Error())
+	}
+	if len(frames) == 0 {
+		return toolResult{
+			call:   call,
+			report: Call{Name: call.Name, OK: true, Detail: "упоминаний нет"},
+			payload: map[string]any{
+				"entity": map[string]any{"name": target.Name, "kind": target.Kind},
+				"frames": []any{},
+				"note": "карточка в тексте ни разу не названа — упоминаний нет; " +
+					"если её знают под другим именем, добавь алиас в карточке",
+			},
+		}
+	}
+	rows := make([]map[string]any, 0, len(frames))
+	lines := make([]string, 0, len(frames))
+	for _, frame := range frames {
+		rows = append(rows, map[string]any{
+			"event_id": frame.FrameID,
+			"title":    frame.Title,
+			"quotes":   frame.Quotes,
+		})
+		lines = append(lines, fmt.Sprintf("%s — %s", frame.Title, strings.Join(frame.Quotes, ", ")))
+	}
+	return toolResult{
+		call: call,
+		report: Call{
+			Name: call.Name, OK: true,
+			Detail: fmt.Sprintf("кадров: %d", len(rows)),
+		},
+		payload: map[string]any{
+			"entity":  map[string]any{"name": target.Name, "kind": target.Kind},
+			"frames":  rows,
+			"summary": strings.Join(lines, "; "),
 		},
 	}
 }

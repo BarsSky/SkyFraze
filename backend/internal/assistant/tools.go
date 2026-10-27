@@ -48,6 +48,8 @@ const (
 	ToolProposeFragmentEdit = "propose_fragment_edit"
 	// Карточки мира проекта (0.67.0): персонажи, места, темы.
 	ToolListEntities = "list_entities"
+	// Где карточка встречается (0.70.0): кадры и цитаты по имени.
+	ToolReadEntity = "read_entity"
 )
 
 // ErrUnknownTool — модель попросила инструмент, которого нет. Это не падение сервера:
@@ -102,7 +104,22 @@ func ToolDefs(caps Capabilities, editing, world bool) []ai.ToolDef {
 				"type":       "object",
 				"properties": map[string]any{},
 			},
-		})
+		},
+			// Где карточка встречается (0.70.0). Сервер ищет по проекции дерева, поэтому ответ
+			// не зависит от того, открыт ли проект в браузере.
+			ai.ToolDef{
+				Name: ToolReadEntity,
+				Description: "Показать, в каких кадрах встречается персонаж, место или тема, с цитатами. " +
+					"Нужно для вопросов «где появляется Анна» и чтобы дописать линию героя, не перечитывая проект целиком.",
+				Parameters: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"name": map[string]any{"type": "string", "description": "Имя карточки из list_entities"},
+					},
+					"required": []string{"name"},
+				},
+			},
+		)
 	}
 
 	// Текстовые инструменты — только если текстом можно заниматься (режим «только
@@ -188,9 +205,9 @@ func ToolDefs(caps Capabilities, editing, world bool) []ai.ToolDef {
 				Parameters: map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"comment_id": map[string]any{"type": "string", "description": "Идентификатор замечания из read_comments"},
+						"comment_id":  map[string]any{"type": "string", "description": "Идентификатор замечания из read_comments"},
 						"replacement": map[string]any{"type": "string", "description": "Новый текст выделенного фрагмента (Markdown, без окружающих абзацев)"},
-						"reason":     map[string]any{"type": "string", "description": "Коротко, что исправляет правка: это увидит человек"},
+						"reason":      map[string]any{"type": "string", "description": "Коротко, что исправляет правка: это увидит человек"},
 					},
 					"required": []string{"comment_id", "replacement"},
 				},
@@ -504,6 +521,7 @@ func trimFloat(v float64) string {
 	}
 	return fmt.Sprintf("%g", v)
 }
+
 // FragmentEditArgs — разобранные аргументы предложения правки фрагмента.
 type FragmentEditArgs struct {
 	// CommentID — замечание, к фрагменту которого относится правка.

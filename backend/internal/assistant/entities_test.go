@@ -14,18 +14,28 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/skyfraze/backend/internal/ai"
+	"github.com/skyfraze/backend/internal/entities"
 	"github.com/skyfraze/backend/internal/store"
 )
 
-// fakeWorld — карточки мира без базы: инструмент только читает, и ему достаточно этого.
+// fakeWorld — карточки мира без базы: инструменты только читают, и им достаточно этого.
 type fakeWorld struct {
-	list []store.ProjectEntity
+	list   []store.ProjectEntity
+	frames []entities.EntityFrame
 }
 
 func (f fakeWorld) ListEntities(
 	_ context.Context, _, _ uuid.UUID,
 ) ([]store.ProjectEntity, error) {
 	return f.list, nil
+}
+
+// Frames отдаёт заранее заданные кадры: тест проверяет разбор ответа, а не поиск по тексту
+// (поиск проверяется в internal/entities/match_test.go своими случаями).
+func (f fakeWorld) Frames(
+	_ context.Context, _, _, _ uuid.UUID,
+) ([]entities.EntityFrame, error) {
+	return f.frames, nil
 }
 
 func callEntities() ai.ToolCall {

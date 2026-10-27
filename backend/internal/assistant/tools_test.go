@@ -244,11 +244,11 @@ func TestParseTextToolCallsLooseJSONNeedsKnownTool(t *testing.T) {
 // урезанные — отдельным тестом ниже.
 func TestToolDefsAreWellFormed(t *testing.T) {
 	defs := ToolDefs(Capabilities{Text: true, Images: true}, true, true)
-	// 10 = чтение дерева и кадра, карточки мира (list_entities), обсуждение кадров, создание
+	// 11 = чтение дерева и кадра, карточки мира (list_entities и read_entity), обсуждение кадров, создание
 	// главы и под-события, предложение правки кадра, правка фрагмента по замечанию, удаление,
 	// иллюстрация.
-	if len(defs) != 10 {
-		t.Fatalf("инструментов %d, ожидалось 10", len(defs))
+	if len(defs) != 11 {
+		t.Fatalf("инструментов %d, ожидалось 11", len(defs))
 	}
 	seen := map[string]bool{}
 	for _, def := range defs {
@@ -263,7 +263,7 @@ func TestToolDefsAreWellFormed(t *testing.T) {
 			t.Fatalf("схема %s должна быть объектом: %+v", def.Name, def.Parameters)
 		}
 	}
-	for _, want := range []string{ToolListEvents, ToolReadEvent, ToolCreateChapter, ToolCreateSub, ToolListEntities} {
+	for _, want := range []string{ToolListEvents, ToolReadEvent, ToolCreateChapter, ToolCreateSub, ToolListEntities, ToolReadEntity} {
 		if !seen[want] {
 			t.Fatalf("инструмент %s не объявлен", want)
 		}
