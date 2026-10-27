@@ -56,6 +56,11 @@ interface Props {
    * что два «главных» персонажа ни разу не встречаются вместе.
    */
   matrix?: MentionMatrix
+  /**
+   * Матрица раскрыта сразу (0.79.0). В области «Связи» она — часть ответа на «кто с кем
+   * встречается», и прятать её за свёрнутым заголовком значит заставлять искать.
+   */
+  matrixOpen?: boolean
   /** Связи карточек проекта (0.74.0): чипы «Аня — живёт на → Земля». */
   links?: EntityLink[]
 }
@@ -70,6 +75,7 @@ export function EntitiesPanel({
   framesByEntity,
   onOpenFrame,
   matrix,
+  matrixOpen = false,
   links,
 }: Props) {
   const [kind, setKind] = useState<EntityKind>('character')
@@ -499,7 +505,7 @@ export function EntitiesPanel({
       {/* Матрица связей: строки — карточки, столбцы — главы, в клетке число упоминаний.
           «Точка» у нуля вместо пустоты: пустая клетка читается как «не загрузилось». */}
       {matrix !== undefined && matrix.chapters.length > 0 && matrix.rows.length > 0 && (
-        <details className="ent__matrix" data-entity-matrix>
+        <details className="ent__matrix" data-entity-matrix open={matrixOpen}>
           <summary className="ent__matrix-summary">Матрица: персонажи × главы</summary>
           <div className="ent__matrix-scroll">
             <table className="ent__matrix-table">

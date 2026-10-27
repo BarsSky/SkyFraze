@@ -12,9 +12,8 @@ import {
 } from '../../api/comments'
 import { FrameComments } from './FrameComments'
 import { FrameMentions } from './FrameMentions'
-import { EntitiesPanel } from '../entities/EntitiesPanel'
 import { scrollWithinMain } from '../../lib/scrollTo'
-import { EntityGraph } from '../entities/EntityGraph'
+import { onOpenFrameRequest } from '../../lib/openFrame'
 import { useProjectEntities } from '../entities/useProjectEntities'
 import {
   entityUsage,
@@ -710,19 +709,15 @@ once — чтобы повторный
     return mentionMatrix(mentionFrames, frameChapters, chapters, entities)
   }, [entities, mentionFrames, rows])
   /**
-   * Открыть блок связей из тулбара (0.72.1): раскрыть и прокрутить к нему.
+   * Переход к области «Связи» из тулбара (0.72.1 → 0.79.0).
    *
-   * `details` раскрываем через DOM, а не пропом: блок живёт в своём компоненте и запоминает
-   * выбор сам. Так кнопка в тулбаре не превращается во второй владелец этого состояния.
+   * С 0.79.0 карточки живут в отдельной области над панелью, поэтому кнопка не раскрывает
+   * блок внутри редакторов, а прокручивает страницу к разделу «Связи». Прокрутка — только
+   * `main`: `scrollIntoView` двигал документ и уводил шапку за экран (0.72.1).
    */
-  const openEntitiesBlock = useCallback(() => {
-    const block = document.querySelector<HTMLDetailsElement>('[data-entities]')
-    if (!block) return
-    block.open = true
-    // Только main: scrollIntoView двигал документ и уводил шапку за экран (0.72.1).
-    scrollWithinMain(block)
-    const firstInput = block.querySelector<HTMLInputElement>('input[aria-label="Имя карточки"]')
-    firstInput?.focus({ preventScroll: true })
+  const openRelations = useCallback(() => {
+    const section = document.querySelector<HTMLElement>('[data-relations]')
+    if (section) scrollWithinMain(section)
   }, [])
   /** Открыть кадр из хронологии: выбрать его и подсветить упоминание. */
   const openFrameWithMention = useCallback((frameId: string, mention: Mention) => {
@@ -734,6 +729,21 @@ once — чтобы повторный
       nonce: (current?.nonce ?? 0) + 1,
     }))
   }, [])
+
+  /**
+   * Кадр просят открыть из другой области — из хронологии в «Связях» (0.79.0).
+   *
+   * Событие, а не проп: область «Связи» и панель редакторов — соседние, но независимые
+   * компоненты страницы, и тащить колбэк через страницу значило бы регистрировать ссылку
+   * внутрь панели. Событие описано в `lib/openFrame.ts`.
+   */
+  useEffect(() => {
+    return onOpenFrameRequest(({ frameId, mention }) => {
+      if (mention) openFrameWithMention(frameId, mention)
+      else setSelectedId(frameId)
+      scrollWithinMain(document.querySelector<HTMLElement>('[data-editor-panel]'))
+    })
+  }, [openFrameWithMention])
 
   /**
    * Помещается ли разобранный кусок в проект.
@@ -1525,7 +1535,7 @@ once — чтобы повторный
           <button
             type="button"
             className="secondary"
-            onClick={openEntitiesBlock}
+            onClick={openRelations}
             data-ed-entities-jump
           >
             связи проекта
@@ -1681,27 +1691,10 @@ once — чтобы повторный
         </p>
       )}
 
-      {/* Связи проекта (0.67.0): карточки персонажей, мест и тем. Над сеткой, а не внутри:
-          дерево кадров и редактор — про текст, карточки — про мир вокруг него, и в общем
-          скролле они мешали бы друг другу. Без projectId панель не рисуется: карточки живут
-          на сервере, и «локального» списка у них нет. */}
-      {projectId && (
-        <EntitiesPanel
-          projectId={projectId}
-          canEdit={canEdit === true}
-          entities={entities}
-          loaded={entitiesLoaded}
-          reload={() => void reloadEntities()}
-          usage={entityUse}
-          framesByEntity={entityFrames}
-          onOpenFrame={openFrameWithMention}
-          matrix={entityMatrix}
-          links={entityLinks}
-        />
-      )}
-
-      {/* Эго-граф связей: между редактором и карточками, как и договаривались. */}
-      {entities.length > 0 && <EntityGraph entities={entities} links={entityLinks} />}
+      {/* Связи проекта живут в отдельной области «Связи» (0.79.0): граф и карточки мира — это
+          не правка текста, и в общей колонке они мешали друг другу (форма создания карточки
+          оказывалась между «+ глава» и фильтром дерева). Здесь остаётся только то, что про
+          кадры: фильтр дерева по карточке и упоминания под редактором. */}
 
       <div className="ed-panel__grid">
         <nav

@@ -1,9 +1,10 @@
-﻿import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { scrollWithinMain } from '../lib/scrollTo'
 import { TimelineStage, type AssetLookup } from '../components/timeline/TimelineStage'
 import { ProjectLoading } from '../components/timeline/ProjectLoading'
 import { EditorsPanel } from '../components/editors/EditorsPanel'
+import { RelationsPanel } from '../components/entities/RelationsPanel'
 import { AssistantDock } from '../components/assistant/AssistantDock'
 import { VersionsModal } from '../components/versions/VersionsModal'
 import { PresenceBar } from '../components/collab/PresenceBar'
@@ -275,6 +276,14 @@ export function ProjectTimelinePage() {
     scrollWithinMain(document.querySelector<HTMLElement>('[data-editor-panel]'))
   }, [])
 
+  /**
+   * Переход к области «Связи» (0.79.0) — тем же способом, что и к редакторам: область стоит
+   * в потоке страницы между показом проекта и панелью редакторов.
+   */
+  const openRelations = useCallback(() => {
+    scrollWithinMain(document.querySelector<HTMLElement>('[data-relations]'))
+  }, [])
+
   const openAssistant = useCallback(() => {
     setAssistantOpen(true)
   }, [])
@@ -410,6 +419,9 @@ export function ProjectTimelinePage() {
                 <button className="secondary" onClick={openEditors}>
                   Редакторы
                 </button>
+                <button className="secondary" onClick={openRelations} data-relations-open>
+                  Связи
+                </button>
                 <button className="secondary" onClick={() => setVersionsOpen(true)} data-versions-open>
                   Версии
                 </button>
@@ -434,6 +446,15 @@ export function ProjectTimelinePage() {
           fixed-слои стадии (sf-stage, z-index 10, непрозрачный фон) закрывают
           всё, что в потоке выше трека, поэтому «над стадией» у редактора было бы
           не видно вовсе. */}
+      {/* Область «Связи» (0.79.0): карточки мира, граф, хронология и матрица — отдельным
+          разделом МЕЖДУ показом проекта (стадией) и панелью редакторов. Так сверху вниз
+          получается: смотрю проект → смотрю его связи → правлю текст. Раньше это жило внутри
+          редакторов, между кнопками правки кадров и деревом, и мешало обеим задачам.
+          Читателю тоже видно: карточки ему доступны на чтение. */}
+      {!loading && events && eventsCount > 0 && (
+        <RelationsPanel projectId={projectId} canEdit={canEdit === true} />
+      )}
+
       {!editorsShown && !loading && presenceBar}
 
       {editorsShown && !loading && events && (

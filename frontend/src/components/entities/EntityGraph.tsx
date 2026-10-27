@@ -23,11 +23,17 @@ import {
 interface Props {
   entities: ProjectEntity[]
   links: EntityLink[]
+  /**
+   * Высокий холст (0.79.0): в области «Связи» граф — главное, а не полоска между блоками.
+   * Меньше 320 px по высоте не бывает, поэтому режим «список» (он для низких экранов) здесь
+   * включается только на телефоне в альбомной ориентации.
+   */
+  tall?: boolean
 }
 
 const HISTORY_LIMIT = 10
 
-export function EntityGraph({ entities, links }: Props) {
+export function EntityGraph({ entities, links, tall = false }: Props) {
   /** Откуда пришли: стек последних центров, «назад» снимает верхний. */
   const [history, setHistory] = useState<string[]>([])
   const [centerId, setCenterId] = useState<string | null>(null)
@@ -152,6 +158,20 @@ export function EntityGraph({ entities, links }: Props) {
     [center, neighbors, size.height, size.width, windowStart],
   )
 
+  /**
+   * Точка, у которой раскрывать карточку: центр холста для центральной карточки и место узла
+   * для соседа. В режиме «рулетки» соседи стоят списком справа — карточка прижмётся к своему
+   * узлу так же.
+   */
+  const anchorFor = useCallback(
+    (id: string) => {
+      if (layout.center.node.id === id) return { x: layout.center.x, y: layout.center.y }
+      const neighbor = layout.neighbors.find((positioned) => positioned.node.id === id)
+      return neighbor ? { x: neighbor.x, y: neighbor.y } : { x: size.width / 2, y: size.height / 2 }
+    },
+    [layout.center, layout.neighbors, size.height, size.width],
+  )
+
   const go = useCallback(
     (id: string) => {
       if (!id || id === centerId) return
@@ -249,7 +269,7 @@ export function EntityGraph({ entities, links }: Props) {
   }
 
   return (
-    <div className="egraph" data-entity-graph="canvas">
+    <div className={tall ? 'egraph egraph--tall' : 'egraph'} data-entity-graph="canvas">
       <GraphHeader
         query={query}
         setQuery={setQuery}
@@ -257,7 +277,10 @@ export function EntityGraph({ entities, links }: Props) {
         onPick={go}
         onBack={history.length > 0 ? back : null}
       />
+      {/* Холст — «пространство»: у него свой фон с сеткой и звёздами (0.79.0). Сеть карточек
+          читается как карта, а не как белое поле, и не сливается с полотном страницы. */}
       <div className="egraph__canvas" ref={setHost} data-entity-graph-canvas>
+        <div className="egraph__space" aria-hidden="true" />
         <svg className="egraph__edges" width="100%" height="100%" aria-hidden="true">
           {layout.edges.map((edge) => (
             <g key={edge.linkId}>
@@ -307,6 +330,12 @@ export function EntityGraph({ entities, links }: Props) {
             card={expandedCard}
             links={links}
             entities={entities}
+            /* Карточка раскрывается РЯДОМ с узлом, а не полосой внизу холста (0.79.0):
+               полоса читалась как подпись к графу, а не как карточка. Позицию считаем по
+               координатам узла и прижимаем к краям, чтобы карточка не уезжала за холст. */
+            anchor={anchorFor(expandedCard.id)}
+            canvasWidth={size.width}
+            canvasHeight={size.height}
             isCenter={expandedCard.id === center.id}
             onCenter={() => {
               go(expandedCard.id)
@@ -326,17 +355,23 @@ export function EntityGraph({ entities, links }: Props) {
 }
 
 /**
- * Карточка узла: имя, вид, алиасы и ближайшие связи (0.78.0).
+ * Карточка узла: имя, вид, алиасы и ближайшие связи (0.78.0 → 0.79.0).
  *
  * Зачем: таблетка с именем отвечает только «как зовут». Чтобы понять, ТА ли это карточка и
  * куда ведут её связи, нужно раскрыть её — и это ожидаемое действие по нажатию на узел.
  * Раньше нажатие на соседа сразу делало его центром: переход без права посмотреть.
  * Теперь нажатие раскрывает карточку, а переход — отдельной кнопкой «Сделать центром».
+ *
+ * С 0.79.0 карточка раскрывается РЯДОМ с узлом: полоса во всю ширину холста читалась как
+ * подпись к графу, а не как карточка (отчёт: «лучше не подпись, а раскрывающаяся карточка»).
  */
 function NodeCard({
   card,
   links,
   entities,
+  anchor,
+  canvasWidth,
+  canvasHeight,
   isCenter,
   onCenter,
   onClose,
@@ -344,14 +379,31 @@ function NodeCard({
   card: ProjectEntity
   links: EntityLink[]
   entities: ProjectEntity[]
+  anchor: { x: number; y: number }
+  canvasWidth: number
+  canvasHeight: number
   isCenter: boolean
   onCenter: () => void
   onClose: () => void
 }) {
   const connections = connectionsOf(card.id, links, entities)
   const shown = connections.slice(0, MAX_CARD_LINKS)
+  // Карточка ставится справа от узла; если справа не хватает места — слева. По вертикали
+  // центрируется на узле и прижимается к краям: узел у нижней кромки не должен тянуть карточку
+  // за холст.
+  const preferRight = anchor.x + CARD_WIDTH + 24 <= canvasWidth
+  const left = preferRight
+    ? Math.min(anchor.x + 22, Math.max(8, canvasWidth - CARD_WIDTH - 8))
+    : Math.max(8, anchor.x - CARD_WIDTH - 22)
+  const top = Math.min(Math.max(anchor.y, 60), Math.max(60, canvasHeight - 60))
   return (
-    <div className="egraph__card" role="dialog" aria-label={`Карточка ${card.name}`} data-entity-graph-card>
+    <div
+      className="egraph__card"
+      role="dialog"
+      aria-label={`Карточка ${card.name}`}
+      data-entity-graph-card
+      style={{ left, top, width: CARD_WIDTH }}
+    >
       <div className="egraph__card-head">
         <span className="ent__kind">{kindLabel(card.kind)}</span>
         <strong className="egraph__card-name">{card.name}</strong>
@@ -397,6 +449,9 @@ function NodeCard({
 
 /** Сколько связей показывать в карточке: остальное — по переходу в панель связей. */
 const MAX_CARD_LINKS = 8
+
+/** Ширина раскрывающейся карточки узла: 320 px — как у обычной карточки в интерфейсе. */
+const CARD_WIDTH = 320
 
 /**
  * Короткая подпись ребра: одна связь целиком, несколько — первая и «+N».
