@@ -358,19 +358,24 @@ describe('EntityGraph — мир, группы и поиск по меткам (
     expect(document.querySelectorAll('[data-entity-graph-level]')).toHaveLength(0)
   })
 
-  it('свайп влево по карточкам группы переключает на следующую группу', async () => {
+  it('группы листаются стрелками; свайпа нет — жест отдан прокрутке страницы (0.102.0)', async () => {
     render(<EntityGraph entities={[anna, earth, bob]} links={links} types={types} />)
     fireEvent.click(await screen.findByRole('button', { name: 'Мир' }))
     fireEvent.click(screen.getByRole('button', { name: /Группа «Место»/ }))
+    const cards = () =>
+      document
+        .querySelector('[data-entity-graph-group-cards]')
+        ?.getAttribute('data-entity-graph-group-cards')
+    expect(cards()).toBe('place')
+    // Касание влево больше ничего не листает: свайп убран, потому что на телефоне не срабатывал.
     const list = document.querySelector('[data-entity-graph-group-cards]') as HTMLElement
-    expect(list.getAttribute('data-entity-graph-group-cards')).toBe('place')
     fireEvent.touchStart(list, { touches: [{ clientX: 200 }] })
     fireEvent.touchEnd(list, { changedTouches: [{ clientX: 100 }] })
-    await waitFor(() =>
-      expect(
-        document.querySelector('[data-entity-graph-group-cards]')?.getAttribute('data-entity-graph-group-cards'),
-      ).toBe('character'),
-    )
+    expect(cards()).toBe('place')
+    fireEvent.click(document.querySelector('[data-entity-graph-group-next]') as HTMLButtonElement)
+    await waitFor(() => expect(cards()).toBe('character'))
+    fireEvent.click(document.querySelector('[data-entity-graph-group-prev]') as HTMLButtonElement)
+    await waitFor(() => expect(cards()).toBe('place'))
   })
 
   it('запоминает уровень: вернувшись, человек попадает в ту же группу (0.101.0)', async () => {

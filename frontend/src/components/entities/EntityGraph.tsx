@@ -54,8 +54,6 @@ const HISTORY_LIMIT = 10
  * «анимация ради анимации», короче — не читается как перелёт.
  */
 const FLY_MS = 320
-/** Порог свайпа между группами (0.100.0): меньше — это уже не жест, а дрожь пальца. */
-const SWIPE_PX = 48
 
 /** Уважает ли система «меньше движения»: тогда перелёт не рисуется вовсе. */
 function useReducedMotion(): boolean {
@@ -105,8 +103,6 @@ export function EntityGraph({ entities, links, tall = false, types = [], project
   /** Карточка, которая сейчас летит в центр: откуда и куда — считает раскладка. */
   const [flying, setFlying] = useState<{ id: string; from: { x: number; y: number } } | null>(null)
   const flyTimer = useRef<number | null>(null)
-  /** Начало свайпа по группе (0.100.0): сравниваем с концом, чтобы отличить жест от касания. */
-  const swipeStart = useRef<number | null>(null)
   const reducedMotion = useReducedMotion()
   const [query, setQuery] = useState('')
   const [windowStart, setWindowStart] = useState(0)
@@ -561,23 +557,7 @@ export function EntityGraph({ entities, links, tall = false, types = [], project
             ))}
           </div>
         ) : (
-          <div
-            className="egraph__group-cards"
-            data-entity-graph-group-cards={active.kind}
-            onTouchStart={(event) => {
-              // Свайп пробный (решение из отчёта): запоминаем начало касания и сравниваем с концом.
-              swipeStart.current = event.touches[0]?.clientX ?? null
-            }}
-            onTouchEnd={(event) => {
-              const start = swipeStart.current
-              swipeStart.current = null
-              if (start === null) return
-              const end = event.changedTouches[0]?.clientX ?? start
-              const delta = end - start
-              if (Math.abs(delta) < SWIPE_PX) return
-              step(delta < 0 ? 1 : -1)
-            }}
-          >
+          <div className="egraph__group-cards" data-entity-graph-group-cards={active.kind}>
             <div className="egraph__group-nav">
               <button type="button" className="secondary" onClick={() => step(-1)} aria-label="Предыдущая группа" data-entity-graph-group-prev>
                 ←

@@ -295,13 +295,6 @@ async function checkGraph(page: Page, label: string) {
 
 /** «Связать» в карточке: завести связь только мышью и клавиатурой. */
 async function checkLinkForm(page: Page) {
-  const addButtons = page.locator('[data-entity-link-add]')
-  const total = await addButtons.count()
-  report.numbers.linkButtons = total
-  if (total === 0) {
-    problem('кнопки «Связать» на карточках нет')
-    return
-  }
   const holderByName = page.locator('[data-entities] .ent__item', {
     has: page.locator('.ent__name', { hasText: 'Сторож' }),
   })
@@ -311,6 +304,18 @@ async function checkLinkForm(page: Page) {
       : page.locator('[data-entities] .ent__item').first()
   const name = await holder.locator('.ent__name').first().innerText()
   const chipsBefore = await holder.locator('[data-entity-link]').count()
+
+  // 0.102.0: действия карточки — в выпадающем меню «⋮», поэтому сначала открываем его у этой
+  // карточки, и только потом ищем пункт «Связать».
+  await holder.locator('[data-entity-menu]').first().click()
+  await page.waitForTimeout(150)
+  const addButtons = page.locator('[data-entity-link-add]')
+  const total = await addButtons.count()
+  report.numbers.linkButtons = total
+  if (total === 0) {
+    problem('пункта «Связать» в меню карточки нет')
+    return
+  }
 
   await holder.locator('[data-entity-link-add]').first().click()
   await page.waitForTimeout(300)

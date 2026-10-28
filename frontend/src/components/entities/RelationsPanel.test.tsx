@@ -114,6 +114,8 @@ describe('RelationsPanel', () => {
     render(<RelationsPanel projectId="p1" canEdit />)
     await screen.findByText(/кадров: 2/)
 
+    // Действия карточки — в меню «⋮» (0.102.0): сначала открываем его, потом выбираем пункт.
+    fireEvent.click(screen.getByLabelText('Действия с карточкой Аня'))
     fireEvent.click(screen.getByLabelText('Где встречается Аня'))
     fireEvent.click(await screen.findByText('Пролог'))
     await waitFor(() => expect(seen.length).toBe(1))

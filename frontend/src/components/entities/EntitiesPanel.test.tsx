@@ -51,6 +51,16 @@ const panel = (props: Partial<Parameters<typeof EntitiesPanel>[0]> = {}) => {
   return { ...result, reload }
 }
 
+/**
+ * Открыть меню «⋮» у карточки (0.102.0).
+ *
+ * Действия карточки больше не лежат кнопками в строке: они в выпадающем списке под «⋮». Тесты
+ * нажимают на пункты, поэтому сначала открывают меню — ровно так же, как это делает человек.
+ */
+const openCardMenu = (name: string) => {
+  fireEvent.click(screen.getByLabelText(`Действия с карточкой ${name}`))
+}
+
 beforeEach(() => {
   mocks.create.mockReset()
   mocks.update.mockReset()
@@ -128,7 +138,7 @@ describe('EntitiesPanel', () => {
     // Каждый вид — своя группа с подписью и числом карточек.
     expect(document.querySelectorAll('[data-entity-group]')).toHaveLength(3)
     expect(document.querySelector('[data-entity-group="character"] .ent__group-summary')?.textContent).toBe(
-      'Персонаж · 1',
+      'Персонаж 1',
     )
   })
 
@@ -149,7 +159,7 @@ describe('EntitiesPanel', () => {
     const places = document.querySelector('[data-entity-group="place"]') as HTMLDetailsElement
     expect(characters.open).toBe(true)
     expect(places.open).toBe(true)
-    expect(characters.querySelector('.ent__group-count')?.textContent).toBe(' · 2')
+    expect(characters.querySelector('.ent__group-count')?.textContent).toBe('2')
 
     fireEvent.click(characters.querySelector('summary') as HTMLElement)
     expect(characters.open).toBe(false)
@@ -193,6 +203,7 @@ describe('EntitiesPanel', () => {
     const { reload } = panel({ entities: [entity()] })
     await screen.findByText('Анна')
 
+    openCardMenu('Анна')
     fireEvent.click(screen.getByLabelText('Изменить карточку Анна'))
     fireEvent.change(screen.getByLabelText('Алиасы карточки Анна'), {
       target: { value: 'Аня, Аннушка' },
@@ -217,6 +228,7 @@ describe('EntitiesPanel', () => {
     const { reload } = panel({ entities: [entity()], countMentionsOf })
     await screen.findByText('Анна')
 
+    openCardMenu('Анна')
     fireEvent.click(screen.getByLabelText('Изменить карточку Анна'))
     fireEvent.change(screen.getByLabelText('Имя карточки Анна'), { target: { value: 'Аня' } })
     fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }))
@@ -241,6 +253,7 @@ describe('EntitiesPanel', () => {
     panel({ entities: [entity()], countMentionsOf })
     await screen.findByText('Анна')
 
+    openCardMenu('Анна')
     fireEvent.click(screen.getByLabelText('Изменить карточку Анна'))
     fireEvent.change(screen.getByLabelText('Имя карточки Анна'), { target: { value: 'Аня' } })
     fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }))
@@ -264,6 +277,7 @@ describe('EntitiesPanel', () => {
     })
     await screen.findByText('Анна')
 
+    openCardMenu('Анна')
     fireEvent.click(screen.getByLabelText('Изменить карточку Анна'))
     fireEvent.change(screen.getByLabelText('Имя карточки Анна'), { target: { value: 'Аня' } })
     fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }))
@@ -282,6 +296,7 @@ describe('EntitiesPanel', () => {
     const { reload } = panel({ entities: [entity()] })
     await screen.findByText('Анна')
 
+    openCardMenu('Анна')
     fireEvent.click(screen.getByLabelText('Удалить карточку Анна'))
     expect(mocks.remove).not.toHaveBeenCalled()
 
@@ -295,6 +310,8 @@ describe('EntitiesPanel', () => {
     panel({ canEdit: false, entities: [entity()] })
     await screen.findByText('Анна')
     expect(screen.queryByRole('button', { name: /Добавить/ })).toBeNull()
+    // Меню «⋮» — это и есть все действия карточки: без него внутри ничего не спрятать.
+    expect(screen.queryByLabelText('Действия с карточкой Анна')).toBeNull()
     expect(screen.queryByLabelText('Изменить карточку Анна')).toBeNull()
     expect(screen.queryByLabelText('Удалить карточку Анна')).toBeNull()
   })
@@ -348,6 +365,7 @@ describe('хронология карточки (0.69.0)', () => {
     panel({ entities: [entity()], framesByEntity: { e1: frames } })
     await screen.findByText('Анна')
 
+    openCardMenu('Анна')
     fireEvent.click(screen.getByLabelText('Где встречается Анна'))
     expect(await screen.findByText('Встреча')).toBeTruthy()
     expect(screen.getByText('01.2')).toBeTruthy()
@@ -361,6 +379,7 @@ describe('хронология карточки (0.69.0)', () => {
     panel({ entities: [entity()], framesByEntity: { e1: frames }, onOpenFrame })
     await screen.findByText('Анна')
 
+    openCardMenu('Анна')
     fireEvent.click(screen.getByLabelText('Где встречается Анна'))
     fireEvent.click(await screen.findByText('Встреча'))
     expect(onOpenFrame).toHaveBeenCalledWith('f1', expect.objectContaining({ quote: 'Анны' }), 'editors')
@@ -711,6 +730,7 @@ describe('EntitiesPanel — «связать» из карточки (0.76.0)', 
     const { reload } = panel({ entities: [anna, earth] })
     await screen.findAllByText('Аня')
 
+    openCardMenu('Аня')
     fireEvent.click(screen.getByLabelText('Связать карточку Аня'))
     // В списке выбора — только другие карточки: связать с собой нельзя (это и CHECK в БД).
     const target = screen.getByLabelText('С какой карточкой связать Аня') as HTMLSelectElement
@@ -729,15 +749,21 @@ describe('EntitiesPanel — «связать» из карточки (0.76.0)', 
     expect(screen.queryByLabelText('Подпись связи от Аня')).toBeNull()
   })
 
-  it('без второй карточки кнопки нет: связывать не с чем', async () => {
+  it('без второй карточки пункта «Связать» нет: связывать не с чем', async () => {
     panel({ entities: [anna] })
     await screen.findAllByText('Аня')
+    openCardMenu('Аня')
+    // Меню открылось, но пункта «Связать» в нём нет — проверяем внутри открытого меню, иначе
+    // проверка ничего не значит: закрытое меню не показывает ни одного пункта.
+    expect(document.querySelector('[data-entity-menu-list]')).not.toBeNull()
+    expect(screen.getByLabelText('Изменить карточку Аня')).toBeTruthy()
     expect(screen.queryByLabelText('Связать карточку Аня')).toBeNull()
   })
 
   it('пока не выбраны карточка и подпись, кнопка неактивна', async () => {
     panel({ entities: [anna, earth] })
     await screen.findAllByText('Аня')
+    openCardMenu('Аня')
     fireEvent.click(screen.getByLabelText('Связать карточку Аня'))
 
     const save = screen
@@ -761,6 +787,7 @@ describe('EntitiesPanel — «связать» из карточки (0.76.0)', 
     })
     panel({ entities: [anna, earth] })
     await screen.findAllByText('Аня')
+    openCardMenu('Аня')
     fireEvent.click(screen.getByLabelText('Связать карточку Аня'))
     fireEvent.change(screen.getByLabelText('С какой карточкой связать Аня'), {
       target: { value: 'e2' },
@@ -774,6 +801,68 @@ describe('EntitiesPanel — «связать» из карточки (0.76.0)', 
     panel({ entities: [anna, earth], canEdit: false })
     await screen.findAllByText('Аня')
     expect(screen.queryByLabelText('Связать карточку Аня')).toBeNull()
+  })
+})
+
+describe('EntitiesPanel — действия в меню «⋮» (0.102.0)', () => {
+  const two = () => [
+    entity({ id: 'e1', name: 'Анна' }),
+    entity({ id: 'e2', name: 'Борис', aliases: [] }),
+  ]
+
+  it('действия карточки спрятаны в выпадающий список и открываются по «⋮»', async () => {
+    panel({ entities: two() })
+    await screen.findByText('Анна')
+    // В строке карточки нет ни одной кнопки действия — только «⋮».
+    expect(document.querySelectorAll('[data-entity-menu-list]')).toHaveLength(0)
+    const trigger = screen.getByLabelText('Действия с карточкой Анна')
+    expect(trigger.getAttribute('aria-haspopup')).toBe('menu')
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+
+    fireEvent.click(trigger)
+    expect(trigger.getAttribute('aria-expanded')).toBe('true')
+    const menu = document.querySelector('[data-entity-menu-list]') as HTMLElement
+    expect(menu.getAttribute('role')).toBe('menu')
+    expect(menu.getAttribute('data-entity-menu-list')).toBe('e1')
+    expect(
+      Array.from(menu.querySelectorAll('[role="menuitem"]')).map((node) => node.textContent),
+    ).toEqual(['Изменить', 'Связать', 'Удалить'])
+  })
+
+  it('открыто только одно меню: второе закрывает первое, Escape и клик мимо тоже', async () => {
+    panel({ entities: two() })
+    await screen.findByText('Анна')
+
+    openCardMenu('Анна')
+    openCardMenu('Борис')
+    const menus = document.querySelectorAll('[data-entity-menu-list]')
+    expect(menus).toHaveLength(1)
+    expect(menus[0].getAttribute('data-entity-menu-list')).toBe('e2')
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(document.querySelectorAll('[data-entity-menu-list]')).toHaveLength(0)
+
+    // Клик мимо меню (по самой карточке) закрывает его: иначе список висел бы поверх строк.
+    openCardMenu('Анна')
+    fireEvent.pointerDown(document.body)
+    expect(document.querySelectorAll('[data-entity-menu-list]')).toHaveLength(0)
+  })
+
+  it('удаление подтверждается строкой под карточкой, «Оставить» отменяет', async () => {
+    panel({ entities: [entity()] })
+    await screen.findByText('Анна')
+
+    openCardMenu('Анна')
+    fireEvent.click(screen.getByLabelText('Удалить карточку Анна'))
+    // Меню закрылось, но вопрос остался на экране: его нельзя «потерять» вместе со списком.
+    expect(document.querySelector('[data-entity-menu-list]')).toBeNull()
+    expect(
+      document.querySelector('[data-entity-delete-confirm-row]')?.textContent,
+    ).toContain('Удалить карточку «Анна»?')
+    expect(mocks.remove).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Оставить' }))
+    expect(document.querySelector('[data-entity-delete-confirm-row]')).toBeNull()
   })
 })
 

@@ -153,6 +153,41 @@ export function EntitiesPanel({
   const [draftAliases, setDraftAliases] = useState('')
   const [draftDescription, setDraftDescription] = useState('')
   const [pendingDelete, setPendingDelete] = useState<string | null>(null)
+  /**
+   * Карточка, у которой открыто меню «⋮» (0.102.0).
+   *
+   * Отчёт: «убрать в три точки и сделать выпадающим списком» — четыре кнопки в каждой строке
+   * («Где встречается | Изменить | Связать | Удалить») занимали полстроки и на телефоне переносились
+   * на вторую, отчего карточки в списке разъезжались по высоте.
+   *
+   * Одно состояние на всю панель, а не своё у каждой карточки: открытым может быть только одно
+   * меню — иначе два списка действий висели бы одновременно и непонятно, к какой карточке какой.
+   */
+  const [menuFor, setMenuFor] = useState<string | null>(null)
+  /**
+   * Закрытие меню «⋮» по клику мимо и по Escape.
+   *
+   * Клик внутри меню и по самой кнопке не перехватываем: выбранное действие само закрывает меню,
+   * а кнопка переключает его нажатием. Иначе `pointerdown` гасил бы меню раньше, чем `click`
+   * успевал переключить его на другую карточку.
+   */
+  useEffect(() => {
+    if (menuFor === null) return undefined
+    const onDown = (event: Event) => {
+      const target = event.target as HTMLElement | null
+      if (target !== null && target.closest('[data-entity-menu-root]') !== null) return
+      setMenuFor(null)
+    }
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMenuFor(null)
+    }
+    document.addEventListener('pointerdown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('pointerdown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [menuFor])
   /** У какой карточки раскрыта хронология. Одна за раз: две открытые — это уже не список. */
   const [chronology, setChronology] = useState<string | null>(null)
   /**
@@ -473,10 +508,11 @@ export function EntitiesPanel({
             onToggle={(e) => toggleGroup(group.kind, (e.currentTarget as HTMLDetailsElement).open)}
           >
             <summary className="ent__group-summary">
-              {group.title}
-              {/* Разделитель внутри того же узла: «Персонажи · 3» читается и глазами, и
-                  скринридером, который иначе произнёс бы «Персонажи3». */}
-              <span className="muted ent__group-count">{` · ${group.entities.length}`}</span>
+              {group.title}{' '}
+              {/* Число карточек — пилюлей у правого края (0.102.0): по отчёту группы читались как
+                  обычный серый текст и терялись между карточками. Разделитель «·» больше не нужен:
+                  число показывает свою принадлежность фоном и формой. */}
+              <span className="ent__group-count">{group.entities.length}</span>
             </summary>
             <ul className="ent__list" data-entities-list>
               {entities.filter((entity) => entity.kind === group.kind).map((entity) => (
@@ -547,84 +583,119 @@ export function EntitiesPanel({
                     </span>
                   )}
                   {canEdit && (
-                    <span className="ent__actions">
-                      {(framesByEntity?.[entity.id]?.length ?? 0) > 0 && (
-                        <button
-                          type="button"
-                          className="secondary"
-                          onClick={() =>
-                            setChronology((current) => (current === entity.id ? null : entity.id))
-                          }
-                          aria-expanded={chronology === entity.id}
-                          aria-label={`Где встречается ${entity.name}`}
-                          data-entity-chronology
-                        >
-                          {chronology === entity.id ? 'Скрыть кадры' : 'Где встречается'}
-                        </button>
-                      )}
+                    <span className="ent__actions" data-entity-menu-root={entity.id}>
                       <button
                         type="button"
-                        className="secondary"
-                        onClick={() => {
-                          setEditing(entity.id)
-                          setDraftName(entity.name)
-                          setDraftAliases(aliasesText(entity))
-                          setDraftDescription(entity.description)
-                          setNote(null)
-                        }}
-                        aria-label={`Изменить карточку ${entity.name}`}
-                        data-entity-edit
+                        className="ent__menu-trigger secondary"
+                        onClick={() =>
+                          setMenuFor((current) => (current === entity.id ? null : entity.id))
+                        }
+                        aria-haspopup="menu"
+                        aria-expanded={menuFor === entity.id}
+                        aria-label={`Действия с карточкой ${entity.name}`}
+                        data-entity-menu
                       >
-                        Изменить
+                        <span aria-hidden="true">⋮</span>
                       </button>
-                      {/* «Связать» — только если есть с чем: одна карточка связей не имеет. */}
-                      {entities.length > 1 && (
-                        <button
-                          type="button"
-                          className="secondary"
-                          onClick={() => {
-                            setLinking((current) => (current === entity.id ? null : entity.id))
-                            setLinkTarget('')
-                            setLinkLabel('')
-                            setNote(null)
-                          }}
-                          aria-expanded={linking === entity.id}
-                          aria-label={`Связать карточку ${entity.name}`}
-                          data-entity-link-add
+                      {menuFor === entity.id && (
+                        <span
+                          className="ent__menu"
+                          role="menu"
+                          aria-label={`Меню карточки ${entity.name}`}
+                          data-entity-menu-list={entity.id}
                         >
-                          {linking === entity.id ? 'Не связывать' : 'Связать'}
-                        </button>
-                      )}
-                      {pendingDelete === entity.id ? (
-                        <>
+                          {(framesByEntity?.[entity.id]?.length ?? 0) > 0 && (
+                            <button
+                              type="button"
+                              role="menuitem"
+                              className="ent__menu-item"
+                              onClick={() => {
+                                setChronology((current) =>
+                                  current === entity.id ? null : entity.id,
+                                )
+                                setMenuFor(null)
+                              }}
+                              aria-label={`Где встречается ${entity.name}`}
+                              data-entity-chronology
+                            >
+                              {chronology === entity.id ? 'Скрыть кадры' : 'Где встречается'}
+                            </button>
+                          )}
                           <button
                             type="button"
-                            className="secondary ed-danger"
-                            onClick={() => void remove(entity.id)}
-                            disabled={busy}
-                            data-entity-delete-confirm
+                            role="menuitem"
+                            className="ent__menu-item"
+                            onClick={() => {
+                              setEditing(entity.id)
+                              setDraftName(entity.name)
+                              setDraftAliases(aliasesText(entity))
+                              setDraftDescription(entity.description)
+                              setNote(null)
+                              setMenuFor(null)
+                            }}
+                            aria-label={`Изменить карточку ${entity.name}`}
+                            data-entity-edit
+                          >
+                            Изменить
+                          </button>
+                          {/* «Связать» — только если есть с чем: одна карточка связей не имеет. */}
+                          {entities.length > 1 && (
+                            <button
+                              type="button"
+                              role="menuitem"
+                              className="ent__menu-item"
+                              onClick={() => {
+                                setLinking((current) => (current === entity.id ? null : entity.id))
+                                setLinkTarget('')
+                                setLinkLabel('')
+                                setNote(null)
+                                setMenuFor(null)
+                              }}
+                              aria-label={`Связать карточку ${entity.name}`}
+                              data-entity-link-add
+                            >
+                              {linking === entity.id ? 'Не связывать' : 'Связать'}
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            role="menuitem"
+                            className="ent__menu-item ent__menu-item--danger"
+                            onClick={() => {
+                              setPendingDelete(entity.id)
+                              setMenuFor(null)
+                            }}
+                            aria-label={`Удалить карточку ${entity.name}`}
+                            data-entity-delete
                           >
                             Удалить
                           </button>
-                          <button
-                            type="button"
-                            className="secondary"
-                            onClick={() => setPendingDelete(null)}
-                          >
-                            Оставить
-                          </button>
-                        </>
-                      ) : (
-                        <button
-                          type="button"
-                          className="secondary"
-                          onClick={() => setPendingDelete(entity.id)}
-                          aria-label={`Удалить карточку ${entity.name}`}
-                          data-entity-delete
-                        >
-                          Удалить
-                        </button>
+                        </span>
                       )}
+                    </span>
+                  )}
+                  {/* Подтверждение удаления — строкой под карточкой, а не в меню (0.102.0):
+                      удаление необратимо, и вопрос должен оставаться на экране, пока на него не
+                      ответили, даже если меню уже закрыто. */}
+                  {canEdit && pendingDelete === entity.id && (
+                    <span className="ent__confirm" data-entity-delete-confirm-row>
+                      <span className="muted">Удалить карточку «{entity.name}»?</span>
+                      <button
+                        type="button"
+                        className="secondary ed-danger"
+                        onClick={() => void remove(entity.id)}
+                        disabled={busy}
+                        data-entity-delete-confirm
+                      >
+                        Удалить
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary"
+                        onClick={() => setPendingDelete(null)}
+                      >
+                        Оставить
+                      </button>
                     </span>
                   )}
                 </>

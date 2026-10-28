@@ -62,7 +62,9 @@ test('хронология карточки ведёт в кадр, а посл�
     timeout: 30_000,
   })
 
-  // 2. Хронология: карточка знает, где встречается, и ведёт в этот кадр.
+  // 2. Хронология: карточка знает, где встречается, и ведёт в этот кадр. С 0.102.0 пункт живёт в
+  // меню «⋮»: сначала открываем его, как это делает человек.
+  await page.getByLabel(`Действия с карточкой ${CARD}`).click()
   await page.getByLabel(`Где встречается ${CARD}`).click()
   const chronology = page.locator('[data-entity-frames]')
   await expect(chronology).toBeVisible()

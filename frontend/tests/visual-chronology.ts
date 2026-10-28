@@ -37,8 +37,13 @@ async function main() {
   }
   await page.waitForTimeout(1200)
 
-  // Раскрываем «Связи проекта» и хронологию первой карточки.
+  // Раскрываем «Связи проекта» и хронологию первой карточки (0.102.0: пункт — в меню «⋮»).
   await page.locator('[data-entities] summary').click()
+  const menu = page.locator('[data-entity-menu]').first()
+  if (await menu.count()) {
+    await menu.click()
+    await page.waitForTimeout(200)
+  }
   const chronology = page.getByLabel(/Где встречается/)
   if (await chronology.count()) {
     await chronology.first().click()
