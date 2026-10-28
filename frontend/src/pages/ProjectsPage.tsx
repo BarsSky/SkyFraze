@@ -468,11 +468,18 @@ export function ProjectsPage() {
           return (
             <div key={p.id} className="card row" style={{ justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
               <div style={{ minWidth: 0, flex: '1 1 240px' }}>
+                {/* Заголовок переносится, а не рвётся за край (0.98.3). Было whiteSpace: 'nowrap' и
+                    textOverflow: 'ellipsis': длинное название — особенно одно слово без пробелов —
+                    не переносилось, ссылка вырастала до 472 px при карточке 336, и текст уезжал за
+                    экран. Горизонтальной прокрутки у страницы нет, поэтому добраться до него было
+                    нечем. Теперь две строки с многоточием и перенос внутри слова. */}
                 <h3 style={{
                   margin: 0,
                   overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
+                  display: '-webkit-box',
+                  WebkitLineClamp: 2,
+                  WebkitBoxOrient: 'vertical',
+                  overflowWrap: 'anywhere',
                 }}>
                   <Link to={`/projects/${p.id}`}>{p.title}</Link>
                   {p.is_public && <span className="pub-badge" title="Видна всем в публичной ленте">в ленте</span>}
@@ -492,6 +499,9 @@ export function ProjectsPage() {
                   display: '-webkit-box',
                   WebkitLineClamp: 2,
                   WebkitBoxOrient: 'vertical',
+                  // Длинная ссылка или слово без пробелов переносится, а не обрезается посреди
+                  // токена: две строки остаются, но текст в них читается (0.98.3).
+                  overflowWrap: 'anywhere',
                 }}>
                   {p.description || <em>без описания</em>}
                 </p>
@@ -679,7 +689,8 @@ export function ProjectsPage() {
             {shared.map((p) => (
               <div key={p.id} className="card row" style={{ justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
                 <div style={{ minWidth: 0, flex: '1 1 240px' }}>
-                  <h3 style={{ margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {/* Те же две строки с переносом, что и у своих проектов (0.98.3). */}
+                  <h3 style={{ margin: 0, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflowWrap: 'anywhere' }}>
                     <Link to={`/projects/${p.id}`}>{p.title}</Link>
                     <span className="pub-badge" title="Доступ только на чтение">только чтение</span>
                   </h3>
