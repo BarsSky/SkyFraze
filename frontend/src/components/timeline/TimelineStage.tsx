@@ -10,7 +10,9 @@ import {
   buildTimelineModel,
   eventFrames,
   frameLabel,
+  framePosition,
   resolveScrollState,
+  scrollDeltaForFrame,
   unitsBeforeChapter,
   unitsBeforeFrame,
   type StageAsset,
@@ -40,6 +42,14 @@ interface Props {
   actions?: ReactNode
   /** Блок под навигацией кадра (например, оценка и просмотры публичной истории). */
   copyFooter?: ReactNode
+  /**
+   * Кадр, к которому надо перейти (0.87.0): из «Связей» человек нажимает «К проекту» во
+   * всплывающей карточке упоминания, и показ проекта должен встать на этот кадр.
+   *
+   * `nonce` нужен, чтобы повторный выбор того же кадра снова двигал прокрутку: по одному `id`
+   * эффект не сработал бы второй раз.
+   */
+  focusFrame?: { id: string; nonce: number } | null
 }
 
 interface EventMeta {
@@ -102,7 +112,7 @@ function resolveAssets(assetIds: string[], lookup: Record<string, AssetLookup>):
  *
  * Стадия занимается только показом и навигацией: редактор — отдельный модуль.
  */
-export function TimelineStage({ events, assetsById, projectTitle, actions, copyFooter }: Props) {
+export function TimelineStage({ events, assetsById, projectTitle, actions, copyFooter, focusFrame }: Props) {
   // Карта файлов проекта (id → адрес) для текста кадра: в тексте могут быть ссылки
   // на вложения (`/api/assets/<id>`), и без подмены они не откроются в приложении.
   const assetUrls = useMemo(() => {
@@ -351,6 +361,43 @@ export function TimelineStage({ events, assetsById, projectTitle, actions, copyF
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
   }, [model, driveText])
+
+  // ── Переход к кадру из другого места приложения (0.87.0).
+  //
+  // «Связи» → всплывающая карточка упоминания → «К проекту»: человек уже видел цитату и ждёт
+  // ровно этот кадр, а не начало истории. Прокрутка стадии — это вес кадров, поэтому позицию
+  // берём из модели (`framePosition` + `unitsBeforeFrame`), а не «примерно туда»: трек
+  // выравниваем по видимой области и добавляем долю, которую занимают кадры до нужного.
+  //
+  // rAF, а не сразу: при переключении вкладки стадия монтируется в этом же кадре, и до первой
+  // раскладки `getBoundingClientRect` вернул бы нули.
+  useEffect(() => {
+    if (!focusFrame?.id) return undefined
+    const raf = requestAnimationFrame(() => {
+      const track = trackRef.current
+      if (!track) return
+      const position = framePosition(model, focusFrame.id)
+      if (!position) return
+      const box = visibleBox(null)
+      const rect = track.getBoundingClientRect()
+      const delta = scrollDeltaForFrame({
+        trackTop: rect.top,
+        boxTop: box.top,
+        trackHeight: rect.height,
+        viewport: box.bottom - box.top,
+        model,
+        position,
+      })
+      const root = getScrollRoot(track)
+      // Корня прокрутки может не быть (стадия ещё не в документе) — тогда двигать нечего.
+      if (!root) return
+      if (root === document.scrollingElement) window.scrollBy(0, delta)
+      else root.scrollTop += delta
+      applyStageVisibility()
+    })
+    return () => cancelAnimationFrame(raf)
+    // nonce — часть зависимости: повторный выбор того же кадра тоже должен двигать прокрутку.
+  }, [focusFrame?.id, focusFrame?.nonce, model])
 
   // ── Жест над листом кадра ведёт трек, а не упирается в лист.
   //

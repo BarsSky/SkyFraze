@@ -199,4 +199,31 @@ describe('mentionMatrix — персонажи × главы (0.71.0)', () => {
     expect(matrix.rows[0].cells).toEqual([])
     expect(matrix.rows[0].total).toBe(0)
   })
+
+  /**
+   * Клетка знает не только «сколько», но и «где» (0.87.0): всплывающая карточка показывает
+   * список кадров этой главы, чтобы человек выбрал нужный и перешёл в него.
+   */
+  it('клетка хранит кадры главы с числом упоминаний в каждом', () => {
+    const matrix = mentionMatrix(frames, frameChapters, chapters, [anna, home])
+    const annaRow = matrix.rows.find((row) => row.entity.id === 'e1')
+    const cell = annaRow?.cells[0]
+    expect(cell?.frames?.map((frame) => frame.id)).toEqual(['f1', 'f2'])
+    expect(cell?.frames?.map((frame) => frame.mentions)).toEqual([1, 1])
+    // Заголовок кадра нужен карточке: «где именно» — это название, а не только id.
+    expect(cell?.frames?.[1].title).toBe('Сцена')
+
+    const homeRow = matrix.rows.find((row) => row.entity.id === 'e2')
+    expect(homeRow?.cells[0].frames?.map((frame) => frame.mentions)).toEqual([1])
+    expect(homeRow?.cells[1].frames?.map((frame) => frame.id)).toEqual(['f3'])
+  })
+
+  it('в одном кадре несколько упоминаний — по-прежнему один кадр в списке', () => {
+    const twice = [{ id: 'f9', title: 'Дважды', body: 'Анна и снова Анна', date: '', order: 0 }]
+    const matrix = mentionMatrix(twice, [{ frameId: 'f9', chapterId: 'ch1' }], chapters, [anna])
+    const cell = matrix.rows[0].cells[0]
+    expect(cell.count).toBe(2)
+    expect(cell.frames).toHaveLength(1)
+    expect(cell.frames?.[0].mentions).toBe(2)
+  })
 })

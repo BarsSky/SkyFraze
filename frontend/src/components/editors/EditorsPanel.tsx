@@ -96,6 +96,18 @@ interface Props {
    */
   onOpenRelations?: () => void
   /**
+   * Просьба открыть кадр, пришедшая СТРАНИЦЕЙ (0.87.0): «К редактированию» во всплывающей
+   * карточке упоминания в «Связях».
+   *
+   * Почему проп, а не только событие: с 0.83.0 панель монтируется лишь на своей вкладке, и
+   * событие `skyfraze:open-frame`, отправленное из «Связей», слышать было некому — переходы
+   * молчали. Страница переключает вкладку и передаёт просьбу уже смонтированной панели; `nonce`
+   * позволяет повторить переход к тому же кадру.
+   */
+  openRequest?: { frameId: string; mention?: Mention; nonce: number } | null
+  /** Просьба обработана: страница убирает её, чтобы повторное монтирование не открывало кадр. */
+  onOpenRequestHandled?: () => void
+  /**
    * Импорт «в место»: вставить разобранный кусок md в этот проект. Возвращает
    * результат сервера (сколько событий и его предупреждения); саму вставку делает
    * страница — у неё есть id проекта и перечитывание состояния без realtime.
@@ -387,6 +399,7 @@ function dropClassFor(hint: DropHint): string {
 export function EditorsPanel({
   events, assets, assetUrls, projectId, canEdit, syncNote, onChanged, onUpload, onImportInto,
   presence, onEditing, assetUsage, onDeleteAsset, assetNote, assetBusyId, onOpenRelations,
+  openRequest, onOpenRequestHandled,
 }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [filter, setFilter] = useState('')
@@ -753,6 +766,22 @@ once — чтобы повторный
       scrollWithinMain(document.querySelector<HTMLElement>('[data-editor-panel]'))
     })
   }, [openFrameWithMention])
+
+  /**
+   * Та же просьба, но пропсом со страницы (0.87.0) — «К редактированию» из «Связей».
+   *
+   * Событие здесь ненадёжно: панель монтируется только на своей вкладке, и переход из «Связей»
+   * отправлял событие в пустоту. Страница переключает вкладку и передаёт просьбу пропсом —
+   * панель получает её уже смонтированной. `nonce` в зависимостях нужен, чтобы повторный выбор
+   * того же кадра тоже сработал.
+   */
+  useEffect(() => {
+    if (!openRequest?.frameId) return
+    if (openRequest.mention) openFrameWithMention(openRequest.frameId, openRequest.mention)
+    else setSelectedId(openRequest.frameId)
+    scrollWithinMain(document.querySelector<HTMLElement>('[data-editor-panel]'))
+    onOpenRequestHandled?.()
+  }, [onOpenRequestHandled, openFrameWithMention, openRequest])
 
   /**
    * Помещается ли разобранный кусок в проект.

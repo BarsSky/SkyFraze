@@ -239,7 +239,7 @@ describe('хронология карточки (0.69.0)', () => {
 
     fireEvent.click(screen.getByLabelText('Где встречается Анна'))
     fireEvent.click(await screen.findByText('Встреча'))
-    expect(onOpenFrame).toHaveBeenCalledWith('f1', expect.objectContaining({ quote: 'Анны' }))
+    expect(onOpenFrame).toHaveBeenCalledWith('f1', expect.objectContaining({ quote: 'Анны' }), 'editors')
   })
 
   it('без упоминаний кнопки «Где встречается» нет: раскрывать нечего', async () => {
@@ -310,35 +310,102 @@ describe('EntitiesPanel — раскрытие блока (0.72.1)', () => {
   })
 })
 
-describe('EntitiesPanel — клетка матрицы ведёт в кадр (0.73.0)', () => {
-  it('клик по числу открывает кадр и упоминание', async () => {
-    const onOpenFrame = vi.fn()
-    const mention = {
-      entityId: 'e1',
-      entityName: 'Анна',
-      field: 'body' as const,
-      from: 3,
-      to: 7,
-      quote: 'Анны',
-    }
-    panel({
-      entities: [entity({ id: 'e1' })],
-      onOpenFrame,
-      matrix: {
-        chapters: [{ id: 'ch1', title: 'Пролог', number: '01' }],
-        rows: [
+describe('EntitiesPanel — клетка матрицы раскрывает карточку упоминания (0.73.0 → 0.87.0)', () => {
+  const mention = {
+    entityId: 'e1',
+    entityName: 'Анна',
+    field: 'body' as const,
+    from: 3,
+    to: 7,
+    quote: 'Анны',
+  }
+  const matrixWithCard = {
+    chapters: [{ id: 'ch1', title: 'Пролог', number: '01' }],
+    rows: [
+      {
+        entity: { id: 'e1', name: 'Анна', aliases: [] },
+        cells: [
           {
-            entity: { id: 'e1', name: 'Анна', aliases: [] },
-            cells: [{ count: 2, first: { frameId: 'f9', mention } }],
-            total: 2,
+            count: 3,
+            first: { frameId: 'f9', mention },
+            frames: [
+              { id: 'f9', title: 'Встреча', mentions: 2, mention },
+              { id: 'f10', title: 'Разговор', mentions: 1, mention },
+            ],
           },
         ],
+        total: 3,
       },
-    })
+    ],
+  }
+
+  /**
+   * 0.87.0: клик по числу больше не уводит молча — раскрывается карточка: глава, цитата, список
+   * кадров главы и два перехода. Первая кнопка («К редактированию») ведёт в текст, вторая
+   * («К проекту») — в показ проекта.
+   */
+  it('клик по числу раскрывает карточку: глава, кадры главы и цитата', async () => {
+    const onOpenFrame = vi.fn()
+    panel({ entities: [entity({ id: 'e1' })], onOpenFrame, matrix: matrixWithCard })
     await screen.findAllByText('Анна')
     fireEvent.click(screen.getByText(/Матрица: персонажи × главы/))
-    fireEvent.click(await screen.findByRole('button', { name: '2' }))
-    expect(onOpenFrame).toHaveBeenCalledWith('f9', expect.objectContaining({ quote: 'Анны' }))
+    fireEvent.click(await screen.findByRole('button', { name: '3' }))
+
+    const card = await screen.findByRole('dialog', { name: /Упоминания «Анна»/ })
+    expect(card.textContent).toContain('глава 01')
+    expect(card.textContent).toContain('Пролог')
+    expect(card.textContent).toContain('Встреча')
+    expect(card.textContent).toContain('Разговор')
+    expect(card.textContent).toContain('«Анны»')
+    // Прямого перехода по клику больше нет: сначала человек видит, куда идёт.
+    expect(onOpenFrame).not.toHaveBeenCalled()
+  })
+
+  it('«К редактированию» ведёт в текст с кадром и упоминанием', async () => {
+    const onOpenFrame = vi.fn()
+    panel({ entities: [entity({ id: 'e1' })], onOpenFrame, matrix: matrixWithCard })
+    await screen.findAllByText('Анна')
+    fireEvent.click(screen.getByText(/Матрица: персонажи × главы/))
+    fireEvent.click(await screen.findByRole('button', { name: '3' }))
+    // Выбираем второй кадр главы: переход должен вести именно в него.
+    fireEvent.click(await screen.findByText('Разговор'))
+    fireEvent.click(screen.getByRole('button', { name: 'К редактированию' }))
+
+    expect(onOpenFrame).toHaveBeenCalledWith(
+      'f10',
+      expect.objectContaining({ quote: 'Анны' }),
+      'editors',
+    )
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('«К проекту» ведёт в показ проекта', async () => {
+    const onOpenFrame = vi.fn()
+    panel({ entities: [entity({ id: 'e1' })], onOpenFrame, matrix: matrixWithCard })
+    await screen.findAllByText('Анна')
+    fireEvent.click(screen.getByText(/Матрица: персонажи × главы/))
+    fireEvent.click(await screen.findByRole('button', { name: '3' }))
+    fireEvent.click(screen.getByRole('button', { name: 'К проекту' }))
+    expect(onOpenFrame).toHaveBeenCalledWith('f9', expect.objectContaining({ quote: 'Анны' }), 'project')
+  })
+
+  it('читателю доступен только переход к показу проекта', async () => {
+    panel({ entities: [entity({ id: 'e1' })], canEdit: false, matrix: matrixWithCard, framesByEntity: {} })
+    await screen.findAllByText('Анна')
+    fireEvent.click(screen.getByText(/Матрица: персонажи × главы/))
+    fireEvent.click(await screen.findByRole('button', { name: '3' }))
+    expect(screen.queryByRole('button', { name: 'К редактированию' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'К проекту' })).toBeTruthy()
+  })
+
+  it('Escape закрывает карточку', async () => {
+    panel({ entities: [entity({ id: 'e1' })], matrix: matrixWithCard })
+    await screen.findAllByText('Анна')
+    fireEvent.click(screen.getByText(/Матрица: персонажи × главы/))
+    fireEvent.click(await screen.findByRole('button', { name: '3' }))
+    await screen.findByRole('dialog')
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 })
 

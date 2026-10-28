@@ -120,6 +120,39 @@ describe('RelationsPanel', () => {
     expect(seen[0].frameId).toBe('f1')
     window.removeEventListener(OPEN_FRAME_EVENT, listener)
   })
+
+  /**
+   * 0.87.0: переход идёт ПРОПСОМ страницы, а не событием.
+   *
+   * Отчёт: «переходы по матрице связей перестали работать по нажатию». Причина — панель
+   * редакторов с 0.83.0 монтируется только на своей вкладке, и событие `open-frame` из «Связей»
+   * слышать было некому. Теперь страница переключает вкладку и передаёт просьбу пропсом.
+   */
+  it('клетка матрицы раскрывает карточку и отдаёт переход странице', async () => {
+    const onOpenFrame = vi.fn()
+    render(<RelationsPanel projectId="p1" canEdit onOpenFrame={onOpenFrame} />)
+    await screen.findByText(/кадров: 2/)
+
+    // Матрица раскрыта в разделе; клетка «Аня × Пролог» содержит число упоминаний.
+    const cell = document.querySelector('[data-matrix-cell]') as HTMLElement | null
+    expect(cell).not.toBeNull()
+    fireEvent.click(cell as HTMLElement)
+    const card = await screen.findByRole('dialog', { name: /Упоминания «Аня»/ })
+    expect(card.textContent).toContain('Пролог')
+
+    fireEvent.click(screen.getByRole('button', { name: 'К проекту' }))
+    expect(onOpenFrame).toHaveBeenCalledWith('f1', expect.objectContaining({ entityName: 'Аня' }), 'project')
+  })
+
+  it('«К редактированию» в карточке матрицы уходит странице с местом «editors»', async () => {
+    const onOpenFrame = vi.fn()
+    render(<RelationsPanel projectId="p1" canEdit onOpenFrame={onOpenFrame} />)
+    await screen.findByText(/кадров: 2/)
+    fireEvent.click(document.querySelector('[data-matrix-cell]') as HTMLElement)
+    await screen.findByRole('dialog', { name: /Упоминания «Аня»/ })
+    fireEvent.click(screen.getByRole('button', { name: 'К редактированию' }))
+    expect(onOpenFrame).toHaveBeenCalledWith('f1', expect.objectContaining({ entityName: 'Аня' }), 'editors')
+  })
 })
 
 describe('numberRows', () => {

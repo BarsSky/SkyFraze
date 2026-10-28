@@ -366,6 +366,53 @@ export function unitsBeforeFrame(model: TimelineModel, chapterIndex: number, fra
 }
 
 /**
+ * Где кадр в модели — глава и номер кадра (0.87.0).
+ *
+ * Зачем: из «Связей» кадр просят открыть В ПОКАЗЕ ПРОЕКТА (кнопка «К проекту» во всплывающей
+ * карточке упоминания), а прокрутка стадии задаётся весом кадра. По id найти его позицию —
+ * единственный способ поставить прокрутку ровно на нужный кадр, а не «примерно туда».
+ *
+ * `null` — кадра в модели нет (удалили в другой вкладке или пришёл из устаревшей проекции).
+ */
+export function framePosition(
+  model: TimelineModel,
+  frameId: string,
+): { chapterIndex: number; frameIndex: number } | null {
+  for (let chapterIndex = 0; chapterIndex < model.chapters.length; chapterIndex += 1) {
+    const frames = model.chapters[chapterIndex].frames
+    const frameIndex = frames.findIndex((frame) => frame.id === frameId)
+    if (frameIndex >= 0) return { chapterIndex, frameIndex }
+  }
+  return null
+}
+
+/**
+ * На сколько прокрутить, чтобы показ проекта встал на кадр (0.87.0).
+ *
+ * Прокрутка стадии — это вес кадров: трек высотой `trackHeight`, видимая область `viewport`.
+ * Верх трека выравниваем по верхней границе видимой области (`trackTop - boxTop`), дальше
+ * добавляем долю, которую занимают кадры до нужного. Без вычитания того и другого получался
+ * «прыжок в начало» вместо конкретного кадра.
+ *
+ * Чистая функция: числа приходят снаружи, поэтому и проверяется тестом, а не глазами.
+ */
+export function scrollDeltaForFrame(input: {
+  /** Верх трека в координатах окна (`getBoundingClientRect().top`). */
+  trackTop: number
+  /** Верх видимой области: под шапкой и полосой вкладок. */
+  boxTop: number
+  trackHeight: number
+  viewport: number
+  model: TimelineModel
+  position: { chapterIndex: number; frameIndex: number }
+}): number {
+  const scrollable = Math.max(1, input.trackHeight - Math.max(1, input.viewport))
+  const units = unitsBeforeFrame(input.model, input.position.chapterIndex, input.position.frameIndex)
+  const progress = input.model.totalWeight > 0 ? Math.min(1, units / input.model.totalWeight) : 0
+  return input.trackTop - input.boxTop + progress * scrollable
+}
+
+/**
  * Только кадры событий — без кадров-картинок.
  *
  * Навигация (маршрут, чипы, панель глав) и счётчики «кадров в главе» говорят

@@ -584,6 +584,49 @@
   .ent__matrix-link { min-width: 32px; min-height: 32px; }
 }
 
+/* ─── карточка упоминания (0.87.0) ───────────────────────────────────────────
+   Клетка матрицы больше не «уводит молча»: она раскрывает карточку — что где встречается,
+   цитата, список кадров главы и два перехода (в текст и в показ проекта).
+   position: fixed — карточка не растягивает таблицу и не уезжает вместе с её прокруткой. */
+.ent__mention-card {
+  position: fixed; z-index: 70;
+  display: grid; gap: 6px; padding: 12px 14px;
+  background: var(--bg-elev); border: 1px solid var(--accent); border-radius: 12px;
+  box-shadow: 0 26px 60px -30px rgba(0, 0, 0, 0.8);
+  font-size: 12px; overflow-y: auto; overscroll-behavior: contain;
+  animation: ent-mention-in 120ms ease-out;
+}
+@keyframes ent-mention-in { from { opacity: 0; } to { opacity: 1; } }
+.ent__mention-head { display: flex; align-items: baseline; gap: 8px; }
+.ent__mention-name { flex: 1 1 auto; overflow-wrap: anywhere; }
+.ent__mention-close { min-width: 32px; min-height: 32px; line-height: 1; }
+.ent__mention-sub { margin: 0; }
+.ent__mention-frames { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.ent__mention-frame {
+  display: flex; align-items: baseline; gap: 6px; width: 100%; text-align: left;
+  background: none; border: 1px solid transparent; border-radius: 6px;
+  padding: 4px 6px; color: var(--fg); font: inherit; cursor: pointer; min-height: 26px;
+}
+.ent__mention-frame:hover { border-color: var(--border); }
+.ent__mention-frame.is-active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.ent__mention-frame-title { overflow-wrap: anywhere; }
+.ent__mention-quote {
+  margin: 0; padding: 6px 8px; border-left: 2px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent); overflow-wrap: anywhere;
+}
+.ent__mention-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.ent__mention-actions button { min-height: 32px; }
+/* На телефоне карточка — «лист» снизу: в 320 px рядом с клеткой она закрыла бы полэкрана. */
+@media (max-width: 640px) {
+  .ent__mention-card {
+    left: 8px !important; right: 8px; top: auto !important; bottom: 8px;
+    width: auto !important; max-height: 60vh;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ent__mention-card { animation: none; }
+}
+
 /* ─── связи карточек в списке (0.74.0) ─────────────────────────────────────── */
 .ent__links { display: inline-flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .ent__link {

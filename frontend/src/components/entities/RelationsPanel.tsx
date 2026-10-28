@@ -13,6 +13,7 @@ import {
   type DatedFrame,
   type FrameChapter,
   type FrameWithMentions,
+  type Mention,
   type MentionFrame,
 } from '../../collab/mentions'
 import { dateFromServer } from '../../collab/eventDate'
@@ -43,6 +44,15 @@ import { createEntityType } from '../../api/entityTypes'
 interface Props {
   projectId: string
   canEdit: boolean
+  /**
+   * Переход к кадру (0.87.0): из всплывающей карточки упоминания — «к редактированию» или
+   * «к проекту». Владелец страницы решает, что это значит (переключить вкладку и передать
+   * просьбу панели редакторов либо прокрутить показ проекта на кадр).
+   *
+   * Почему проп, а не событие: панель редакторов монтируется только на своей вкладке, и событие
+   * из «Связей» слышать было некому — переходы по матрице и хронологии перестали работать.
+   */
+  onOpenFrame?: (frameId: string, mention: Mention, place: 'editors' | 'project') => void
 }
 
 /** Строка дерева в том же виде, что нужно хронологии и матрице. */
@@ -57,7 +67,7 @@ interface RelationsRow {
   isChapter: boolean
 }
 
-export function RelationsPanel({ projectId, canEdit }: Props) {
+export function RelationsPanel({ projectId, canEdit, onOpenFrame }: Props) {
   const { entities, links, types, loaded, reload } = useProjectEntities(projectId)
   const [rows, setRows] = useState<RelationsRow[]>([])
   const [eventsLoaded, setEventsLoaded] = useState(false)
@@ -143,9 +153,23 @@ export function RelationsPanel({ projectId, canEdit }: Props) {
     return mentionMatrix(mentionFrames, frameChapters, chapters, entities)
   }, [entities, mentionFrames, rows])
 
-  const openFrame = useCallback((frameId: string, mention?: Parameters<typeof requestOpenFrame>[1]) => {
-    requestOpenFrame(frameId, mention)
-  }, [])
+  /**
+   * Переход к кадру из хронологии карточки и из матрицы (0.79.0 → 0.87.0).
+   *
+   * Сначала пробуем проп страницы: она переключит вкладку и передаст просьбу панели редакторов
+   * либо прокрутит показ проекта. Событие осталось запасным путём — для случаев, когда панель
+   * встроена без страницы (сценарии, тесты).
+   */
+  const openFrame = useCallback(
+    (frameId: string, mention?: Mention, place: 'editors' | 'project' = 'editors') => {
+      if (onOpenFrame && mention) {
+        onOpenFrame(frameId, mention, place)
+        return
+      }
+      requestOpenFrame(frameId, mention)
+    },
+    [onOpenFrame],
+  )
 
   const chapters = rows.filter((row) => row.isChapter).length
   const framesCount = rows.length

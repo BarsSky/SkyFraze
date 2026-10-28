@@ -15,7 +15,7 @@ import {
 } from '../../api/entities'
 import { serverErrorMessage } from '../../api/client'
 import { cardTemplateFor, typeTitle, type EntityCardTemplate, type EntityType } from '../../api/entityTypes'
-import type { FrameWithMentions, Mention, MentionMatrix } from '../../collab/mentions'
+import type { FrameWithMentions, MatrixCell, Mention, MentionMatrix } from '../../collab/mentions'
 
 /**
  * «Связи проекта» — карточки персонажей, мест и тем (docs/entity-links.md, фаза 1).
@@ -60,7 +60,7 @@ interface Props {
    * ведёт в кадр и подсвечивает упоминание — это и есть «где на таймлайне появляется Анна».
    */
   framesByEntity?: Record<string, FrameWithMentions[]>
-  onOpenFrame?: (frameId: string, mention: Mention) => void
+  onOpenFrame?: (frameId: string, mention: Mention, place: 'editors' | 'project') => void
   /**
    * Матрица «персонажи × главы» (0.71.0): кто с кем в одной главе. Единственный вид, где видно,
    * что два «главных» персонажа ни разу не встречаются вместе.
@@ -142,6 +142,27 @@ export function EntitiesPanel({
    * запоминается, чтобы блок не раскрывался каждый раз заново.
    */
   const [open, setOpen] = useState(() => readEntitiesOpen(projectId) ?? entities.length === 0)
+  /**
+   * Всплывающая карточка упоминания (0.87.0): что где встречается и два перехода.
+   *
+   * Зачем вместо прямого перехода: клик по клетке матрицы раньше уводил в кадр молча — человек
+   * не видел, куда идёт (и в какой главе это), а если кадров в главе несколько, попадал всегда в
+   * первый. Теперь клетка раскрывает карточку: цитата, список кадров главы и выбор — «к
+   * редактированию» (текст) или «к проекту» (показ).
+   *
+   * `anchor` — координаты окна, от которых карточка встаёт рядом с клеткой. Считаем по
+   * `getBoundingClientRect`: таблица матрицы прокручивается вбок, и координаты внутри неё
+   * разъезжались бы с экранными.
+   */
+  const [mentionCard, setMentionCard] = useState<{
+    entityName: string
+    kind: string
+    chapterNumber: string
+    chapterTitle: string
+    cell: MatrixCell
+    frameId: string
+    anchor: { x: number; y: number }
+  } | null>(null)
 
   /** Связи карточки в обе стороны: прямые и обратные (0.74.0). */
   const entityLinks = (entityId: string) => connectionsOf(entityId, links ?? [], entities)
@@ -550,7 +571,10 @@ export function EntitiesPanel({
                       <button
                         type="button"
                         className="ent__frame-open"
-                        onClick={() => onOpenFrame?.(frame.frameId, frame.mentions[0])}
+                        onClick={() => {
+                          const mention = frame.mentions[0]
+                          if (mention) onOpenFrame?.(frame.frameId, mention, canEdit ? 'editors' : 'project')
+                        }}
                         title={`Открыть кадр и показать «${frame.mentions[0]?.quote ?? ''}»`}
                         data-entity-frame={frame.frameId}
                       >
@@ -725,10 +749,24 @@ export function EntitiesPanel({
                           <button
                             type="button"
                             className="ent__matrix-link"
-                            title={`Открыть кадр и показать «${cell.first?.mention.quote ?? ''}»`}
-                            onClick={() =>
-                              cell.first && onOpenFrame?.(cell.first.frameId, cell.first.mention)
-                            }
+                            title={`Где встречается «${row.entity.name}» в главе`}
+                            onClick={(event) => {
+                              // Карточка встаёт рядом с клеткой: экранные координаты, а не
+                              // координаты внутри прокручиваемой таблицы.
+                              const rect = event.currentTarget.getBoundingClientRect()
+                              const firstFrame = cell.frames?.[0] ?? cell.first
+                              if (!firstFrame) return
+                              const chapter = matrix.chapters[index]
+                              setMentionCard({
+                                entityName: row.entity.name,
+                                kind: row.entity.kind ?? '',
+                                chapterNumber: chapter.number,
+                                chapterTitle: chapter.title,
+                                cell,
+                                frameId: 'id' in firstFrame ? firstFrame.id : firstFrame.frameId,
+                                anchor: { x: Math.round(rect.left), y: Math.round(rect.bottom) },
+                              })
+                            }}
                             data-matrix-cell={matrix.chapters[index].id}
                           >
                             {cell.count}
@@ -748,7 +786,140 @@ export function EntitiesPanel({
           </p>
         </details>
       )}
+      {/* Всплывающая карточка упоминания (0.87.0): «где встречается» + два перехода.
+          position: fixed — карточка не должна ни растягивать таблицу, ни уезжать вместе с её
+          горизонтальной прокруткой. */}
+      {mentionCard !== null && (
+        <MentionCard
+          card={mentionCard}
+          canEdit={canEdit}
+          kindTitle={kindTitle}
+          onSelectFrame={(frameId) => setMentionCard((current) => (current ? { ...current, frameId } : current))}
+          onOpen={(place) => {
+            const frame = mentionCard.cell.frames?.find((item) => item.id === mentionCard.frameId)
+            const mention = frame?.mention ?? mentionCard.cell.first?.mention
+            const frameId = frame?.id ?? mentionCard.cell.first?.frameId
+            setMentionCard(null)
+            if (mention && frameId) onOpenFrame?.(frameId, mention, place)
+          }}
+          onClose={() => setMentionCard(null)}
+        />
+      )}
     </details>
+  )
+}
+
+/**
+ * Карточка упоминания (0.87.0): что где встречается и куда перейти.
+ *
+ * Зачем вместо прямого перехода: клик по клетке матрицы раньше уводил в кадр молча — человек не
+ * видел ни главы, ни цитаты, — а при нескольких кадрах в главе всегда попадал в первый. Здесь
+ * видно цитату, список кадров главы (можно выбрать) и два перехода: в текст («к редактированию»)
+ * и в показ проекта («к проекту»). Читателю редактор недоступен — у него остаётся один переход.
+ */
+function MentionCard({
+  card,
+  canEdit,
+  kindTitle,
+  onSelectFrame,
+  onOpen,
+  onClose,
+}: {
+  card: {
+    entityName: string
+    kind: string
+    chapterNumber: string
+    chapterTitle: string
+    cell: MatrixCell
+    frameId: string
+    anchor: { x: number; y: number }
+  }
+  canEdit: boolean
+  kindTitle: (key: string) => string
+  onSelectFrame: (frameId: string) => void
+  onOpen: (place: 'editors' | 'project') => void
+  onClose: () => void
+}) {
+  const frames = card.cell.frames ?? []
+  const selected = frames.find((frame) => frame.id === card.frameId) ?? frames[0]
+  // Позиция: рядом с клеткой, с прижатием к краям окна. Высота ограничена остатком экрана —
+  // длинный список кадров прокручивается внутри карточки, а не уезжает под нижний край.
+  const width = 320
+  const left = Math.min(Math.max(8, card.anchor.x - 60), Math.max(8, window.innerWidth - width - 8))
+  const top = Math.min(Math.max(8, card.anchor.y + 8), Math.max(8, window.innerHeight - 120))
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  return (
+    <div
+      className="ent__mention-card"
+      role="dialog"
+      aria-label={`Упоминания «${card.entityName}» в главе ${card.chapterNumber}`}
+      data-mention-card
+      style={{ left, top, width, maxHeight: `calc(100vh - ${top}px - 12px)` }}
+    >
+      <div className="ent__mention-head">
+        <span className="ent__kind">{kindTitle(card.kind)}</span>
+        <strong className="ent__mention-name">{card.entityName}</strong>
+        <button
+          type="button"
+          className="secondary ent__mention-close"
+          onClick={onClose}
+          aria-label="Закрыть карточку упоминания"
+          data-mention-close
+        >
+          ×
+        </button>
+      </div>
+      <p className="muted ent__mention-sub">
+        глава {card.chapterNumber} «{card.chapterTitle}» · упоминаний:{' '}
+        <span data-mention-count>{card.cell.count}</span>
+      </p>
+      {frames.length > 0 && (
+        <ul className="ent__mention-frames" data-mention-frames>
+          {frames.map((frame) => (
+            <li key={frame.id}>
+              <button
+                type="button"
+                className={frame.id === selected?.id ? 'ent__mention-frame is-active' : 'ent__mention-frame'}
+                onClick={() => onSelectFrame(frame.id)}
+                aria-pressed={frame.id === selected?.id}
+                data-mention-frame={frame.id}
+              >
+                <span className="ent__mention-frame-title">{frame.title || 'без названия'}</span>
+                {frame.mentions > 1 && <span className="muted">×{frame.mentions}</span>}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {selected?.mention.quote !== undefined && (
+        <p className="ent__mention-quote" data-mention-quote>
+          «{selected.mention.quote}»
+        </p>
+      )}
+      <div className="ent__mention-actions">
+        {canEdit && (
+          <button type="button" onClick={() => onOpen('editors')} data-mention-to-editors>
+            К редактированию
+          </button>
+        )}
+        <button
+          type="button"
+          className={canEdit ? 'secondary' : undefined}
+          onClick={() => onOpen('project')}
+          data-mention-to-project
+        >
+          К проекту
+        </button>
+      </div>
+    </div>
   )
 }
 

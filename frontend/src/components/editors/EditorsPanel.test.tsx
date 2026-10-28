@@ -189,6 +189,34 @@ describe('EditorsPanel — перетаскивание событий', () => {
     expect(rowEl('Глава 2').className).toContain('ed-row--active')
   })
 
+  /**
+   * 0.87.0: просьба открыть кадр приходит ПРОПСОМ со страницы («К редактированию» в карточке
+   * упоминания). Событие для этого не годилось: панель монтируется только на своей вкладке, и
+   * событие, отправленное из «Связей», слышать было некому — переходы молчали.
+   */
+  it('открывает кадр по просьбе страницы и сообщает, что обработал её', () => {
+    // jsdom не умеет scrollIntoView, а панель после перехода прокручивает себя к дереву.
+    ;(HTMLElement.prototype as unknown as { scrollIntoView: () => void }).scrollIntoView = vi.fn()
+    const { events, chapter2 } = makeEvents()
+    const onOpenRequestHandled = vi.fn()
+    const { rerender } = render(
+      <EditorsPanel events={events} assets={[]} assetUrls={{}} onChanged={vi.fn()} onUpload={async () => null} />,
+    )
+    rerender(
+      <EditorsPanel
+        events={events}
+        assets={[]}
+        assetUrls={{}}
+        onChanged={vi.fn()}
+        onUpload={async () => null}
+        openRequest={{ frameId: chapter2.get('id') as string, nonce: 1 }}
+        onOpenRequestHandled={onOpenRequestHandled}
+      />,
+    )
+    expect(rowEl('Глава 2').className).toContain('ed-row--active')
+    expect(onOpenRequestHandled).toHaveBeenCalled()
+  })
+
   it('Esc отменяет перенос, дерево не меняется', () => {
     const { events, sub } = makeEvents()
     const onChanged = show(events)

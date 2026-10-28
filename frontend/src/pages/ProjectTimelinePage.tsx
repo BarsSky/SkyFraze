@@ -9,6 +9,7 @@ import { VersionsModal } from '../components/versions/VersionsModal'
 import { PresenceBar } from '../components/collab/PresenceBar'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { useCollab, yAddEvent, type YMap } from '../collab/yprovider'
+import type { Mention } from '../collab/mentions'
 import { titleString } from '../collab/text'
 import { connectionNotice } from '../collab/connection'
 import { projectPhase } from '../lib/projectPhase'
@@ -78,6 +79,20 @@ export function ProjectTimelinePage() {
    * У читателя вкладок нет: публичный показ остаётся прежним (прокрутка по сценам).
    */
   const [view, setView] = useState<ProjectView>('project')
+  /**
+   * Просьба открыть кадр в редакторе (0.87.0).
+   *
+   * Раньше «Связи» отправляли событие `skyfraze:open-frame`, и его ловила панель редакторов.
+   * С 0.83.0 эта панель монтируется только на своей вкладке: событие, отправленное из «Связей»,
+   * не слышал никто — переходы по матрице и хронологии перестали работать. Теперь страница
+   * сама переключает вкладку и передаёт просьбу панели пропсом (детерминированно: панель
+   * получает её уже смонтированной).
+   */
+  const [openFrameRequest, setOpenFrameRequest] = useState<
+    { frameId: string; mention?: Mention; nonce: number } | null
+  >(null)
+  /** Кадр, к которому надо прокрутить показ проекта (кнопка «К проекту»). */
+  const [focusFrame, setFocusFrame] = useState<{ id: string; nonce: number } | null>(null)
 
   const collab = useCollab(projectId)
   const events = collab?.events
@@ -380,6 +395,33 @@ export function ProjectTimelinePage() {
    * Читатель видит прежний показ проекта без вкладок — публичная версия не меняется.
    */
   const tabsShown = editorsShown && !loading
+
+  /**
+   * Переход к конкретному кадру из «Связей» (0.87.0): «к редактированию» или «к проекту».
+   *
+   * Почему страница, а не событие: панель редакторов монтируется только на своей вкладке, и
+   * событие `skyfraze:open-frame`, отправленное из «Связей», слышать было некому — переходы по
+   * матрице и хронологии молчали (отчёт: «перестали работать по нажатию»). Здесь вкладка
+   * переключается, а просьба передаётся пропсом уже смонтированной панели.
+   *
+   * Читателю редактор недоступен (вкладок и панели нет) — для него обе кнопки ведут к показу
+   * проекта: это единственное место, где он видит кадр.
+   */
+  const openFrameAt = useCallback(
+    (frameId: string, mention: Mention, place: 'editors' | 'project') => {
+      if (!frameId) return
+      const nonce = Date.now()
+      const editorsAvailable = tabsShown && canEdit === true && eventsCount > 0
+      if (place === 'editors' && editorsAvailable) {
+        setOpenFrameRequest({ frameId, mention, nonce })
+        setView('editors')
+        return
+      }
+      if (tabsShown) setView('project')
+      setFocusFrame({ id: frameId, nonce })
+    },
+    [canEdit, eventsCount, tabsShown],
+  )
   /**
    * Высота строки вкладок — в CSS-переменную `--sf-tabs-h` (0.83.0).
    *
@@ -492,6 +534,8 @@ export function ProjectTimelinePage() {
             /* Кнопок режимов в шапке стадии больше нет: вкладки живут своей строкой сверху,
                а помощник — плавающий чат, доступный в любом режиме. */
             actions={undefined}
+            /* «К проекту» из «Связей» (0.87.0): прокрутка встаёт на выбранный кадр. */
+            focusFrame={focusFrame}
           />
         )}
 
@@ -519,6 +563,10 @@ export function ProjectTimelinePage() {
               assetNote={assetNote}
               assetBusyId={assetBusyId}
               onOpenRelations={openRelations}
+              /* «К редактированию» из всплывающей карточки упоминания: страница уже
+                 переключила вкладку, панель открывает кадр и подсвечивает слово. */
+              openRequest={openFrameRequest}
+              onOpenRequestHandled={() => setOpenFrameRequest(null)}
             />
           </>
         )}
@@ -527,7 +575,7 @@ export function ProjectTimelinePage() {
             снапшот документа: его данные — проекция и карточки, они приходят своим запросом
             раньше, и вкладка показывает связи, пока грузится текст. */}
         {tabsShown && view === 'relations' && (
-          <RelationsPanel projectId={projectId} canEdit={canEdit === true} />
+          <RelationsPanel projectId={projectId} canEdit={canEdit === true} onOpenFrame={openFrameAt} />
         )}
 
         {/* «Версии» — та же история, что была окном, но вкладкой: переключение мгновенное,
@@ -546,7 +594,7 @@ export function ProjectTimelinePage() {
       {/* Читателю и в пустом проекте панели редакторов нет, и карточки ему показываются в
           обычном потоке под показом проекта — без вкладок, как и было до 0.83.0. */}
       {!showEditors && !loading && eventsCount > 0 && project != null && (
-        <RelationsPanel projectId={projectId} canEdit={false} />
+        <RelationsPanel projectId={projectId} canEdit={false} onOpenFrame={openFrameAt} />
       )}
 
       {!tabsShown && !loading && presenceBar}

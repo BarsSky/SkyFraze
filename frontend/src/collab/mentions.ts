@@ -32,6 +32,12 @@ export interface MentionEntity {
   id: string
   name: string
   aliases: string[]
+  /**
+   * Вид карточки (0.87.0): нужен всплывающей карточке упоминания — она подписывает карточку
+   * так же, как список («Фракция»), а не голым именем. Необязателен: поиск упоминаний работает
+   * и без типа.
+   */
+  kind?: string
 }
 
 /** Одно найденное упоминание. `from`/`to` — индексы в UTF-16, как у выделения и якорей. */
@@ -200,11 +206,28 @@ export interface MatrixChapter {
   number: string
 }
 
+/**
+ * Кадр внутри клетки матрицы (0.87.0): где именно в этой главе встречается карточка.
+ *
+ * Зачем: клетка отвечала «сколько», а всплывающая карточка должна ответить «где» — списком
+ * кадров этой главы, чтобы человек выбрал нужный и перешёл в него.
+ */
+export interface MatrixFrameMention {
+  id: string
+  title: string
+  /** Сколько раз карточка упомянута в этом кадре. */
+  mentions: number
+  /** Первое упоминание кадра: по нему подсвечивается слово при переходе. */
+  mention: Mention
+}
+
 /** Клетка матрицы: сколько упоминаний и куда вести по клику (0.73.0). */
 export interface MatrixCell {
   count: number
   /** Первое упоминание в этой главе: по нему открывается кадр и выделяется слово. */
   first?: { frameId: string; mention: Mention }
+  /** Кадры главы с этой карточкой, в порядке дерева (0.87.0). */
+  frames?: MatrixFrameMention[]
 }
 
 /** Строка матрицы: карточка и её упоминания по главам (в порядке столбцов). */
@@ -261,9 +284,18 @@ export function mentionMatrix(
         perEntity.set(mention.entityId, {
           count: 1,
           first: { frameId: frame.id, mention },
+          // Кадры клетки собираем сразу: всплывающая карточка показывает «где встречается»,
+          // и второй проход по всем кадрам ради этого не нужен.
+          frames: [{ id: frame.id, title: frame.title, mentions: 1, mention }],
         })
+        continue
+      }
+      cell.count += 1
+      const inFrame = cell.frames?.find((item) => item.id === frame.id)
+      if (inFrame) {
+        inFrame.mentions += 1
       } else {
-        cell.count += 1
+        cell.frames?.push({ id: frame.id, title: frame.title, mentions: 1, mention })
       }
     }
     cells.set(chapterId, perEntity)

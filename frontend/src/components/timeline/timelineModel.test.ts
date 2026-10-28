@@ -12,7 +12,9 @@ import {
   eventFrames,
   eventPosition,
   frameLabel,
+  framePosition,
   resolveScrollState,
+  scrollDeltaForFrame,
   stepNumber,
   textUnits,
   unitsBeforeChapter,
@@ -292,5 +294,70 @@ describe('нумерация и позиции', () => {
     expect(unitsBeforeChapter(model, 1)).toBeCloseTo(model.chapters[0].weight)
     expect(unitsBeforeFrame(model, 0, 0)).toBe(0)
     expect(unitsBeforeFrame(model, 0, 1)).toBeCloseTo(FRAME_WEIGHT_CHAPTER)
+  })
+
+  /**
+   * 0.87.0: «К проекту» в карточке упоминания ставит прокрутку на нужный кадр, а для этого
+   * странице нужно найти кадр в модели — по id, а не «примерно по номеру».
+   */
+  it('framePosition находит кадр по id: глава и номер кадра', () => {
+    const model = buildTimelineModel(ITEMS, ['#aaa'])
+    const first = model.chapters[0].frames[0]
+    expect(framePosition(model, first.id)).toEqual({ chapterIndex: 0, frameIndex: 0 })
+    const second = model.chapters[0].frames[1]
+    expect(framePosition(model, second.id)).toEqual({ chapterIndex: 0, frameIndex: 1 })
+    const otherChapter = model.chapters[1].frames[0]
+    expect(framePosition(model, otherChapter.id)).toEqual({ chapterIndex: 1, frameIndex: 0 })
+    // Кадра нет в модели: удалили в другой вкладке или пришёл из устаревшей проекции.
+    expect(framePosition(model, 'нет-такого')).toBeNull()
+  })
+
+  /**
+   * Точность «К проекту» (0.87.0): прокрутка должна встать на ВЫБРАННЫЙ кадр, а не в начало.
+   * Проверяем числами: первый кадр — только выравнивание трека, последний — весь трек.
+   */
+  it('scrollDeltaForFrame ставит показ на выбранный кадр', () => {
+    const model = buildTimelineModel(ITEMS, ['#aaa'])
+    // Трек 1000 px, видимая область 200 px → прокручиваемая часть 800 px; трек ниже верха на 100.
+    const base = { trackTop: 100, boxTop: 0, trackHeight: 1000, viewport: 200, model }
+    const first = scrollDeltaForFrame({ ...base, position: { chapterIndex: 0, frameIndex: 0 } })
+    // Первый кадр: трек выравнивается по верху — 100 px.
+    expect(first).toBeCloseTo(100, 6)
+
+    const second = model.chapters[0].frames[1]
+    const deltaSecond = scrollDeltaForFrame({ ...base, position: { chapterIndex: 0, frameIndex: 1 } })
+    // Кадр 1.1 начинается после веса главы: 100 + вес_до_кадра / весь_вес * 800.
+    expect(deltaSecond).toBeCloseTo(
+      100 + (unitsBeforeFrame(model, 0, 1) / model.totalWeight) * 800,
+      6,
+    )
+    expect(deltaSecond).toBeGreaterThan(first)
+
+    // Последний кадр последней главы: прогресс 1 → прокручиваемая часть целиком.
+    const lastChapter = model.chapters.length - 1
+    const lastFrame = model.chapters[lastChapter].frames.length - 1
+    const deltaLast = scrollDeltaForFrame({
+      ...base,
+      position: { chapterIndex: lastChapter, frameIndex: lastFrame },
+    })
+    expect(deltaLast).toBeLessThanOrEqual(100 + 800 + 0.001)
+    // И не меньше, чем начало последней главы.
+    expect(deltaLast).toBeGreaterThanOrEqual(deltaSecond)
+    expect(second.id).toBeTruthy()
+  })
+
+  it('scrollDeltaForFrame выравнивает трек, даже если он выше окна', () => {
+    const model = buildTimelineModel(ITEMS, ['#aaa'])
+    // Трек уже прокручен вверх: его верх выше видимой области на 300 px.
+    const delta = scrollDeltaForFrame({
+      trackTop: -300,
+      boxTop: 0,
+      trackHeight: 1000,
+      viewport: 200,
+      model,
+      position: { chapterIndex: 0, frameIndex: 0 },
+    })
+    // Отрицательное смещение: прокрутка вернётся назад к началу трека.
+    expect(delta).toBeCloseTo(-300, 6)
   })
 })
