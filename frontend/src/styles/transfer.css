@@ -42,6 +42,19 @@
 }
 .dl-menu__item:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
 .dl-menu__item .muted { font-size: 12px; line-height: 1.35; }
+/* Переключатель оформления DOCX в меню «Книга» (0.93.1): одна строка над кнопкой скачивания —
+   выбор виден ДО нажатия, а не в настройках проекта. */
+.dl-menu__note {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 6px 10px; font-size: 12px;
+  border-top: 1px dashed var(--border); border-bottom: 1px dashed var(--border);
+}
+.dl-menu__note-label { color: var(--fg-muted); }
+.dl-menu__select {
+  flex: 1 1 120px; min-width: 0; max-width: 100%;
+  background: var(--bg); color: var(--fg); border: 1px solid var(--border);
+  border-radius: 6px; padding: 6px 8px; font-size: 13px; min-height: 32px;
+}
 
 /* ── окно импорта папки ──────────────────────────────────────────────── */
 .sf-import {

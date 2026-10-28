@@ -47,13 +47,24 @@ func (e *QuotaError) Error() string {
 // InUseError — файл прикреплён к кадрам, удалять его нельзя.
 type InUseError struct {
 	Events int
+	// MentionImages — сколько упоминаний карточек показывают этот файл (0.93.1). Картинка
+	// упоминания — такая же ссылка, как привязка к кадру: удалять файл из-под неё молча нельзя.
+	MentionImages int
 }
 
 func (e *InUseError) Error() string {
+	var parts []string
 	if e.Events == 1 {
-		return "файл прикреплён к кадру — сначала открепите его"
+		parts = append(parts, "к кадру")
+	} else if e.Events > 1 {
+		parts = append(parts, fmt.Sprintf("к %d кадрам", e.Events))
 	}
-	return fmt.Sprintf("файл прикреплён к %d кадрам — сначала открепите его", e.Events)
+	if e.MentionImages == 1 {
+		parts = append(parts, "к упоминанию карточки")
+	} else if e.MentionImages > 1 {
+		parts = append(parts, fmt.Sprintf("к %d упоминаниям карточек", e.MentionImages))
+	}
+	return "файл прикреплён " + strings.Join(parts, " и ") + " — сначала открепите его"
 }
 
 // QuotaExceeded — можно ли считать ошибку превышением квоты (для HTTP-кода).
@@ -388,6 +399,15 @@ func (s *Service) Delete(ctx context.Context, actorID, assetID uuid.UUID) error 
 		if usage > 0 {
 			return &InUseError{Events: usage}
 		}
+	}
+	// Картинка упоминания карточки (0.93.1) — такая же ссылка, как привязка к кадру. Считаем
+	// отдельно от `usage`: привязки кадров живут в CRDT, картинки упоминаний — в базе.
+	mentions, err := s.store.CountMentionImagesByAsset(ctx, assetID)
+	if err != nil {
+		return err
+	}
+	if mentions > 0 {
+		return &InUseError{MentionImages: mentions}
 	}
 	if err := s.store.DeleteAsset(ctx, assetID); err != nil {
 		return err

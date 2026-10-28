@@ -21,6 +21,7 @@ import { exportStoryBook, exportStoryMarkdown } from '../api/storyFiles'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { ImportFolderModal } from '../components/ImportFolderModal'
 import { TrashPanel } from '../components/projects/TrashPanel'
+import { DocxTemplateSwitch } from '../components/projects/DocxTemplateSwitch'
 import { projectWeight } from '../lib/projectWeight'
 import { copyText } from '../lib/clipboard'
 import { useAuthStore } from '../store/auth'
@@ -44,6 +45,12 @@ export function ProjectsPage() {
   const [templateName, setTemplateName] = useState('')
   const [note, setNote] = useState<string | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
+  /**
+   * Открытое меню «Книга» у проекта: переключатель оформления DOCX грузится только для него.
+   * Состояние живёт здесь, а не в компоненте: меню — это <details> в списке, и без общего
+   * состояния переключатель монтировался бы у всех проектов сразу.
+   */
+  const [bookMenu, setBookMenu] = useState<string | null>(null)
   const [importing, setImporting] = useState(false)
   /** Проект → сколько новых замечаний ждёт ответа (см. docs/comments.md). */
   const [unseen, setUnseen] = useState<Record<string, number>>({})
@@ -570,7 +577,21 @@ export function ProjectsPage() {
                 </details>
                 {/* Книга файлом: EPUB читают, DOCX правят. Отдельное меню, а не пункты
                     в Markdown: это разные задачи — «перенести текст» и «получить книгу». */}
-                <details className="dl-menu">
+                <details
+                  className="dl-menu"
+                  // Переключатель оформления грузится только когда меню открыли (0.93.1):
+                  // иначе список проектов делал бы запрос шаблонов на каждый проект ради меню,
+                  // которое чаще всего не открывают.
+                  onToggle={(event) => {
+                    // `currentTarget` живёт только во время обработчика: внутри updater'а он уже
+                    // null. Поэтому «открыто?» снимаем сразу, а не в функции обновления.
+                    const open = event.currentTarget.open
+                    setBookMenu((current) => {
+                      if (open) return p.id
+                      return current === p.id ? null : current
+                    })
+                  }}
+                >
                   <summary className="dl-menu__toggle" title="Скачать книгу: EPUB для читалки или DOCX для правки">
                     Книга
                   </summary>
@@ -587,6 +608,17 @@ export function ProjectsPage() {
                       <b>Скачать .epub</b>
                       <span className="muted">книга с оглавлением и иллюстрациями — для читалки</span>
                     </button>
+                    {/* Каким оформлением соберётся .docx — видно ЗДЕСЬ, до нажатия: за выбором
+                        оформления раньше нужно было уходить в настройки проекта. */}
+                    {bookMenu === p.id && (
+                      <DocxTemplateSwitch
+                        projectId={p.id}
+                        // Роль в списке проектов приходит не всегда (`role` есть у участий,
+                        // у своего проекта она может быть пустой) — владелец определяется по
+                        // `owner_id`, иначе переключатель был бы выключен у автора.
+                        canEdit={p.role === 'owner' || p.role === 'editor' || p.owner_id === userId}
+                      />
+                    )}
                     <button
                       type="button"
                       className="dl-menu__item"

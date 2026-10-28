@@ -79,3 +79,16 @@ func (s *Store) DeleteMentionImage(
 	}
 	return tag.RowsAffected() > 0, nil
 }
+
+// CountMentionImagesByAsset — сколько упоминаний карточек показывают этот файл.
+//
+// Нужен удалению вложения (0.93.1): картинка упоминания — такая же ссылка, как привязка к кадру,
+// и удалить файл из-под неё значит оставить карточку с пустой рамкой. Удаление тогда отказывает
+// с объяснением, а не срабатывает каскадом молча.
+func (s *Store) CountMentionImagesByAsset(ctx context.Context, assetID uuid.UUID) (int, error) {
+	var count int
+	err := s.Pool.QueryRow(ctx,
+		`SELECT count(*) FROM mention_images WHERE asset_id = $1`, assetID).Scan(&count)
+	return count, err
+}
+
