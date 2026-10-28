@@ -261,9 +261,10 @@ function HeaderMenu({
         data-header-more
       >
         Ещё
-        <span aria-hidden="true" className="header-more__caret">
-          {open ? '▴' : '▾'}
-        </span>
+        {/* Уголок рисует CSS, а не символ ▾: на телефоне шрифт подставлял вместо него точку
+            (в отчёте 0.98.2 кнопка выглядела как «Ещё ·»), и было не видно, что это раскрывающееся
+            меню. Направление задаёт aria-expanded — тот же признак, что читает скринридер. */}
+        <span aria-hidden="true" className="header-more__caret" />
       </button>
       {open && (
         <div className="header-more__menu" role="menu" data-header-menu>

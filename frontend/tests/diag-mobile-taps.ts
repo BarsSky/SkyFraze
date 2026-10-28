@@ -147,12 +147,19 @@ async function checkWidth(
   if ((await more.count()) > 0) {
     await more.tap({ timeout: 10_000 }).catch(() => undefined)
     await page.waitForTimeout(300)
-    const opened = (await page.evaluate(`(async () => {
+    // Проверяем не «есть ли узел в DOM» (у обрезанного меню тоже есть размер), а попадает ли
+    // касание в его первый пункт: именно на этом 0.98.1 промахнулась — меню существовало, но было
+    // обрезано шапкой, и тап уходил в страницу.
+    const state = (await page.evaluate(`(async () => {
       const menu = document.querySelector('[data-header-menu]')
-      return menu ? menu.getBoundingClientRect().width > 0 : false
-    })()`)) as boolean
-    console.log(`кнопка «Ещё»: меню открылось — ${opened}`)
-    if (!opened) problems.push(`${width}px: тап по «Ещё» не открыл меню`)
+      if (!menu || !menu.firstElementChild) return { hit: false, where: 'меню нет' }
+      const item = menu.firstElementChild.getBoundingClientRect()
+      const found = document.elementFromPoint(Math.round(item.left + item.width / 2), Math.round(item.top + item.height / 2))
+      return { hit: menu.contains(found), where: found ? found.tagName.toLowerCase() : 'пусто' }
+    })()`)) as { hit: boolean; where: string }
+    const opened = state.hit
+    console.log(`кнопка «Ещё»: пункт меню под касанием — ${opened} (в точке ${state.where})`)
+    if (!opened) problems.push(`${width}px: тап по «Ещё» не открыл видимое меню (в точке ${state.where})`)
 
     // Пункты меню: раздел (ссылка) и действие (тема). Обе — «кнопки в полоске меню».
     const navItem = page.locator('[data-header-menu] a').first()

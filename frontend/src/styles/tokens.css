@@ -269,7 +269,22 @@ html.sf-stage-on .layout header {
   display: inline-flex; align-items: center; gap: 4px;
   min-height: 34px; padding: 4px 12px; font-size: 0.94rem;
 }
-.header-more__caret { font-size: 0.7em; opacity: 0.75; }
+/* Уголок «раскрывается» рисуется границами, а не символом ▾: символ на телефоне подставлялся
+   точкой («Ещё ·»), и кнопка не выглядела раскрывающейся. Поворот — по aria-expanded. */
+.header-more__caret {
+  display: inline-block;
+  width: 0; height: 0;
+  margin-left: 1px;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid currentColor;
+  opacity: 0.8;
+  transition: transform 0.15s ease;
+}
+.header-more__button[aria-expanded='true'] .header-more__caret { transform: rotate(180deg); }
+@media (prefers-reduced-motion: reduce) {
+  .header-more__caret { transition: none; }
+}
 .header-more__menu {
   position: absolute; left: 0; right: auto; top: calc(100% + 6px); z-index: 90;
   min-width: 180px; max-width: calc(100vw - 20px); display: grid; gap: 2px; padding: 6px;
@@ -300,6 +315,33 @@ html.sf-stage-on .layout header {
    вылезало за правый край (замер на 360 px: правый край 377 при экране 360). */
 @media (max-width: 420px) {
   .header-more__menu { left: auto; right: 0; }
+}
+
+/* Меню «Ещё» на телефоне (0.98.2): `fixed`, а не `absolute`.
+ *
+ * Отчёт: «кнопка „Ещё“ не реагировала на касание». Она нажималась — состояние переключалось,
+ * `aria-expanded` становился true, — а меню НЕ БЫЛО ВИДНО: шапка на телефоне обрезает содержимое
+ * (`.layout header { overflow-x: hidden }` и `.auth-links { overflow: hidden }`, у полосы навигации
+ * высота 35 px), и выпадающий список обрезался её прямоугольником. Замер: меню 180×238 при
+ * контейнере 186×35, в точке первого пункта `elementFromPoint` возвращал `main` — то есть касание
+ * уходило в страницу. По этой же причине на телефоне уже работает `position: fixed` у панели
+ * колокольчика: fixed не обрезается `overflow` предков (у нас нет предков с `transform`/`filter`,
+ * которые сделали бы его содержащим блоком).
+ *
+ * Ширина — по содержимому, но не шире экрана; правый край прижат к экрану, а не к кнопке: у кнопки,
+ * стоящей у самого края, меню уезжало бы за него. `max-height` с прокруткой — на случай, когда
+ * пунктов много (шесть пунктов + два действия). */
+@media (max-width: 860px) {
+  .header-more__menu {
+    position: fixed;
+    top: calc(var(--sf-header-h, 46px) + 4px);
+    right: 8px;
+    left: auto;
+    max-width: calc(100vw - 16px);
+    max-height: calc(100vh - var(--sf-header-h, 46px) - 16px);
+    overflow-y: auto;
+    z-index: 120;
+  }
 }
 
 /* Знак SkyFraze рядом с названием: рисунок тот же, что в favicon.svg */
