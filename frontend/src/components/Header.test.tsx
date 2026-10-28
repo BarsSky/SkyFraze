@@ -140,3 +140,26 @@ describe('Header — навигация на узком экране', () => {
     expect(items).toContain('Админка')
   })
 })
+
+/**
+ * Высота шапки — в CSS-переменной (0.86.0).
+ *
+ * Отчёт: «меню накрывает кнопки переключения» на вкладке «Версии». Причина: переменную
+ * `--sf-header-h` ставила стадия проекта, а с 0.83.0 она живёт только на вкладке «Проект» —
+ * на остальных её размонтирование СНИМАЛО переменную, и полоса вкладок вставала на запасные
+ * 46 px под реальной шапкой 62 px: верх вкладок был скрыт. Теперь меряет сама шапка.
+ */
+describe('Header — высота шапки для фиксированных слоёв', () => {
+  it('отдаёт свою высоту в --sf-header-h и убирает её при размонтировании', () => {
+    stubViewport(1200)
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      x: 0, y: 0, width: 1200, height: 62, top: 0, left: 0, right: 1200, bottom: 62,
+      toJSON: () => ({}),
+    } as DOMRect)
+    const view = renderHeader()
+    expect(document.documentElement.style.getPropertyValue('--sf-header-h')).toBe('62px')
+    view.unmount()
+    expect(document.documentElement.style.getPropertyValue('--sf-header-h')).toBe('')
+    vi.restoreAllMocks()
+  })
+})

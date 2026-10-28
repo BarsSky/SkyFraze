@@ -178,25 +178,12 @@ export function TimelineStage({ events, assetsById, projectTitle, actions, copyF
     }
   }, [applyStageVisibility])
 
-  // Фиксированные слои стадии не должны заезжать под шапку приложения: на телефоне
-  // шапка переносится и становится выше, и кнопка «Редакторы» оказывалась под ней.
-  // Поэтому высоту шапки измеряем и отдаём в CSS переменной --sf-header-h.
-  useEffect(() => {
-    const header = document.querySelector<HTMLElement>('.layout header')
-    const apply = () => {
-      const h = header ? Math.round(header.getBoundingClientRect().height) : 0
-      document.documentElement.style.setProperty('--sf-header-h', `${h}px`)
-    }
-    apply()
-    const ro = header && typeof ResizeObserver !== 'undefined' ? new ResizeObserver(apply) : null
-    if (ro && header) ro.observe(header)
-    window.addEventListener('resize', apply)
-    return () => {
-      ro?.disconnect()
-      window.removeEventListener('resize', apply)
-      document.documentElement.style.removeProperty('--sf-header-h')
-    }
-  }, [])
+  // Высоту шапки приложения измеряет САМА шапка (0.86.0, Header.tsx) и отдаёт в --sf-header-h.
+  //
+  // Почему мера переехала: с 0.83.0 стадия живёт только на вкладке «Проект»; её размонтирование
+  // снимало переменную, и на «Редакторах»/«Связях»/«Версиях» полоса вкладок вставала на запасные
+  // 46 px под реальной шапкой 62 px — верх вкладок был скрыт (отчёт: «меню накрывает кнопки
+  // переключения»). Здесь меры больше нет, иначе два наблюдателя спорили бы за одну переменную.
 
   // ── Данные из CRDT: тексты, вложения и настройки фона кадра
   useEffect(() => {

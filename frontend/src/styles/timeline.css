@@ -99,7 +99,9 @@
   position: fixed; left: 0; right: 0; top: var(--sf-header-h, 46px); z-index: 55;
   display: flex; justify-content: center;
   padding: 8px 12px;
-  background: color-mix(in srgb, var(--bg) 96%, transparent);
+  /* Полностью непрозрачный фон (0.86.0): под полосой ездит содержимое вкладки, и даже 4%
+     прозрачности давали «призрачные» кнопки, просвечивающие сквозь полосу. */
+  background: var(--bg);
   border-bottom: 1px solid var(--border);
 }
 .sf-tabs__tab {
@@ -112,6 +114,13 @@
   background: var(--accent-strong, var(--accent)); border-color: transparent;
   color: var(--bg); font-weight: 600;
 }
+/* Панель вкладки начинается ПОД полосой вкладок (0.86.0).
+   Полоса — fixed поверх страницы, а содержимое «Редакторов», «Связей» и «Версий» идёт в потоке
+   <main> с самого верха: без этого отступа его заголовок и кнопки оказывались под вкладками
+   (отчёт «меню накрывает кнопки переключения»). У сцены и листа кадра свои absolute/fixed
+   смещения, посчитанные от --sf-free-top, — отступ панели их не двигает. У читателя вкладок нет,
+   переменная равна нулю, и поток остаётся прежним. */
+#project-tab-panel { padding-top: var(--sf-tabs-h, 0px); }
 @media (max-width: 860px) {
   .sf-tabs { gap: 4px; }
   .sf-tabs__tab { padding: 4px 10px; font-size: 0.82rem; }

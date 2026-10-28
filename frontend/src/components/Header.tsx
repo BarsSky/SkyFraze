@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../store/auth'
 import { useTheme } from '../store/theme'
@@ -47,6 +47,37 @@ export function Header() {
   const nextTheme = theme === 'dark' ? 'light' : 'dark'
   const compact = useMediaQuery(COMPACT_QUERY)
   const narrow = useMediaQuery(NARROW_QUERY)
+  const headerRef = useRef<HTMLElement | null>(null)
+
+  /**
+   * Фактическая высота шапки — в `--sf-header-h` (0.86.0).
+   *
+   * Почему мерим ЗДЕСЬ, а не в стадии проекта, как было до 0.86.0: с 0.83.0 стадия живёт только
+   * на вкладке «Проект», и на «Редакторах», «Связях» и «Версиях» её компонент размонтировался —
+   * вместе с ним исчезала переменная, и фиксированная полоса вкладок вставала на запасные 46 px
+   * при реальной шапке 62 px. Полоса уезжала ПОД шапку, и её верхняя часть была не видна: отчёт
+   * «меню накрывает кнопки переключения». Шапка смонтирована всегда — она и есть хозяин своей
+   * высоты.
+   *
+   * На телефоне шапка переносится и становится выше (две строки) — ResizeObserver сообщает об
+   * этом сам, без опроса размеров на каждом кадре.
+   */
+  useLayoutEffect(() => {
+    const header = headerRef.current
+    const apply = () => {
+      const h = header ? Math.round(header.getBoundingClientRect().height) : 0
+      if (h > 0) document.documentElement.style.setProperty('--sf-header-h', `${h}px`)
+    }
+    apply()
+    const ro = header && typeof ResizeObserver !== 'undefined' ? new ResizeObserver(apply) : null
+    if (ro && header) ro.observe(header)
+    window.addEventListener('resize', apply)
+    return () => {
+      ro?.disconnect()
+      window.removeEventListener('resize', apply)
+      document.documentElement.style.removeProperty('--sf-header-h')
+    }
+  }, [])
 
   /** Раздел активен и на своих подстраницах: /projects и /projects/<id>. */
   const isActive = (to: string) => pathname === to || pathname.startsWith(`${to}/`)
@@ -77,7 +108,7 @@ export function Header() {
   }
 
   return (
-    <header>
+    <header ref={headerRef}>
       <div className="row" style={{ gap: 14, minWidth: 0 }}>
         <Link to={user ? '/projects' : '/feed'} className="brand">
           <BrandMark size={24} />
