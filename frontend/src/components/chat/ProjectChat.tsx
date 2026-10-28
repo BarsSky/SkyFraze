@@ -239,7 +239,13 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread }: Props
               <span className="chat__author">{message.author_name}</span>
               <span className="muted chat__time">{timeOf(message.created_at)}</span>
               {message.edited_at !== undefined && (
-                <span className="muted chat__edited" title={timeOf(message.edited_at)}>изменено</span>
+                <span
+                  className="muted chat__edited"
+                  title={`Изменено в ${timeOf(message.edited_at)}`}
+                  data-chat-edited
+                >
+                  изменено
+                </span>
               )}
             </div>
             {message.reply_to !== undefined && (
@@ -290,19 +296,25 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread }: Props
                 <button
                   type="button"
                   className="chat__mini"
+                  aria-label="ответить"
+                  title={`Ответить ${message.author_name}`}
                   onClick={() => setReplyTo(message)}
                   data-chat-reply-button={message.id}
                 >
-                  ответить
+                  <span aria-hidden="true">↩</span> ответить
                 </button>
                 {mine && message.kind === 'user' && (
                   <button
                     type="button"
                     className="chat__mini"
+                    // Не «удалить», а «изменить» (0.97.1): правка своего — то, что нужно в
+                    // обсуждении, а удаление ломало бы цитаты ответов и смысл разговора.
+                    aria-label="изменить"
+                    title="Исправить текст своего сообщения — с отметкой «изменено»"
                     onClick={() => setEditing({ id: message.id, text: message.body })}
                     data-chat-edit={message.id}
                   >
-                    изменить
+                    <span aria-hidden="true">✎</span> изменить
                   </button>
                 )}
               </div>

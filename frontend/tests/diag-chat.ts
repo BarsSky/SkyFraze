@@ -148,8 +148,17 @@ async function main() {
     await editArea.fill('Это ответ на первое (исправлено).')
     await page.locator('[data-chat-edit-save]').first().click()
     await page.getByText('Это ответ на первое (исправлено).').waitFor({ state: 'visible', timeout: 20_000 })
-    await page.getByText('изменено').first().waitFor({ state: 'visible', timeout: 10_000 })
-    console.log('ответ и правка: работают')
+    await page.locator('[data-chat-edited]').first().waitFor({ state: 'visible', timeout: 10_000 })
+    // Кнопки «ответить» и «изменить» должны быть видны и нажимаемы пальцем (0.97.1): до этого они
+    // были 24 px высотой и 11 px шрифтом, и человек не находил правку вовсе.
+    const actionBox = await page.locator('[data-chat-edit]').first().boundingBox()
+    const replyBox = await page.locator('[data-chat-reply-button]').first().boundingBox()
+    console.log(`кнопки: изменить ${Math.round(actionBox?.height ?? 0)} px, ответить ${Math.round(replyBox?.height ?? 0)} px`)
+    if ((actionBox?.height ?? 0) < 30) problems.push(`кнопка «изменить» мелкая: ${actionBox?.height} px`)
+    if ((replyBox?.height ?? 0) < 30) problems.push(`кнопка «ответить» мелкая: ${replyBox?.height} px`)
+    const marker = await page.locator('[data-chat-edited]').first().getAttribute('title')
+    if (!/Изменено в \d\d:\d\d/.test(marker ?? '')) problems.push(`нет времени правки: ${marker}`)
+    console.log(`ответ и правка: работают, отметка «${marker}»`)
 
     // 4.2. Мгновенная доставка: вторая открытая вкладка того же проекта получает сообщение по
     // сокету, а не ждёт опроса (он теперь раз в 20 секунд).

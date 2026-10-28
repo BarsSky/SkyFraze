@@ -188,17 +188,28 @@
   overflow-wrap: anywhere;
 }
 .chat__item-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+/* «Ответить» и «изменить» (0.97.1). Размер — цель нажатия, а не украшение: до этого кнопки были
+   24 px высотой и 11 px шрифтом, и на телефоне в них было не попасть, а на десктопе их просто не
+   замечали — человек писал «вместо удаления лучше редактирование», хотя правка уже была. */
 .chat__mini {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   background: none;
-  border: 0;
-  padding: 2px 4px;
-  min-height: 24px;
-  color: var(--fg-muted);
-  font-size: 11px;
+  border: 1px solid transparent;
+  padding: 4px 8px;
+  min-height: 32px;
+  color: var(--fg-soft);
+  font-size: 12px;
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: 6px;
 }
-.chat__mini:hover { color: var(--fg); background: var(--bg); }
+.chat__mini:hover {
+  color: var(--fg);
+  background: var(--bg);
+  border-color: var(--border);
+}
+.chat__mini:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .chat__edit { display: grid; gap: 6px; margin-top: 4px; }
 .chat__edit textarea { width: 100%; font-size: 13px; resize: vertical; }
 .chat__reply-chip {
