@@ -603,19 +603,26 @@
   .ent__matrix-link { min-width: 32px; min-height: 32px; }
 }
 
-/* ─── карточка упоминания (0.87.0) ───────────────────────────────────────────
-   Клетка матрицы больше не «уводит молча»: она раскрывает карточку — что где встречается,
-   цитата, список кадров главы и два перехода (в текст и в показ проекта).
-   position: fixed — карточка не растягивает таблицу и не уезжает вместе с её прокруткой. */
+/* ─── карточка упоминания (0.87.0 → 0.90.0) ─────────────────────────────────
+   Клетка матрицы не «уводит молча»: она раскрывает карточку — что где встречается, цитата,
+   список кадров главы и два перехода (в текст и в показ проекта). С 0.90.0 карточка стоит В
+   ПОТОКЕ под матрицей, а не всплывает поверх страницы: отчёт «элемент показывает всплывающее
+   сообщение, а не сам раскрывается в карточку». В потоке она не закрывает соседние клетки, не
+   уезжает за край на телефоне и оставляет место будущей привязке картинки. */
 .ent__mention-card {
-  position: fixed; z-index: 70;
+  margin-top: 10px;
   display: grid; gap: 6px; padding: 12px 14px;
   background: var(--bg-elev); border: 1px solid var(--accent); border-radius: 12px;
-  box-shadow: 0 26px 60px -30px rgba(0, 0, 0, 0.8);
-  font-size: 12px; overflow-y: auto; overscroll-behavior: contain;
-  animation: ent-mention-in 120ms ease-out;
+  box-shadow: 0 26px 60px -30px rgba(0, 0, 0, 0.55);
+  font-size: 12px;
+  animation: ent-mention-in 140ms ease-out;
 }
-@keyframes ent-mention-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes ent-mention-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+/* Раскрытая клетка: видно, откуда карточка пришла. */
+.ent__matrix-link.is-expanded {
+  text-decoration: none; color: var(--bg);
+  background: var(--accent); border-radius: 6px;
+}
 .ent__mention-head { display: flex; align-items: baseline; gap: 8px; }
 .ent__mention-name { flex: 1 1 auto; overflow-wrap: anywhere; }
 .ent__mention-close { min-width: 32px; min-height: 32px; line-height: 1; }
@@ -635,13 +642,6 @@
 }
 .ent__mention-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .ent__mention-actions button { min-height: 32px; }
-/* На телефоне карточка — «лист» снизу: в 320 px рядом с клеткой она закрыла бы полэкрана. */
-@media (max-width: 640px) {
-  .ent__mention-card {
-    left: 8px !important; right: 8px; top: auto !important; bottom: 8px;
-    width: auto !important; max-height: 60vh;
-  }
-}
 @media (prefers-reduced-motion: reduce) {
   .ent__mention-card { animation: none; }
 }

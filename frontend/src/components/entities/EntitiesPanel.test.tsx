@@ -351,7 +351,7 @@ describe('EntitiesPanel — клетка матрицы раскрывает к�
     fireEvent.click(screen.getByText(/Матрица: персонажи × главы/))
     fireEvent.click(await screen.findByRole('button', { name: '3' }))
 
-    const card = await screen.findByRole('dialog', { name: /Упоминания «Анна»/ })
+    const card = await screen.findByRole('region', { name: /Упоминания «Анна»/ })
     expect(card.textContent).toContain('глава 01')
     expect(card.textContent).toContain('Пролог')
     expect(card.textContent).toContain('Встреча')
@@ -376,7 +376,7 @@ describe('EntitiesPanel — клетка матрицы раскрывает к�
       expect.objectContaining({ quote: 'Анны' }),
       'editors',
     )
-    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.queryByRole('region')).toBeNull()
   })
 
   it('«К проекту» ведёт в показ проекта', async () => {
@@ -403,9 +403,34 @@ describe('EntitiesPanel — клетка матрицы раскрывает к�
     await screen.findAllByText('Анна')
     fireEvent.click(screen.getByText(/Матрица: персонажи × главы/))
     fireEvent.click(await screen.findByRole('button', { name: '3' }))
-    await screen.findByRole('dialog')
+    await screen.findByRole('region')
     fireEvent.keyDown(window, { key: 'Escape' })
-    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.queryByRole('region')).toBeNull()
+  })
+
+  /**
+   * 0.90.0: карточка раскрывается В ПОТОКЕ под матрицей, а клетка помечается раскрытой.
+   *
+   * Отчёт: «элемент по клику показывает всплывающее сообщение, а не сам раскрывается в карточку».
+   * Всплывающая карточка читалась как подсказка и на телефоне уезжала за край.
+   */
+  it('карточка стоит в разделе, а не всплывает поверх страницы', async () => {
+    const { container } = panel({ entities: [entity({ id: 'e1' })], matrix: matrixWithCard })
+    await screen.findAllByText('Анна')
+    fireEvent.click(screen.getByText(/Матрица: персонажи × главы/))
+    fireEvent.click(await screen.findByRole('button', { name: '3' }))
+    const card = await screen.findByRole('region', { name: /Упоминания «Анна»/ })
+    // Внутри блока карточек, а не порталом в body: это часть раздела.
+    expect(container.contains(card)).toBe(true)
+    expect(card.className).toContain('ent__mention-card')
+    // Клетка сообщает, что она раскрыта, и подсвечена.
+    const cell = container.querySelector('[data-matrix-cell]') as HTMLElement
+    expect(cell.getAttribute('aria-expanded')).toBe('true')
+    expect(cell.className).toContain('is-expanded')
+    // Повторное нажатие сворачивает.
+    fireEvent.click(cell)
+    expect(screen.queryByRole('region')).toBeNull()
+    expect(cell.getAttribute('aria-expanded')).toBe('false')
   })
 })
 

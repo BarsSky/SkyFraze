@@ -143,25 +143,26 @@ export function EntitiesPanel({
    */
   const [open, setOpen] = useState(() => readEntitiesOpen(projectId) ?? entities.length === 0)
   /**
-   * Всплывающая карточка упоминания (0.87.0): что где встречается и два перехода.
+   * Раскрытая клетка матрицы (0.87.0 → 0.90.0): что где встречается и два перехода.
    *
-   * Зачем вместо прямого перехода: клик по клетке матрицы раньше уводил в кадр молча — человек
-   * не видел, куда идёт (и в какой главе это), а если кадров в главе несколько, попадал всегда в
-   * первый. Теперь клетка раскрывает карточку: цитата, список кадров главы и выбор — «к
-   * редактированию» (текст) или «к проекту» (показ).
+   * 0.87.0 открывала рядом с клеткой ВСПЛЫВАЮЩУЮ карточку — по отчёту она читалась как
+   * «всплывающее сообщение», а не как раскрытие элемента. Теперь клетка раскрывается В САМОЙ
+   * таблице: под ней появляется карточка на всю ширину раздела, а выбранная клетка подсвечена.
+   * Так элемент раскрывается «в карточку», а не показывает подсказку, и на телефоне ничего не
+   * улетает за край (всплывающая карточка не помещалась рядом с клеткой).
    *
-   * `anchor` — координаты окна, от которых карточка встаёт рядом с клеткой. Считаем по
-   * `getBoundingClientRect`: таблица матрицы прокручивается вбок, и координаты внутри неё
-   * разъезжались бы с экранными.
+   * Заодно место под будущую фичу: в карточке появится привязка по картинке (вложение проекта к
+   * упоминанию) — в потоке для этого есть место, в подсказке его не было.
    */
   const [mentionCard, setMentionCard] = useState<{
+    entityId: string
+    chapterIndex: number
     entityName: string
     kind: string
     chapterNumber: string
     chapterTitle: string
     cell: MatrixCell
     frameId: string
-    anchor: { x: number; y: number }
   } | null>(null)
 
   /** Связи карточки в обе стороны: прямые и обратные (0.74.0). */
@@ -748,26 +749,44 @@ export function EntitiesPanel({
                         ) : (
                           <button
                             type="button"
-                            className="ent__matrix-link"
+                            className={
+                              mentionCard !== null &&
+                              mentionCard.entityId === row.entity.id &&
+                              mentionCard.chapterIndex === index
+                                ? 'ent__matrix-link is-expanded'
+                                : 'ent__matrix-link'
+                            }
                             title={`Где встречается «${row.entity.name}» в главе`}
-                            onClick={(event) => {
-                              // Карточка встаёт рядом с клеткой: экранные координаты, а не
-                              // координаты внутри прокручиваемой таблицы.
-                              const rect = event.currentTarget.getBoundingClientRect()
+                            aria-expanded={
+                              mentionCard !== null &&
+                              mentionCard.entityId === row.entity.id &&
+                              mentionCard.chapterIndex === index
+                            }
+                            onClick={() => {
                               const firstFrame = cell.frames?.[0] ?? cell.first
                               if (!firstFrame) return
+                              const sameAsOpen =
+                                mentionCard !== null &&
+                                mentionCard.entityId === row.entity.id &&
+                                mentionCard.chapterIndex === index
+                              if (sameAsOpen) {
+                                setMentionCard(null)
+                                return
+                              }
                               const chapter = matrix.chapters[index]
                               setMentionCard({
+                                entityId: row.entity.id,
+                                chapterIndex: index,
                                 entityName: row.entity.name,
                                 kind: row.entity.kind ?? '',
                                 chapterNumber: chapter.number,
                                 chapterTitle: chapter.title,
                                 cell,
                                 frameId: 'id' in firstFrame ? firstFrame.id : firstFrame.frameId,
-                                anchor: { x: Math.round(rect.left), y: Math.round(rect.bottom) },
                               })
                             }}
                             data-matrix-cell={matrix.chapters[index].id}
+                            data-matrix-cell-entity={row.entity.id}
                           >
                             {cell.count}
                           </button>
@@ -784,38 +803,44 @@ export function EntitiesPanel({
             Число — упоминания в главе. «·» — не встречается: так и видно, кто ни разу не был в
             одной сцене с другими.
           </p>
+          {/* Клетка раскрывается карточкой прямо в разделе (0.90.0): раньше карточка всплывала
+              рядом с клеткой и читалась как подсказка, а на телефоне уезжала за край. */}
+          {mentionCard !== null && (
+            <MentionCard
+              card={mentionCard}
+              canEdit={canEdit}
+              kindTitle={kindTitle}
+              onSelectFrame={(frameId) =>
+                setMentionCard((current) => (current ? { ...current, frameId } : current))
+              }
+              onOpen={(place) => {
+                const frame = mentionCard.cell.frames?.find((item) => item.id === mentionCard.frameId)
+                const mention = frame?.mention ?? mentionCard.cell.first?.mention
+                const frameId = frame?.id ?? mentionCard.cell.first?.frameId
+                setMentionCard(null)
+                if (mention && frameId) onOpenFrame?.(frameId, mention, place)
+              }}
+              onClose={() => setMentionCard(null)}
+            />
+          )}
         </details>
-      )}
-      {/* Всплывающая карточка упоминания (0.87.0): «где встречается» + два перехода.
-          position: fixed — карточка не должна ни растягивать таблицу, ни уезжать вместе с её
-          горизонтальной прокруткой. */}
-      {mentionCard !== null && (
-        <MentionCard
-          card={mentionCard}
-          canEdit={canEdit}
-          kindTitle={kindTitle}
-          onSelectFrame={(frameId) => setMentionCard((current) => (current ? { ...current, frameId } : current))}
-          onOpen={(place) => {
-            const frame = mentionCard.cell.frames?.find((item) => item.id === mentionCard.frameId)
-            const mention = frame?.mention ?? mentionCard.cell.first?.mention
-            const frameId = frame?.id ?? mentionCard.cell.first?.frameId
-            setMentionCard(null)
-            if (mention && frameId) onOpenFrame?.(frameId, mention, place)
-          }}
-          onClose={() => setMentionCard(null)}
-        />
       )}
     </details>
   )
 }
 
 /**
- * Карточка упоминания (0.87.0): что где встречается и куда перейти.
+ * Карточка упоминания (0.87.0 → 0.90.0): что где встречается и куда перейти.
  *
  * Зачем вместо прямого перехода: клик по клетке матрицы раньше уводил в кадр молча — человек не
  * видел ни главы, ни цитаты, — а при нескольких кадрах в главе всегда попадал в первый. Здесь
  * видно цитату, список кадров главы (можно выбрать) и два перехода: в текст («к редактированию»)
  * и в показ проекта («к проекту»). Читателю редактор недоступен — у него остаётся один переход.
+ *
+ * 0.90.0: карточка раскрывается В ПОТОКЕ раздела, под матрицей, а не всплывает поверх страницы.
+ * Отчёт: «элемент по клику показывает всплывающее сообщение, а не сам раскрывается в карточку».
+ * В потоке карточка не закрывает соседние клетки, не уезжает за край на телефоне и оставляет
+ * место для будущей привязки картинки к упоминанию.
  */
 function MentionCard({
   card,
@@ -826,13 +851,14 @@ function MentionCard({
   onClose,
 }: {
   card: {
+    entityId: string
+    chapterIndex: number
     entityName: string
     kind: string
     chapterNumber: string
     chapterTitle: string
     cell: MatrixCell
     frameId: string
-    anchor: { x: number; y: number }
   }
   canEdit: boolean
   kindTitle: (key: string) => string
@@ -842,11 +868,6 @@ function MentionCard({
 }) {
   const frames = card.cell.frames ?? []
   const selected = frames.find((frame) => frame.id === card.frameId) ?? frames[0]
-  // Позиция: рядом с клеткой, с прижатием к краям окна. Высота ограничена остатком экрана —
-  // длинный список кадров прокручивается внутри карточки, а не уезжает под нижний край.
-  const width = 320
-  const left = Math.min(Math.max(8, card.anchor.x - 60), Math.max(8, window.innerWidth - width - 8))
-  const top = Math.min(Math.max(8, card.anchor.y + 8), Math.max(8, window.innerHeight - 120))
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -859,10 +880,9 @@ function MentionCard({
   return (
     <div
       className="ent__mention-card"
-      role="dialog"
+      role="region"
       aria-label={`Упоминания «${card.entityName}» в главе ${card.chapterNumber}`}
       data-mention-card
-      style={{ left, top, width, maxHeight: `calc(100vh - ${top}px - 12px)` }}
     >
       <div className="ent__mention-head">
         <span className="ent__kind">{kindTitle(card.kind)}</span>

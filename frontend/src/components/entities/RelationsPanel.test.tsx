@@ -137,7 +137,7 @@ describe('RelationsPanel', () => {
     const cell = document.querySelector('[data-matrix-cell]') as HTMLElement | null
     expect(cell).not.toBeNull()
     fireEvent.click(cell as HTMLElement)
-    const card = await screen.findByRole('dialog', { name: /Упоминания «Аня»/ })
+    const card = await screen.findByRole('region', { name: /Упоминания «Аня»/ })
     expect(card.textContent).toContain('Пролог')
 
     fireEvent.click(screen.getByRole('button', { name: 'К проекту' }))
@@ -149,7 +149,7 @@ describe('RelationsPanel', () => {
     render(<RelationsPanel projectId="p1" canEdit onOpenFrame={onOpenFrame} />)
     await screen.findByText(/кадров: 2/)
     fireEvent.click(document.querySelector('[data-matrix-cell]') as HTMLElement)
-    await screen.findByRole('dialog', { name: /Упоминания «Аня»/ })
+    await screen.findByRole('region', { name: /Упоминания «Аня»/ })
     fireEvent.click(screen.getByRole('button', { name: 'К редактированию' }))
     expect(onOpenFrame).toHaveBeenCalledWith('f1', expect.objectContaining({ entityName: 'Аня' }), 'editors')
   })
