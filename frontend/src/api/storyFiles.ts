@@ -1,5 +1,6 @@
 import { http } from './client'
 import { parseFilename } from './transfer'
+import { saveBlob } from '../lib/download'
 
 /**
  * Выгрузка проекта в Markdown и обратная загрузка папки с md-файлами.
@@ -288,17 +289,7 @@ function slugifyFilename(title: string): string {
   return slug || 'project'
 }
 
-/** Скачивание, как у архива переноса: blob → временная ссылка → клик по <a>. */
-function saveBlob(blob: Blob, name: string): void {
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = name
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  URL.revokeObjectURL(url)
-}
+
 
 function requireMarkdownForm(source: MarkdownImportSource | null | undefined): FormData {
   const form = buildMarkdownImportForm(source)

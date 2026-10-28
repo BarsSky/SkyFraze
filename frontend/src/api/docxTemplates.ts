@@ -1,4 +1,6 @@
 import { http } from './client'
+import { parseFilename } from './transfer'
+import { saveBlob } from '../lib/download'
 
 /**
  * Шаблоны оформления DOCX (0.91.0, docs/docx-template.md).
@@ -90,6 +92,23 @@ export async function deleteDocxTemplate(projectId: string, id: string): Promise
     .delete(`projects/${projectId}/docx-templates/${id}`)
     .json<{ templates?: unknown }>()
   return readTemplates(raw?.templates)
+}
+
+/**
+ * Скачать ПРИМЕР шаблона (0.94.0).
+ *
+ * Зачем файл, а не инструкция: «сделать свой шаблон» начинается с вопроса «а как он выглядит».
+ * Пример содержит абзац `{{content}}` отдельной строкой и стили с именами, которые разбор умеет
+ * сопоставить (Title, Heading1–4, Quote, Code, Date, ListParagraph) — человеку достаточно открыть
+ * его в Word и поменять оформление.
+ */
+export async function downloadDocxSample(projectId: string): Promise<string> {
+  const response = await http.get(`projects/${projectId}/docx-templates/sample`, { timeout: 60_000 })
+  const blob = await response.blob()
+  const fromHeader = parseFilename(response.headers.get('Content-Disposition'))
+  const name = fromHeader || 'skyfraze-template-example.docx'
+  saveBlob(blob, name)
+  return name
 }
 
 /** Подписи карты стилей для интерфейса: «что в проекте». */

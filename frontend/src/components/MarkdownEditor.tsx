@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { MarkdownBlock } from './MarkdownBlock'
 import { resolveLiveText } from '../collab/liveText'
 import { MARKER_TEMPLATES, beginMarker, insertMarker, styleMarker } from '../lib/docxMarkers'
+import { DocxHelp } from './docx/DocxHelp'
 import {
   DIAGRAM_KINDS,
   codeSkeleton,
@@ -73,6 +74,8 @@ export function MarkdownEditor({ value, onSave, onAdopt, onClose, title, assetUr
   const [docxOpen, setDocxOpen] = useState(false)
   /** Выбранный стиль шаблона. Пусто — список ещё не пришёл или шаблона нет. */
   const [docxStyle, setDocxStyle] = useState('')
+  /** Открыта справка «Как сделать шаблон» (0.94.0). */
+  const [docxHelpOpen, setDocxHelpOpen] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const windowRef = useRef<HTMLDivElement>(null)
   const restoreFocus = useRef<HTMLElement | null>(null)
@@ -235,6 +238,7 @@ export function MarkdownEditor({ value, onSave, onAdopt, onClose, title, assetUr
 
   return createPortal(
     <div className="md-editor" role="dialog" aria-modal="true" aria-label="Редактор текста с Markdown">
+      {docxHelpOpen && <DocxHelp onClose={() => setDocxHelpOpen(false)} />}
       <div className="md-editor__window" ref={windowRef}>
         <div className="md-editor__head">
           <div className="md-editor__titles">
@@ -395,6 +399,17 @@ export function MarkdownEditor({ value, onSave, onAdopt, onClose, title, assetUr
               Маркеры не видны в показе и не участвуют в поиске; их понимает только скачивание
               DOCX.
             </span>
+            {/* Справка (0.94.0): из редактора её раньше не было видно вовсе, и вопрос «как
+                работает разметка DOCX» оставался без ответа прямо в том месте, где её ставят. */}
+            <button
+              type="button"
+              className="secondary"
+              title="Как работает разметка DOCX и из чего делается шаблон"
+              onClick={() => setDocxHelpOpen(true)}
+              data-docx-help-open
+            >
+              справка
+            </button>
           </div>
         </div>
 

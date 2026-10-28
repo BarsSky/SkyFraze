@@ -20,6 +20,7 @@ import {
 import {
   activateDocxTemplate,
   deleteDocxTemplate,
+  downloadDocxSample,
   listDocxTemplates,
   mappingRows,
   uploadDocxTemplate,
@@ -27,6 +28,7 @@ import {
 } from '../api/docxTemplates'
 import { useAuthStore } from '../store/auth'
 import { ErrorBanner } from '../components/ErrorBanner'
+import { DocxHelp } from '../components/docx/DocxHelp'
 import { craftsOf } from '../lib/crafts'
 
 /**
@@ -361,6 +363,24 @@ function DocxTemplateCard({ projectId, onErr }: { projectId: string; onErr: (err
   const [name, setName] = useState('')
   const [file, setFile] = useState<File | null>(null)
   const [openReport, setOpenReport] = useState<string | null>(null)
+  /** Открыта справка «Как сделать шаблон» (0.94.0). */
+  const [helpOpen, setHelpOpen] = useState(false)
+  /** Идёт скачивание примера шаблона. */
+  const [sampleBusy, setSampleBusy] = useState(false)
+
+  /** Скачать пример шаблона: человек сразу видит, о чём речь, а не читает инструкцию. */
+  async function downloadSample() {
+    setSampleBusy(true)
+    setNote(null)
+    try {
+      const name = await downloadDocxSample(projectId)
+      setNote(`Скачан пример «${name}» — откройте в Word и поменяйте оформление`)
+    } catch (e) {
+      onErr(e)
+    } finally {
+      setSampleBusy(false)
+    }
+  }
 
   const load = useCallback(async () => {
     try {
@@ -430,6 +450,28 @@ function DocxTemplateCard({ projectId, onErr }: { projectId: string; onErr: (err
         скачивание проекта соберётся в нём. В шаблоне нужен отдельный абзац <code>{'{{content}}'}</code>:
         на его место встанет текст проекта. Без шаблона DOCX собирается встроенным оформлением.
       </p>
+      {/* Справка и пример (0.94.0): до этого «как сделать шаблон» нигде не было видно — человек
+          видел только поле загрузки и не знал ни про плейсхолдер, ни про имена стилей. */}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+        <button
+          type="button"
+          className="secondary"
+          onClick={() => setHelpOpen(true)}
+          data-docx-help-open
+        >
+          Как сделать шаблон
+        </button>
+        <button
+          type="button"
+          className="secondary"
+          disabled={busy}
+          onClick={() => void downloadSample()}
+          data-docx-sample
+        >
+          {sampleBusy ? 'Готовлю…' : 'Скачать пример .docx'}
+        </button>
+      </div>
+      {helpOpen && <DocxHelp projectId={projectId} onClose={() => setHelpOpen(false)} />}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
         <div style={{ flex: '1 1 200px', minWidth: 160 }}>
           <label className="muted" style={{ display: 'block', marginBottom: 4 }}>

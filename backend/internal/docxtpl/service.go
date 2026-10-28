@@ -196,6 +196,20 @@ func (s *Service) Delete(ctx context.Context, userID, projectID, id uuid.UUID) (
 	return s.List(ctx, userID, projectID)
 }
 
+// Sample — пример шаблона для скачивания (0.94.0). Права: редактор и выше — тот же, кто может
+// загрузить шаблон. Отдаём пример вместо инструкции: человек открывает его в Word, правит
+// оформление и загружает обратно, не выясняя, что такое «абзац {{content}}».
+func (s *Service) Sample(ctx context.Context, userID, projectID uuid.UUID) ([]byte, error) {
+	if err := s.proj.RequireEditor(ctx, userID, projectID); err != nil {
+		return nil, mapError(err)
+	}
+	data := SampleTemplate()
+	if len(data) == 0 {
+		return nil, ErrBadTemplate
+	}
+	return data, nil
+}
+
 // Active — активный шаблон с пакетом файла. nil означает «шаблона нет» — выгрузка соберёт
 // документ встроенным оформлением. Права вызывающего уже проверены выше по стеку (экспорт).
 func (s *Service) Active(ctx context.Context, projectID uuid.UUID) (*ActiveTemplate, error) {

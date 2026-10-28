@@ -17,6 +17,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -39,9 +40,34 @@ func NewHandler(svc *Service, logger *slog.Logger) *Handler {
 // Mount вешает ручки на под-роутер проекта.
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/docx-templates", h.List)
+	// Статический сегмент рядом с {templateID}: chi отдаёт приоритет статике, поэтому
+	// `/docx-templates/sample` не попадёт в обработчик идентификатора.
+	r.Get("/docx-templates/sample", h.Sample)
 	r.Post("/docx-templates", h.Upload)
 	r.Post("/docx-templates/{templateID}/activate", h.Activate)
 	r.Delete("/docx-templates/{templateID}", h.Delete)
+}
+
+// Sample — GET /docx-templates/sample: готовый пример шаблона (0.94.0).
+//
+// Отдаём файл, а не инструкцию: человек открывает пример в Word, меняет титул, шрифты и поля,
+// оставляет абзац {{content}} и имена стилей — и загружает обратно. Это снимает главный вопрос
+// «как вообще начать», из-за которого фича выглядела нерабочей.
+func (h *Handler) Sample(w http.ResponseWriter, r *http.Request) {
+	userID, projectID, ok := h.target(w, r)
+	if !ok {
+		return
+	}
+	data, err := h.svc.Sample(r.Context(), userID, projectID)
+	if err != nil {
+		h.fail(w, err, "docx template sample")
+		return
+	}
+	w.Header().Set("Content-Type", docxMime)
+	w.Header().Set("Content-Disposition", `attachment; filename="skyfraze-template-example.docx"`)
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
 }
 
 // List — GET /docx-templates.
