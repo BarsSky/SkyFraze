@@ -144,13 +144,17 @@ func (s *Service) BotName() string { return s.botName }
 // сам бот при ответе, а интерфейсу достаточно «кнопка есть или нет».
 func (s *Service) BotAvailable() bool { return s.bot != nil && s.bot.Enabled() }
 
-// Messages — последние сообщения проекта (viewer+). after != nil — только новые после него.
+// Messages — последние сообщения проекта (viewer+).
+//
+// `after` — только новые после него (опрос и сокет), `before` — только прежние до него (кнопка
+// «показать прежние», 0.99.2). Оба сразу не имеют смысла: окно либо догоняет ленту, либо листает
+// назад, и выбирать «в обе стороны» нечего.
 //
 // К каждому сообщению прикладываются отметки (0.98.0): «согласен / надо сделать / вопрос» и какие
 // из них мои. Считаются одним запросом на всю ленту, а не по сообщению — окно показывает до сотни
 // строк, и N+1 здесь был бы заметен при каждом обновлении.
 func (s *Service) Messages(
-	ctx context.Context, userID, projectID uuid.UUID, after *uuid.UUID, limit int,
+	ctx context.Context, userID, projectID uuid.UUID, after, before *uuid.UUID, limit int,
 ) ([]MessageView, error) {
 	if err := s.proj.RequireViewer(ctx, userID, projectID); err != nil {
 		return nil, err
@@ -162,10 +166,13 @@ func (s *Service) Messages(
 		messages []store.ChatMessage
 		err      error
 	)
-	if after == nil {
-		messages, err = s.store.ListChatMessages(ctx, projectID, limit)
-	} else {
+	switch {
+	case after != nil:
 		messages, err = s.store.ChatMessagesAfter(ctx, projectID, *after, limit)
+	case before != nil:
+		messages, err = s.store.ChatMessagesBefore(ctx, projectID, *before, limit)
+	default:
+		messages, err = s.store.ListChatMessages(ctx, projectID, limit)
 	}
 	if err != nil {
 		return nil, err

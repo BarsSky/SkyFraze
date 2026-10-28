@@ -121,7 +121,7 @@ func TestChatPostAndList(t *testing.T) {
 		t.Fatalf("без просьбы бот не отвечает: %+v", answer)
 	}
 
-	list, err := e.svc.Messages(ctx, e.owner, e.project, nil, 0)
+	list, err := e.svc.Messages(ctx, e.owner, e.project, nil, nil, 0)
 	if err != nil {
 		t.Fatalf("список: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestChatPostAndList(t *testing.T) {
 		t.Fatalf("второе сообщение: %v", err)
 	}
 	after := answer.Message.ID
-	fresh, err := e.svc.Messages(ctx, e.viewer, e.project, &after, 0)
+	fresh, err := e.svc.Messages(ctx, e.viewer, e.project, &after, nil, 0)
 	if err != nil {
 		t.Fatalf("новые: %v", err)
 	}
@@ -224,7 +224,7 @@ func TestChatBotAnswer(t *testing.T) {
 	}
 
 	// Оба сообщения в чате: вопрос участника и ответ бота.
-	list, err := e.svc.Messages(ctx, e.owner, e.project, nil, 0)
+	list, err := e.svc.Messages(ctx, e.owner, e.project, nil, nil, 0)
 	if err != nil {
 		t.Fatalf("список: %v", err)
 	}
@@ -247,7 +247,7 @@ func TestChatBotDisabledKeepsMessage(t *testing.T) {
 	if !strings.Contains(answer.Note, "выключен") {
 		t.Fatalf("причина не объяснена: %q", answer.Note)
 	}
-	list, err := e.svc.Messages(ctx, e.owner, e.project, nil, 0)
+	list, err := e.svc.Messages(ctx, e.owner, e.project, nil, nil, 0)
 	if err != nil || len(list) != 1 {
 		t.Fatalf("вопрос участника потерян: %+v, %v", list, err)
 	}
@@ -268,7 +268,7 @@ func TestChatPermissions(t *testing.T) {
 	e := setupChat(t)
 	ctx := context.Background()
 	outsider := uuid.New()
-	if _, err := e.svc.Messages(ctx, outsider, e.project, nil, 0); !errors.Is(err, projects.ErrForbidden) {
+	if _, err := e.svc.Messages(ctx, outsider, e.project, nil, nil, 0); !errors.Is(err, projects.ErrForbidden) {
 		t.Fatalf("посторонний прочитал чат: %v", err)
 	}
 	if _, err := e.svc.Post(ctx, outsider, e.project, chat.Input{Body: "Чужой"}); !errors.Is(err, projects.ErrForbidden) {
@@ -566,7 +566,7 @@ func TestChatReactions(t *testing.T) {
 	}
 
 	// Лента приносит отметки вместе с сообщениями.
-	list, err := e.svc.Messages(ctx, e.viewer, e.project, nil, 0)
+	list, err := e.svc.Messages(ctx, e.viewer, e.project, nil, nil, 0)
 	if err != nil {
 		t.Fatalf("лента: %v", err)
 	}
@@ -583,4 +583,77 @@ func TestChatReactions(t *testing.T) {
 	if _, ok := store.ParseChatReactionKind("like"); ok {
 		t.Fatalf("«like» приняли за отметку")
 	}
+}
+
+// TestChatHistoryPaging — «показать прежние» (0.99.2).
+//
+// До этого окно открывалось последними 100 сообщениями, и в живом проекте начало разговора было
+// недостижимо вовсе. Проверяем страницы назад: они не пересекаются с уже показанным, идут от
+// старых к новым, доходят до первого сообщения и на исчерпании отдают пусто (а не повторяют
+// последнюю страницу — иначе кнопка «показать прежние» крутилась бы вечно).
+func TestChatHistoryPaging(t *testing.T) {
+	e := setupChat(t)
+	ctx := context.Background()
+
+	const total = 7
+	posted := make([]uuid.UUID, 0, total)
+	for i := 0; i < total; i++ {
+		answer, err := e.svc.Post(ctx, e.owner, e.project, chat.Input{Body: "сообщение " + string(rune('A'+i))})
+		if err != nil {
+			t.Fatalf("сообщение %d: %v", i, err)
+		}
+		posted = append(posted, answer.Message.ID)
+	}
+
+	// Первая страница — три последних, как открывается окно.
+	first, err := e.svc.Messages(ctx, e.owner, e.project, nil, nil, 3)
+	if err != nil {
+		t.Fatalf("первая страница: %v", err)
+	}
+	if len(first) != 3 || first[2].ID != posted[6] || first[0].ID != posted[4] {
+		t.Fatalf("первая страница не та: %+v", ids(first))
+	}
+
+	// Назад от самого старого в первой странице: приходят ровно предыдущие три.
+	before := first[0].ID
+	older, err := e.svc.Messages(ctx, e.owner, e.project, nil, &before, 3)
+	if err != nil {
+		t.Fatalf("страница назад: %v", err)
+	}
+	if len(older) != 3 || older[2].ID != posted[3] || older[0].ID != posted[1] {
+		t.Fatalf("страница назад не та: %+v", ids(older))
+	}
+	for _, message := range older {
+		if message.ID == first[0].ID || message.ID == first[1].ID {
+			t.Fatalf("страницы пересеклись: %+v", ids(older))
+		}
+	}
+
+	// Ещё назад — остаётся одно сообщение, и оно первое.
+	before = older[0].ID
+	last, err := e.svc.Messages(ctx, e.owner, e.project, nil, &before, 3)
+	if err != nil {
+		t.Fatalf("последняя страница: %v", err)
+	}
+	if len(last) != 1 || last[0].ID != posted[0] {
+		t.Fatalf("последняя страница не та: %+v", ids(last))
+	}
+
+	// Дальше истории нет: пусто, а не повтор.
+	before = posted[0]
+	empty, err := e.svc.Messages(ctx, e.owner, e.project, nil, &before, 3)
+	if err != nil {
+		t.Fatalf("пустая страница: %v", err)
+	}
+	if len(empty) != 0 {
+		t.Fatalf("после начала истории что-то есть: %+v", ids(empty))
+	}
+}
+
+func ids(messages []chat.MessageView) []uuid.UUID {
+	out := make([]uuid.UUID, 0, len(messages))
+	for _, message := range messages {
+		out = append(out, message.ID)
+	}
+	return out
 }

@@ -55,6 +55,15 @@ const REACTIONS: Array<{ kind: ChatReactionKind; label: string; full: string }> 
   { kind: 'question', label: 'вопрос', full: 'вопрос' },
 ]
 
+/**
+ * Размер страницы истории (0.99.2).
+ *
+ * Совпадает с серверным `defaultLimit` (100): окно открывается одной страницей, а кнопка «показать
+ * прежние» листает назад такими же страницами. Если сервер отдал меньше — история кончилась, и
+ * кнопка пропадает: иначе она «крутилась» бы на пустых страницах.
+ */
+const PAGE_SIZE = 100
+
 function readSeen(projectId: string): string {
   try {
     return localStorage.getItem(seenKey(projectId)) ?? ''
@@ -95,6 +104,17 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread }: Props
   const [editBusy, setEditBusy] = useState(false)
   /** Какая плашка отметки сейчас в запросе (`сообщение:вид`) — защита от двойного нажатия. */
   const [reactionBusy, setReactionBusy] = useState<string | null>(null)
+  /**
+   * Есть ли в истории сообщения ДО показанных (0.99.2).
+   *
+   * `null` — ещё не знаем: первая загрузка не отвечает на этот вопрос, если пришло меньше лимита
+   * (значит, показано всё). Дальше `true` — кнопка «показать прежние» видна, `false` — история
+   * кончилась.
+   */
+  const [hasOlder, setHasOlder] = useState<boolean | null>(null)
+  const [loadingOlder, setLoadingOlder] = useState(false)
+  /** Не прокручивать вниз после подгрузки прежних сообщений (см. эффект прокрутки). */
+  const skipAutoScroll = useRef(false)
   const listRef = useRef<HTMLUListElement | null>(null)
   const lastIdRef = useRef('')
   /** Кто я: «изменить» показываем только у своих сообщений. */
@@ -115,12 +135,15 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread }: Props
    */
   const load = useCallback(async (mode: 'append' | 'reload' = 'append') => {
     try {
-      const page = await listChat(projectId, mode === 'reload' ? undefined : lastIdRef.current || undefined)
+      const initial = lastIdRef.current === ''
+      const page = await listChat(projectId, mode === 'reload' ? {} : { after: lastIdRef.current || undefined })
       setBot(page.bot)
       if (mode === 'reload') {
         setMessages(page.messages)
         lastIdRef.current =
           page.messages.length > 0 ? page.messages[page.messages.length - 1].id : ''
+        // Столько же, сколько страница: если пришло меньше — показана вся история.
+        setHasOlder(page.messages.length >= PAGE_SIZE)
       } else if (page.messages.length > 0) {
         setMessages((current) => {
           const seen = new Set(current.map((item) => item.id))
@@ -129,12 +152,47 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread }: Props
           return [...current, ...fresh]
         })
         lastIdRef.current = page.messages[page.messages.length - 1].id
+        // Первая загрузка (лента была пуста) отвечает и на вопрос «есть ли что-то раньше».
+        if (initial) setHasOlder(page.messages.length >= PAGE_SIZE)
       }
       setError(null)
     } catch {
       setError('Чат не загрузился — проверьте доступ к проекту.')
     }
   }, [projectId])
+
+  /**
+   * Листнуть назад (0.99.2): «показать прежние».
+   *
+   * Отдельная функция, а не режим `load`: у неё другое направление — страница ДОБАВЛЯЕТСЯ СВЕРХУ,
+   * и прокрутку после этого двигать нельзя (иначе человека выбрасывает в конец, откуда он только
+   * что ушёл). `skipAutoScroll` гасит единственный эффект, который прокручивает ленту вниз.
+   */
+  const loadOlder = useCallback(async () => {
+    if (loadingOlder) return
+    const first = messages[0]
+    if (!first) return
+    setLoadingOlder(true)
+    try {
+      const page = await listChat(projectId, { before: first.id })
+      if (page.messages.length === 0) {
+        setHasOlder(false)
+        return
+      }
+      skipAutoScroll.current = true
+      setMessages((current) => {
+        const seen = new Set(current.map((item) => item.id))
+        const older = page.messages.filter((item) => !seen.has(item.id))
+        return [...older, ...current]
+      })
+      setHasOlder(page.messages.length >= PAGE_SIZE)
+      setError(null)
+    } catch {
+      setError('Прежние сообщения не загрузились.')
+    } finally {
+      setLoadingOlder(false)
+    }
+  }, [loadingOlder, messages, projectId])
 
   // Первая загрузка и «страховочный» опрос. Мгновенную доставку даёт сокет проекта (0.96.0):
   // он присылает сигнал, и мы сразу спрашиваем новое. Опрос остаётся редким — на случай, когда
@@ -193,9 +251,16 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread }: Props
   }, [messages, onUnread, projectId, visible])
 
   // Прокрутка к свежему сообщению — только если человек уже был внизу (иначе выдёргиваем из чтения).
+  //
+  // `skipAutoScroll` (0.99.2): после «показать прежние» сообщений стало больше, но прокручивать
+  // вниз нельзя — человек как раз читает старое сверху, и прыжок в конец выбросил бы его оттуда.
   useEffect(() => {
     const list = listRef.current
     if (!list) return
+    if (skipAutoScroll.current) {
+      skipAutoScroll.current = false
+      return
+    }
     list.scrollTop = list.scrollHeight
   }, [messages.length, visible])
 
@@ -280,6 +345,21 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread }: Props
       </div>
 
       <ul className="chat__list" ref={listRef} data-chat-list>
+        {/* «Показать прежние» (0.99.2): сверху ленты, а не снизу — история листается назад.
+            Кнопка одна и исчезает, когда сервер отдал неполную страницу: «ещё» больше нет. */}
+        {hasOlder === true && (
+          <li className="chat__older">
+            <button
+              type="button"
+              className="chat__mini"
+              onClick={() => void loadOlder()}
+              disabled={loadingOlder}
+              data-chat-older
+            >
+              {loadingOlder ? 'загружаю прежние…' : 'показать прежние'}
+            </button>
+          </li>
+        )}
         {messages.length === 0 && (
           <li className="chat__empty muted">
             Пока тихо. Напишите первым или позовите {bot.name} на разбор.

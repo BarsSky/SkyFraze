@@ -105,11 +105,24 @@ export async function markChatSeen(projectId: string): Promise<void> {
   await http.post(`projects/${projectId}/chat/seen`).json()
 }
 
-/** Последние сообщения (или только новые после `after`). */
-export async function listChat(projectId: string, after?: string): Promise<ChatPage> {
+/**
+ * Сообщения чата: последние, только новые после `after`, или только прежние до `before`.
+ *
+ * `before` — листнуть назад (0.99.2): до этого в старом проекте начало разговора было недостижимо,
+ * окно открывалось последними ста сообщениями. `after` и `before` вместе сервер не принимает:
+ * это два разных вопроса к одной ленте.
+ */
+export async function listChat(
+  projectId: string,
+  options?: { after?: string; before?: string; limit?: number },
+): Promise<ChatPage> {
+  const searchParams: Record<string, string> = {}
+  if (options?.after) searchParams.after = options.after
+  if (options?.before) searchParams.before = options.before
+  if (options?.limit !== undefined) searchParams.limit = String(options.limit)
   const raw = await http
     .get(`projects/${projectId}/chat/messages`, {
-      searchParams: after ? { after } : undefined,
+      searchParams: Object.keys(searchParams).length > 0 ? searchParams : undefined,
     })
     .json<{ messages?: unknown; bot?: unknown }>()
   const messages = Array.isArray(raw?.messages)

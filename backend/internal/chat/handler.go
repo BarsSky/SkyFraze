@@ -51,22 +51,40 @@ func (h *Handler) Mount(r chi.Router) {
 }
 
 // List — GET /chat/messages.
+//
+// `after` — догнать ленту, `before` — листнуть назад (0.99.2). Вместе их не принимаем: это два
+// разных вопроса к одной ленте, и «оба сразу» означало бы «дай всё» — лимит бы молча съел половину.
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	userID, projectID, ok := h.target(w, r)
 	if !ok {
 		return
 	}
-	var after *uuid.UUID
-	if raw := strings.TrimSpace(r.URL.Query().Get("after")); raw != "" {
+	parseID := func(name string) (*uuid.UUID, bool) {
+		raw := strings.TrimSpace(r.URL.Query().Get(name))
+		if raw == "" {
+			return nil, true
+		}
 		id, err := uuid.Parse(raw)
 		if err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid after id")
-			return
+			writeErr(w, http.StatusBadRequest, "invalid "+name+" id")
+			return nil, false
 		}
-		after = &id
+		return &id, true
+	}
+	after, ok := parseID("after")
+	if !ok {
+		return
+	}
+	before, ok := parseID("before")
+	if !ok {
+		return
+	}
+	if after != nil && before != nil {
+		writeErr(w, http.StatusBadRequest, "after и before вместе не используются")
+		return
 	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	messages, err := h.svc.Messages(r.Context(), userID, projectID, after, limit)
+	messages, err := h.svc.Messages(r.Context(), userID, projectID, after, before, limit)
 	if err != nil {
 		h.fail(w, err, "chat list")
 		return

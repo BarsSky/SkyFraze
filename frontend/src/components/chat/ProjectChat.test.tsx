@@ -312,4 +312,57 @@ describe('ProjectChat', () => {
     notifyChatChanged('p1')
     await waitFor(() => expect(screen.getByLabelText('согласен: 1')).toBeTruthy())
   })
+
+  /**
+   * История «показать прежние» (0.99.2).
+   *
+   * До этого окно открывалось последними ста сообщениями, и в живом проекте начало разговора было
+   * недостижимо вовсе. Кнопка появляется только если сервер отдал ПОЛНУЮ страницу: неполная значит
+   * «это всё», и кнопка, которая ничего не находит, хуже её отсутствия.
+   */
+  const page = (count: number, prefix: string, startAt = 1) =>
+    Array.from({ length: count }, (_, index) => message({ id: `${prefix}${startAt + index}` }))
+
+  it('кнопка «показать прежние» есть только при полной странице (0.99.2)', async () => {
+    listChat.mockResolvedValue({ messages: page(100, 'm'), bot: { name: 'Нестор', available: false } })
+    listEventRows.mockResolvedValue([])
+    render(<ProjectChat {...base} />)
+    expect(await screen.findByText('показать прежние')).toBeTruthy()
+    cleanup()
+
+    // Неполная страница — история кончилась, кнопки нет.
+    listChat.mockResolvedValue({ messages: page(3, 'm'), bot: { name: 'Нестор', available: false } })
+    render(<ProjectChat {...base} />)
+    await waitFor(() => expect(screen.getAllByText('Как вам новая глава?').length).toBe(3))
+    expect(screen.queryByText('показать прежние')).toBeNull()
+  })
+
+  it('нажатие подгружает прежние сообщения СВЕРХУ и убирает кнопку (0.99.2)', async () => {
+    listChat.mockResolvedValueOnce({ messages: page(100, 'm', 100), bot: { name: 'Нестор', available: false } })
+    listEventRows.mockResolvedValue([])
+    render(<ProjectChat {...base} />)
+    const button = await screen.findByText('показать прежние')
+
+    // Первая страница — свежие (m100..m199), вторая (назад) — 5 более старых: m95..m99.
+    listChat.mockResolvedValueOnce({
+      messages: Array.from({ length: 5 }, (_, index) => message({ id: `m${95 + index}`, body: `старое ${95 + index}` })),
+      bot: { name: 'Нестор', available: false },
+    })
+    fireEvent.click(button)
+    await waitFor(() => expect(screen.getByText('старое 95')).toBeTruthy())
+    // Запрос ушёл именно «до первого показанного», а не «после последнего».
+    expect(listChat.mock.calls.at(-1)?.[1]).toEqual({ before: 'm100' })
+    // Неполная страница — кнопка исчезла: раньше этого уже нет.
+    expect(screen.queryByText('показать прежние')).toBeNull()
+  })
+
+  it('пустая страница прежних тоже убирает кнопку, а не крутит её вечно (0.99.2)', async () => {
+    listChat.mockResolvedValueOnce({ messages: page(100, 'm'), bot: { name: 'Нестор', available: false } })
+    listEventRows.mockResolvedValue([])
+    render(<ProjectChat {...base} />)
+    const button = await screen.findByText('показать прежние')
+    listChat.mockResolvedValueOnce({ messages: [], bot: { name: 'Нестор', available: false } })
+    fireEvent.click(button)
+    await waitFor(() => expect(screen.queryByText('показать прежние')).toBeNull())
+  })
 })

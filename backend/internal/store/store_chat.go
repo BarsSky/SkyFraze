@@ -116,3 +116,31 @@ func (s *Store) ChatMessagesAfter(
 		  ORDER BY created_at, id
 		  LIMIT $3`, projectID, after, limit)
 }
+
+// ChatMessagesBefore — что было ДО известного сообщения (0.99.2): «показать прежние».
+//
+// Зачем. Окно чата открывается последними 100 сообщениями (ListChatMessages), и до 0.99.2 более
+// раннее начало разговора было недостижимо вовсе: в проекте, живущем год, первый день обсуждения
+// просто исчезал из интерфейса. Листаем назад страницами по limit, от старых к новым.
+//
+// Сравнение по паре (created_at, id), как и у After: у двух сообщений может совпасть время до
+// микросекунды, и тогда порядок задаёт id — иначе страница «зависала» бы на одном сообщении.
+func (s *Store) ChatMessagesBefore(
+	ctx context.Context, projectID uuid.UUID, before uuid.UUID, limit int,
+) ([]ChatMessage, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if before == uuid.Nil {
+		return s.ListChatMessages(ctx, projectID, limit)
+	}
+	return qAll[ChatMessage](ctx, s.Pool,
+		`SELECT `+chatColumns+` FROM (
+		     SELECT `+chatColumns+` FROM project_chat_messages
+		      WHERE project_id = $1
+		        AND (created_at, id) < (SELECT created_at, id FROM project_chat_messages WHERE id = $2)
+		      ORDER BY created_at DESC, id DESC
+		      LIMIT $3
+		   ) older
+		 ORDER BY created_at, id`, projectID, before, limit)
+}

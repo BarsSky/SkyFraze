@@ -129,6 +129,11 @@
   flex: 1 1 auto;
 }
 .chat__empty { font-size: 12px; }
+/* «Показать прежние» (0.99.2): строка сверху ленты, по центру и приглушённо — это действие над
+   историей, а не сообщение. Цель нажатия — 32 px, как у остальных кнопок окна. */
+.chat__older { display: flex; justify-content: center; padding: 2px 0 4px; }
+.chat__older .chat__mini { color: var(--fg-muted); border-color: var(--border); }
+.chat__older .chat__mini:hover { color: var(--fg); }
 .chat__item { font-size: 13px; }
 .chat__item--bot {
   padding: 8px 10px;
