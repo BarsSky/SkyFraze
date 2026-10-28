@@ -9,6 +9,8 @@ import {
   layoutEgoGraph,
   type GraphNeighbor,
 } from '../../collab/graph'
+import { buildNeighborhood } from '../../collab/neighborhood'
+import { buildEntityIndex, searchEntities, type EntitySearchHit } from '../../lib/entitySearch'
 
 /**
  * Эго-граф связей: карточка в центре, её связи вокруг (0.75.0).
@@ -46,6 +48,8 @@ const HISTORY_LIMIT = 10
  * «анимация ради анимации», короче — не читается как перелёт.
  */
 const FLY_MS = 320
+/** Порог свайпа между группами (0.100.0): меньше — это уже не жест, а дрожь пальца. */
+const SWIPE_PX = 48
 
 /** Уважает ли система «меньше движения»: тогда перелёт не рисуется вовсе. */
 function useReducedMotion(): boolean {
@@ -66,6 +70,23 @@ export function EntityGraph({ entities, links, tall = false, types = [] }: Props
   const [history, setHistory] = useState<string[]>([])
   const [centerId, setCenterId] = useState<string | null>(null)
   /**
+   * Уровень просмотра (0.100.0): «мир» (группы по видам) или карточка с её сетью.
+   *
+   * Заказ: «как группировать карточки и ориентироваться в них — с акцентом на главную группу и
+   * погружением в подгруппы». Мир — это группы; вход в группу не меняет данных, только вид.
+   * По умолчанию открывается карточка (как раньше): человек пришёл смотреть связи, а не каталог.
+   */
+  const [level, setLevel] = useState<'world' | 'card'>('card')
+  /** Какая группа показана на уровне «мир»; `null` — мир целиком. */
+  const [groupKind, setGroupKind] = useState<string | null>(null)
+  /**
+   * Глубина окрестности (0.100.0): 1 — прямые соседи, 2 — соседи соседей и так далее.
+   *
+   * Решение из отчёта: «глубина без верхней границы». Ограничивает не число, а данные — обход
+   * останавливается, когда новых карточек нет (`buildNeighborhood`).
+   */
+  const [depth, setDepth] = useState(1)
+  /**
    * Какая карточка раскрыта в окне графа (0.78.0 → 0.84.0).
    *
    * С 0.84.0 раскрытая карточка всегда одна — та, что стоит в центре холста: нажатие на узел
@@ -76,6 +97,8 @@ export function EntityGraph({ entities, links, tall = false, types = [] }: Props
   /** Карточка, которая сейчас летит в центр: откуда и куда — считает раскладка. */
   const [flying, setFlying] = useState<{ id: string; from: { x: number; y: number } } | null>(null)
   const flyTimer = useRef<number | null>(null)
+  /** Начало свайпа по группе (0.100.0): сравниваем с концом, чтобы отличить жест от касания. */
+  const swipeStart = useRef<number | null>(null)
   const reducedMotion = useReducedMotion()
   const [query, setQuery] = useState('')
   const [windowStart, setWindowStart] = useState(0)
@@ -160,6 +183,113 @@ export function EntityGraph({ entities, links, tall = false, types = [] }: Props
     () => entities.find((entity) => entity.id === expanded) ?? null,
     [entities, expanded],
   )  // Escape закрывает карточку: это окно поверх графа, и клавиатурой его тоже надо закрывать.
+
+  /**
+   * Группы по видам (0.100.0) — для уровня «мир».
+   *
+   * Порядок — как виды заведены в проекте: **главная группа та, что создана первой** (ответ на
+   * вопрос «какой акцент»). Тип с самым ранним `created_at` идёт первым и получает акцент; если дат
+   * нет (старые данные), порядок задаёт `position`. Карточки вида вне `types` (импорт до 0.81.0) —
+   * отдельной группой в конце, чтобы не потерялись.
+   */
+  const groups = useMemo(() => {
+    const byKind = new Map<string, ProjectEntity[]>()
+    for (const entity of entities) {
+      const list = byKind.get(entity.kind)
+      if (list) list.push(entity)
+      else byKind.set(entity.kind, [entity])
+    }
+    const known = [...types].sort((a, b) => {
+      const aTime = a.created_at ?? ''
+      const bTime = b.created_at ?? ''
+      if (aTime !== bTime) return aTime < bTime ? -1 : 1
+      return a.position - b.position
+    })
+    const out: Array<{ kind: string; title: string; cards: ProjectEntity[]; links: number; isolated: number }> = []
+    const push = (kind: string, cards: ProjectEntity[]) => {
+      const linksCount = cards.reduce(
+        (sum, card) => sum + connectionsOf(card.id, links, entities).length,
+        0,
+      )
+      const isolatedCount = cards.filter(
+        (card) => connectionsOf(card.id, links, entities).length === 0,
+      ).length
+      out.push({
+        kind,
+        title: typeTitle(types, kind),
+        cards,
+        links: linksCount,
+        isolated: isolatedCount,
+      })
+    }
+    for (const type of known) {
+      const cards = byKind.get(type.key)
+      if (cards) {
+        push(type.key, cards)
+        byKind.delete(type.key)
+      }
+    }
+    for (const [kind, cards] of byKind) push(kind, cards)
+    return out
+  }, [entities, links, types])
+
+  /** Главная группа: первая созданная (см. комментарий выше). */
+  const mainKind = groups[0]?.kind ?? null
+
+  /**
+   * Окрестность по уровням: «глубже» без верхней границы (0.100.0).
+   *
+   * Уровень 1 — то, что уже нарисовано вокруг центра; уровни 2+ показываем списком под холстом.
+   * Так «погружение» не требует новой раскладки: человек видит, что за соседями, и может уйти в
+   * любую карточку нажатием.
+   */
+  const neighborhood = useMemo(() => {
+    if (!center) return { levels: [], total: 0, truncated: false }
+    const nodes = entities.map((entity) => ({ id: entity.id, name: entity.name, kind: entity.kind }))
+    return buildNeighborhood(center.id, links, nodes, depth)
+  }, [center, depth, entities, links])
+
+  /**
+   * Индекс меток и поиск по нему (0.100.0): имя, алиасы, вид, подписи связей.
+   *
+   * Раньше поиск шёл только по имени — алиасы не участвовали, и «Анна» не находила «Аню».
+   */
+  const searchIndex = useMemo(() => buildEntityIndex(entities, links, types), [entities, links, types])
+  const matches = useMemo<EntitySearchHit[]>(
+    () => searchEntities(searchIndex, query, 8),
+    [query, searchIndex],
+  )
+
+  /**
+   * Крошки уровня карточки (0.100.0): «Мир / Персонажи».
+   *
+   * Имени карточки здесь нет намеренно: оно уже написано в центре холста, и вторая его копия в
+   * крошках дублировала бы центр (и ломала текстовые запросы в тестах «найди карточку Аня»).
+   * Крошка ведёт в группу — то есть туда, откуда карточку и открыли.
+   */
+  const crumbsFor = useCallback((): Array<{ label: string; onClick: (() => void) | null }> => {
+    const kind = center?.kind ?? null
+    const group = groups.find((item) => item.kind === kind) ?? null
+    const out: Array<{ label: string; onClick: (() => void) | null }> = [
+      {
+        label: 'Мир',
+        onClick: () => {
+          setLevel('world')
+          setGroupKind(null)
+        },
+      },
+    ]
+    if (group) {
+      out.push({
+        label: group.title,
+        onClick: () => {
+          setLevel('world')
+          setGroupKind(group.kind)
+        },
+      })
+    }
+    return out
+  }, [center, groups])
   useEffect(() => {
     if (expanded === null) return undefined
     const onKey = (event: KeyboardEvent) => {
@@ -286,11 +416,7 @@ export function EntityGraph({ entities, links, tall = false, types = [] }: Props
     })
   }, [])
 
-  const matches = useMemo(() => {
-    const text = query.trim().toLowerCase()
-    if (!text) return []
-    return entities.filter((entity) => entity.name.toLowerCase().includes(text)).slice(0, 6)
-  }, [entities, query])
+  // Поиск по меткам — выше (`matches` из `searchIndex`): имя, алиасы, вид, подписи связей (0.100.0).
 
   if (entities.length === 0) {
     return (
@@ -301,6 +427,125 @@ export function EntityGraph({ entities, links, tall = false, types = [] }: Props
   }
 
   if (!center) return null
+
+  /**
+   * Уровень «мир» (0.100.0): группы по видам.
+   *
+   * Заказ: «можно ли свапом перебирать существующие группы или иначе группировать карточки, и как
+   * ориентироваться». Здесь группы — плитки: главная (созданная первой) крупнее и с акцентом,
+   * у каждой видно число карточек, связей и «вне связей». Внутрь — нажатием; между группами, когда
+   * одна открыта, можно листать свайпом влево/вправо или стрелками (свайп пока пробный — решение
+   * из отчёта: «сначала испробовать»).
+   */
+  if (level === 'world') {
+    const active = groups.find((group) => group.kind === groupKind) ?? null
+    const index = active ? groups.findIndex((group) => group.kind === active.kind) : -1
+    const step = (delta: number) => {
+      if (groups.length === 0) return
+      const next = index < 0 ? 0 : (index + delta + groups.length) % groups.length
+      setGroupKind(groups[next].kind)
+    }
+    return (
+      <div className={tall ? 'egraph egraph--tall' : 'egraph'} data-entity-graph="world">
+        <GraphHeader
+          query={query}
+          setQuery={setQuery}
+          matches={matches}
+          onPick={select}
+          onBack={history.length > 0 ? back : null}
+          crumbs={
+            active
+              ? [
+                  { label: 'Мир', onClick: () => setGroupKind(null) },
+                  { label: active.title, onClick: null },
+                ]
+              : null
+          }
+        />
+        {active === null ? (
+          <div className="egraph__groups" data-entity-graph-groups>
+            {groups.map((group) => (
+              <button
+                key={group.kind}
+                type="button"
+                className={group.kind === mainKind ? 'egraph__group is-main' : 'egraph__group'}
+                onClick={() => setGroupKind(group.kind)}
+                data-entity-graph-group={group.kind}
+                aria-label={`Группа «${group.title}»: карточек ${group.cards.length}`}
+              >
+                <span className="egraph__group-name">{group.title}</span>
+                <span className="egraph__group-count">{group.cards.length}</span>
+                <span className="muted egraph__group-meta">
+                  {group.links === 0 ? 'связей нет' : `связей ${group.links}`}
+                  {group.isolated > 0 ? ` · ${group.isolated} вне связей` : ''}
+                </span>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div
+            className="egraph__group-cards"
+            data-entity-graph-group-cards={active.kind}
+            onTouchStart={(event) => {
+              // Свайп пробный (решение из отчёта): запоминаем начало касания и сравниваем с концом.
+              swipeStart.current = event.touches[0]?.clientX ?? null
+            }}
+            onTouchEnd={(event) => {
+              const start = swipeStart.current
+              swipeStart.current = null
+              if (start === null) return
+              const end = event.changedTouches[0]?.clientX ?? start
+              const delta = end - start
+              if (Math.abs(delta) < SWIPE_PX) return
+              step(delta < 0 ? 1 : -1)
+            }}
+          >
+            <div className="egraph__group-nav">
+              <button type="button" className="secondary" onClick={() => step(-1)} aria-label="Предыдущая группа" data-entity-graph-group-prev>
+                ←
+              </button>
+              <span className="muted">
+                {index + 1} из {groups.length}
+              </span>
+              <button type="button" className="secondary" onClick={() => step(1)} aria-label="Следующая группа" data-entity-graph-group-next>
+                →
+              </button>
+            </div>
+            <ul className="egraph__list" data-entity-graph-group-list>
+              {active.cards.map((card) => {
+                const count = connectionsOf(card.id, links, entities).length
+                return (
+                  <li key={card.id}>
+                    <button
+                      type="button"
+                      className="egraph__row"
+                      onClick={() => {
+                        setLevel('card')
+                        setDepth(1)
+                        setExpanded(card.id)
+                        setCenterId(card.id)
+                      }}
+                      data-entity-graph-group-card={card.id}
+                    >
+                      <span className="egraph__row-name">{card.name}</span>
+                      <span className="muted">
+                        {count === 0 ? 'вне связей' : `${count} ${count === 1 ? 'связь' : 'связей'}`}
+                      </span>
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+            {active.cards.length === 0 && (
+              <p className="muted">
+                В этой группе пока нет карточек.
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+    )
+  }
 
   // Низкий экран: вместо графа — список соседей с подписями. Граф на 390 px с шестью узлами
   // читается, с двадцатью — нет, а список читается всегда.
@@ -316,8 +561,9 @@ export function EntityGraph({ entities, links, tall = false, types = [] }: Props
           query={query}
           setQuery={setQuery}
           matches={matches}
-          onPick={go}
+          onPick={select}
           onBack={history.length > 0 ? back : null}
+          crumbs={crumbsFor()}
         />
         <div className="egraph__center">{center.name}</div>
         <ul className="egraph__list" data-entity-graph-list>
@@ -370,6 +616,7 @@ export function EntityGraph({ entities, links, tall = false, types = [] }: Props
         matches={matches}
         onPick={select}
         onBack={history.length > 0 ? back : null}
+        crumbs={crumbsFor()}
       />
       {/* Холст — «пространство»: у него свой фон с сеткой и звёздами (0.79.0). Сеть карточек
           читается как карта, а не как белое поле, и не сливается с полотном страницы. */}
@@ -516,6 +763,54 @@ export function EntityGraph({ entities, links, tall = false, types = [] }: Props
           </ul>
         </div>
       )}
+      {/* «Глубже» (0.100.0): уровни окрестности, без верхней границы. Холст показывает только
+          прямых соседей (кольцо из шести), а что за ними — видно здесь: уровень 2, 3 и дальше, пока
+          обход не исчерпает проект. Кнопка «ещё уровень» показывается, только когда глубже
+          действительно что-то есть (`truncated`), — иначе она выглядела бы сломанной. */}
+      {(neighborhood.levels.length > 1 || neighborhood.truncated) && (
+        <div className="egraph__levels" data-entity-graph-levels>
+          {neighborhood.levels.slice(1).map((levelData) => (
+            <div key={levelData.level} className="egraph__level" data-entity-graph-level={levelData.level}>
+              <span className="muted egraph__level-title">уровень {levelData.level}</span>
+              {levelData.nodes.map((node) => (
+                <button
+                  key={node.id}
+                  type="button"
+                  className="egraph__level-chip"
+                  onClick={() => select(node.id)}
+                  data-entity-graph-level-node={node.id}
+                >
+                  {node.name}
+                </button>
+              ))}
+            </div>
+          ))}
+          <div className="egraph__level-controls">
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => setDepth((current) => current + 1)}
+              disabled={!neighborhood.truncated}
+              data-entity-graph-deeper
+            >
+              ещё уровень
+            </button>
+            {depth > 1 && (
+              <button
+                type="button"
+                className="secondary"
+                onClick={() => setDepth(1)}
+                data-entity-graph-flatter
+              >
+                свернуть
+              </button>
+            )}
+            <span className="muted">
+              {neighborhood.total === 0 ? 'связей нет' : `в окрестности ${neighborhood.total}`}
+            </span>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -625,19 +920,25 @@ export function shortLabel(label: string): string {
 /** Предел подписи на ребре: при 12px шрифте это ~150 px, влезает в холст 248 px. */
 const EDGE_LABEL_CHARS = 22
 
-/** Поиск и «назад»: одинаковы в обоих режимах, поэтому отдельным блоком. */
+/** Поиск, крошки и «назад»: одинаковы во всех режимах, поэтому отдельным блоком. */
 function GraphHeader({
   query,
   setQuery,
   matches,
   onPick,
   onBack,
+  crumbs = null,
 }: {
   query: string
   setQuery: (value: string) => void
-  matches: ProjectEntity[]
+  matches: EntitySearchHit[]
   onPick: (id: string) => void
   onBack: (() => void) | null
+  /**
+   * Крошки уровня (0.100.0): «Мир / Персонажи». Нужны затем, чтобы человек всегда видел, где он, и
+   * мог подняться на уровень выше одним нажатием, а не искать кнопку «назад».
+   */
+  crumbs?: Array<{ label: string; onClick: (() => void) | null }> | null
 }) {
   const first = matches[0]
   return (
@@ -651,7 +952,7 @@ function GraphHeader({
         data-entity-graph-search
         onKeyDown={(e) => {
           if (e.key === 'Enter' && first) {
-            onPick(first.id)
+            onPick(first.entity.id)
             setQuery('')
           }
         }}
@@ -661,24 +962,71 @@ function GraphHeader({
           назад
         </button>
       )}
+      {crumbs !== null && crumbs.length > 0 && (
+        <nav className="egraph__crumbs" aria-label="Где я в графе" data-entity-graph-crumbs>
+          {crumbs.map((crumb, index) => (
+            <span key={crumb.label} className="egraph__crumb">
+              {index > 0 && <span className="muted" aria-hidden="true"> / </span>}
+              {crumb.onClick ? (
+                <button type="button" className="egraph__crumb-link" onClick={crumb.onClick}>
+                  {crumb.label}
+                </button>
+              ) : (
+                <span aria-current="page">{crumb.label}</span>
+              )}
+            </span>
+          ))}
+        </nav>
+      )}
       {matches.length > 0 && (
         <ul className="egraph__matches" data-entity-graph-matches>
           {matches.map((match) => (
-            <li key={match.id}>
+            <li key={match.entity.id}>
               <button
                 type="button"
                 className="egraph__match"
                 onClick={() => {
-                  onPick(match.id)
+                  onPick(match.entity.id)
                   setQuery('')
                 }}
+                data-entity-graph-match={match.entity.id}
+                data-entity-graph-match-source={match.source}
               >
-                {match.name}
+                {/* Подсказка объясняет, ПОЧЕМУ карточка в выдаче: без этого «Аня» в ответ на «Анна»
+                    выглядит случайной. Совпавший кусок подчёркнут. */}
+                <span className="egraph__match-name">
+                  {match.source === 'name' ? (
+                    highlight(match.matched, match.at, match.length)
+                  ) : (
+                    match.entity.name
+                  )}
+                </span>
+                <span className="muted egraph__match-why">
+                  {match.source === 'name'
+                    ? ''
+                    : match.source === 'alias'
+                      ? `алиас «${match.matched}»`
+                      : match.source === 'kind'
+                        ? `вид «${match.matched}»`
+                        : `связь «${match.matched}»`}
+                </span>
               </button>
             </li>
           ))}
         </ul>
       )}
     </div>
+  )
+}
+
+/** Подсветка совпавшего куска в подсказке: три части текста, средняя — `<mark>`. */
+function highlight(text: string, at: number, length: number) {
+  if (at < 0 || length <= 0) return text
+  return (
+    <>
+      {text.slice(0, at)}
+      <mark>{text.slice(at, at + length)}</mark>
+      {text.slice(at + length)}
+    </>
   )
 }

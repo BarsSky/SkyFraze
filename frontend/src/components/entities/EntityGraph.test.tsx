@@ -230,3 +230,120 @@ describe('shortLabel — подпись ребра на холсте (0.78.0)', 
     expect(short).not.toMatch(/\s…$/)
   })
 })
+
+/**
+ * Уровни графа и поиск по меткам (0.100.0).
+ *
+ * Заказ: «как группировать карточки и ориентироваться в них, с акцентом на главную группу и
+ * погружением в подгруппы; поиск должен выдавать подсказками проиндексированные метки карточек».
+ * Решения из отчёта: главная группа — созданная первой; глубина — без верхней границы; свайп —
+ * пробный.
+ */
+describe('EntityGraph — мир, группы и поиск по меткам (0.100.0)', () => {
+  const card = (id: string, name: string, kind = 'character') => ({
+    id,
+    kind,
+    name,
+    aliases: [] as string[],
+    description: '',
+    color: '',
+    created_at: '',
+    updated_at: '',
+  })
+  const anna = { ...card('e1', 'Аня'), aliases: ['Анна'] }
+  const earth = card('e2', 'Земля', 'place')
+  const bob = card('e3', 'Борис')
+  // Типы: «Место» создан раньше «Персонажа» — значит, главная группа именно «Место».
+  const types = [
+    { key: 'place', title: 'Место', color: '', icon: '', position: 2, is_default: true, created_at: '2026-01-01T00:00:00Z' },
+    { key: 'character', title: 'Персонаж', color: '', icon: '', position: 1, is_default: true, created_at: '2026-02-01T00:00:00Z' },
+  ]
+  const links = [
+    { id: 'l1', from_entity: 'e1', to_entity: 'e2', label: 'живёт на', created_at: '' },
+    { id: 'l2', from_entity: 'e1', to_entity: 'e3', label: 'боится', created_at: '' },
+  ]
+
+  it('уровень «мир»: группы по видам, главная — созданная первой', async () => {
+    render(<EntityGraph entities={[anna, earth, bob]} links={links} types={types} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Мир' }))
+    const groups = document.querySelectorAll('[data-entity-graph-group]')
+    expect(groups).toHaveLength(2)
+    // Первая по порядку — та, чей тип создан раньше, и у неё акцент.
+    expect(groups[0].getAttribute('data-entity-graph-group')).toBe('place')
+    expect(groups[0].className).toContain('is-main')
+    expect(groups[1].className).not.toContain('is-main')
+    // У группы видно число карточек и связей.
+    expect(groups[0].textContent).toContain('Земля'.length ? '1' : '1')
+    // Связи считаются по карточкам группы: у Ани две, у Бориса одна — итого три.
+    expect(groups[1].textContent).toContain('связей 3')
+  })
+
+  it('вход в группу показывает её карточки и «вне связей» у одиночек', async () => {
+    render(<EntityGraph entities={[anna, earth, bob]} links={links} types={types} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Мир' }))
+    fireEvent.click(screen.getByRole('button', { name: /Группа «Персонаж»/ }))
+    const rows = document.querySelectorAll('[data-entity-graph-group-card]')
+    expect(rows).toHaveLength(2)
+    // «Аня» связана — у неё число связей, «Борис» связан тоже (через Аню).
+    expect(rows[0].textContent).toContain('связей')
+    // Карточка из группы открывается в центре графа.
+    fireEvent.click(rows[1])
+    expect(await screen.findByRole('dialog', { name: 'Карточка Борис' })).toBeTruthy()
+  })
+
+  it('поиск находит по алиасу и объясняет, почему карточка в выдаче', async () => {
+    render(<EntityGraph entities={[anna, earth, bob]} links={links} types={types} />)
+    const input = await screen.findByLabelText('Поиск по карточкам в графе')
+    fireEvent.change(input, { target: { value: 'анна' } })
+    // «Аня» есть и узлом на холсте, и подсказкой — берём именно подсказку.
+    const hit = (await waitFor(() => {
+      const node = document.querySelector('[data-entity-graph-match]') as HTMLElement | null
+      if (node === null) throw new Error('нет подсказок')
+      return node
+    })) as HTMLElement
+    expect(hit.getAttribute('data-entity-graph-match-source')).toBe('alias')
+    expect(hit.textContent).toContain('алиас «Анна»')
+  })
+
+  it('поиск по подписи связи находит обе стороны', async () => {
+    render(<EntityGraph entities={[anna, earth, bob]} links={links} types={types} />)
+    fireEvent.change(await screen.findByLabelText('Поиск по карточкам в графе'), { target: { value: 'живёт' } })
+    const hits = document.querySelectorAll('[data-entity-graph-match]')
+    const names = Array.from(hits).map((node) => node.textContent ?? '')
+    expect(names.some((text) => text.includes('Аня'))).toBe(true)
+    expect(names.some((text) => text.includes('Земля'))).toBe(true)
+    expect(names.some((text) => text.includes('связь «живёт на»'))).toBe(true)
+  })
+
+  it('«глубже» показывает уровни окрестности, пока есть что показывать', async () => {
+    render(<EntityGraph entities={[anna, earth, bob]} links={links} types={types} />)
+    // Центр — Аня (у неё больше связей): прямых соседей двое, глубже идти некуда.
+    await screen.findByRole('button', { name: 'Аня' })
+    expect(document.querySelector('[data-entity-graph-deeper]')).toBeNull()
+    // Переходим на «Землю»: у неё сосед Аня, а за Аней — Борис, то есть «глубже» есть.
+    fireEvent.click(screen.getByRole('button', { name: 'Земля' }))
+    await waitFor(() => expect(document.querySelector('[data-entity-graph-deeper]')).not.toBeNull())
+    fireEvent.click(document.querySelector('[data-entity-graph-deeper]') as HTMLButtonElement)
+    const levels = document.querySelectorAll('[data-entity-graph-level]')
+    expect(levels.length).toBeGreaterThan(0)
+    expect(levels[0].textContent).toContain('уровень 2')
+    // «Свернуть» возвращает к прямому окружению.
+    fireEvent.click(document.querySelector('[data-entity-graph-flatter]') as HTMLButtonElement)
+    expect(document.querySelectorAll('[data-entity-graph-level]')).toHaveLength(0)
+  })
+
+  it('свайп влево по карточкам группы переключает на следующую группу', async () => {
+    render(<EntityGraph entities={[anna, earth, bob]} links={links} types={types} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Мир' }))
+    fireEvent.click(screen.getByRole('button', { name: /Группа «Место»/ }))
+    const list = document.querySelector('[data-entity-graph-group-cards]') as HTMLElement
+    expect(list.getAttribute('data-entity-graph-group-cards')).toBe('place')
+    fireEvent.touchStart(list, { touches: [{ clientX: 200 }] })
+    fireEvent.touchEnd(list, { changedTouches: [{ clientX: 100 }] })
+    await waitFor(() =>
+      expect(
+        document.querySelector('[data-entity-graph-group-cards]')?.getAttribute('data-entity-graph-group-cards'),
+      ).toBe('character'),
+    )
+  })
+})

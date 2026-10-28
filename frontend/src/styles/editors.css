@@ -846,7 +846,53 @@
 .egraph__match {
   background: var(--bg-elev); border: 1px dashed var(--border); border-radius: 999px;
   padding: 2px 10px; font-size: 12px; color: var(--fg); cursor: pointer;
+  display: inline-flex; align-items: baseline; gap: 6px; min-height: 32px;
 }
+.egraph__match:hover { border-color: var(--accent); }
+/* Подсказка объясняет, почему карточка в выдаче: «алиас «Анна»», «связь «живёт на»» (0.100.0).
+   Совпавший кусок подчёркнут, а не залит: `mark` без стилей спорит с темой. */
+.egraph__match-name { white-space: nowrap; }
+.egraph__match-why { font-size: 11px; }
+.egraph__match mark { background: none; color: var(--accent); font-weight: 600; text-decoration: underline; }
+
+/* Крошки уровня (0.100.0): «Мир / Персонажи» — где я и куда подняться. Стоят в той же строке,
+   что поиск: отдельная строка отнимала высоту у холста. */
+.egraph__crumbs { display: inline-flex; align-items: center; gap: 2px; font-size: 12px; }
+.egraph__crumb-link {
+  background: none; border: none; padding: 2px 4px; color: var(--accent);
+  font: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 2px;
+}
+
+/* Уровень «мир» (0.100.0): группы карточек плитками. Главная (созданная первой) — крупнее и с
+   акцентной рамкой: на неё смотрят в первую очередь. */
+.egraph__groups { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); margin-top: 10px; }
+.egraph__group {
+  display: grid; gap: 2px; text-align: left; cursor: pointer;
+  padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--bg-elev); color: var(--fg); font: inherit;
+}
+.egraph__group:hover { border-color: var(--accent); }
+.egraph__group.is-main { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+.egraph__group-name { font-weight: 600; }
+.egraph__group-count { font-size: 1.4rem; font-weight: 700; line-height: 1.1; }
+.egraph__group-meta { font-size: 12px; }
+.egraph__group-nav { display: flex; align-items: center; gap: 8px; margin: 8px 0 4px; }
+.egraph__group-nav button { min-width: 34px; min-height: 34px; }
+.egraph__group-cards { touch-action: pan-y; }
+
+/* «Глубже» (0.100.0): уровни окрестности списком под холстом. Холст не перегружаем: кольцо
+   остаётся прямым соседям, а дальше — читаемые строки. */
+.egraph__levels { margin-top: 8px; display: grid; gap: 6px; }
+.egraph__level { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.egraph__level-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+.egraph__level-chip {
+  background: var(--bg-elev); border: 1px solid var(--border); border-radius: 999px;
+  padding: 4px 10px; font: inherit; font-size: 12px; color: var(--fg); cursor: pointer;
+  min-height: 32px;
+}
+.egraph__level-chip:hover { border-color: var(--accent); }
+.egraph__level-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.egraph__level-controls button { min-height: 32px; }
 .egraph__canvas { position: relative; height: 320px; margin-top: 8px; border-radius: 10px; overflow: hidden; }
 /* «Пространство» под сетью (0.79.0): сетка, свечение центра и редкие звёзды тоном темы.
    Слои — только градиенты и точки, без картинок и без размытия: на телефоне прокрутка не
