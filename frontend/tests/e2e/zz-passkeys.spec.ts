@@ -29,7 +29,9 @@ test('ключ доступа: привязка в профиле, вход им
   const email = await currentEmail(page)
   expect(email).toContain('@')
 
-  await page.goto('/coauthors')
+  // Ключи доступа живут на вкладке «Профиль» (0.99.0): до этого блок стоял на «Соавторах», и
+  // сценарий ходил туда. Переезд сломал бы проверку молча — ключей на старой странице больше нет.
+  await page.goto('/profile')
   const block = page.locator('[data-passkeys]')
   await expect(block).toBeVisible({ timeout: 30_000 })
   // Chromium умеет WebAuthn: если раздел говорит обратное — backend не настроен
@@ -68,7 +70,7 @@ test('ключ доступа: привязка в профиле, вход им
 
   // Уборка за собой: удаляем ключ, иначе вход по одному паролю здесь больше не работает и
   // повторный прогон на той же базе начнётся с другого состояния.
-  await page.goto('/coauthors')
+  await page.goto('/profile')
   await expect(page.locator('[data-passkeys-list]')).toContainText('виртуальный ключ', {
     timeout: 30_000,
   })
