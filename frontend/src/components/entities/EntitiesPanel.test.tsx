@@ -824,6 +824,9 @@ describe('EntitiesPanel — действия в меню «⋮» (0.102.0)', () 
     const menu = document.querySelector('[data-entity-menu-list]') as HTMLElement
     expect(menu.getAttribute('role')).toBe('menu')
     expect(menu.getAttribute('data-entity-menu-list')).toBe('e1')
+    // По умолчанию список идёт вниз от кнопки: в jsdom прямоугольники нулевые, места «внизу»
+    // хватает по определению.
+    expect(menu.className).toBe('ent__menu')
     expect(
       Array.from(menu.querySelectorAll('[role="menuitem"]')).map((node) => node.textContent),
     ).toEqual(['Изменить', 'Связать', 'Удалить'])
@@ -846,6 +849,39 @@ describe('EntitiesPanel — действия в меню «⋮» (0.102.0)', () 
     openCardMenu('Анна')
     fireEvent.pointerDown(document.body)
     expect(document.querySelectorAll('[data-entity-menu-list]')).toHaveLength(0)
+  })
+
+  it('у последней карточки меню раскрывается вверх, а не за нижний край (0.102.2)', async () => {
+    panel({ entities: two() })
+    await screen.findByText('Анна')
+    // jsdom не считает раскладку, поэтому подставляем прямоугольник, который уже не влезает в окно.
+    const original = HTMLElement.prototype.getBoundingClientRect
+    const rect = (bottom: number) =>
+      ({
+        top: bottom - 116,
+        bottom,
+        left: 0,
+        right: 168,
+        width: 168,
+        height: 116,
+        x: 0,
+        y: bottom - 116,
+        toJSON: () => ({}),
+      }) as DOMRect
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      // Только меню: остальным узлам отдаём настоящий (нулевой) прямоугольник jsdom.
+      if (this.classList?.contains('ent__menu')) return rect(window.innerHeight + 40)
+      return original.call(this)
+    })
+
+    openCardMenu('Анна')
+    await waitFor(() =>
+      expect(document.querySelector('[data-entity-menu-list]')?.className).toContain('is-up'),
+    )
+    // Класс — единственное, чем разворот виден в DOM; положение считает CSS-правило `.is-up`.
+    expect(document.querySelector('[data-entity-menu-list]')?.className).toBe('ent__menu is-up')
   })
 
   it('клавиатура: фокус в первом пункте, стрелки и Home/End ходят по меню, Escape — назад на «⋮»', async () => {

@@ -198,11 +198,21 @@ export function EntitiesPanel({
       document.removeEventListener('keydown', onKey)
     }
   }, [menuFor])
-  /** Меню открылось — сразу в первый пункт: иначе Tab из «⋮» шёл бы по карточкам ниже. */
+  /**
+   * Меню раскрыто вверх (0.102.2): у последней карточки внизу экрана места под список нет, и
+   * пункты «Связать / Удалить» уезжали бы за край. Разворот считается один раз при открытии —
+   * так список не «прыгает», пока с ним работают.
+   */
+  const [menuUp, setMenuUp] = useState(false)
+  /** Меню открылось — ставим фокус в первый пункт и проверяем, есть ли место внизу. */
   useEffect(() => {
     if (menuFor === null) return
-    const first = menuEl.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')
-    first?.focus()
+    const el = menuEl.current
+    // jsdom в тестах отдаёт нулевой прямоугольник — тогда разворот не нужен по определению.
+    if (el !== null && el !== undefined && el.getBoundingClientRect().bottom > window.innerHeight - 8) {
+      setMenuUp(true)
+    }
+    el?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus()
   }, [menuFor])
   /** У какой карточки раскрыта хронология. Одна за раз: две открытые — это уже не список. */
   const [chronology, setChronology] = useState<string | null>(null)
@@ -603,9 +613,12 @@ export function EntitiesPanel({
                       <button
                         type="button"
                         className="ent__menu-trigger secondary"
-                        onClick={() =>
+                        onClick={() => {
+                          // Каждое открытие — заново «вниз»: разворот вверх решает замер, а не
+                          // прошлое состояние этого меню.
+                          setMenuUp(false)
                           setMenuFor((current) => (current === entity.id ? null : entity.id))
-                        }
+                        }}
                         aria-haspopup="menu"
                         aria-expanded={menuFor === entity.id}
                         aria-label={`Действия с карточкой ${entity.name}`}
@@ -615,7 +628,7 @@ export function EntitiesPanel({
                       </button>
                       {menuFor === entity.id && (
                         <span
-                          className="ent__menu"
+                          className={menuUp ? 'ent__menu is-up' : 'ent__menu'}
                           role="menu"
                           aria-label={`Меню карточки ${entity.name}`}
                           data-entity-menu-list={entity.id}

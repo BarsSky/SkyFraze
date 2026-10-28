@@ -65,7 +65,9 @@ type MenuInfo = {
   viewport?: { w: number; h: number }
   reachable?: boolean
   gapBelowTrigger?: number | null
-  overTrigger?: boolean | null
+  gapAboveTrigger?: number | null
+  placement?: string | null
+  flipped?: boolean
   background?: string
   shadow?: string
 }
@@ -163,9 +165,8 @@ async function measureStyles(page: Page): Promise<{ group: GroupStyle; trigger: 
 }
 
 /** Открыть меню «⋮» у карточки и снять его геометрию. */
-async function measureMenu(page: Page, card: string): Promise<MenuInfo> {
-  await page.getByLabel(`Действия с карточкой ${card}`).click()
-  await page.waitForTimeout(150)
+/** Прочитать уже открытое меню: геометрия, пункты, досягаемость, место относительно кнопки. */
+async function readMenu(page: Page): Promise<MenuInfo> {
   return page.evaluate(
     `(async () => {
       const menu = document.querySelector('[data-entity-menu-list]')
@@ -192,16 +193,28 @@ async function measureMenu(page: Page, card: string): Promise<MenuInfo> {
         },
         viewport: { w: window.innerWidth, h: window.innerHeight },
         reachable: !!hit && menu.contains(hit),
-        // Меню должно стоять ПОД своей кнопкой с зазором 4 px, а не накрывать её.
+        // Меню стоит под своей кнопкой (зазор 4 px) или, у нижнего края, над ней.
         gapBelowTrigger: tbox ? Math.round(box.top - tbox.bottom) : null,
-        overTrigger: tbox
-          ? !(box.top >= tbox.bottom || box.bottom <= tbox.top || box.left >= tbox.right || box.right <= tbox.left)
+        gapAboveTrigger: tbox ? Math.round(tbox.top - box.bottom) : null,
+        placement: tbox
+          ? box.top >= tbox.bottom - 1
+            ? 'below'
+            : box.bottom <= tbox.top + 1
+              ? 'above'
+              : 'over'
           : null,
+        flipped: menu.className.includes('is-up'),
         background: getComputedStyle(menu).backgroundColor,
         shadow: getComputedStyle(menu).boxShadow,
       }
     })()`,
   ) as Promise<MenuInfo>
+}
+
+async function measureMenu(page: Page, card: string): Promise<MenuInfo> {
+  await page.getByLabel(`Действия с карточкой ${card}`).click()
+  await page.waitForTimeout(150)
+  return readMenu(page)
 }
 
 async function main() {
@@ -320,8 +333,8 @@ async function main() {
       }
       if (menu.role !== 'menu') problems.push(`роль меню: ${menu.role}`)
       if (!menu.reachable) problems.push('меню не в точке нажатия: сверху лежит что-то другое')
-      if (menu.overTrigger === true) problems.push('меню накрывает собственную кнопку «⋮»')
-      if (menu.gapBelowTrigger !== 4) {
+      if (menu.placement === 'over') problems.push('меню накрывает собственную кнопку «⋮»')
+      if (menu.placement === 'below' && menu.gapBelowTrigger !== 4) {
         problems.push(`меню не под кнопкой: зазор ${String(menu.gapBelowTrigger)} px вместо 4`)
       }
       if ((menu.items ?? []).some((item) => item.height < 32)) {
@@ -397,8 +410,8 @@ async function main() {
       const rect = phoneMenu.rect!
       const viewport = phoneMenu.viewport!
       if (!phoneMenu.reachable) problems.push('на телефоне меню не в точке нажатия')
-      if (phoneMenu.overTrigger === true) problems.push('на телефоне меню накрывает свою кнопку')
-      if (phoneMenu.gapBelowTrigger !== 4) {
+      if (phoneMenu.placement === 'over') problems.push('на телефоне меню накрывает свою кнопку')
+      if (phoneMenu.placement === 'below' && phoneMenu.gapBelowTrigger !== 4) {
         problems.push(`на телефоне меню не под кнопкой: зазор ${String(phoneMenu.gapBelowTrigger)} px`)
       }
       if (rect.left < 0 || rect.right > viewport.w) {
@@ -421,6 +434,37 @@ async function main() {
           `пункты ${(phoneMenu.items ?? []).map((item) => item.height).join('/')} px`,
       )
     }
+    // Последняя карточка у нижнего края: меню должно развернуться ВВЕРХ, иначе «Удалить» уйдёт за
+    // экран. В 0.102.0 проверялась только первая карточка — этот случай и остался бы незамеченным.
+    const lastTrigger = phone.locator('[data-entity-menu]').last()
+    await lastTrigger.scrollIntoViewIfNeeded()
+    await phone.waitForTimeout(250)
+    await lastTrigger.click()
+    await phone.waitForTimeout(250)
+    const lastMenu = await readMenu(phone)
+    numbers.menu_phone_last = lastMenu
+    if (lastMenu.missing) {
+      problems.push('на телефоне меню последней карточки не открылось')
+    } else {
+      const rect = lastMenu.rect!
+      const viewport = lastMenu.viewport!
+      if (rect.bottom > viewport.h) {
+        problems.push(`последняя карточка: меню за нижним краем (${rect.bottom} > ${viewport.h})`)
+      }
+      if (lastMenu.placement !== 'above') {
+        problems.push(`последняя карточка: меню не развернулось вверх (${lastMenu.placement})`)
+      }
+      if (lastMenu.gapAboveTrigger !== 4) {
+        problems.push(`последняя карточка: зазор над кнопкой ${String(lastMenu.gapAboveTrigger)} px вместо 4`)
+      }
+      await phone.locator('[data-entities]').screenshot({ path: 'entity-menu-phone-up.png' })
+      await phone.keyboard.press('Escape')
+      console.log(
+        `телефон, последняя карточка: меню ${rect.width}×${rect.height} в (${rect.left},${rect.top}), ` +
+          `разворот: ${String(lastMenu.placement)} (is-up: ${String(lastMenu.flipped)})`,
+      )
+    }
+
     await phoneContext.close()
   } finally {
     await page.request.delete(`${API}/api/projects/${projectId}/purge`, { headers }).catch(() => undefined)

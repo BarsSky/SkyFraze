@@ -610,6 +610,9 @@
   background: var(--bg-elev); border: 1px solid var(--border); border-radius: 10px;
   box-shadow: 0 10px 24px color-mix(in srgb, var(--fg) 22%, transparent);
 }
+/* Меню у последней карточки внизу экрана раскрывается вверх (0.102.2): решает замер при открытии,
+   а не CSS — сколько места под кнопкой, знает только страница. */
+.ent__menu.is-up { top: auto; bottom: calc(100% + 4px); }
 .ent__menu-item {
   min-height: 34px; padding: 6px 10px; text-align: left;
   background: none; border: 1px solid transparent; border-radius: 8px;
