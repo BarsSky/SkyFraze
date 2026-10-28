@@ -813,6 +813,18 @@ cd frontend && npx tsx tests/diag-graph-focus.ts
 # заготовки типа в форму карточки. Сам убирает за собой созданные проекты.
 cd frontend && npx tsx tests/diag-template.ts
 
+# Шаблон оформления DOCX (0.91.0): загрузка настоящего .docx, отчёт разбора (плейсхолдер, карта
+# стилей, предупреждения), активность первого шаблона и то, что скачивание идёт через шаблон
+# (заголовок X-Skyfraze-Docx-Template: custom). Файл шаблона — _dev_shots/template.docx.
+# Сам убирает за собой диагностический шаблон.
+cd frontend && npx tsx tests/diag-docx-template.ts
+
+# Маркеры DOCX (0.92.0): в редакторе открыть «Разметку DOCX», вставить разрыв страницы и
+# оглавление, сохранить — и убедиться, что сервер увидел маркеры (export.md), а .docx собран с
+# <w:br w:type="page"/> и полем TOC. Текст кадра возвращается на место. Файл —
+# _dev_shots/docx-markers-export.docx (распаковать и посмотреть word/document.xml).
+cd frontend && npx tsx tests/diag-docx-markers.ts
+
 # E2E публичной ленты: права, просмотры, оценки
 cd frontend && npx tsx tests/public-feed.ts
 

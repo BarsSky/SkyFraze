@@ -45,6 +45,8 @@ import {
   type TransferFrame,
 } from '../../lib/assetTransfer'
 import { serverErrorMessage } from '../../api/client'
+import { listDocxTemplates } from '../../api/docxTemplates'
+import { docxStyleNames } from '../../lib/docxMarkers'
 import {
   yAddEvent,
   yDeleteEvent,
@@ -540,6 +542,30 @@ once — чтобы повторный
         if (alive) setUnseenCounts(unseen)
       })
       .catch(() => undefined)
+    return () => {
+      alive = false
+    }
+  }, [projectId])
+
+  /**
+   * Стили абзаца действующего шаблона DOCX (0.92.0) — для панели «Разметка DOCX» в редакторе.
+   *
+   * Один запрос на проект при открытии панели, а не на каждый кадр: список стилей не зависит
+   * от кадра. Ошибка не показывается: без шаблона (или без права менять шаблоны) панель просто
+   * не предлагает стилей, и это нормальное состояние, а не сбой, о котором надо кричать в
+   * редакторе текста.
+   */
+  const [docxStyles, setDocxStyles] = useState<string[]>([])
+  useEffect(() => {
+    if (!projectId) return undefined
+    let alive = true
+    listDocxTemplates(projectId)
+      .then((templates) => {
+        if (alive) setDocxStyles(docxStyleNames(templates))
+      })
+      .catch(() => {
+        if (alive) setDocxStyles([])
+      })
     return () => {
       alive = false
     }
@@ -1870,6 +1896,7 @@ once — чтобы повторный
                   setPendingAnchor({ field: 'body', ...fragment })
                 }
                 focusRange={focusRange}
+                docxStyles={docxStyles}
               />
               <p className="muted ed-editor__hint">
                 Изменения сохраняются автоматически; дерево синхронизируется с сервером.

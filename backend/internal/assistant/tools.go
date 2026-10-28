@@ -349,6 +349,11 @@ func ParseUpdate(args map[string]any, limits Limits) (UpdateArgs, error) {
 		if len([]rune(body)) > limits.MaxBodyChars {
 			return out, TooLongError{Field: "body_md", Limit: limits.MaxBodyChars}
 		}
+		// Маркеры DOCX (0.92.0): правка приходит текстом целиком, и склеенный маркер потерял бы
+		// оформление куска молча — ошибка возвращается модели до предложения, а не после.
+		if err := checkDocxMarkers(body); err != nil {
+			return out, err
+		}
 		out.Body = &body
 	}
 	if out.Title == nil && out.Body == nil {
@@ -505,6 +510,11 @@ func ParseCreate(args map[string]any, limits Limits) (CreateArgs, error) {
 	body := argString(args, "body_md")
 	if len([]rune(body)) > limits.MaxBodyChars {
 		return out, TooLongError{Field: "body_md", Limit: limits.MaxBodyChars}
+	}
+	// Маркеры DOCX (0.92.0): склеенная строка маркера не работает и молча теряет оформление —
+	// лучше вернуть модели понятную ошибку, пока текст не стал кадром.
+	if err := checkDocxMarkers(body); err != nil {
+		return out, err
 	}
 	out.Title = title
 	out.Body = body

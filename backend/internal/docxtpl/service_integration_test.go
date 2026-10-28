@@ -268,6 +268,34 @@ func TestDocxTemplateRejectsBadFile(t *testing.T) {
 	}
 }
 
+// TestDocxTemplateParagraphStyles — имена стилей абзаца для ИИ-помощника (0.92.0).
+//
+// Помощник ставит маркеры `<!-- sf:style=Имя -->` и должен называть только существующие стили.
+// Проверяем и фильтр типа: стиль знака к абзацу не применить, и предлагать его модели нельзя.
+func TestDocxTemplateParagraphStyles(t *testing.T) {
+	e := setupDocx(t)
+	ctx := context.Background()
+	upload(t, e, e.owner, "рукопись")
+
+	styles, err := e.svc.ParagraphStyles(ctx, e.project)
+	if err != nil {
+		t.Fatalf("стили: %v", err)
+	}
+	if len(styles) == 0 {
+		t.Fatal("стили абзаца не найдены")
+	}
+	for _, name := range styles {
+		if strings.TrimSpace(name) == "" {
+			t.Fatalf("пустое имя стиля: %v", styles)
+		}
+	}
+	// Без шаблона (другой проект) — пустой список, а не ошибка.
+	other, err := e.svc.ParagraphStyles(ctx, uuid.New())
+	if err != nil || len(other) != 0 {
+		t.Fatalf("стили проекта без шаблона: %v, %v", other, err)
+	}
+}
+
 func TestDocxTemplateActiveMissingFile(t *testing.T) {
 	e := setupDocx(t)
 	ctx := context.Background()

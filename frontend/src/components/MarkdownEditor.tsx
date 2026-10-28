@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { MarkdownBlock } from './MarkdownBlock'
 import { resolveLiveText } from '../collab/liveText'
+import { MARKER_TEMPLATES, beginMarker, insertMarker, styleMarker } from '../lib/docxMarkers'
 import {
   DIAGRAM_KINDS,
   codeSkeleton,
@@ -34,6 +35,12 @@ interface Props {
    * предпросмотр показывает ту же картинку, что увидят читатели.
    */
   assetUrls?: Record<string, string>
+  /**
+   * Стили абзаца действующего шаблона DOCX (0.92.0) — из чего выбирать в панели «Разметка DOCX».
+   * Пусто — шаблона нет, и панель предлагает только разрыв страницы и оглавление: список
+   * несуществующих стилей хуже, чем его отсутствие.
+   */
+  docxStyles?: string[]
 }
 
 type Mode = 'split' | 'edit' | 'preview'
@@ -53,12 +60,19 @@ type Mode = 'split' | 'edit' | 'preview'
  * соавтора». Правило «что делать» целиком живёт в `resolveLiveText` и покрыто
  * тестом, здесь только его исполнение.
  */
-export function MarkdownEditor({ value, onSave, onAdopt, onClose, title, assetUrls }: Props) {
+export function MarkdownEditor({ value, onSave, onAdopt, onClose, title, assetUrls, docxStyles }: Props) {
   const [text, setText] = useState(value)
   const [mode, setMode] = useState<Mode>('split')
   const [diagramKind, setDiagramKind] = useState<string>(DIAGRAM_KINDS[0].id)
   /** На телефоне панель вставок свёрнута: в строку она не влезает (см. CSS). */
   const [insertsOpen, setInsertsOpen] = useState(false)
+  /**
+   * Панель «Разметка DOCX» (0.92.0). Свёрнута по умолчанию: маркеры нужны не каждый раз, а
+   * человек, который их не знает, не должен упираться в них при первом открытии редактора.
+   */
+  const [docxOpen, setDocxOpen] = useState(false)
+  /** Выбранный стиль шаблона. Пусто — список ещё не пришёл или шаблона нет. */
+  const [docxStyle, setDocxStyle] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const windowRef = useRef<HTMLDivElement>(null)
   const restoreFocus = useRef<HTMLElement | null>(null)
@@ -179,6 +193,25 @@ export function MarkdownEditor({ value, onSave, onAdopt, onClose, title, assetUr
     })
   }, [])
 
+  /**
+   * Стили шаблона для панели «Разметка DOCX» и выбранный из них.
+   *
+   * `currentStyle` — не просто состояние: список приходит асинхронно (шаблоны грузятся после
+   * открытия панели), и без сверки с ним `select` показывал бы пустое значение, а кнопки
+   * вставляли маркер с пустым именем.
+   */
+  const styleNames = useMemo(
+    () => (docxStyles ?? []).map((name) => name.trim()).filter((name) => name !== ''),
+    [docxStyles],
+  )
+  const currentStyle = styleNames.includes(docxStyle) ? docxStyle : styleNames[0] ?? ''
+
+  /** Вставка маркера на место курсора: тем же путём, что и остальные вставки. */
+  const insertDocxMarker = useCallback(
+    (marker: string) => apply(insertMarker(text, selection(), marker)),
+    [apply, selection, text],
+  )
+
   const tools = useMemo(
     () => [
       { label: 'Ж', title: 'Жирный (Ctrl+B)', run: () => apply(wrapSelection(text, selection(), '**')) },
@@ -279,6 +312,89 @@ export function MarkdownEditor({ value, onSave, onAdopt, onClose, title, assetUr
             >
               диаграмма
             </button>
+          </div>
+        </div>
+
+        {/* Разметка DOCX (0.92.0, docs/docx-template.md §3). Отдельная панель, а не кнопки в
+            строке: это не Markdown, а служебные пометки для выгрузки, и рядом с «жирный/цитата»
+            они выглядели бы частью обычной разметки. Понимает их только скачивание .docx —
+            в показе маркеры невидимы, потому что их вырезает maskDocxMarkers. */}
+        <div className="md-editor__docx" data-docx-markup={docxOpen ? 'open' : 'closed'}>
+          <button
+            type="button"
+            className="secondary md-editor__docx-toggle"
+            aria-expanded={docxOpen}
+            aria-controls="md-editor-docx"
+            onClick={() => setDocxOpen((open) => !open)}
+          >
+            Разметка DOCX {docxOpen ? '▴' : '▾'}
+          </button>
+          <div className="md-editor__docx-body" id="md-editor-docx">
+            <button
+              type="button"
+              className="secondary"
+              title="Начать новый лист в DOCX на этом месте"
+              onClick={() => insertDocxMarker(MARKER_TEMPLATES[0].marker)}
+            >
+              разрыв страницы
+            </button>
+            <button
+              type="button"
+              className="secondary"
+              title="Поле оглавления Word на этом месте (обновляется в Word по F9)"
+              onClick={() => insertDocxMarker(MARKER_TEMPLATES[1].marker)}
+            >
+              оглавление
+            </button>
+            {styleNames.length > 0 ? (
+              <>
+                <span className="md-editor__toolbar-sep" aria-hidden />
+                <select
+                  className="md-editor__docx-style"
+                  aria-label="Стиль шаблона DOCX"
+                  value={currentStyle}
+                  onChange={(e) => setDocxStyle(e.target.value)}
+                >
+                  {styleNames.map((name) => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="secondary"
+                  title="Текст ниже — этим стилем шаблона (до следующего маркера)"
+                  disabled={currentStyle === ''}
+                  onClick={() => insertDocxMarker(styleMarker(currentStyle))}
+                >
+                  стиль ниже
+                </button>
+                <button
+                  type="button"
+                  className="secondary"
+                  title="Начать кусок этим стилем; закрыть кнопкой «закончить блок»"
+                  disabled={currentStyle === ''}
+                  onClick={() => insertDocxMarker(beginMarker(currentStyle))}
+                >
+                  начать блок
+                </button>
+                <button
+                  type="button"
+                  className="secondary"
+                  title="Вернуть обычное оформление"
+                  onClick={() => insertDocxMarker(MARKER_TEMPLATES[2].marker)}
+                >
+                  закончить блок
+                </button>
+              </>
+            ) : (
+              <span className="muted md-editor__docx-hint">
+                Стили шаблона появятся, когда у проекта будет загружен шаблон оформления.
+              </span>
+            )}
+            <span className="muted md-editor__docx-hint">
+              Маркеры не видны в показе и не участвуют в поиске; их понимает только скачивание
+              DOCX.
+            </span>
           </div>
         </div>
 

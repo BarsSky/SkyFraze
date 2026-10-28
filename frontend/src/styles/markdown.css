@@ -144,6 +144,26 @@
   border-radius: 8px; padding: 7px 9px; min-width: 150px;
 }
 
+/* Разметка DOCX (0.92.0): сворачиваемая панель под строкой вставок. Свёрнута по умолчанию —
+   в редакторе уже шестнадцать кнопок, и маркеры нужны не каждый раз. */
+.md-editor__docx {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  padding: 8px 14px; border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 60%, transparent);
+  flex: 0 0 auto; font-size: 12px;
+}
+.md-editor__docx-body { display: none; }
+.md-editor__docx[data-docx-markup='open'] .md-editor__docx-body {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  width: 100%; padding-top: 8px;
+}
+.md-editor__docx-body button { min-width: 38px; }
+.md-editor__docx-style {
+  background: var(--bg); color: var(--fg); border: 1px solid var(--border);
+  border-radius: 8px; padding: 7px 9px; min-width: 150px;
+}
+.md-editor__docx-hint { flex: 1 1 240px; min-width: 0; font-size: 11px; }
+
 .md-editor__body { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: 1fr 1fr; }
 .md-editor__body[data-mode='edit'] { grid-template-columns: 1fr; }
 .md-editor__body[data-mode='preview'] { grid-template-columns: 1fr; }
@@ -202,6 +222,8 @@
   .md-editor__toolbar[data-inserts='open'] .md-editor__inserts { display: flex; }
   .md-editor__inserts .md-editor__toolbar-sep { display: none; }
   .md-editor__diagram { min-width: 0; flex: 1 1 150px; }
+  .md-editor__docx { padding: 8px 10px; }
+  .md-editor__docx-style { min-width: 0; flex: 1 1 140px; }
   .md-editor__head { padding: 8px 10px; gap: 8px; }
   .md-editor__titles { flex: 1 1 100%; }
   .md-editor__modes { flex: 1 1 auto; }

@@ -28,6 +28,8 @@ import type { TextField } from './text'
 export const MIN_ALIAS_LENGTH = 2
 
 /** Карточка в том виде, в каком она нужна поиску. */
+import { maskDocxMarkers } from '../lib/docxMarkers'
+
 export interface MentionEntity {
   id: string
   name: string
@@ -73,8 +75,12 @@ export function findMentions(
   if (pattern === null || text === '') return []
   const byAlias = aliasIndex(entities)
   const out: Mention[] = []
+  // Маркеры DOCX (0.92.0) не участвуют в поиске упоминаний, но и не сдвигают позиции: маска
+  // сохраняет длину, поэтому `from`/`to` остаются валидными для СЫРОГО текста (на них держатся
+  // подсветка и якоря замечаний).
+  const searchable = maskDocxMarkers(text)
   const re = new RegExp(pattern.source, 'giu')
-  for (const match of text.matchAll(re)) {
+  for (const match of searchable.matchAll(re)) {
     const quote = match[0]
     const entity = byAlias.get(quote.toLowerCase())
     if (!entity) continue

@@ -319,15 +319,33 @@ func docxBody(st *story, media map[uuid.UUID]docxMedia, styles docxStyleSet) str
 			pictures++
 			b.WriteString(docxImage(item, pictures))
 		}
-		for _, block := range parseMarkdown(frame.Event.Body) {
-			b.WriteString(docxBlock(block, styles))
+		// Маркеры в тексте кадра (0.92.0, docs/docx-template.md §3): разрыв страницы,
+		// оглавление и «этот кусок — стилем шаблона». Текст вне маркеров печатается как раньше.
+		for _, section := range splitDocxSections(frame.Event.Body) {
+			switch {
+			case section.pagebreak:
+				b.WriteString(docxPageBreak)
+				continue
+			case section.toc:
+				b.WriteString(docxTOCField)
+				continue
+			}
+			for _, block := range section.blocks {
+				b.WriteString(docxBlock(block, styles, section.style))
+			}
 		}
 	}
 	return b.String()
 }
 
 // docxBlock печатает один блок разметки.
-func docxBlock(block mdBlock, styles docxStyleSet) string {
+//
+// `override` — стиль шаблона из маркера `style=`/`begin=` (0.92.0): автор написал его прямо в
+// тексте, поэтому он сильнее обычных правил документа. Пусто — блок оформляется как раньше.
+func docxBlock(block mdBlock, styles docxStyleSet, override string) string {
+	if override != "" {
+		return docxBlockStyled(block, override)
+	}
 	switch block.Kind {
 	case "heading":
 		level := block.Level
@@ -374,6 +392,47 @@ func docxBlock(block mdBlock, styles docxStyleSet) string {
 		// Картинки внутри текста кадра не привязываются к вложениям проекта, поэтому в
 		// DOCX они остаются строкой-ссылкой: текст не потерян, а ссылка открывается.
 		return docxParagraph(block.ImageAlt+" ("+block.ImageSrc+")", styles.Date, "", "")
+	}
+	return ""
+}
+
+// docxBlockStyled печатает блок стилем автора из маркера.
+//
+// Стиль у маркера ОДИН на весь кусок, поэтому внутренние отличия блока (цитата, код, список)
+// здесь не обыгрываются: автор сказал «это оформлено так» — Word покажет текст этим стилем.
+// Заголовок под маркером тоже теряет уровень: его уровень задан структурой приложения
+// (глава/под-событие), а не `#`, и спорить с ней стилем из текста было бы странно.
+func docxBlockStyled(block mdBlock, style string) string {
+	switch block.Kind {
+	case "heading":
+		return docxParagraph(inlinePlain(block.Text), style, "", "")
+	case "paragraph", "quote":
+		return docxRunsParagraph(inlineRuns(block.Text), style, "")
+	case "code":
+		return docxParagraph(block.Text, style, "", "")
+	case "list":
+		var b strings.Builder
+		for _, item := range block.Items {
+			prefix := "• "
+			if item.Ordered {
+				prefix = "1. "
+			}
+			if item.Depth > 0 {
+				prefix = "  " + prefix
+			}
+			b.WriteString(docxRunsParagraph(
+				append([]inlineRun{{Text: prefix}}, inlineRuns(item.Text)...), style, ""))
+		}
+		return b.String()
+	case "table":
+		var b strings.Builder
+		for rowIndex, row := range block.Rows {
+			b.WriteString(docxRunsParagraph(
+				[]inlineRun{{Text: strings.Join(row, " | "), Bold: rowIndex == 0}}, style, ""))
+		}
+		return b.String()
+	case "image":
+		return docxParagraph(block.ImageAlt+" ("+block.ImageSrc+")", style, "", "")
 	}
 	return ""
 }

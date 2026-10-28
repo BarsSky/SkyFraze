@@ -49,6 +49,11 @@ once
    * выделение, если оно уже стоит там.
    */
   focusRange?: FocusRange | null
+  /**
+   * Стили абзаца действующего шаблона DOCX (0.92.0): их предлагает панель «Разметка DOCX» в
+   * редакторе. Приходят из панели редакторов — она уже знает проект и грузит шаблоны.
+   */
+  docxStyles?: string[]
 }
 
 /**
@@ -117,6 +122,7 @@ export function EventEditor({
   ymap, assets, images, assetUrls, onUpload, onUploadMany, onAttach, onDetach, onBackgroundChange, background, onChange, onTyping,
   onFragmentSelected,
   focusRange,
+  docxStyles,
 }: Props) {
   /**
    * Записать правку поля.
@@ -284,6 +290,7 @@ export function EventEditor({
           title={title}
           // Ссылки на вложения в тексте должны открываться и в предпросмотре.
           assetUrls={assetUrls}
+          docxStyles={docxStyles}
           onSave={(next) => {
             setText(ymap, 'body', next)
             onChange?.()

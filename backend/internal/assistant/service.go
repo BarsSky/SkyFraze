@@ -168,6 +168,15 @@ type EntityWriter interface {
 	AddLink(ctx context.Context, userID, projectID, from, to uuid.UUID, label string) (*store.EntityLink, error)
 }
 
+// DocxStyles — имена стилей абзаца из активного шаблона оформления (0.92.0, docs/docx-template.md).
+//
+// Помощнику нужны ТОЛЬКО имена: он объясняет их модели словами, чтобы та ставила
+// `<!-- sf:style=Эпиграф -->` с существующим стилем, а не выдумывала. Сам DOCX помощник не
+// собирает, поэтому интерфейс такой узкий.
+type DocxStyles interface {
+	ParagraphStyles(ctx context.Context, projectID uuid.UUID) ([]string, error)
+}
+
 // Service — беседы с моделью внутри проекта.
 type Service struct {
 	store    *store.Store
@@ -191,6 +200,10 @@ type Service struct {
 	// инструментам, запись — только применению подтверждённого предложения. Без него
 	// propose_entities модели не предлагается, а list_entities продолжает работать.
 	worldWrite EntityWriter
+	// docxStyles — стили абзаца активного шаблона DOCX (0.92.0). Необязателен: без него
+	// помощник знает словарь маркеров, но не предлагает style=/begin= — имён, которых нет в
+	// шаблоне, в Word не применить.
+	docxStyles DocxStyles
 }
 
 // New собирает сервис. Отсутствие вставки или прав не валит сервер: помощник —
@@ -226,8 +239,29 @@ func (s *Service) UseEntityWriter(writer EntityWriter) { s.worldWrite = writer }
 // UseEditor подключает правку существующих кадров: без него помощник только создаёт.
 func (s *Service) UseEditor(editor EventEditor) { s.editor = editor }
 
+// UseDocxStyles подключает имена стилей шаблона оформления: без него маркеры DOCX в правилах
+// есть, а стилей нет (и модель не придумывает имена).
+func (s *Service) UseDocxStyles(styles DocxStyles) { s.docxStyles = styles }
+
 // Limits — действующие пределы (интерфейс показывает их в подсказке).
 func (s *Service) Limits() Limits { return s.limits }
+
+// docxStyleNames — стили абзаца активного шаблона (0.92.0). Нет шаблона, нет подключения или
+// ошибка чтения — пусто: правила тогда честно говорят модели «стилей нет», и она не выдумывает
+// имена, которые в Word ничего не оформят.
+func (s *Service) docxStyleNames(ctx context.Context, projectID uuid.UUID) []string {
+	if s.docxStyles == nil {
+		return nil
+	}
+	styles, err := s.docxStyles.ParagraphStyles(ctx, projectID)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Warn("ai: стили шаблона DOCX недоступны", "project", projectID, "err", err)
+		}
+		return nil
+	}
+	return styles
+}
 
 // Enabled — работает ли помощник.
 func (s *Service) Enabled() bool { return s != nil && s.models != nil && s.models.Enabled() }
@@ -687,7 +721,8 @@ func (s *Service) SendStreamImages(
 	messages := make([]ai.Message, 0, len(history)+3)
 	messages = append(messages, ai.Message{
 		Role: "system",
-		Content: systemPrompt(project, personaOf(settings), s.limits.MaxToolCalls, caps, s.editor != nil) + "\n\n" +
+		Content: systemPrompt(project, personaOf(settings), s.limits.MaxToolCalls, caps, s.editor != nil) +
+			docxMarkupBlock(s.docxStyleNames(ctx, projectID)) + "\n\n" +
 			treeContext(list, s.limits.MaxEventsInPrompt),
 	})
 	messages = append(messages, history...)

@@ -330,6 +330,9 @@ func main() {
 	// человек кнопкой в окне помощника. Без этой строки инструмент предложения модели не
 	// предлагается, и помощник карточки только читает.
 	assistantSvc.UseEntityWriter(entitiesSvc)
+	// Стили шаблона оформления (0.92.0): помощник ставит маркеры `<!-- sf:style=… -->` только с
+	// именами, которые в шаблоне есть, — выдуманный стиль в Word ничего не оформит.
+	assistantSvc.UseDocxStyles(docxTplSvc)
 	assistantH := assistant.NewHandler(assistantSvc, logger)
 
 	collabHub := collab.NewHub(logger, cfg.JWTSecret, evSvc, cfg.CORSOrigins)

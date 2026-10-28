@@ -1,5 +1,6 @@
 import MarkdownItCtor, { type MarkdownIt, type StateBlock, type StateInline } from 'markdown-it'
 import DOMPurify from 'dompurify'
+import { maskDocxMarkers } from './docxMarkers'
 
 /**
  * Markdown в тексте события.
@@ -214,7 +215,9 @@ const PENDING_IMAGE =
  * заголовок не несёт — без подмены картинка в тексте не открывалась бы (401).
  */
 export function renderMarkdown(source: string, assetUrls?: Record<string, string>): MarkdownResult {
-  const text = source ?? ''
+  // Маркеры DOCX (0.92.0) в показе не видны: маскируем их ДО markdown-it. Маска сохраняет длину
+  // строк, но здесь позиции не нужны — важно, что в HTML не попадёт `<!-- sf:... -->`.
+  const text = maskDocxMarkers(source ?? '')
   if (text.trim() === '') return { html: '', hasMath: false, hasDiagram: false }
 
   const raw = renderer.render(text)

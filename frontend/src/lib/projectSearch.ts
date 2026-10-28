@@ -19,6 +19,8 @@
  */
 
 /** Кадр для поиска: то, что панель редакторов уже читает из документа. */
+import { maskDocxMarkers } from './docxMarkers'
+
 export interface SearchableFrame {
   id: string
   title: string
@@ -58,21 +60,26 @@ export function searchProject(
   const inTitle: SearchHit[] = []
   const inBody: SearchHit[] = []
   for (const frame of frames) {
-    if (frame.title.toLowerCase().includes(needle)) {
+    // Маркеры DOCX (0.92.0) в поиске не участвуют: иначе «sf», «style» и имена стилей находились
+    // бы в каждом кадре, где стоит маркер. Маска сохраняет длину — сниппет режется по тем же
+    // местам, что и раньше, только вместо маркера в нём пробелы.
+    const maskedTitle = maskDocxMarkers(frame.title)
+    const maskedBody = maskDocxMarkers(frame.body)
+    if (maskedTitle.toLowerCase().includes(needle)) {
       inTitle.push({
         id: frame.id,
         title: frame.title,
-        snippet: snippetAround(frame.body, needle),
+        snippet: snippetAround(maskedBody, needle),
         inTitle: true,
       })
       continue
     }
-    const index = frame.body.toLowerCase().indexOf(needle)
+    const index = maskedBody.toLowerCase().indexOf(needle)
     if (index >= 0) {
       inBody.push({
         id: frame.id,
         title: frame.title,
-        snippet: snippetAround(frame.body, needle),
+        snippet: snippetAround(maskedBody, needle),
         inTitle: false,
       })
     }

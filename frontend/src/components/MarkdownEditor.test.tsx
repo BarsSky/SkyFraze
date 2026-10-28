@@ -127,3 +127,66 @@ describe('MarkdownEditor — живое обновление из CRDT', () => {
     expect(screen.getByText(/Соавтор изменил текст/)).toBeInTheDocument()
   })
 })
+
+/**
+ * Разметка DOCX (0.92.0): панель вставляет служебные маркеры.
+ *
+ * Проверяем то, что человек видит: кнопки вставляют СТРОКИ маркеров в текст, а стили берутся
+ * только из шаблона — без шаблона списка нет.
+ */
+describe('MarkdownEditor — панель «Разметка DOCX»', () => {
+  const openPanel = () => fireEvent.click(screen.getByRole('button', { name: /Разметка DOCX/ }))
+  const textarea = () => screen.getByLabelText('Текст события в Markdown') as HTMLTextAreaElement
+
+  it('свёрнута по умолчанию и раскрывается кнопкой', () => {
+    setup('текст')
+    const toggle = screen.getByRole('button', { name: /Разметка DOCX/ })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    openPanel()
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+  })
+
+  it('«разрыв страницы» и «оглавление» вставляют маркеры в текст', () => {
+    setup('Первый абзац.')
+    openPanel()
+    fireEvent.click(screen.getByRole('button', { name: 'разрыв страницы' }))
+    expect(textarea().value).toContain('<!-- sf:pagebreak -->')
+
+    fireEvent.click(screen.getByRole('button', { name: 'оглавление' }))
+    expect(textarea().value).toContain('<!-- sf:toc -->')
+    // Маркеры не потерялись и стоят отдельными строками — иначе разбор их не увидит.
+    expect(textarea().value.split('\n').filter((line) => line.startsWith('<!-- sf:'))).toHaveLength(2)
+  })
+
+  it('со стилями шаблона появляется выбор и кнопки style/begin/end', () => {
+    render(
+      <MarkdownEditor
+        value="Текст."
+        onSave={() => {}}
+        onAdopt={() => {}}
+        onClose={() => {}}
+        docxStyles={['Эпиграф', 'Стих']}
+      />,
+    )
+    openPanel()
+    const select = screen.getByLabelText('Стиль шаблона DOCX') as HTMLSelectElement
+    expect(Array.from(select.options).map((option) => option.value)).toEqual(['Эпиграф', 'Стих'])
+
+    fireEvent.click(screen.getByRole('button', { name: 'стиль ниже' }))
+    expect(textarea().value).toContain('<!-- sf:style=Эпиграф -->')
+
+    fireEvent.click(screen.getByRole('button', { name: 'начать блок' }))
+    expect(textarea().value).toContain('<!-- sf:begin=Эпиграф -->')
+
+    fireEvent.click(screen.getByRole('button', { name: 'закончить блок' }))
+    expect(textarea().value).toContain('<!-- sf:end -->')
+  })
+
+  it('без шаблона стилей не предлагает, но разрыв и оглавление остаются', () => {
+    setup('Текст.')
+    openPanel()
+    expect(screen.queryByLabelText('Стиль шаблона DOCX')).toBeNull()
+    expect(screen.getByText(/Стили шаблона появятся/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'разрыв страницы' })).toBeInTheDocument()
+  })
+})

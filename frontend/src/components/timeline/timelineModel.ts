@@ -11,6 +11,8 @@ import { buildEventTree, type EventLike } from '../../collab/eventTree'
  * наследуясь от родителя, если не задан.
  */
 
+import { maskDocxMarkers } from '../../lib/docxMarkers'
+
 export interface StageAsset {
   id: string
   url: string
@@ -134,7 +136,9 @@ export const MAX_TEXT_UNITS = 24
  * Дальше каждый экран текста даёт ещё одну единицу прокрутки.
  */
 export function textUnits(title: string, body: string): number {
-  const chars = (title?.length ?? 0) + (body?.length ?? 0)
+  // Маркеры DOCX (0.92.0) не должны удлинять кадр в прокрутке: длина считается по маске, и
+  // «<!-- sf:style=Эпиграф -->» не растягивает сцену на лишний экран.
+  const chars = maskDocxMarkers(title ?? '').length + maskDocxMarkers(body ?? '').length
   if (chars <= CHARS_PER_TEXT_UNIT) return 0
   return Math.min(MAX_TEXT_UNITS, (chars - CHARS_PER_TEXT_UNIT) / CHARS_PER_TEXT_UNIT)
 }

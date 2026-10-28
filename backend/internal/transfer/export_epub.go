@@ -273,7 +273,10 @@ func epubChapterXHTML(st *story, chapter epubChapter, imagePath map[uuid.UUID]st
 				path, escapeXML(frame.Number))
 		}
 		if body := strings.TrimSpace(frame.Event.Body); body != "" {
-			b.WriteString(blocksXHTML(parseMarkdown(body)))
+			// Маркеры DOCX (0.92.0) книга не умеет: разрыв страницы и оглавление в EPUB
+			// задаются самой книгой, а «стиль шаблона» — понятие Word. Убираем строки-маркеры,
+			// чтобы служебные комментарии не попали читателю в текст.
+			b.WriteString(blocksXHTML(parseMarkdown(stripDocxMarkers(body))))
 		}
 		if i == 0 && st.Project.Description != "" && chapter.Frames[0].Event.ID == frame.Event.ID &&
 			len(chapter.Frames) == 1 {

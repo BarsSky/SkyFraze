@@ -218,6 +218,38 @@ func (s *Service) Active(ctx context.Context, projectID uuid.UUID) (*ActiveTempl
 	return &ActiveTemplate{Entry: entry, Raw: raw}, nil
 }
 
+// ParagraphStyles — имена стилей абзаца активного шаблона (0.92.0).
+//
+// Нужны ИИ-помощнику: он объясняет их модели, чтобы маркер `<!-- sf:style=… -->` ссылался на
+// стиль, который в шаблоне есть. Файл шаблона при этом не читается — разбор сохранён в строке
+// при загрузке, и пересчитывать его незачем.
+func (s *Service) ParagraphStyles(ctx context.Context, projectID uuid.UUID) ([]string, error) {
+	row, err := s.store.ActiveDocxTemplate(ctx, projectID)
+	if err != nil || row == nil {
+		return nil, err
+	}
+	var styles []Style
+	if err := json.Unmarshal(row.Styles, &styles); err != nil {
+		// Битый JSON стилей — не повод ронять ответ помощника: он просто не увидит имён.
+		return nil, nil
+	}
+	seen := make(map[string]bool, len(styles))
+	out := make([]string, 0, len(styles))
+	for _, style := range styles {
+		if style.Type != "paragraph" {
+			// Стиль знака или таблицы к абзацу не применить: Word молча оставил бы текст как есть.
+			continue
+		}
+		name := strings.TrimSpace(style.Name)
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	return out, nil
+}
+
 func (s *Service) requireOwner(ctx context.Context, userID, projectID uuid.UUID) error {
 	role, err := s.proj.Role(ctx, userID, projectID)
 	if err != nil {
