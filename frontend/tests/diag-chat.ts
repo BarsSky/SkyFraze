@@ -160,6 +160,49 @@ async function main() {
     if (!/Изменено в \d\d:\d\d/.test(marker ?? '')) problems.push(`нет времени правки: ${marker}`)
     console.log(`ответ и правка: работают, отметка «${marker}»`)
 
+    // 4.3. Отметки на сообщении (0.98.0): три плашки, нажатие ставит и снимает, состояние
+    // переживает перезагрузку (значит, хранится на сервере, а не в памяти вкладки).
+    await openChatTab()
+    const reactionRow = page.locator('[data-chat-reactions]').first()
+    await reactionRow.waitFor({ state: 'visible', timeout: 20_000 })
+    const chips = reactionRow.locator('[data-chat-reaction]')
+    const chipCount = await chips.count()
+    console.log(`плашек отметок у сообщения: ${chipCount}`)
+    if (chipCount !== 3) problems.push(`плашек отметок ${chipCount} вместо 3`)
+
+    const todoChip = reactionRow.locator('[data-chat-reaction$=":todo"]').first()
+    const todoBox = await todoChip.boundingBox()
+    console.log(`плашка «сделать»: ${Math.round(todoBox?.height ?? 0)} px высотой`)
+    if ((todoBox?.height ?? 0) < 28) problems.push(`плашка отметки ${Math.round(todoBox?.height ?? 0)} px — мелкая цель`)
+
+    await todoChip.click()
+    await page.waitForFunction(
+      `(() => { const chip = document.querySelector('[data-chat-reaction$=":todo"]'); return chip ? chip.getAttribute('aria-pressed') === 'true' : false })()`,
+      undefined,
+      { timeout: 10_000 },
+    )
+    const pressedText = (await todoChip.innerText()).replace(/\s+/g, ' ').trim()
+    console.log(`после нажатия «сделать»: «${pressedText}», нажато`)
+    if (!/1/.test(pressedText)) problems.push(`счётчик отметки не показал 1: «${pressedText}»`)
+
+    // Переживает перезагрузку — значит, лежит на сервере.
+    await page.reload()
+    await openChatTab()
+    const reloadedChip = page.locator('[data-chat-reaction$=":todo"]').first()
+    await reloadedChip.waitFor({ state: 'visible', timeout: 20_000 })
+    const reloadedPressed = await reloadedChip.getAttribute('aria-pressed')
+    console.log(`после перезагрузки «сделать» нажато: ${reloadedPressed}`)
+    if (reloadedPressed !== 'true') problems.push('отметка не пережила перезагрузку — не сохранена на сервере')
+
+    // Повторное нажатие снимает.
+    await reloadedChip.click()
+    await page.waitForFunction(
+      `(() => { const chip = document.querySelector('[data-chat-reaction$=":todo"]'); return chip ? chip.getAttribute('aria-pressed') === 'false' : false })()`,
+      undefined,
+      { timeout: 10_000 },
+    )
+    console.log('повторное нажатие сняло отметку')
+
     // 4.2. Мгновенная доставка: вторая открытая вкладка того же проекта получает сообщение по
     // сокету, а не ждёт опроса (он теперь раз в 20 секунд).
     const second = await page.context().newPage()

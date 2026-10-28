@@ -210,6 +210,40 @@
   border-color: var(--border);
 }
 .chat__mini:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* Отметки на сообщении (0.98.0): «согласен», «сделать», «вопрос».
+   Плашки стоят одной строкой под текстом, все три видны всегда — включая нулевые: иначе человек не
+   узнает, что отметить сообщение вообще можно. Нажатая залита акцентным цветом и обведена: цвет —
+   единственный признак «моё», поэтому он же дублируется `aria-pressed`. */
+.chat__reactions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.chat__reaction {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 32px;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--fg-soft);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.chat__reaction:hover { color: var(--fg); border-color: var(--accent); }
+.chat__reaction:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.chat__reaction:disabled { cursor: progress; opacity: 0.7; }
+.chat__reaction.is-on {
+  color: var(--fg);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+/* Число — отдельным узлом: оно меняется при нажатии, и без него не видно, что отметку поставил
+   кто-то ещё, а не только ты. */
+.chat__reaction-count {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: inherit;
+}
 .chat__edit { display: grid; gap: 6px; margin-top: 4px; }
 .chat__edit textarea { width: 100%; font-size: 13px; resize: vertical; }
 .chat__reply-chip {

@@ -16,6 +16,7 @@ const listChat = vi.fn()
 const postChat = vi.fn()
 const editChat = vi.fn()
 const listEventRows = vi.fn()
+const toggleChatReaction = vi.fn()
 
 const markChatSeen = vi.fn().mockResolvedValue(undefined)
 
@@ -23,6 +24,7 @@ vi.mock('../../api/chat', () => ({
   listChat: (...args: unknown[]) => listChat(...args),
   postChat: (...args: unknown[]) => postChat(...args),
   editChat: (...args: unknown[]) => editChat(...args),
+  toggleChatReaction: (...args: unknown[]) => toggleChatReaction(...args),
   markChatSeen: (...args: unknown[]) => markChatSeen(...args),
 }))
 
@@ -44,6 +46,7 @@ const message = (over: Record<string, unknown> = {}) => ({
   kind: 'user' as const,
   body: 'Как вам новая глава?',
   created_at: '2026-10-28T10:00:00Z',
+  reactions: { agree: 0, todo: 0, question: 0, mine: [] },
   ...over,
 })
 
@@ -218,5 +221,95 @@ describe('ProjectChat', () => {
     await waitFor(() => expect(screen.getByText('Моё, исправленное.')).toBeTruthy())
     // Отметка «изменено» появляется у правленого сообщения.
     expect(screen.getByText('изменено')).toBeTruthy()
+  })
+
+  /**
+   * Отметки на сообщении (0.98.0): «согласен», «сделать», «вопрос».
+   *
+   * Проверяем ровно то, что человек видит и нажимает: все три плашки на месте даже при нулях, у
+   * своей отметки видно нажатое состояние и число, нажатие уходит на сервер с видом отметки, а
+   * ответ сервера перерисовывает счётчики без перечитывания ленты.
+   */
+  it('отметки: три плашки, счётчик и нажатое состояние (0.98.0)', async () => {
+    listChat.mockResolvedValue({
+      messages: [
+        message({
+          id: 'm1',
+          reactions: { agree: 2, todo: 1, question: 0, mine: ['todo'] },
+        }),
+      ],
+      bot: { name: 'Нестор', available: false },
+    })
+    listEventRows.mockResolvedValue([])
+    render(<ProjectChat {...base} />)
+
+    const row = await screen.findByLabelText('надо сделать: 1')
+    expect(row.getAttribute('aria-pressed')).toBe('true')
+    // У нулевой отметки числа нет, но подпись есть — иначе не видно, что нажимать можно.
+    const question = screen.getByLabelText('вопрос')
+    expect(question.getAttribute('aria-pressed')).toBe('false')
+    expect(screen.getByLabelText('согласен: 2').textContent).toContain('2')
+  })
+
+  it('отметку ставят и снимают одним нажатием, ответ сервера перерисовывает счётчик (0.98.0)', async () => {
+    listChat.mockResolvedValue({
+      messages: [message({ id: 'm1', reactions: { agree: 0, todo: 0, question: 0, mine: [] } })],
+      bot: { name: 'Нестор', available: false },
+    })
+    listEventRows.mockResolvedValue([])
+    toggleChatReaction.mockResolvedValue({ agree: 1, todo: 0, question: 0, mine: ['agree'] })
+    render(<ProjectChat {...base} />)
+
+    fireEvent.click(await screen.findByLabelText('согласен'))
+    await waitFor(() => expect(toggleChatReaction).toHaveBeenCalledWith('p1', 'm1', 'agree'))
+    // Счётчик и нажатое состояние пришли из ответа — без второго запроса ленты.
+    expect(await screen.findByLabelText('согласен: 1')).toBeTruthy()
+    expect(screen.getByLabelText('согласен: 1').getAttribute('aria-pressed')).toBe('true')
+    expect(listChat).toHaveBeenCalledTimes(1)
+  })
+
+  it('отметка чужого человека видна как число, но не как нажатая (0.98.0)', async () => {
+    listChat.mockResolvedValue({
+      messages: [message({ id: 'm1', reactions: { agree: 3, todo: 0, question: 1, mine: [] } })],
+      bot: { name: 'Нестор', available: false },
+    })
+    listEventRows.mockResolvedValue([])
+    render(<ProjectChat {...base} />)
+    const agree = await screen.findByLabelText('согласен: 3')
+    expect(agree.getAttribute('aria-pressed')).toBe('false')
+    expect(screen.getByLabelText('вопрос: 1').getAttribute('aria-pressed')).toBe('false')
+  })
+
+  it('отметка не поставилась — причина видна рядом, лента не портится (0.98.0)', async () => {
+    listChat.mockResolvedValue({
+      messages: [message({ id: 'm1', reactions: { agree: 0, todo: 0, question: 0, mine: [] } })],
+      bot: { name: 'Нестор', available: false },
+    })
+    listEventRows.mockResolvedValue([])
+    toggleChatReaction.mockRejectedValue(new Error('нужны права участника'))
+    render(<ProjectChat {...base} />)
+    fireEvent.click(await screen.findByLabelText('вопрос'))
+    await waitFor(() => expect(screen.getByText(/нужны права участника/)).toBeTruthy())
+    // Счётчик остался нулевым: неудачное нажатие не делает вид, что отметка встала.
+    expect(screen.getByLabelText('вопрос').getAttribute('aria-pressed')).toBe('false')
+  })
+
+  it('сигнал из сокета перечитывает ленту: чужая отметка появляется без перезагрузки (0.98.0)', async () => {
+    listChat.mockResolvedValue({
+      messages: [message({ id: 'm1', reactions: { agree: 0, todo: 0, question: 0, mine: [] } })],
+      bot: { name: 'Нестор', available: false },
+    })
+    listEventRows.mockResolvedValue([])
+    render(<ProjectChat {...base} />)
+    await screen.findByLabelText('согласен')
+
+    // Кто-то поставил отметку: сервер присылает сигнал, лента перечитывается целиком (не «после
+    // последнего» — отметка меняет УЖЕ показанное сообщение).
+    listChat.mockResolvedValue({
+      messages: [message({ id: 'm1', reactions: { agree: 1, todo: 0, question: 0, mine: [] } })],
+      bot: { name: 'Нестор', available: false },
+    })
+    notifyChatChanged('p1')
+    await waitFor(() => expect(screen.getByLabelText('согласен: 1')).toBeTruthy())
   })
 })

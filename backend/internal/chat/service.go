@@ -52,6 +52,11 @@ var (
 	ErrReplyTarget = errors.New("сообщение, на которое отвечают, не найдено в этом проекте")
 	// ErrNotAuthor — править сообщение может только его автор.
 	ErrNotAuthor = errors.New("править сообщение может только его автор")
+	// ErrMessageNotFound — сообщения нет в этом проекте: отметить нечего (0.98.0).
+	ErrMessageNotFound = errors.New("сообщение не найдено в этом проекте")
+	// ErrReactionKind — неизвестный вид отметки (0.98.0). Набор фиксирован: см.
+	// docs/project-chat.md §2.5.
+	ErrReactionKind = errors.New("неизвестный вид отметки")
 	// ErrBotDisabled — Нестор выключен на стенде или в проекте.
 	ErrBotDisabled = errors.New("Нестор выключен — сообщение сохранено, ответа не будет")
 )
@@ -89,6 +94,16 @@ type Answer struct {
 // Message — сообщение в том виде, в каком его видит интерфейс (алиас типа хранилища, чтобы
 // вызывающему не приходилось импортировать store).
 type Message = store.ChatMessage
+
+// MessageView — сообщение вместе с отметками (0.98.0).
+//
+// Отметки лежат рядом, а не внутри сообщения: сообщение — факт текста, отметки — реакция людей на
+// него, и в базе они живут в разных таблицах. Склеиваются на выходе, чтобы клиент не собирал ленту
+// из двух источников и не рассинхронизировался.
+type MessageView struct {
+	store.ChatMessage
+	Reactions store.ChatReactions `json:"reactions"`
+}
 
 // Service — общий чат проекта.
 type Service struct {
@@ -130,19 +145,116 @@ func (s *Service) BotName() string { return s.botName }
 func (s *Service) BotAvailable() bool { return s.bot != nil && s.bot.Enabled() }
 
 // Messages — последние сообщения проекта (viewer+). after != nil — только новые после него.
+//
+// К каждому сообщению прикладываются отметки (0.98.0): «согласен / надо сделать / вопрос» и какие
+// из них мои. Считаются одним запросом на всю ленту, а не по сообщению — окно показывает до сотни
+// строк, и N+1 здесь был бы заметен при каждом обновлении.
 func (s *Service) Messages(
 	ctx context.Context, userID, projectID uuid.UUID, after *uuid.UUID, limit int,
-) ([]Message, error) {
+) ([]MessageView, error) {
 	if err := s.proj.RequireViewer(ctx, userID, projectID); err != nil {
 		return nil, err
 	}
 	if limit <= 0 || limit > maxLimit {
 		limit = defaultLimit
 	}
+	var (
+		messages []store.ChatMessage
+		err      error
+	)
 	if after == nil {
-		return s.store.ListChatMessages(ctx, projectID, limit)
+		messages, err = s.store.ListChatMessages(ctx, projectID, limit)
+	} else {
+		messages, err = s.store.ChatMessagesAfter(ctx, projectID, *after, limit)
 	}
-	return s.store.ChatMessagesAfter(ctx, projectID, *after, limit)
+	if err != nil {
+		return nil, err
+	}
+	return s.withReactions(ctx, userID, messages)
+}
+
+// withReactions раскладывает отметки по сообщениям. Пустой чат — пустой результат без запроса в БД.
+func (s *Service) withReactions(
+	ctx context.Context, userID uuid.UUID, messages []store.ChatMessage,
+) ([]MessageView, error) {
+	out := make([]MessageView, 0, len(messages))
+	if len(messages) == 0 {
+		return out, nil
+	}
+	ids := make([]uuid.UUID, 0, len(messages))
+	for _, message := range messages {
+		ids = append(ids, message.ID)
+	}
+	stats, err := s.store.ChatReactionStats(ctx, ids, userID)
+	if err != nil {
+		return nil, err
+	}
+	for _, message := range messages {
+		reactions, ok := stats[message.ID]
+		if !ok {
+			reactions = store.ChatReactions{Mine: []string{}}
+		}
+		out = append(out, MessageView{ChatMessage: message, Reactions: reactions})
+	}
+	return out, nil
+}
+
+// ToggleReaction ставит или снимает отметку (viewer+, 0.98.0).
+//
+// Почему переключатель, а не отдельные «поставить» и «снять»: у человека один и тот же жест — нажатие
+// на плашку, и второй ручки ему знать не нужно. Состояние решает сервер по тому, что уже стоит:
+// повторное нажатие снимает, а не «ставит ещё раз» (уникальный индекс не дал бы второго, и нажатие
+// выглядело бы сломанным).
+func (s *Service) ToggleReaction(
+	ctx context.Context, userID, projectID, messageID uuid.UUID, kind store.ChatReactionKind,
+) (store.ChatReactions, error) {
+	if err := s.proj.RequireViewer(ctx, userID, projectID); err != nil {
+		return store.ChatReactions{}, err
+	}
+	message, err := s.store.ChatMessageByID(ctx, projectID, messageID)
+	if err != nil {
+		return store.ChatReactions{}, err
+	}
+	if message == nil {
+		return store.ChatReactions{}, ErrMessageNotFound
+	}
+	before, err := s.store.ChatReactionStats(ctx, []uuid.UUID{messageID}, userID)
+	if err != nil {
+		return store.ChatReactions{}, err
+	}
+	mine := false
+	for _, raw := range before[messageID].Mine {
+		if raw == string(kind) {
+			mine = true
+			break
+		}
+	}
+	if mine {
+		err = s.store.RemoveChatReaction(ctx, messageID, userID, kind)
+	} else {
+		err = s.store.AddChatReaction(ctx, messageID, userID, kind)
+	}
+	if err != nil {
+		return store.ChatReactions{}, err
+	}
+	// Отметка — изменение ленты для всех, у кого она открыта: тот же сигнал, что у нового сообщения.
+	// Содержимого в сигнале нет, каждая вкладка перечитает ленту сама.
+	s.notifyChanged(projectID)
+	return s.ReactionStats(ctx, userID, messageID)
+}
+
+// ReactionStats — отметки одного сообщения в том виде, в каком их показывает интерфейс.
+func (s *Service) ReactionStats(
+	ctx context.Context, userID, messageID uuid.UUID,
+) (store.ChatReactions, error) {
+	stats, err := s.store.ChatReactionStats(ctx, []uuid.UUID{messageID}, userID)
+	if err != nil {
+		return store.ChatReactions{}, err
+	}
+	if value, ok := stats[messageID]; ok {
+		return value, nil
+	}
+	return store.ChatReactions{Mine: []string{}}, nil
 }
 
 // Unread — где человека ждут в чате: непрочитанные по проектам (0.97.0).

@@ -43,6 +43,9 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/chat/messages", h.Post)
 	// Правка своего сообщения (0.96.0).
 	r.Patch("/chat/messages/{messageID}", h.Edit)
+	// Отметки на сообщении (0.98.0): «согласен», «надо сделать», «вопрос». Одна ручка на
+	// переключение: повторное нажатие снимает, состояние решает сервер.
+	r.Post("/chat/messages/{messageID}/reactions", h.ToggleReaction)
 	// «Прочитано» в чате проекта (0.97.0): колокольчик считает непрочитанное по серверу.
 	r.Post("/chat/seen", h.MarkSeen)
 }
@@ -69,7 +72,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if messages == nil {
-		messages = []Message{}
+		messages = []MessageView{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"messages": messages,
@@ -151,6 +154,41 @@ func (h *Handler) Edit(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"message": message})
 }
 
+// ToggleReaction — POST /chat/messages/{messageID}/reactions: поставить или снять отметку.
+//
+// Тело — `{"kind":"agree"}`. Ответ — отметки сообщения целиком, а не «готово»: клиент сразу
+// перерисовывает плашки с числами, не дожидаясь следующего чтения ленты. Неизвестный вид — 400 с
+// объяснением, а не тихое «ничего не произошло».
+func (h *Handler) ToggleReaction(w http.ResponseWriter, r *http.Request) {
+	userID, projectID, ok := h.target(w, r)
+	if !ok {
+		return
+	}
+	messageID, err := uuid.Parse(chi.URLParam(r, "messageID"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid message id")
+		return
+	}
+	var body struct {
+		Kind string `json:"kind"`
+	}
+	if err := decode(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	kind, ok := store.ParseChatReactionKind(body.Kind)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "отметка бывает «согласен», «надо сделать» или «вопрос»")
+		return
+	}
+	reactions, err := h.svc.ToggleReaction(r.Context(), userID, projectID, messageID, kind)
+	if err != nil {
+		h.fail(w, err, "chat reaction")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"reactions": reactions})
+}
+
 // Unseen и MarkSeen вешает вызывающий: первая ручка живёт в корне (`/api/chat/unseen` — «где меня
 // ждут» по всем проектам) и требует входа, вторая — в под-дереве проекта.
 
@@ -210,6 +248,10 @@ func (h *Handler) fail(w http.ResponseWriter, err error, where string) {
 		writeErr(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, ErrNotAuthor):
 		writeErr(w, http.StatusForbidden, err.Error())
+	case errors.Is(err, ErrMessageNotFound):
+		writeErr(w, http.StatusNotFound, err.Error())
+	case errors.Is(err, ErrReactionKind):
+		writeErr(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, projects.ErrForbidden):
 		writeErr(w, http.StatusForbidden, "forbidden")
 	case errors.Is(err, store.ErrNotFound), errors.Is(err, projects.ErrNotFound):

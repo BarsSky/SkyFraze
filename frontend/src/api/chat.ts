@@ -8,6 +8,24 @@ import { http } from './client'
  * кадр и необязательную точную фразу из него.
  */
 
+/**
+ * Вид отметки на сообщении (0.98.0, docs/project-chat.md §2.5).
+ *
+ * Три рабочих, а не «любой эмодзи»: чат проекта — разговор о тексте, и голосование за сообщения
+ * превращало бы его в рейтинг. Набор тот же, что у реакций на замечания в обсуждении кадров:
+ * «согласен» (мысль принята), «надо сделать» (из этого следует правка), «вопрос» (надо уточнить).
+ */
+export type ChatReactionKind = 'agree' | 'todo' | 'question'
+
+/** Отметки сообщения: сколько каждого вида и какие из них мои. */
+export interface ChatReactions {
+  agree: number
+  todo: number
+  question: number
+  /** Виды, поставленные мной: у одного человека их может быть несколько на одном сообщении. */
+  mine: ChatReactionKind[]
+}
+
 export interface ChatMessage {
   id: string
   project_id: string
@@ -24,6 +42,8 @@ export interface ChatMessage {
   reply_to?: string
   /** Когда правили после отправки. */
   edited_at?: string
+  /** Отметки (0.98.0). Пустые — если никто ничего не ставил. */
+  reactions: ChatReactions
   created_at: string
 }
 
@@ -142,6 +162,42 @@ export async function editChat(projectId: string, messageId: string, body: strin
   return message
 }
 
+/**
+ * Поставить или снять отметку (0.98.0). Одна ручка на оба действия: состояние решает сервер — он
+ * снимает уже стоящую отметку, поэтому кнопка ведёт себя как переключатель.
+ *
+ * Ответ — отметки сообщения целиком, а не «готово»: интерфейс сразу перерисовывает счётчики и не
+ * ждёт следующего чтения ленты.
+ */
+export async function toggleChatReaction(
+  projectId: string,
+  messageId: string,
+  kind: ChatReactionKind,
+): Promise<ChatReactions> {
+  const raw = await http
+    .post(`projects/${projectId}/chat/messages/${messageId}/reactions`, { json: { kind } })
+    .json<{ reactions?: unknown }>()
+  return readReactions(raw?.reactions)
+}
+
+/** Отметки из ответа сервера. Пустой ответ — нули, а не падение: лента важнее плашек. */
+function readReactions(raw: unknown): ChatReactions {
+  const record = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>
+  const count = (value: unknown) => (typeof value === 'number' && value > 0 ? Math.trunc(value) : 0)
+  const mine: ChatReactionKind[] = []
+  if (Array.isArray(record.mine)) {
+    for (const item of record.mine) {
+      if (item === 'agree' || item === 'todo' || item === 'question') mine.push(item)
+    }
+  }
+  return {
+    agree: count(record.agree),
+    todo: count(record.todo),
+    question: count(record.question),
+    mine,
+  }
+}
+
 function readMessage(raw: unknown): ChatMessage | null {
   if (typeof raw !== 'object' || raw === null) return null
   const record = raw as Record<string, unknown>
@@ -159,6 +215,7 @@ function readMessage(raw: unknown): ChatMessage | null {
     quote: typeof record.quote === 'string' && record.quote ? record.quote : undefined,
     reply_to: typeof record.reply_to === 'string' && record.reply_to ? record.reply_to : undefined,
     edited_at: typeof record.edited_at === 'string' && record.edited_at ? record.edited_at : undefined,
+    reactions: readReactions(record.reactions),
     created_at: typeof record.created_at === 'string' ? record.created_at : '',
   }
 }

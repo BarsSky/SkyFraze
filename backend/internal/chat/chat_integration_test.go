@@ -55,7 +55,7 @@ func setupChat(t *testing.T) *chatEnv {
 	t.Helper()
 	pool := testdb.Setup(t, "chat")
 	testdb.Truncate(t, pool,
-		"project_chat_messages", "project_entities",
+		"project_chat_reactions", "project_chat_messages", "project_entities",
 		"login_audit", "webauthn_challenges", "user_webauthn_credentials",
 		"user_recovery_codes", "user_totp", "comment_notifications", "comment_views",
 		"event_comments", "project_revisions", "ai_changes", "ai_messages", "ai_conversations",
@@ -489,5 +489,98 @@ func TestChatEnqueuesNotifications(t *testing.T) {
 	}
 	if pending[0].MessageID != second.Message.ID {
 		t.Fatalf("письмо о другом сообщении: %+v", pending[0])
+	}
+}
+
+// TestChatReactions — отметки на сообщениях (0.98.0).
+//
+// Что проверяем и почему именно это:
+//   - пустое состояние отдаёт пустой СПИСОК, а не nil: интерфейс читает `mine` без проверок;
+//   - повторное нажатие СНИМАЕТ отметку, а не ставит вторую (иначе кнопка «залипала» бы);
+//   - у двух людей разные отметки, и каждый видит своими только свои;
+//   - отметки приходят вместе с лентой — окно не делает второй запрос на них;
+//   - чужое сообщение отметить нельзя: иначе по идентификатору можно было бы достать чужой чат.
+func TestChatReactions(t *testing.T) {
+	e := setupChat(t)
+	ctx := context.Background()
+
+	answer, err := e.svc.Post(ctx, e.viewer, e.project, chat.Input{Body: "Может, переименуем главу?"})
+	if err != nil {
+		t.Fatalf("сообщение: %v", err)
+	}
+	messageID := answer.Message.ID
+
+	// Пусто: три нуля и пустой список «моих».
+	empty, err := e.svc.ReactionStats(ctx, e.owner, messageID)
+	if err != nil {
+		t.Fatalf("пустые отметки: %v", err)
+	}
+	if empty.Agree != 0 || empty.Todo != 0 || empty.Question != 0 {
+		t.Fatalf("у нового сообщения есть отметки: %+v", empty)
+	}
+	if empty.Mine == nil {
+		t.Fatalf("«мои» пришли nil, а не пустым списком: %+v", empty)
+	}
+
+	// Ставлю «надо сделать» — появляется, и это моя отметка.
+	after, err := e.svc.ToggleReaction(ctx, e.owner, e.project, messageID, store.ChatReactionTodo)
+	if err != nil {
+		t.Fatalf("первая отметка: %v", err)
+	}
+	if after.Todo != 1 || len(after.Mine) != 1 || after.Mine[0] != string(store.ChatReactionTodo) {
+		t.Fatalf("отметка не встала: %+v", after)
+	}
+
+	// Повторное нажатие снимает, а не добавляет вторую.
+	after, err = e.svc.ToggleReaction(ctx, e.owner, e.project, messageID, store.ChatReactionTodo)
+	if err != nil {
+		t.Fatalf("снятие отметки: %v", err)
+	}
+	if after.Todo != 0 || len(after.Mine) != 0 {
+		t.Fatalf("повторное нажатие не сняло отметку: %+v", after)
+	}
+
+	// Двое на одном сообщении: у каждого своё, и «мои» — только свои.
+	if _, err := e.svc.ToggleReaction(ctx, e.owner, e.project, messageID, store.ChatReactionAgree); err != nil {
+		t.Fatalf("владелец: %v", err)
+	}
+	if _, err := e.svc.ToggleReaction(ctx, e.viewer, e.project, messageID, store.ChatReactionTodo); err != nil {
+		t.Fatalf("читатель: %v", err)
+	}
+	ownerSees, err := e.svc.ReactionStats(ctx, e.owner, messageID)
+	if err != nil {
+		t.Fatalf("отметки владельца: %v", err)
+	}
+	if ownerSees.Agree != 1 || ownerSees.Todo != 1 {
+		t.Fatalf("счётчики у владельца: %+v", ownerSees)
+	}
+	if len(ownerSees.Mine) != 1 || ownerSees.Mine[0] != string(store.ChatReactionAgree) {
+		t.Fatalf("«моё» у владельца: %+v", ownerSees.Mine)
+	}
+	viewerSees, err := e.svc.ReactionStats(ctx, e.viewer, messageID)
+	if err != nil {
+		t.Fatalf("отметки читателя: %v", err)
+	}
+	if len(viewerSees.Mine) != 1 || viewerSees.Mine[0] != string(store.ChatReactionTodo) {
+		t.Fatalf("«моё» у читателя: %+v", viewerSees.Mine)
+	}
+
+	// Лента приносит отметки вместе с сообщениями.
+	list, err := e.svc.Messages(ctx, e.viewer, e.project, nil, 0)
+	if err != nil {
+		t.Fatalf("лента: %v", err)
+	}
+	if len(list) != 1 || list[0].Reactions.Agree != 1 || list[0].Reactions.Todo != 1 {
+		t.Fatalf("отметки в ленте: %+v", list)
+	}
+
+	// Чужого сообщения нет — отметить нечего.
+	if _, err := e.svc.ToggleReaction(ctx, e.owner, e.project, uuid.New(), store.ChatReactionAgree); !errors.Is(err, chat.ErrMessageNotFound) {
+		t.Fatalf("чужое сообщение отмечено: %v", err)
+	}
+
+	// Неизвестный вид отметки не разбирается вовсе: набор фиксирован схемой.
+	if _, ok := store.ParseChatReactionKind("like"); ok {
+		t.Fatalf("«like» приняли за отметку")
 	}
 }

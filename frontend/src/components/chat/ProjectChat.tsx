@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { editChat, listChat, markChatSeen, postChat, type ChatBotInfo, type ChatMessage } from '../../api/chat'
+import {
+  editChat,
+  listChat,
+  markChatSeen,
+  postChat,
+  toggleChatReaction,
+  type ChatBotInfo,
+  type ChatMessage,
+  type ChatReactionKind,
+  type ChatReactions,
+} from '../../api/chat'
 import { listEventRows } from '../../api/events'
 import { serverErrorMessage } from '../../api/client'
 import { onChatChanged } from '../../lib/chatEvents'
@@ -32,6 +42,18 @@ interface Props {
 function seenKey(projectId: string): string {
   return `sf-chat-seen:${projectId}`
 }
+
+/**
+ * Отметки на сообщении (0.98.0): три вида, как у реакций на замечания.
+ *
+ * Короткая подпись на плашке («сделать») и полная в подсказке и для скринридера («надо сделать»):
+ * в строке сообщения три длинных подписи не помещаются, но человек должен понимать, что нажимает.
+ */
+const REACTIONS: Array<{ kind: ChatReactionKind; label: string; full: string }> = [
+  { kind: 'agree', label: 'согласен', full: 'согласен' },
+  { kind: 'todo', label: 'сделать', full: 'надо сделать' },
+  { kind: 'question', label: 'вопрос', full: 'вопрос' },
+]
 
 function readSeen(projectId: string): string {
   try {
@@ -71,6 +93,8 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread }: Props
   /** Сообщение, которое прямо сейчас правят, и черновик его текста. */
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(null)
   const [editBusy, setEditBusy] = useState(false)
+  /** Какая плашка отметки сейчас в запросе (`сообщение:вид`) — защита от двойного нажатия. */
+  const [reactionBusy, setReactionBusy] = useState<string | null>(null)
   const listRef = useRef<HTMLUListElement | null>(null)
   const lastIdRef = useRef('')
   /** Кто я: «изменить» показываем только у своих сообщений. */
@@ -82,12 +106,22 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread }: Props
     return map
   }, [frames])
 
-  /** Догрузить новое (или всё, если ещё ничего не знаем). */
-  const load = useCallback(async () => {
+  /** Догрузить новое (или всё, если ещё ничего не знаем).
+   *
+   * `reload` (0.98.0) — перечитать страницу целиком. Нужен из-за отметок: они меняют УЖЕ
+   * показанные сообщения, а не добавляют строки, поэтому догрузка «после последнего» их не увидит.
+   * Сигнал из сокета приходит на любое изменение ленты (новое сообщение, правка, отметка), и по
+   * нему дешевле перечитать страницу, чем поддерживать отдельный канал «что именно изменилось».
+   */
+  const load = useCallback(async (mode: 'append' | 'reload' = 'append') => {
     try {
-      const page = await listChat(projectId, lastIdRef.current || undefined)
+      const page = await listChat(projectId, mode === 'reload' ? undefined : lastIdRef.current || undefined)
       setBot(page.bot)
-      if (page.messages.length > 0) {
+      if (mode === 'reload') {
+        setMessages(page.messages)
+        lastIdRef.current =
+          page.messages.length > 0 ? page.messages[page.messages.length - 1].id : ''
+      } else if (page.messages.length > 0) {
         setMessages((current) => {
           const seen = new Set(current.map((item) => item.id))
           const fresh = page.messages.filter((item) => !seen.has(item.id))
@@ -111,8 +145,10 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread }: Props
     return () => window.clearInterval(interval)
   }, [load, visible])
 
-  // Сигнал из сокета: сообщение появилось — забираем сразу, не ожидая опроса.
-  useEffect(() => onChatChanged(projectId, () => void load()), [load, projectId])
+  // Сигнал из сокета: лента изменилась (новое сообщение, правка, отметка) — перечитываем страницу
+  // целиком, не ожидая опроса. Именно перечитываем, а не догружаем: отметка меняет уже показанные
+  // сообщения, и «после последнего» её не увидело бы.
+  useEffect(() => onChatChanged(projectId, () => void load('reload')), [load, projectId])
 
   // Кадры для привязки — один раз при открытии вкладки: список меняется редко, а выбор нужен
   // только в момент написания.
@@ -180,6 +216,33 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread }: Props
       }
     },
     [editing, projectId],
+  )
+
+  /**
+   * Поставить или снять отметку (0.98.0).
+   *
+   * Ответ сервера — отметки сообщения целиком, поэтому строку обновляем по нему, а не перечитываем
+   * всю ленту: нажатие должно отвечать сразу. Пока запрос идёт, повторное нажатие по той же плашке
+   * игнорируется — иначе два быстрых клика дали бы «поставить и снять» в непредсказуемом порядке.
+   */
+  const toggleReaction = useCallback(
+    async (messageId: string, kind: ChatReactionKind) => {
+      const key = `${messageId}:${kind}`
+      if (reactionBusy === key) return
+      setReactionBusy(key)
+      try {
+        const reactions: ChatReactions = await toggleChatReaction(projectId, messageId, kind)
+        setMessages((current) =>
+          current.map((item) => (item.id === messageId ? { ...item, reactions } : item)),
+        )
+        setError(null)
+      } catch (e) {
+        setError(await explain(e))
+      } finally {
+        setReactionBusy(null)
+      }
+    },
+    [projectId, reactionBusy],
   )
 
   const send = useCallback(async () => {
@@ -290,6 +353,39 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread }: Props
               >
                 к кадру{message.quote ? `: «${message.quote}»` : ` «${titles.get(message.event_id) ?? 'кадр удалён'}»`}
               </button>
+            )}
+            {/* Отметки (0.98.0): три рабочие, как у реакций на замечания. Показываем все три всегда —
+                счётчик у нуля может не быть, а «а что тут можно нажать» человек должен видеть. */}
+            {!isEditing && (
+              <div className="chat__reactions" data-chat-reactions={message.id}>
+                {REACTIONS.map((reaction) => {
+                  const count = message.reactions?.[reaction.kind] ?? 0
+                  const active = message.reactions?.mine?.includes(reaction.kind) === true
+                  const busyThis = reactionBusy === `${message.id}:${reaction.kind}`
+                  return (
+                    <button
+                      key={reaction.kind}
+                      type="button"
+                      className={active ? 'chat__reaction is-on' : 'chat__reaction'}
+                      aria-pressed={active}
+                      aria-label={
+                        count > 0 ? `${reaction.full}: ${count}` : reaction.full
+                      }
+                      title={
+                        active
+                          ? `Снять отметку «${reaction.full}»`
+                          : `Отметить «${reaction.full}»`
+                      }
+                      disabled={busyThis}
+                      onClick={() => void toggleReaction(message.id, reaction.kind)}
+                      data-chat-reaction={`${message.id}:${reaction.kind}`}
+                    >
+                      {reaction.label}
+                      {count > 0 && <span className="chat__reaction-count">{count}</span>}
+                    </button>
+                  )
+                })}
+              </div>
             )}
             {!isEditing && (
               <div className="chat__item-actions">
