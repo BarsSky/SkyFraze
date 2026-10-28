@@ -52,6 +52,28 @@ export async function openEditorsTab(page: Page): Promise<void> {
   await openProjectTab(page, 'editors')
 }
 
+/**
+ * Токен текущей сессии для запросов из сценария (0.92.2).
+ *
+ * `page.request` — это HTTP-клиент Playwright: localStorage страницы он не видит и cookie тоже не
+ * всегда (приложение хранит JWT в localStorage). Поэтому сценарий, которому нужен серверный ответ
+ * (например, скачанный `.md` или `.docx`), берёт токен из состояния авторизации и передаёт его
+ * сам — иначе проверка молча получила бы 401 и проверяла бы не то.
+ */
+export async function apiToken(page: Page): Promise<string> {
+  return page.evaluate(() => {
+    const raw = localStorage.getItem('skyfraze-auth') || '{}'
+    const parsed = JSON.parse(raw) as { state?: { accessToken?: string } }
+    return parsed.state?.accessToken ?? ''
+  })
+}
+
+/** Заголовки для `page.request` с токеном сессии. */
+export async function apiHeaders(page: Page): Promise<Record<string, string>> {
+  const token = await apiToken(page)
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
+
 export async function signIn(page: Page, email: string = E2E_ADMIN_EMAIL): Promise<boolean> {
   await page.goto('/register')
   const heading = await page.locator('h1').innerText()

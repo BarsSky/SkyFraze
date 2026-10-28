@@ -103,13 +103,79 @@ func (s *Service) Create(
 	}
 	// Вид обязан быть заведён в проекте (0.81.0): «Фракция» существует только там, где человек её
 	// создал. Проверка ДО вставки — ради текста ошибки; БД страхует внешним ключом.
-	if err := s.typeExists(ctx, projectID, entity.Kind); err != nil {
+	cardType, err := s.entityType(ctx, projectID, entity.Kind)
+	if err != nil {
 		return nil, err
 	}
+	// Заготовка типа (0.92.2): пустые поля заполняются тем, что владелец записал у типа.
+	// Раньше это делала только форма в интерфейсе, поэтому карточка, созданная помощником или
+	// через API, оставалась без заготовки — тип «Порт» с описанием «{{name}} — порт…» и
+	// алиасом «гавань» давал у человека одно, а у помощника другое.
+	entity = applyCardTemplate(entity, cardType.CardTemplate)
 	entity.ProjectID = projectID
 	entity.CreatedBy = &userID
 	return s.store.CreateEntity(ctx, entity)
 }
+
+// applyCardTemplate заполняет ПУСТЫЕ поля карточки заготовкой типа.
+//
+// Правило одно и то же для всех, кто создаёт карточку: заготовка — подсказка, а не директива.
+// Присланное значение (от человека, из помощника или из импорта) всегда сильнее; заготовка
+// заполняет только то, чего не прислали вовсе. `{{name}}` заменяется на имя карточки — так же,
+// как это делает форма в интерфейсе (`cardTemplateFor` в frontend/src/api/entityTypes.ts).
+func applyCardTemplate(entity store.ProjectEntity, template store.EntityCardTemplate) store.ProjectEntity {
+	if template.Empty() {
+		return entity
+	}
+	if entity.Description == "" && template.Description != "" {
+		description := strings.ReplaceAll(template.Description, "{{name}}", entity.Name)
+		entity.Description = truncateRunes(strings.TrimSpace(description), maxDescriptionRunes)
+	}
+	if len(entity.Aliases) == 0 && len(template.Aliases) > 0 {
+		entity.Aliases = templateAliases(template.Aliases, entity.Name)
+	}
+	return entity
+}
+
+// templateAliases — алиасы заготовки, прошедшие те же правила, что и введённые руками.
+//
+// Негодный алиас заготовки (короче двух знаков, повтор имени, дубль) ОТБРАСЫВАЕТСЯ, а не валит
+// создание карточки: заготовку писал человек для удобства, и отказ «из-за алиаса в заготовке»
+// был бы отказом за то, чего создающий карточку не выбирал.
+func templateAliases(raw []string, name string) []string {
+	nameKey := strings.ToLower(strings.TrimSpace(name))
+	out := make([]string, 0, len(raw))
+	seen := map[string]bool{}
+	for _, alias := range raw {
+		alias = strings.TrimSpace(alias)
+		if alias == "" || utf8.RuneCountInString(alias) < minAliasRunes {
+			continue
+		}
+		if utf8.RuneCountInString(alias) > maxAliasRunes {
+			continue
+		}
+		key := strings.ToLower(alias)
+		if key == nameKey || seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, alias)
+		if len(out) >= maxAliases {
+			break
+		}
+	}
+	return out
+}
+
+// truncateRunes режет строку по границе знака: байтовый срез порвал бы кириллицу.
+func truncateRunes(value string, limit int) string {
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	return string(runes[:limit])
+}
+
 
 // PrepareCard проверяет и нормализует поля карточки, НЕ создавая её.
 //

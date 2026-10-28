@@ -240,16 +240,28 @@ func (s *Service) DeleteType(ctx context.Context, userID, projectID uuid.UUID, k
 
 // typeExists проверяет, что вид карточки есть в проекте: им пользуется создание карточки.
 func (s *Service) typeExists(ctx context.Context, projectID uuid.UUID, key string) error {
+	_, err := s.entityType(ctx, projectID, key)
+	return err
+}
+
+// entityType — вид карточки из проекта или понятная ошибка.
+//
+// Отдельно от typeExists, потому что созданию карточки нужен не только факт существования
+// вида, но и его заготовка (0.92.2): описание и алиасы, которые владелец записал у типа.
+func (s *Service) entityType(
+	ctx context.Context, projectID uuid.UUID, key string,
+) (*store.EntityType, error) {
 	if err := s.store.EnsureEntityTypes(ctx, projectID); err != nil {
-		return err
+		return nil, err
 	}
-	if _, err := s.store.EntityTypeByKey(ctx, projectID, key); err != nil {
+	entityType, err := s.store.EntityTypeByKey(ctx, projectID, key)
+	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return fmt.Errorf("%w: вид «%s» не заведён в проекте", ErrInvalidEntity, key)
+			return nil, fmt.Errorf("%w: вид «%s» не заведён в проекте", ErrInvalidEntity, key)
 		}
-		return err
+		return nil, err
 	}
-	return nil
+	return entityType, nil
 }
 
 // slugifyType переводит название в машинный ключ.

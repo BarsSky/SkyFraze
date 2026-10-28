@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -62,7 +63,10 @@ func TestHubMergesConcurrentClients(t *testing.T) {
 		t.Fatalf("проект: %v", err)
 	}
 
-	logger := slog.New(slog.NewTextHandler(&testLogWriter{t: t}, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	logWriter := &testLogWriter{t: t}
+	// Горутины хаба переживают тест: после конца теста писать в его лог нельзя (паника).
+	t.Cleanup(func() { logWriter.done.Store(true) })
+	logger := slog.New(slog.NewTextHandler(logWriter, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	hub := collab.NewHub(logger, "test-secret", evSvc, "")
 	runCtx, stopHub := context.WithCancel(ctx)
 	defer stopHub()
@@ -137,17 +141,36 @@ func TestHubMergesConcurrentClients(t *testing.T) {
 	if err := ygo.ApplyUpdate(peers[0].doc, ygo.EncodeStateAsUpdate(seed)); err != nil {
 		t.Fatalf("засев у клиента 0: %v", err)
 	}
-	if err := peers[0].conn.WriteMessage(websocket.BinaryMessage, ygo.EncodeStateAsUpdate(peers[0].doc)); err != nil {
-		t.Fatalf("отправка засева: %v", err)
-	}
-	waitFor(t, 5*time.Second, func() bool {
+	seedUpdate := ygo.EncodeStateAsUpdate(peers[0].doc)
+	missingSeed := func() int {
+		missing := 0
 		for _, p := range peers {
 			if eventBody(p.doc, eventID) == "" {
-				return false
+				missing++
 			}
 		}
-		return true
-	}, "все клиенты получили событие")
+		return missing
+	}
+	// Повторная рассылка, а не одно окно ожидания (0.92.2).
+	//
+	// Так этот тест и упал один раз в CI: двадцать сокетов на нагруженном раннере успевают не
+	// все, и один проход рассылки приходился на момент, когда часть клиентов ещё дочитывала
+	// приветственное состояние. Полное состояние Yjs идемпотентно (merge), поэтому повторить его
+	// дешевле и честнее, чем растягивать «подожди пять секунд» — иначе тест падает по таймингу и
+	// выглядит как поломка синхронизации.
+	for attempt := 0; attempt < 6 && missingSeed() > 0; attempt++ {
+		if err := peers[0].conn.WriteMessage(websocket.BinaryMessage, seedUpdate); err != nil {
+			t.Fatalf("отправка засева (попытка %d): %v", attempt+1, err)
+		}
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) && missingSeed() > 0 {
+			time.Sleep(25 * time.Millisecond)
+		}
+	}
+	if missing := missingSeed(); missing > 0 {
+		t.Fatalf("не дождались: все клиенты получили событие (без засева осталось %d из %d)",
+			missing, len(peers))
+	}
 
 	revisionBefore := int64(0)
 	if state, err := st.GetProjectEventState(ctx, project.ID); err == nil && state != nil {
@@ -449,10 +472,27 @@ func findEvent(doc *ygo.Doc, id string) *ygo.Map {
 
 // testLogWriter отправляет логи сервера в вывод теста: без этого причина отказа
 // проекции (единственное место, где она пишет в лог) осталась бы невидимой.
-type testLogWriter struct{ t *testing.T }
+//
+// Почему с защитой от «лога после теста» (0.92.2). Горутины хаба живут дольше теста: клиент
+// уходит, `leave` запускает сохранение снапшота, и через мгновение после конца теста в лог
+// приходит строка. `t.Log` из такой горутины — это паника «Log in goroutine after
+// TestHubMergesConcurrentClients has completed», а не полезная диагностика: тест уже прошёл, а
+// процесс падает. Именно так он и падал при прогоне `-count=3` (и один раз в CI 0.92.0).
+// Поэтому пишем только пока тест жив, а сам вызов обёрнут в recover: между проверкой флага и
+// вызовом тест успевает завершиться.
+type testLogWriter struct {
+	t    *testing.T
+	done atomic.Bool
+}
 
 func (w *testLogWriter) Write(p []byte) (int, error) {
-	w.t.Logf("server: %s", strings.TrimSpace(string(p)))
+	if w.done.Load() {
+		return len(p), nil
+	}
+	func() {
+		defer func() { _ = recover() }()
+		w.t.Logf("server: %s", strings.TrimSpace(string(p)))
+	}()
 	return len(p), nil
 }
 
