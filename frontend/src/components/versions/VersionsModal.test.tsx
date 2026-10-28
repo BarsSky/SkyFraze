@@ -55,7 +55,8 @@ describe('VersionsModal', () => {
   it('показывает версии и подписывает их вид и объём', async () => {
     renderModal()
     expect(await screen.findByText(/Вручную · перед переписыванием/)).toBeTruthy()
-    // Число кадров и объём — одной строкой под подписью.\n    expect(screen.getByText(/кадр/)).toBeTruthy()
+    // Число кадров и объём — одной строкой под подписью.
+    expect(screen.getByText(/кадр/)).toBeTruthy()
     expect(screen.getByText(/2 КБ/)).toBeTruthy()
   })
 
@@ -85,7 +86,8 @@ describe('VersionsModal', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Показать' }))
     expect(await screen.findByText(/В версии/)).toBeTruthy()
     expect(screen.getByText(/Глава 1/)).toBeTruthy()
-    // «12 знаков» есть и в сводке версии, и в строке кадра — это нормально.\n    expect(screen.getAllByText(/12 знаков/).length).toBeGreaterThan(0)
+    // «12 знаков» есть и в сводке версии, и в строке кадра — это нормально.
+    expect(screen.getAllByText(/12 знаков/).length).toBeGreaterThan(0)
   })
 
   it('читателю не показывает ни сохранения, ни восстановления', async () => {

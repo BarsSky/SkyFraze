@@ -476,7 +476,10 @@ describe('EntitiesPanel — связи карточек (0.74.0)', () => {
     })
     await screen.findAllByText('Аня')
     // Подпись блока: раньше связи шли без неё и сливались с остальными полями карточки.
-    expect(screen.getAllByText('Связи').length).toBeGreaterThan(0)
+    // С 0.97.3 в подписи ещё и число связей — иначе свёрнутый список читался бы как полный.
+    expect(screen.getAllByText(/^Связи/).length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Связи · 1').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Связи · 2').length).toBeGreaterThan(0)
     // Каждая связь — отдельная строка списка (data-entity-link), а не общий поток чипов.
     const rows = document.querySelectorAll('[data-entity-link]')
     expect(rows.length).toBeGreaterThanOrEqual(2)
@@ -485,6 +488,94 @@ describe('EntitiesPanel — связи карточек (0.74.0)', () => {
       // стороны своя строка и в ней есть подпись, а не только имя.
       expect(row.textContent).toMatch(/(→|←) (живёт на|боится)/)
     }
+  })
+
+  /**
+   * Нагрузка (0.97.3): сервер разрешает до 20 связей у карточки, и в живом прогоне карточка с
+   * двадцатью связями занимала 1033 px, а её кнопки уезжали на 1546 px от верха документа.
+   * Теперь по умолчанию видно пять строк, остальные — за кнопкой с числом.
+   */
+  const manyLinks = (count: number) => {
+    const hub = entity({ id: 'h1', name: 'Аня', aliases: [] })
+    const others = Array.from({ length: count }, (_, index) =>
+      entity({ id: `o${index}`, name: `Карточка ${index + 1}`, aliases: [] }),
+    )
+    const links = others.map((other, index) => ({
+      id: `l${index}`,
+      from_entity: hub.id,
+      to_entity: other.id,
+      label: 'живёт на',
+      created_at: '2026-10-27T10:00:00Z',
+    }))
+    return { entities: [hub, ...others], links }
+  }
+
+  const cardOf = (name: string): HTMLElement => {
+    const card = [...document.querySelectorAll('.ent__item')].find(
+      (node) => node.querySelector('.ent__name')?.textContent === name,
+    )
+    if (!(card instanceof HTMLElement)) throw new Error(`нет карточки «${name}»`)
+    return card
+  }
+
+  it('связей больше пяти: пять строк, счётчик и кнопка «Показать все» (0.97.3)', async () => {
+    const data = manyLinks(8)
+    panel(data)
+    await screen.findAllByText('Аня')
+
+    const card = cardOf('Аня')
+    expect(card.querySelectorAll('[data-entity-link]').length).toBe(5)
+    expect(card.querySelector('.ent__links-title')?.textContent).toBe('Связи · 8')
+    const toggle = card.querySelector('[data-entity-links-toggle]')
+    expect(toggle?.textContent).toBe('Показать все 8')
+    expect(toggle?.getAttribute('aria-expanded')).toBe('false')
+    expect(card.querySelector('[data-entity-links-hidden]')?.textContent).toBe('скрыто ещё 3')
+  })
+
+  it('кнопка раскрывает все связи и сворачивает обратно (0.97.3)', async () => {
+    const data = manyLinks(8)
+    panel(data)
+    await screen.findAllByText('Аня')
+
+    const toggle = cardOf('Аня').querySelector('[data-entity-links-toggle]') as HTMLButtonElement
+    fireEvent.click(toggle)
+    const expanded = cardOf('Аня')
+    expect(expanded.querySelectorAll('[data-entity-link]').length).toBe(8)
+    expect(expanded.querySelector('[data-entity-links-toggle]')?.textContent).toBe('Свернуть связи')
+    expect(expanded.querySelector('[data-entity-links-toggle]')?.getAttribute('aria-expanded')).toBe('true')
+    // Раскрытый список не должен врать про скрытое.
+    expect(expanded.querySelector('[data-entity-links-hidden]')).toBeNull()
+
+    fireEvent.click(expanded.querySelector('[data-entity-links-toggle]') as HTMLButtonElement)
+    expect(cardOf('Аня').querySelectorAll('[data-entity-link]').length).toBe(5)
+  })
+
+  it('свёрнутость — у каждой карточки своя: раскрытие одной не раскрывает другую (0.97.3)', async () => {
+    const first = entity({ id: 'h1', name: 'Аня', aliases: [] })
+    const second = entity({ id: 'h2', name: 'Земля', aliases: [] })
+    const others = Array.from({ length: 12 }, (_, index) =>
+      entity({ id: `o${index}`, name: `Карточка ${index + 1}`, aliases: [] }),
+    )
+    // По шесть связей на карточку: Ане — первые шесть целей, Земле — вторые шесть.
+    const links = others.flatMap((other, index) => {
+      const hub = index < 6 ? first : second
+      return [
+        {
+          id: `l${index}`,
+          from_entity: hub.id,
+          to_entity: other.id,
+          label: 'живёт на',
+          created_at: '2026-10-27T10:00:00Z',
+        },
+      ]
+    })
+    panel({ entities: [first, second, ...others], links })
+    await screen.findAllByText('Земля')
+
+    expect(cardOf('Земля').querySelectorAll('[data-entity-link]').length).toBe(5)
+    fireEvent.click(cardOf('Аня').querySelector('[data-entity-links-toggle]') as HTMLButtonElement)
+    expect(cardOf('Аня').querySelectorAll('[data-entity-link]').length).toBe(6)
+    expect(cardOf('Земля').querySelectorAll('[data-entity-link]').length).toBe(5)
   })
 })
 

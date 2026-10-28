@@ -9,6 +9,7 @@ import {
   kindLabel,
   listEntities,
   updateEntity,
+  type EntityConnection,
   type EntityKind,
   type EntityLink,
   type ProjectEntity,
@@ -420,38 +421,14 @@ export function EntitiesPanel({
                       {entity.description}
                     </span>
                   )}
-                  {/* Связи с другими карточками (0.74.0 → 0.97.2): список под своей подписью.
-                      До этого связи шли чипами в общем потоке карточки — при перечислении
-                      сливались друг с другом, а длинный текст расползал ряд. */}
+                  {/* Связи с другими карточками (0.74.0 → 0.97.3): список под своей подписью,
+                      лишние строки — за кнопкой «Показать все». */}
                   {!editing && entityLinks(entity.id).length > 0 && (
-                    <span className="ent__links" data-entity-links>
-                      <span className="ent__links-title">Связи</span>
-                      {entityLinks(entity.id).map((connection) => (
-                        <span
-                          key={connection.link.id}
-                          className="ent__link"
-                          data-entity-link={connection.link.id}
-                        >
-                          <span className="ent__link-label">
-                            {connection.direction === 'out'
-                              ? `→ ${connection.link.label}`
-                              : `← ${connection.link.label}`}
-                          </span>
-                          <span className="ent__link-name">{connection.other.name}</span>
-                          {canEdit && (
-                            <button
-                              type="button"
-                              className="ent__link-remove"
-                              onClick={() => void removeLink(connection.link.id)}
-                              aria-label={`Убрать связь с ${connection.other.name}`}
-                              title="Убрать связь"
-                            >
-                              ×
-                            </button>
-                          )}
-                        </span>
-                      ))}
-                    </span>
+                    <LinkList
+                      connections={entityLinks(entity.id)}
+                      canEdit={canEdit}
+                      onRemove={(linkId) => void removeLink(linkId)}
+                    />
                   )}
                   {/* Сколько кадров и упоминаний: «сирота» (ноль) — повод либо добавить
                       алиас, либо убрать карточку. */}
@@ -986,6 +963,82 @@ function MentionCard({
         </button>
       </div>
     </div>
+  )
+}
+
+/**
+ * Сколько связей карточки видно, пока человек не раскрыл список (0.97.3).
+ *
+ * Причина — число: сервер разрешает до 20 связей у карточки, и все они раньше выводились сразу.
+ * Живая проверка (`tests/diag-entity-links-load.ts`) на двадцати связях дала карточку 995 px:
+ * список занимал 904 px, а кнопки «Изменить» и «Связать» уезжали на 1613 px от верха документа —
+ * ниже первого экрана, то есть до них надо было догадаться прокрутить. Пять строк — это ещё
+ * обозримый список, и вместе с кнопками карточка остаётся в пределах экрана.
+ */
+const LINKS_PREVIEW = 5
+
+/**
+ * Список связей карточки (0.97.2 → 0.97.3): каждая связь своей плашкой, лишние — за кнопкой.
+ *
+ * Свёрнутость — состояние ОДНОЙ карточки, поэтому компонент, а не состояние панели: раскрыть
+ * связи у одной карточки не должно раскрывать их у всех.
+ */
+function LinkList({
+  connections,
+  canEdit,
+  onRemove,
+}: {
+  connections: EntityConnection[]
+  canEdit: boolean
+  onRemove: (linkId: string) => void
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const total = connections.length
+  const visible = expanded ? connections : connections.slice(0, LINKS_PREVIEW)
+  const hidden = total - visible.length
+  return (
+    <span className="ent__links" data-entity-links>
+      <span className="ent__links-title">
+        Связи · {total}
+      </span>
+      {visible.map((connection) => (
+        <span key={connection.link.id} className="ent__link" data-entity-link={connection.link.id}>
+          <span className="ent__link-label">
+            {connection.direction === 'out' ? `→ ${connection.link.label}` : `← ${connection.link.label}`}
+          </span>
+          <span className="ent__link-name">{connection.other.name}</span>
+          {canEdit && (
+            <button
+              type="button"
+              className="ent__link-remove"
+              onClick={() => onRemove(connection.link.id)}
+              aria-label={`Убрать связь с ${connection.other.name}`}
+              title="Убрать связь"
+            >
+              ×
+            </button>
+          )}
+        </span>
+      ))}
+      {total > LINKS_PREVIEW && (
+        <button
+          type="button"
+          className="ent__links-more"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((current) => !current)}
+          data-entity-links-toggle
+        >
+          {expanded ? 'Свернуть связи' : `Показать все ${total}`}
+        </button>
+      )}
+      {/* Подпись того, что скрыто: «Показать все 20» говорит, сколько всего, но не сколько
+          спрятано. Одна строка приглушённым — чтобы свёрнутый список не выглядел полным. */}
+      {hidden > 0 && (
+        <span className="muted ent__links-more-hint" data-entity-links-hidden>
+          скрыто ещё {hidden}
+        </span>
+      )}
+    </span>
   )
 }
 

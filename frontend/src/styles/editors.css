@@ -762,6 +762,19 @@
      прыгать вслед за текстом. */
 }
 .ent__link-remove:hover { color: var(--danger); background: var(--bg-elev); }
+/* «Показать все / Свернуть» (0.97.3): у карточки бывает до 20 связей (предел сервера), и все они
+   сразу растягивали карточку на 995 px — кнопки правки уезжали ниже первого экрана. Теперь сверху
+   пять строк, остальные — за этой кнопкой. Кнопка не тянется на всю ширину: она служебная, и
+   растянутая читалась бы как ещё одна связь. */
+.ent__links-more {
+  justify-self: start;
+  background: none; border: 1px dashed var(--border); border-radius: 8px;
+  color: var(--fg); cursor: pointer; padding: 5px 10px;
+  font: inherit; font-size: 12px; min-height: 32px;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.ent__links-more:hover { border-color: var(--accent); background: var(--bg-elev); }
+.ent__links-more-hint { font-size: 11px; justify-self: start; }
 /* Медиа-запрос идёт ПОСЛЕ базового правила: при равной специфичности выигрывает то, что ниже.
    Поставленный выше (в общем блоке медиа-запросов) он молча проигрывал базовым 26 px — так и
    вышло на живой проверке 0.77.0. */

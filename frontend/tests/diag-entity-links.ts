@@ -92,7 +92,10 @@ async function main() {
 
     // 1. Подпись блока и границы строк.
     const titles = await page.locator('.ent__links-title').allInnerTexts()
-    // text-transform: uppercase — innerText вернёт «СВЯЗИ», сравниваем без регистра.\n    if (!titles.some((text) => text.trim().toLowerCase() === 'связи')) {\n      problems.push(нет подписи «Связи» у списка: )\n    }
+    // text-transform: uppercase — innerText вернёт «СВЯЗИ», сравниваем без регистра.
+    if (!titles.some((text) => text.trim().toLowerCase().startsWith('связи'))) {
+      problems.push(`нет подписи «Связи» у списка: ${JSON.stringify(titles)}`)
+    }
 
     const geometry = await page.evaluate<{ vw: number; panelRight: number | null; pageScroll: number; rows: Array<{ top: number; bottom: number; height: number; right: number; width: number; overflowX: boolean; text: string }> }>(`(async () => {
       const panel = document.querySelector('#project-tab-panel')
