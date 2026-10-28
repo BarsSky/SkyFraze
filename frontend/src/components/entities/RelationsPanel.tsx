@@ -23,6 +23,12 @@ import { EntitiesPanel } from './EntitiesPanel'
 import { requestOpenFrame } from '../../lib/openFrame'
 import { ENTITIES_CHANGED_EVENT } from '../../api/assistant'
 import { createEntityType } from '../../api/entityTypes'
+import {
+  clearMentionImage as clearMentionImageRequest,
+  listMentionImages,
+  mentionImageKey,
+  setMentionImage as setMentionImageRequest,
+} from '../../api/mentionImages'
 
 /**
  * Область «Связи» (0.79.0): всё про карточки мира — в одном месте.
@@ -72,6 +78,65 @@ export function RelationsPanel({ projectId, canEdit, onOpenFrame }: Props) {
   const [rows, setRows] = useState<RelationsRow[]>([])
   const [eventsLoaded, setEventsLoaded] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  /**
+   * Картинки упоминаний (0.93.0): ключ `карточка:кадр` → id вложения.
+   *
+   * Держим словарём в состоянии панели, а не в карточке: карточка раскрывается и закрывается, и
+   * при каждом открытии заново ходить в базу за тем же списком было бы расточительно. После
+   * привязки состояние правится локально — ответ сервера уже подтвердил изменение.
+   */
+  const [mentionImages, setMentionImages] = useState<Record<string, string>>({})
+
+  const loadMentionImages = useCallback(async () => {
+    try {
+      setMentionImages(await listMentionImages(projectId))
+    } catch {
+      // Без картинок карточка работает: это дополнение, а не основа. Ошибку не кричим.
+      setMentionImages({})
+    }
+  }, [projectId])
+
+  useEffect(() => {
+    void loadMentionImages()
+  }, [loadMentionImages])
+
+  const setMentionImage = useCallback(
+    async (entityId: string, eventId: string, assetId: string) => {
+      const key = mentionImageKey(entityId, eventId)
+      const previous = mentionImages[key]
+      setMentionImages((current) => ({ ...current, [key]: assetId }))
+      try {
+        await setMentionImageRequest(projectId, entityId, eventId, assetId)
+      } catch {
+        // Сервер отказал — возвращаем как было, иначе карточка показывала бы картинку, которой нет.
+        setMentionImages((current) => {
+          const next = { ...current }
+          if (previous) next[key] = previous
+          else delete next[key]
+          return next
+        })
+      }
+    },
+    [mentionImages, projectId],
+  )
+
+  const clearMentionImage = useCallback(
+    async (entityId: string, eventId: string) => {
+      const key = mentionImageKey(entityId, eventId)
+      const previous = mentionImages[key]
+      setMentionImages((current) => {
+        const next = { ...current }
+        delete next[key]
+        return next
+      })
+      try {
+        await clearMentionImageRequest(projectId, entityId, eventId)
+      } catch {
+        if (previous) setMentionImages((current) => ({ ...current, [key]: previous }))
+      }
+    },
+    [mentionImages, projectId],
+  )
 
   const loadEvents = useCallback(async () => {
     try {
@@ -226,6 +291,9 @@ export function RelationsPanel({ projectId, canEdit, onOpenFrame }: Props) {
             : undefined
         }
         links={links}
+        mentionImages={mentionImages}
+        onSetMentionImage={(entityId, eventId, assetId) => void setMentionImage(entityId, eventId, assetId)}
+        onClearMentionImage={(entityId, eventId) => void clearMentionImage(entityId, eventId)}
       />
     </section>
   )

@@ -684,6 +684,29 @@
   .ent__mention-card { animation: none; }
 }
 
+/* ─── картинка у упоминания (0.93.0, docs/entity-links.md §3.4.1) ─────────────
+   «Как это выглядит» — вложение проекта, привязанное к паре «карточка × кадр».
+   Картинка ограничена по высоте: портрет не должен вытеснять из карточки кадры и переходы. */
+.ent__mention-image { display: grid; gap: 6px; min-width: 0; }
+/* Рамка с постоянной высотой: и портрет, и обложка темы выглядят одинаково, а карточка не
+   прыгает при смене кадра. `contain` не обрезает: карту или схему тоже можно привязать. */
+.ent__mention-image-figure {
+  margin: 0; background: var(--bg); border: 1px solid var(--border);
+  border-radius: 8px; overflow: hidden;
+}
+.ent__mention-image-img {
+  display: block; width: 100%; height: 160px; object-fit: contain;
+}
+.ent__mention-image-loading { font-size: 12px; }
+.ent__mention-image-empty { margin: 0; font-size: 12px; }
+.ent__mention-image-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.ent__mention-image-actions button { min-height: 32px; }
+.ent__mention-image-picker {
+  display: flex; gap: 6px; flex-wrap: wrap; align-items: center; font-size: 12px;
+}
+.ent__mention-image-picker select { flex: 1 1 180px; min-width: 0; max-width: 100%; }
+.ent__mention-image-picker button { min-height: 32px; }
+
 /* ─── связи карточек в списке (0.74.0) ─────────────────────────────────────── */
 .ent__links { display: inline-flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .ent__link {

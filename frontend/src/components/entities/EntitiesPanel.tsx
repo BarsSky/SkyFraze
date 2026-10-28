@@ -14,6 +14,7 @@ import {
   type ProjectEntity,
 } from '../../api/entities'
 import { serverErrorMessage } from '../../api/client'
+import { MentionImage } from './MentionImage'
 import { cardTemplateFor, typeTitle, type EntityCardTemplate, type EntityType } from '../../api/entityTypes'
 import type { FrameWithMentions, MatrixCell, Mention, MentionMatrix } from '../../collab/mentions'
 
@@ -80,6 +81,17 @@ interface Props {
   onCreateType?: (title: string, cardTemplate?: EntityCardTemplate) => Promise<void>
   /** Связи карточек проекта (0.74.0): чипы «Аня — живёт на → Земля». */
   links?: EntityLink[]
+  /**
+   * Картинки упоминаний (0.93.0): ключ `карточка:кадр` → id вложения проекта.
+   *
+   * Словарь, а не «дай картинку этой пары»: панель «Связи» открывается на вкладке и показывает
+   * карточки всех персонажей сразу — запрос на каждую пару означал бы N обращений ради экрана.
+   */
+  mentionImages?: Record<string, string>
+  /** Привязать картинку к паре «карточка × кадр» (редактор и выше). */
+  onSetMentionImage?: (entityId: string, eventId: string, assetId: string) => void
+  /** Отвязать картинку у пары. */
+  onClearMentionImage?: (entityId: string, eventId: string) => void
 }
 
 export function EntitiesPanel({
@@ -96,6 +108,9 @@ export function EntitiesPanel({
   types = [],
   onCreateType,
   links,
+  mentionImages,
+  onSetMentionImage,
+  onClearMentionImage,
 }: Props) {
   // Вид новой карточки — первый тип проекта (у стартовых это «Персонаж»). Состояние хранит КЛЮЧ
   // типа: человек мог переименовать «Персонаж» в «Героя», и ключ остаётся `character`.
@@ -808,8 +823,12 @@ export function EntitiesPanel({
           {mentionCard !== null && (
             <MentionCard
               card={mentionCard}
+              projectId={projectId}
               canEdit={canEdit}
               kindTitle={kindTitle}
+              mentionImages={mentionImages}
+              onSetMentionImage={onSetMentionImage}
+              onClearMentionImage={onClearMentionImage}
               onSelectFrame={(frameId) =>
                 setMentionCard((current) => (current ? { ...current, frameId } : current))
               }
@@ -844,8 +863,12 @@ export function EntitiesPanel({
  */
 function MentionCard({
   card,
+  projectId,
   canEdit,
   kindTitle,
+  mentionImages,
+  onSetMentionImage,
+  onClearMentionImage,
   onSelectFrame,
   onOpen,
   onClose,
@@ -860,8 +883,13 @@ function MentionCard({
     cell: MatrixCell
     frameId: string
   }
+  projectId: string
   canEdit: boolean
   kindTitle: (key: string) => string
+  /** Картинки упоминаний: ключ `карточка:кадр` → id вложения (0.93.0). */
+  mentionImages?: Record<string, string>
+  onSetMentionImage?: (entityId: string, eventId: string, assetId: string) => void
+  onClearMentionImage?: (entityId: string, eventId: string) => void
   onSelectFrame: (frameId: string) => void
   onOpen: (place: 'editors' | 'project') => void
   onClose: () => void
@@ -923,6 +951,21 @@ function MentionCard({
         <p className="ent__mention-quote" data-mention-quote>
           «{selected.mention.quote}»
         </p>
+      )}
+      {/* Картинка упоминания (0.93.0): привязана к паре «карточка × кадр», поэтому меняется
+          вместе с выбранным кадром в списке выше. */}
+      {selected && (
+        <MentionImage
+          projectId={projectId}
+          entityId={card.entityId}
+          entityName={card.entityName}
+          eventId={selected.id}
+          eventTitle={selected.title}
+          assetId={mentionImages?.[`${card.entityId}:${selected.id}`]}
+          canEdit={canEdit}
+          onSet={(assetId) => onSetMentionImage?.(card.entityId, selected.id, assetId)}
+          onClear={() => onClearMentionImage?.(card.entityId, selected.id)}
+        />
       )}
       <div className="ent__mention-actions">
         {canEdit && (

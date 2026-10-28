@@ -50,6 +50,8 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/entity-types", h.CreateType)
 	r.Patch("/entity-types/{key}", h.UpdateType)
 	r.Delete("/entity-types/{key}", h.DeleteType)
+	// Картинка у упоминания карточки в кадре (0.93.0, миграция 0037).
+	h.mentionImageRoutes(r)
 }
 
 // entityInput — тело запроса; указатели у необязательных полей, чтобы «не прислали» не
@@ -179,6 +181,11 @@ func (h *Handler) fail(w http.ResponseWriter, err error, op string) {
 		writeErr(w, http.StatusConflict, "сущность с таким именем уже есть в проекте")
 	case errors.Is(err, ErrTypeNotFound):
 		writeErr(w, http.StatusNotFound, "тип карточки не найден")
+	case errors.Is(err, ErrMentionImageTarget):
+		// 404, а не 400: пара «карточка × кадр» или файл либо есть в проекте, либо нет.
+		writeErr(w, http.StatusNotFound, err.Error())
+	case errors.Is(err, ErrNotImage):
+		writeErr(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, ErrTypeDefault):
 		writeErr(w, http.StatusConflict, err.Error())
 	case errors.As(err, &hasCards):
