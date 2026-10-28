@@ -481,6 +481,13 @@ frameLocal, transition}`.
 | `components/editors/EditorsPanel.tsx` | навигатор, тулбар (`+ глава`, `+ подсобытие`, удалить), выбор события |
 | `components/editors/EventEditor.tsx` | поля события: заголовок, текст, дата, вложения |
 | `components/editors/BackgroundPicker.tsx` | фон кадра: как у главы / тон / картинка |
+| `components/entities/RelationsPanel.tsx` | вкладка «Связи»: граф, карточки, хронология, матрица, упоминания |
+| `components/entities/EntitiesPanel.tsx` | карточки мира: создание и правка, алиасы, связи, «Показать все N» для длинного списка |
+| `components/entities/EntityGraph.tsx` | эго-граф: раскладка, перелёт карточки в центр, лист на телефоне |
+| `components/chat/ProjectChat.tsx` | общий чат проекта: обсуждение и чат, правка и ответ, ссылки на кадры |
+| `components/versions/VersionsModal.tsx` | окно «Версии»: снимки, предпросмотр содержимого, восстановление |
+| `components/docx/DocxHelp.tsx`, `MarkdownEditor.tsx` | справка по шаблону DOCX и панель «Разметка DOCX» (маркеры вставляются в текст кадра) |
+| `collab/mentions.ts` | поиск упоминаний по имени и алиасам, хронология, матрица, счётчик имён для переименования |
 | `styles/tokens.css`, `styles/timeline.css`, `styles/editors.css` | токены тем, стадия, редакторы |
 | `pages/ProjectTimelinePage.tsx` | только данные и композиция стадии с редактором |
 
