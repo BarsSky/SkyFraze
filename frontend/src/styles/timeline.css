@@ -690,7 +690,12 @@ html.sf-viewer-open body { overflow: hidden; }
 }
 
 @media (max-width: 860px) {
-  .layout header .muted { display: none; }
+  /* Здесь стояло `.layout header .muted { display: none }` — правило из тех времён, когда имя
+     вошедшего было `<span class="muted">` и на телефоне мешало шапке. Имя давно живёт в
+     `.header-user`, а правило осталось и било по ЧУЖИМ `.muted` в шапке: панель колокольчика
+     лежит внутри `header`, её «Новых замечаний нет» — `.muted`, и на телефоне он исчезал.
+     Панель открывалась пустой полоской 18 px, и кнопка выглядела «не реагирующей на касание»
+     (отчёт 0.98.1). Убрано: скрывать в шапке больше нечего. */
   .layout header button { white-space: nowrap; padding: 6px 10px; font-size: 12px; }
   .sf-topbar__title { display: none; }
   .sf-topbar__actions { gap: 6px; }
