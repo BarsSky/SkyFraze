@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   MIN_ALIAS_LENGTH,
+  countNameMentions,
   entityUsage,
   findMentions,
   frameMentions,
@@ -8,6 +9,7 @@ import {
   mentionMatrix,
   orderChronologically,
   type MentionEntity,
+  type MentionFrame,
 } from './mentions'
 
 /**
@@ -225,5 +227,71 @@ describe('mentionMatrix — персонажи × главы (0.71.0)', () => {
     expect(cell.count).toBe(2)
     expect(cell.frames).toHaveLength(1)
     expect(cell.frames?.[0].mentions).toBe(2)
+  })
+})
+
+/**
+ * Счётчик «сколько раз это имя есть в тексте» (0.97.4).
+ *
+ * Он решает одно действие — оставить ли старое имя алиасом при переименовании, — и ошибиться в
+ * нём дорого: «0» означает «можно переименовать и потерять связи», а это необратимо для человека,
+ * который этого не хотел. Поэтому считает тем же поиском, что и упоминания.
+ */
+describe('countNameMentions', () => {
+  const frames: MentionFrame[] = [
+    { id: 'f1', title: 'Анна и дом', body: 'Анна вошла в дом. Анны не было слышно.' },
+    { id: 'f2', title: 'Сцена', body: 'Дом стоял на холме.' },
+    { id: 'f3', title: '', body: '' },
+  ]
+
+  it('считает и заголовки, и текст — все вхождения, а не кадры', () => {
+    // «Анна» в заголовке f1 и «Анна» в тексте f1 → два вхождения; «Анны» не считается, потому что
+    // это другой набор букв (падеж задаётся алиасом, а его у пробы нет).
+    expect(countNameMentions(frames, 'Анна')).toBe(2)
+    expect(countNameMentions(frames, 'Дом на холме')).toBe(0)
+    expect(countNameMentions(frames, 'дом')).toBe(3)
+  })
+
+  it('не считает имя внутри другого слова или через дефис', () => {
+    const risky: MentionFrame[] = [{ id: 'f4', title: '', body: 'Анна-Мария и Аннотация' }]
+    expect(countNameMentions(risky, 'Анна')).toBe(0)
+  })
+
+  it('пустое имя — ноль, а не «нашлось всё»', () => {
+    expect(countNameMentions(frames, '')).toBe(0)
+    expect(countNameMentions(frames, '   ')).toBe(0)
+  })
+
+  it('пустой проект — ноль без исключений', () => {
+    expect(countNameMentions([], 'Анна')).toBe(0)
+  })
+
+  it('имя короче предела алиасов не находится — как и в упоминаниях', () => {
+    const short: MentionFrame[] = [{ id: 'f5', title: '', body: 'Я пришёл' }]
+    expect([...'Я'].length).toBeLessThan(MIN_ALIAS_LENGTH)
+    expect(countNameMentions(short, 'Я')).toBe(0)
+  })
+})
+
+/**
+ * Риск «связь съезжает при правке текста» (§5 docs/entity-links.md).
+ *
+ * Якорей у упоминаний нет и не нужно: они не хранятся, а пересчитываются из текста на каждое
+ * изменение, поэтому вставка до упоминания сдвигает его САМА. Проверяем то, что из этого следует
+ * для человека: упоминание не исчезает и позиции продолжают указывать на то же слово.
+ */
+describe('упоминания при правке текста', () => {
+  it('вставка текста до упоминания сдвигает позиции, но не теряет связь', () => {
+    const before = findMentions('Анна вошла.', [anna])
+    const after = findMentions('Наутро Анна вошла.', [anna])
+    expect(before).toHaveLength(1)
+    expect(after).toHaveLength(1)
+    expect(after[0].from).toBe(before[0].from + 'Наутро '.length)
+    expect(after[0].quote).toBe('Анна')
+  })
+
+  it('правка внутри самого слова убирает упоминание, а не сдвигает его', () => {
+    // «Анна» → «Анга»: слова-имени больше нет, и честнее показать ноль, чем тянуть связь.
+    expect(findMentions('Анга вошла.', [anna])).toHaveLength(0)
   })
 })

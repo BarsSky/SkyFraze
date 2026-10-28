@@ -18,6 +18,7 @@ import { serverErrorMessage } from '../../api/client'
 import { MentionImage } from './MentionImage'
 import { cardTemplateFor, typeTitle, type EntityCardTemplate, type EntityType } from '../../api/entityTypes'
 import type { FrameWithMentions, MatrixCell, Mention, MentionMatrix } from '../../collab/mentions'
+import { MIN_ALIAS_LENGTH } from '../../collab/mentions'
 
 /**
  * «Связи проекта» — карточки персонажей, мест и тем (docs/entity-links.md, фаза 1).
@@ -83,6 +84,14 @@ interface Props {
   /** Связи карточек проекта (0.74.0): чипы «Аня — живёт на → Земля». */
   links?: EntityLink[]
   /**
+   * Сколько раз имя встречается в тексте проекта (0.97.4).
+   *
+   * Нужен только переименованию: упоминания ищутся по имени и алиасам, поэтому смена имени без
+   * старого имени в алиасах молча рвёт все связи карточки с кадрами. Панель карточек текста не
+   * видит — счётчик приходит от владельца, у которого кадры под рукой.
+   */
+  countMentionsOf?: (name: string) => number
+  /**
    * Картинки упоминаний (0.93.0): ключ `карточка:кадр` → id вложения проекта.
    *
    * Словарь, а не «дай картинку этой пары»: панель «Связи» открывается на вкладке и показывает
@@ -109,6 +118,7 @@ export function EntitiesPanel({
   types = [],
   onCreateType,
   links,
+  countMentionsOf,
   mentionImages,
   onSetMentionImage,
   onClearMentionImage,
@@ -299,18 +309,56 @@ export function EntitiesPanel({
     }
   }, [aliases, description, kind, name, projectId, reload])
 
+  /**
+   * Сохранить правку карточки (0.74.0 → 0.97.4).
+   *
+   * Переименование — не просто смена подписи: упоминания ищутся по имени и алиасам, поэтому
+   * «Анна» → «Аня» без старого имени в алиасах теряет ВСЕ связи карточки с кадрами, где написано
+   * «Анна», — молча, потому что счётчики в панели просто обнулятся. Поэтому перед сохранением
+   * спрашиваем у владельца кадров, осталось ли старое имя в тексте, и если да — дописываем его в
+   * алиасы и говорим об этом в примечании. Убрать алиас можно тут же, в списке алиасов: это не
+   * скрытое решение, а сохранение уже существующих связей.
+   */
   const save = useCallback(
     async (id: string) => {
       setBusy(true)
       setNote(null)
       try {
+        const previous = entities.find((entity) => entity.id === id)
+        const nextName = draftName.trim()
+        let nextAliases = splitAliases(draftAliases)
+        let keptOldName: { name: string; count: number } | null = null
+        if (previous !== undefined && previous.name !== nextName && countMentionsOf !== undefined) {
+          const oldName = previous.name
+          const already =
+            [...nextAliases, nextName].some(
+              (candidate) => candidate.toLowerCase() === oldName.toLowerCase(),
+            ) || [...oldName.trim()].length < MIN_ALIAS_LENGTH
+          if (!already) {
+            const count = countMentionsOf(oldName)
+            if (count > 0) {
+              nextAliases = [...nextAliases, oldName]
+              keptOldName = { name: oldName, count }
+            }
+          }
+        }
         await updateEntity(projectId, id, {
-          name: draftName.trim(),
-          aliases: splitAliases(draftAliases),
+          name: nextName,
+          aliases: nextAliases,
           description: draftDescription.trim(),
         })
         setEditing(null)
-        setNote({ kind: 'ok', text: 'Изменения сохранены.' })
+        if (keptOldName !== null) {
+          const times = plural(keptOldName.count, 'раз', 'раза', 'раз')
+          setNote({
+            kind: 'ok',
+            text:
+              `Изменения сохранены. Прежнее имя «${keptOldName.name}» оставлено в алиасах: ` +
+              `в тексте оно встречается ${times}, и без него эти связи потерялись бы.`,
+          })
+        } else {
+          setNote({ kind: 'ok', text: 'Изменения сохранены.' })
+        }
         reload()
       } catch (e) {
         setNote({ kind: 'error', text: await explain(e, 'Не удалось сохранить.') })
@@ -318,7 +366,7 @@ export function EntitiesPanel({
         setBusy(false)
       }
     },
-    [draftAliases, draftDescription, draftName, projectId, reload],
+    [countMentionsOf, draftAliases, draftDescription, draftName, entities, projectId, reload],
   )
 
   const remove = useCallback(

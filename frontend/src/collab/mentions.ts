@@ -106,6 +106,30 @@ export function frameMentions(frame: MentionFrame, entities: MentionEntity[]): M
 }
 
 /**
+ * Сколько раз имя встречается в тексте проекта (0.97.4).
+ *
+ * Нужно ровно для одного решения: переименование карточки. Упоминания ищутся по имени и алиасам,
+ * поэтому «Анна» → «Аня» без старого имени в алиасах молча теряет все связи с текстом — счётчики
+ * в панели падают до нуля, а в тексте по-прежнему написано «Анна». Перед сохранением мы считаем
+ * этим счётчиком, осталось ли старое имя в тексте, и если да — оставляем его алиасом.
+ *
+ * Считает ТЕМ ЖЕ поиском (`findMentions`), а не отдельной регуляркой: иначе границы слова,
+ * регистр и маскирование маркеров DOCX однажды разъехались бы с настоящими упоминаниями, и
+ * «осталось 0» оказалось бы неправдой именно там, где решение принимается.
+ */
+export function countNameMentions(frames: MentionFrame[], name: string): number {
+  const trimmed = name.trim()
+  if (trimmed === '') return 0
+  const probe: MentionEntity[] = [{ id: '_probe', name: trimmed, aliases: [] }]
+  let total = 0
+  for (const frame of frames) {
+    total += findMentions(frame.title, probe, 'title').length
+    total += findMentions(frame.body, probe, 'body').length
+  }
+  return total
+}
+
+/**
  * Упоминания одной карточки в кадре (0.92.1).
  *
  * Зачем группировать. Раньше список показывал КАЖДОЕ вхождение: в кадре, где Ганимед назван

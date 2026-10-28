@@ -7,6 +7,7 @@ import {
   type EventTreeNode,
 } from '../../collab/eventTree'
 import {
+  countNameMentions,
   entityUsage,
   framesByEntity,
   mentionMatrix,
@@ -184,6 +185,18 @@ export function RelationsPanel({ projectId, canEdit, onOpenFrame }: Props) {
 
   const usage = useMemo(() => entityUsage(mentionFrames, entities), [mentionFrames, entities])
 
+  /**
+   * Сколько раз имя встречается в тексте проекта — для переименования (0.97.4).
+   *
+   * Считается тем же поиском, что и упоминания: панель карточек получает ответ и, если старое имя
+   * ещё есть в тексте, оставляет его алиасом. Иначе «Анна» → «Аня» рвёт все связи карточки с
+   * кадрами, не сказав об этом ни слова.
+   */
+  const countMentionsOf = useCallback(
+    (name: string) => countNameMentions(mentionFrames, name),
+    [mentionFrames],
+  )
+
   const framesByEntityData = useMemo<Record<string, FrameWithMentions[]>>(() => {
     const dated: DatedFrame[] = rows.map((row) => ({
       id: row.id,
@@ -277,6 +290,7 @@ export function RelationsPanel({ projectId, canEdit, onOpenFrame }: Props) {
         loaded={loaded}
         reload={() => void reload()}
         usage={usage}
+        countMentionsOf={countMentionsOf}
         framesByEntity={framesByEntityData}
         onOpenFrame={openFrame}
         matrix={matrix}

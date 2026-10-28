@@ -154,6 +154,78 @@ describe('EntitiesPanel', () => {
     expect(reload).toHaveBeenCalled()
   })
 
+  /**
+   * Переименование и текст (0.97.4). Упоминания ищутся по имени и алиасам, поэтому «Анна» → «Аня»
+   * без старого имени в алиасах молча рвёт все связи карточки с кадрами, где написано «Анна».
+   * Панель карточек текста не видит и спрашивает счётчик у владельца кадров.
+   */
+  it('переименование оставляет прежнее имя в алиасах, если оно есть в тексте', async () => {
+    mocks.update.mockResolvedValue(entity({ name: 'Аня' }))
+    const countMentionsOf = vi.fn().mockReturnValue(12)
+    const { reload } = panel({ entities: [entity()], countMentionsOf })
+    await screen.findByText('Анна')
+
+    fireEvent.click(screen.getByLabelText('Изменить карточку Анна'))
+    fireEvent.change(screen.getByLabelText('Имя карточки Анна'), { target: { value: 'Аня' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }))
+
+    await waitFor(() =>
+      expect(mocks.update).toHaveBeenCalledWith('p1', 'e1', {
+        name: 'Аня',
+        aliases: ['Аня', 'Анна'],
+        description: '',
+      }),
+    )
+    expect(countMentionsOf).toHaveBeenCalledWith('Анна')
+    // Сказать об этом обязательно: алиас добавлен без просьбы, и человек должен видеть, почему.
+    expect(await screen.findByText(/Прежнее имя «Анна» оставлено в алиасах/)).toBeTruthy()
+    expect(screen.getByText(/встречается 12 раз/)).toBeTruthy()
+    expect(reload).toHaveBeenCalled()
+  })
+
+  it('если прежнего имени в тексте нет — алиасы не трогаем', async () => {
+    mocks.update.mockResolvedValue(entity({ name: 'Аня' }))
+    const countMentionsOf = vi.fn().mockReturnValue(0)
+    panel({ entities: [entity()], countMentionsOf })
+    await screen.findByText('Анна')
+
+    fireEvent.click(screen.getByLabelText('Изменить карточку Анна'))
+    fireEvent.change(screen.getByLabelText('Имя карточки Анна'), { target: { value: 'Аня' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }))
+
+    await waitFor(() =>
+      expect(mocks.update).toHaveBeenCalledWith('p1', 'e1', {
+        name: 'Аня',
+        aliases: ['Аня'],
+        description: '',
+      }),
+    )
+    expect(screen.queryByText(/оставлено в алиасах/)).toBeNull()
+  })
+
+  it('прежнее имя уже в алиасах — второй раз не добавляем и не считаем', async () => {
+    mocks.update.mockResolvedValue(entity({ name: 'Аня' }))
+    const countMentionsOf = vi.fn().mockReturnValue(7)
+    panel({
+      entities: [entity({ aliases: ['Аня', 'анна'] })],
+      countMentionsOf,
+    })
+    await screen.findByText('Анна')
+
+    fireEvent.click(screen.getByLabelText('Изменить карточку Анна'))
+    fireEvent.change(screen.getByLabelText('Имя карточки Анна'), { target: { value: 'Аня' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }))
+
+    await waitFor(() =>
+      expect(mocks.update).toHaveBeenCalledWith('p1', 'e1', {
+        name: 'Аня',
+        aliases: ['Аня', 'анна'],
+        description: '',
+      }),
+    )
+    expect(countMentionsOf).not.toHaveBeenCalled()
+  })
+
   it('удаление требует подтверждения', async () => {
     const { reload } = panel({ entities: [entity()] })
     await screen.findByText('Анна')
