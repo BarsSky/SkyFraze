@@ -33,7 +33,7 @@ async function main() {
   await signIn(page)
   await attachPasskey(page)
 
-  await page.goto(`${BASE}/coauthors`)
+  await page.goto(`${BASE}/profile`)
   const section = page.locator('[data-two-factor]')
   await section.waitFor({ state: 'visible', timeout: 30_000 })
   await page.locator('[data-logins-list]').waitFor({ state: 'visible', timeout: 20_000 })
@@ -81,7 +81,7 @@ async function signIn(page: Page) {
 }
 
 async function attachPasskey(page: Page) {
-  await page.goto(`${BASE}/coauthors`)
+  await page.goto(`${BASE}/profile`)
   await page.locator('[data-passkeys]').waitFor({ state: 'visible', timeout: 20_000 })
   if (await page.locator('[data-passkeys-list]').count()) return
 

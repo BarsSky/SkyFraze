@@ -71,7 +71,17 @@ describe('Header — навигация на узком экране', () => {
     const nav = view.container.querySelector('nav') as HTMLElement
     expect(within(nav).getByText('Резиденты')).toBeTruthy()
     expect(within(nav).getByText('Админка')).toBeTruthy()
+    // «Профиль» — в строке (0.99.0), и он ведёт на свою страницу, а не на «Соавторов».
+    const profile = within(nav).getByRole('link', { name: 'Профиль' })
+    expect(profile.getAttribute('href')).toBe('/profile')
     expect(view.container.querySelector('[data-header-more]')).toBeNull()
+  })
+
+  it('имя в шапке ведёт в профиль, а не в соавторов (0.99.0)', () => {
+    stubViewport(1200)
+    const view = renderHeader()
+    const nameLink = view.container.querySelector('.header-user') as HTMLAnchorElement
+    expect(nameLink.getAttribute('href')).toBe('/profile')
   })
 
   it('на телефоне в строке остаются главные пункты, остальное — в меню', async () => {
@@ -94,6 +104,9 @@ describe('Header — навигация на узком экране', () => {
     expect(within(menu).getByText('Админка')).toBeTruthy()
     expect(within(menu).getByText('Лента')).toBeTruthy()
     expect(within(menu).getByText('Соавторы')).toBeTruthy()
+    // Своя учётная запись — отдельным пунктом (0.99.0): до этого профиля в навигации не было,
+    // а всё про вход жило на странице «Соавторы».
+    expect(within(menu).getByText('Профиль')).toBeTruthy()
 
     fireEvent.keyDown(window, { key: 'Escape' })
     expect(screen.queryByRole('menu')).toBeNull()

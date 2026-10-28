@@ -199,7 +199,15 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
 .layout {
   display: grid;
   grid-template-rows: auto 1fr;
+  /* `100vh` на телефоне ВЫШЕ видимой области: в него входят адресная строка и панели браузера.
+     Прокручивается не документ, а вложенный `main` этой высоты — и его низ оказывался под панелью
+     браузера, откуда последний блок не достать прокруткой (отчёт 0.99.0: «в Админке поле
+     „Пользователи“ частично за экраном, и его никак не достать»). `dvh` — та же высота, но по
+     ВИДИМОЙ области; `vh` остаётся запасным вариантом для движков без `dvh`. */
   height: 100vh;
+}
+@supports (height: 100dvh) {
+  .layout { height: 100dvh; }
 }
 .layout header {
   padding: var(--sf-header-pad, 12px) 24px;
@@ -226,7 +234,13 @@ html.sf-stage-on .layout header {
 }
 .layout main {
   padding: 24px;
+  /* Низ — с запасом на системный индикатор телефона (полоска «домой»): последняя строка списка
+     не должна лежать прямо на нём и не должна оказываться под ним недоступной. */
+  padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
   overflow: auto;
+  /* Жест в конце списка не «проваливается» в родителя: страница не дёргается при прокрутке до
+     конца (жалоба «прокручиваю вниз и не достать» начинается ровно с такого рывка). */
+  overscroll-behavior: contain;
   background: var(--bg);
 }
 .error { color: var(--danger); margin: 8px 0; }

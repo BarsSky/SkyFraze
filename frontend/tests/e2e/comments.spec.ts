@@ -195,15 +195,19 @@ test('колокольчик показывает, что новых замеч�
  * Согласие на письма о замечаниях — галочка в профиле, и по умолчанию она снята.
  *
  * Проверяем именно умолчание: текст проекта уходит на почтовый сервер, и включаться это
- * должно только осознанно (docs/comments.md §5.2).
+ * должно только осознанно (docs/comments.md §5.2). С 0.99.0 галочка живёт на вкладке «Профиль»
+ * (раньше — на «Соавторах»), поэтому проверяем и то, что до неё есть вход из навигации.
  */
 test('в профиле есть галочка «присылать замечания на почту», по умолчанию снята', async ({ page }) => {
   test.skip(!(await signIn(page)), 'учётной записи e2e нет и регистрация закрыта')
 
-  await page.goto('/coauthors')
+  await page.goto('/profile')
   const toggle = page.locator('[data-notify-comments]')
   await expect(toggle).toBeVisible({ timeout: 30_000 })
   await expect(toggle).not.toBeChecked()
   // И рядом честное объяснение, что текст уходит на почтовый сервер.
   await expect(page.getByText(/письмо уходит на почтовый сервер/i)).toBeVisible()
+  // Вход в профиль из шапки: «Профиль» есть в навигации (на узком экране — в меню «Ещё»).
+  await page.goto('/projects')
+  await expect(page.locator('header').getByRole('link', { name: 'Профиль' })).toHaveCount(1)
 })

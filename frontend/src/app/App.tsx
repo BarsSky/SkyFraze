@@ -42,6 +42,7 @@ const CoauthorsPage = lazy(() =>
   import('../pages/CoauthorsPage').then((m) => ({ default: m.CoauthorsPage })),
 )
 const PeoplePage = lazy(() => import('../pages/PeoplePage').then((m) => ({ default: m.PeoplePage })))
+const ProfilePage = lazy(() => import('../pages/ProfilePage').then((m) => ({ default: m.ProfilePage })))
 
 /**
  * Место страницы внутри каркаса: тонкая полоска загрузки вместо пустоты.
@@ -135,6 +136,13 @@ export function App() {
         <Route
           path="/coauthors"
           element={<RequireAuth><AuthLayout><Page><CoauthorsPage /></Page></AuthLayout></RequireAuth>}
+        />
+        {/* «Профиль» (0.99.0): имя, ник, резюме, видимость в каталоге, ключи доступа и журнал
+            входов. До этого всё это жило на странице «Соавторы», и своей вкладки у учётной записи
+            не было вовсе. */}
+        <Route
+          path="/profile"
+          element={<RequireAuth><AuthLayout><Page><ProfilePage /></Page></AuthLayout></RequireAuth>}
         />
         {/* Каталог резидентов: только вошедшим — это люди инсталляции, а не витрина */}
         <Route

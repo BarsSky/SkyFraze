@@ -96,6 +96,9 @@ export function Header() {
     { to: '/coauthors', label: 'Соавторы' },
     // Каталог зарегистрированных: кто здесь есть и чем занимается
     { to: '/people', label: 'Резиденты' },
+    // Своя учётная запись — отдельной вкладкой (0.99.0): до этого имя, ник, резюме, ключи доступа
+    // и журнал входов жили на странице «Соавторы», и «профиля» в навигации не было вовсе.
+    { to: '/profile', label: 'Профиль' },
   ]
   if (user?.is_admin) links.push({ to: '/admin', label: 'Админка' })
 
@@ -159,9 +162,9 @@ export function Header() {
       <div className="row" style={{ gap: 8 }}>
         {user && (
           <Link
-            to="/coauthors"
+            to="/profile"
             className="header-user"
-            title={`${user.email} — профиль и круг соавторов`}
+            title={`${user.email} — профиль: имя, ник, ключи доступа и журнал входов`}
           >
             {user.display_name}
             {user.username ? ` · @${user.username}` : ''}

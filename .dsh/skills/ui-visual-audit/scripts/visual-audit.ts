@@ -602,35 +602,62 @@ async function visualScreens(browser: Browser, errors: string[], slug: string | 
         })
       }
 
-      // соавторы: поиск людей по нику, специализации, доступ к закрытым проектам
+      // соавторы: поиск людей по нику, специализации, доступ к закрытым проектам.
+      // Профиль (имя, ник, резюме, ключи, журнал входов) с 0.99.0 живёт на своей вкладке
+      // `/profile` — отчёт «нету вкладки пользователя, всё про вход в Соавторах». Здесь проверяем
+      // и то, и другое: круг соавторов с поиском и профиль на своей странице.
       await page.goto(`${BASE}/coauthors`)
-      await page.waitForSelector('[data-profile]', { timeout: 20000 }).catch(() => null)
+      await page.waitForSelector('[data-coauthors]', { timeout: 20000 }).catch(() => null)
       await page.waitForTimeout(700)
       name = `${vp.tag}-${theme}-coauthors`
       await shot(page, name)
       applyProbe(await probe(page), 'coauthors', vp.tag, name)
       const coauthorState = (await page.evaluate(`(() => {
-        const nick = document.querySelector('[data-profile] input[aria-label="Ваш ник"]')
         const search = document.querySelector('input[aria-label="Поиск людей по нику или имени"]')
         return {
-          hasProfile: !!document.querySelector('[data-profile]'),
-          nick: nick ? nick.value : null,
           hasSearch: !!search,
+          hasProfileLink: !!document.querySelector('[data-profile-link] a[href="/profile"]'),
           coauthors: document.querySelectorAll('[data-coauthors] .coauthors__row').length,
         }
-      })()`)) as { hasProfile: boolean; nick: string | null; hasSearch: boolean; coauthors: number }
-      if (!coauthorState.hasProfile || !coauthorState.hasSearch) {
+      })()`)) as { hasSearch: boolean; hasProfileLink: boolean; coauthors: number }
+      if (!coauthorState.hasSearch || !coauthorState.hasProfileLink) {
         add({
           severity: 'error', area: 'visual', screen: 'coauthors', viewport: vp.tag,
           check: 'страница соавторов', detail: JSON.stringify(coauthorState),
           where: 'CoauthorsPage',
         })
       } else {
-        pass('coauthors', vp.tag, `соавторов: ${coauthorState.coauthors}, ник: @${coauthorState.nick}`)
+        pass('coauthors', vp.tag, `соавторов: ${coauthorState.coauthors}, вход в профиль есть`)
       }
-      if (!coauthorState.nick) {
+
+      // профиль: имя, ник, резюме и настройки входа — на своей вкладке (0.99.0).
+      await page.goto(`${BASE}/profile`)
+      await page.waitForSelector('[data-profile]', { timeout: 20000 }).catch(() => null)
+      await page.waitForTimeout(700)
+      name = `${vp.tag}-${theme}-profile`
+      await shot(page, name)
+      applyProbe(await probe(page), 'profile', vp.tag, name)
+      const profileState = (await page.evaluate(`(() => {
+        const nick = document.querySelector('[data-profile] input[aria-label="Ваш ник"]')
+        const keys = document.querySelector('[data-profile] [data-testid], [data-profile] .account-2fa, [data-profile] h4')
+        return {
+          hasProfile: !!document.querySelector('[data-profile]'),
+          nick: nick ? nick.value : null,
+          hasSecurity: !!keys,
+        }
+      })()`)) as { hasProfile: boolean; nick: string | null; hasSecurity: boolean }
+      if (!profileState.hasProfile) {
         add({
-          severity: 'error', area: 'functional', screen: 'coauthors', viewport: vp.tag,
+          severity: 'error', area: 'functional', screen: 'profile', viewport: vp.tag,
+          check: 'страница профиля', detail: JSON.stringify(profileState),
+          where: 'ProfilePage',
+        })
+      } else {
+        pass('profile', vp.tag, `профиль на месте, ник: @${profileState.nick ?? '—'}`)
+      }
+      if (!profileState.nick) {
+        add({
+          severity: 'error', area: 'functional', screen: 'profile', viewport: vp.tag,
           check: 'ник пользователя', detail: 'пустой ник — человека не найти поиском',
           where: 'auth/service.go (генерация ника) / ProfileCard',
         })
