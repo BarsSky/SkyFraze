@@ -707,14 +707,49 @@
 .ent__mention-image-picker select { flex: 1 1 180px; min-width: 0; max-width: 100%; }
 .ent__mention-image-picker button { min-height: 32px; }
 
-/* ─── связи карточек в списке (0.74.0) ─────────────────────────────────────── */
-.ent__links { display: inline-flex; gap: 6px; flex-wrap: wrap; align-items: center; }
-.ent__link {
-  display: inline-flex; align-items: baseline; gap: 4px;
-  border: 1px dashed var(--border); border-radius: 999px; padding: 1px 8px; font-size: 12px;
+/* ─── связи карточек в списке (0.74.0 → 0.97.2) ──────────────────────────────
+   Раньше связи были чипами в общем потоке карточки: при перечислении они сливались («список
+   связей сливается»), а длинное название расползало ряд — чип переносился как обычный текст,
+   без границ. Теперь это СПИСОК: своя строка во всю ширину карточки, подпись, и каждая связь —
+   отдельная плашка с рамкой и отступом. Правило простое: у каждой связи своя строка, и её
+   границы видно, даже когда связей пять. */
+.ent__links {
+  flex: 1 0 100%;
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
 }
-.ent__link-label { opacity: 0.75; }
-.ent__link-name { font-weight: 600; }
+.ent__links-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fg-muted);
+}
+.ent__link {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent, var(--fg));
+  border-radius: 8px;
+  background: var(--bg);
+  font-size: 12px;
+}
+.ent__link-label { color: var(--fg-muted); white-space: nowrap; }
+.ent__link-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
 .ent__link-remove {
   background: none; border: none; padding: 0 2px; margin: 0; cursor: pointer;
   color: var(--fg-muted); font-size: 13px; line-height: 1;
@@ -722,7 +757,9 @@
      невозможно попасть пальцем (нашёл живой аудит 0.77.0). 26 px — рабочий минимум на мыши,
      на телефоне увеличивается в медиа-запросе ниже. */
   display: inline-flex; align-items: center; justify-content: center;
-  min-width: 26px; min-height: 26px; margin-left: 2px; border-radius: 6px;
+  min-width: 26px; min-height: 26px; margin-left: auto; border-radius: 6px;
+  /* В строке связи «×» стоит у правого края: плашка тянется на всю ширину, и кнопка не должна
+     прыгать вслед за текстом. */
 }
 .ent__link-remove:hover { color: var(--danger); background: var(--bg-elev); }
 /* Медиа-запрос идёт ПОСЛЕ базового правила: при равной специфичности выигрывает то, что ниже.

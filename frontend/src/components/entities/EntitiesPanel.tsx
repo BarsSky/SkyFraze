@@ -420,9 +420,12 @@ export function EntitiesPanel({
                       {entity.description}
                     </span>
                   )}
-                  {/* Связи с другими карточками (0.74.0): чип показывает подпись и сторону. */}
+                  {/* Связи с другими карточками (0.74.0 → 0.97.2): список под своей подписью.
+                      До этого связи шли чипами в общем потоке карточки — при перечислении
+                      сливались друг с другом, а длинный текст расползал ряд. */}
                   {!editing && entityLinks(entity.id).length > 0 && (
                     <span className="ent__links" data-entity-links>
+                      <span className="ent__links-title">Связи</span>
                       {entityLinks(entity.id).map((connection) => (
                         <span
                           key={connection.link.id}

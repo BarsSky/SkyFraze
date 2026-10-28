@@ -860,6 +860,11 @@ cd frontend && npx tsx tests/diag-mentions.ts
 # серверу, «отвязать» её убирает. Проект создаётся и удаляется скриптом.
 cd frontend && npx tsx tests/diag-mention-image.ts
 
+# Список связей в карточке (0.97.2): четыре карточки и пять связей, включая длинное имя. Проверяем,
+# что у каждой связи своя строка с зазором, строки не вылезают за панель и не расползаются
+# (1280 и 360 px). Проект создаётся и удаляется скриптом. Снимки: entity-links-desktop/mobile.png
+cd frontend && npx tsx tests/diag-entity-links.ts
+
 # E2E публичной ленты: права, просмотры, оценки
 cd frontend && npx tsx tests/public-feed.ts
 

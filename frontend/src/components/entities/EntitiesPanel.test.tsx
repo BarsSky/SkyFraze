@@ -464,6 +464,28 @@ describe('EntitiesPanel — связи карточек (0.74.0)', () => {
     await screen.findAllByText('Аня')
     expect(screen.queryByLabelText('Убрать связь с Земля')).toBeNull()
   })
+
+  it('связи — список под подписью, и у каждой связи своя строка (0.97.2)', async () => {
+    const third = entity({ id: 'e3', name: 'Сторож', aliases: [] })
+    panel({
+      entities: [anna, earth, third],
+      links: [
+        link,
+        { ...link, id: 'l2', to_entity: 'e3', label: 'боится' },
+      ],
+    })
+    await screen.findAllByText('Аня')
+    // Подпись блока: раньше связи шли без неё и сливались с остальными полями карточки.
+    expect(screen.getAllByText('Связи').length).toBeGreaterThan(0)
+    // Каждая связь — отдельная строка списка (data-entity-link), а не общий поток чипов.
+    const rows = document.querySelectorAll('[data-entity-link]')
+    expect(rows.length).toBeGreaterThanOrEqual(2)
+    for (const row of rows) {
+      // У связи две стороны: у Ани — «→ живёт на», у Земли — «← живёт на». Важно, что у каждой
+      // стороны своя строка и в ней есть подпись, а не только имя.
+      expect(row.textContent).toMatch(/(→|←) (живёт на|боится)/)
+    }
+  })
 })
 
 describe('EntitiesPanel — «связать» из карточки (0.76.0)', () => {
