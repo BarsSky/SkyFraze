@@ -11,6 +11,7 @@ import {
 } from '../../collab/graph'
 import { buildNeighborhood } from '../../collab/neighborhood'
 import { buildEntityIndex, searchEntities, type EntitySearchHit } from '../../lib/entitySearch'
+import { readGraphView, writeGraphView } from '../../lib/graphView'
 
 /**
  * Эго-граф связей: карточка в центре, её связи вокруг (0.75.0).
@@ -38,6 +39,11 @@ interface Props {
    * констант — «Фракция» это название из проекта человека.
    */
   types?: EntityType[]
+  /**
+   * Проект, к которому относится граф (0.101.0). Нужен, чтобы запомнить выбранный уровень
+   * («мир» или карточка) и открытую группу: без него состояние приходилось бы выбирать заново.
+   */
+  projectId?: string
 }
 
 const HISTORY_LIMIT = 10
@@ -65,7 +71,7 @@ function useReducedMotion(): boolean {
   return reduced
 }
 
-export function EntityGraph({ entities, links, tall = false, types = [] }: Props) {
+export function EntityGraph({ entities, links, tall = false, types = [], projectId }: Props) {
   /** Откуда пришли: стек последних центров, «назад» снимает верхний. */
   const [history, setHistory] = useState<string[]>([])
   const [centerId, setCenterId] = useState<string | null>(null)
@@ -86,6 +92,8 @@ export function EntityGraph({ entities, links, tall = false, types = [] }: Props
    * останавливается, когда новых карточек нет (`buildNeighborhood`).
    */
   const [depth, setDepth] = useState(1)
+  /** Свёрнутые подгруппы (0.101.0): подписи связей, которые человек свернул в открытой группе. */
+  const [collapsedClusters, setCollapsedClusters] = useState<string[]>([])
   /**
    * Какая карточка раскрыта в окне графа (0.78.0 → 0.84.0).
    *
@@ -237,6 +245,70 @@ export function EntityGraph({ entities, links, tall = false, types = [] }: Props
   const mainKind = groups[0]?.kind ?? null
 
   /**
+   * Подгруппы открытой группы — по **подписям связей** (0.101.0, решение из отчёта: «подгруппа как
+   * предлагаешь»).
+   *
+   * Почему так, а не ручные группы: подпись связи уже есть в данных («живёт на», «боится»), и она
+   * отвечает на вопрос «что связывает этих людей внутри группы». Одна карточка может попасть в две
+   * подгруппы — у Ани есть и «живёт на», и «боится», — и это честно: подгруппа здесь не папка, а
+   * отношение. Карточки без связей идут отдельной подгруппой «вне связей», чтобы их было видно.
+   */
+  const clusters = useMemo(() => {
+    const active = groups.find((group) => group.kind === groupKind) ?? null
+    if (active === null) return { labels: [], isolated: [] as ProjectEntity[] }
+    const byLabel = new Map<
+      string,
+      Array<{ card: ProjectEntity; other: string; direction: 'out' | 'in' }>
+    >()
+    for (const card of active.cards) {
+      for (const connection of connectionsOf(card.id, links, entities)) {
+        const list = byLabel.get(connection.link.label) ?? []
+        // Одна строка на пару «подпись × карточка»: две одинаковые связи не должны дублировать строку.
+        if (list.some((item) => item.card.id === card.id)) continue
+        list.push({ card, other: connection.other.name, direction: connection.direction })
+        byLabel.set(connection.link.label, list)
+      }
+    }
+    const labels = [...byLabel.entries()]
+      .map(([label, items]) => ({ label, items }))
+      .sort((a, b) => b.items.length - a.items.length || a.label.localeCompare(b.label, 'ru'))
+    const isolated = active.cards.filter((card) => connectionsOf(card.id, links, entities).length === 0)
+    return { labels, isolated }
+  }, [entities, groupKind, groups, links])
+
+  const toggleCluster = useCallback((label: string) => {
+    setCollapsedClusters((current) =>
+      current.includes(label) ? current.filter((item) => item !== label) : [...current, label],
+    )
+  }, [])
+
+  // Запомненный уровень (0.101.0): человек, который смотрит мир по группам, возвращается туда же.
+  //
+  // Запись делается НЕ эффектом «на любое изменение», а явно в переходах (`persist`): в dev-режиме
+  // компонент монтируется дважды (StrictMode), и эффект записи на монтировании успевал записать
+  // значение по умолчанию раньше, чем второй монтаж прочитает сохранённое. Живая проверка ловила
+  // это как «уровень не запомнился». Явная запись в действиях человека от порядка монтирования не
+  // зависит.
+  const restoredRef = useRef(false)
+  useEffect(() => {
+    if (projectId) {
+      const saved = readGraphView(projectId)
+      if (saved !== null) {
+        setLevel(saved.level)
+        setGroupKind(saved.groupKind)
+      }
+    }
+    restoredRef.current = true
+  }, [projectId])
+
+  const persist = useCallback(
+    (next: { level: 'world' | 'card'; groupKind: string | null }) => {
+      if (projectId) writeGraphView(projectId, next)
+    },
+    [projectId],
+  )
+
+  /**
    * Окрестность по уровням: «глубже» без верхней границы (0.100.0).
    *
    * Уровень 1 — то, что уже нарисовано вокруг центра; уровни 2+ показываем списком под холстом.
@@ -276,6 +348,7 @@ export function EntityGraph({ entities, links, tall = false, types = [] }: Props
         onClick: () => {
           setLevel('world')
           setGroupKind(null)
+          persist({ level: 'world', groupKind: null })
         },
       },
     ]
@@ -285,11 +358,12 @@ export function EntityGraph({ entities, links, tall = false, types = [] }: Props
         onClick: () => {
           setLevel('world')
           setGroupKind(group.kind)
+          persist({ level: 'world', groupKind: group.kind })
         },
       })
     }
     return out
-  }, [center, groups])
+  }, [center, groups, persist])
   useEffect(() => {
     if (expanded === null) return undefined
     const onKey = (event: KeyboardEvent) => {
@@ -444,6 +518,7 @@ export function EntityGraph({ entities, links, tall = false, types = [] }: Props
       if (groups.length === 0) return
       const next = index < 0 ? 0 : (index + delta + groups.length) % groups.length
       setGroupKind(groups[next].kind)
+      persist({ level: 'world', groupKind: groups[next].kind })
     }
     return (
       <div className={tall ? 'egraph egraph--tall' : 'egraph'} data-entity-graph="world">
@@ -469,7 +544,10 @@ export function EntityGraph({ entities, links, tall = false, types = [] }: Props
                 key={group.kind}
                 type="button"
                 className={group.kind === mainKind ? 'egraph__group is-main' : 'egraph__group'}
-                onClick={() => setGroupKind(group.kind)}
+                onClick={() => {
+                  setGroupKind(group.kind)
+                  persist({ level: 'world', groupKind: group.kind })
+                }}
                 data-entity-graph-group={group.kind}
                 aria-label={`Группа «${group.title}»: карточек ${group.cards.length}`}
               >
@@ -512,29 +590,79 @@ export function EntityGraph({ entities, links, tall = false, types = [] }: Props
               </button>
             </div>
             <ul className="egraph__list" data-entity-graph-group-list>
-              {active.cards.map((card) => {
-                const count = connectionsOf(card.id, links, entities).length
+              {/* Подгруппы по подписям связей (0.101.0): «живёт на · 2», «боится · 1». Свёрнутые
+                  запоминаются на время просмотра — это движение внутри группы, а не настройка. */}
+              {clusters.labels.map((cluster) => {
+                const collapsed = collapsedClusters.includes(cluster.label)
                 return (
-                  <li key={card.id}>
+                  <li key={cluster.label} className="egraph__cluster" data-entity-graph-cluster={cluster.label}>
                     <button
                       type="button"
-                      className="egraph__row"
-                      onClick={() => {
-                        setLevel('card')
-                        setDepth(1)
-                        setExpanded(card.id)
-                        setCenterId(card.id)
-                      }}
-                      data-entity-graph-group-card={card.id}
+                      className="egraph__cluster-head"
+                      aria-expanded={!collapsed}
+                      onClick={() => toggleCluster(cluster.label)}
+                      data-entity-graph-cluster-toggle={cluster.label}
                     >
-                      <span className="egraph__row-name">{card.name}</span>
-                      <span className="muted">
-                        {count === 0 ? 'вне связей' : `${count} ${count === 1 ? 'связь' : 'связей'}`}
-                      </span>
+                      <span className="egraph__cluster-name">{cluster.label}</span>
+                      <span className="muted">{cluster.items.length}</span>
                     </button>
+                    {!collapsed && (
+                      <ul className="egraph__cluster-list">
+                        {cluster.items.map((item) => (
+                          <li key={item.card.id}>
+                            <button
+                              type="button"
+                              className="egraph__row"
+                              onClick={() => {
+                                setLevel('card')
+                                setDepth(1)
+                                setExpanded(item.card.id)
+                                setCenterId(item.card.id)
+                                persist({ level: 'card', groupKind: null })
+                              }}
+                              data-entity-graph-group-card={item.card.id}
+                            >
+                              <span className="egraph__row-name">{item.card.name}</span>
+                              <span className="muted">
+                                {item.direction === 'out' ? '→' : '←'} {item.other}
+                              </span>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                   </li>
                 )
               })}
+              {clusters.isolated.length > 0 && (
+                <li className="egraph__cluster" data-entity-graph-cluster="isolated">
+                  <span className="egraph__cluster-head" data-entity-graph-cluster-isolated>
+                    <span className="egraph__cluster-name">вне связей</span>
+                    <span className="muted">{clusters.isolated.length}</span>
+                  </span>
+                  <ul className="egraph__cluster-list">
+                    {clusters.isolated.map((card) => (
+                      <li key={card.id}>
+                        <button
+                          type="button"
+                          className="egraph__row"
+                          onClick={() => {
+                            setLevel('card')
+                            setDepth(1)
+                            setExpanded(card.id)
+                            setCenterId(card.id)
+                            persist({ level: 'card', groupKind: null })
+                          }}
+                          data-entity-graph-group-card={card.id}
+                        >
+                          <span className="egraph__row-name">{card.name}</span>
+                          <span className="muted">связей нет</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </li>
+              )}
             </ul>
             {active.cards.length === 0 && (
               <p className="muted">

@@ -278,17 +278,43 @@ describe('EntityGraph — мир, группы и поиск по меткам (
     expect(groups[1].textContent).toContain('связей 3')
   })
 
-  it('вход в группу показывает её карточки и «вне связей» у одиночек', async () => {
+  it('вход в группу показывает подгруппы по подписям связей (0.101.0)', async () => {
     render(<EntityGraph entities={[anna, earth, bob]} links={links} types={types} />)
     fireEvent.click(await screen.findByRole('button', { name: 'Мир' }))
     fireEvent.click(screen.getByRole('button', { name: /Группа «Персонаж»/ }))
-    const rows = document.querySelectorAll('[data-entity-graph-group-card]')
-    expect(rows).toHaveLength(2)
-    // «Аня» связана — у неё число связей, «Борис» связан тоже (через Аню).
-    expect(rows[0].textContent).toContain('связей')
-    // Карточка из группы открывается в центре графа.
-    fireEvent.click(rows[1])
+
+    const labels = Array.from(document.querySelectorAll('[data-entity-graph-cluster]')).map((node) =>
+      node.getAttribute('data-entity-graph-cluster'),
+    )
+    expect(labels).toEqual(['боится', 'живёт на'])
+    // В «живёт на» — только Аня (второй конец связи в другой группе), в «боится» — Аня и Борис.
+    const ziv = document.querySelector('[data-entity-graph-cluster="живёт на"]') as HTMLElement
+    const boitsya = document.querySelector('[data-entity-graph-cluster="боится"]') as HTMLElement
+    expect(ziv.querySelectorAll('[data-entity-graph-group-card]')).toHaveLength(1)
+    expect(boitsya.querySelectorAll('[data-entity-graph-group-card]')).toHaveLength(2)
+    // У строки видно, с кем связь: «→ Земля», «← Аня».
+    expect(ziv.textContent).toContain('→ Земля')
+    expect(boitsya.textContent).toContain('← Аня')
+
+    // Подгруппа сворачивается: это состояние просмотра, а не настройка.
+    fireEvent.click(ziv.querySelector('[data-entity-graph-cluster-toggle]') as HTMLButtonElement)
+    expect(ziv.querySelector('[data-entity-graph-cluster-toggle]')?.getAttribute('aria-expanded')).toBe('false')
+    expect(ziv.querySelectorAll('[data-entity-graph-group-card]')).toHaveLength(0)
+
+    // Карточка из подгруппы открывается в обозревателе.
+    fireEvent.click(boitsya.querySelectorAll('[data-entity-graph-group-card]')[1] as HTMLButtonElement)
     expect(await screen.findByRole('dialog', { name: 'Карточка Борис' })).toBeTruthy()
+  })
+
+  it('карточка без связей попадает в подгруппу «вне связей»', async () => {
+    const lonely = card('e9', 'Сторож')
+    render(<EntityGraph entities={[anna, earth, bob, lonely]} links={links} types={types} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Мир' }))
+    fireEvent.click(screen.getByRole('button', { name: /Группа «Персонаж»/ }))
+    const isolated = document.querySelector('[data-entity-graph-cluster="isolated"]') as HTMLElement
+    expect(isolated.textContent).toContain('вне связей')
+    expect(isolated.textContent).toContain('Сторож')
+    expect(isolated.textContent).toContain('связей нет')
   })
 
   it('поиск находит по алиасу и объясняет, почему карточка в выдаче', async () => {
@@ -345,5 +371,29 @@ describe('EntityGraph — мир, группы и поиск по меткам (
         document.querySelector('[data-entity-graph-group-cards]')?.getAttribute('data-entity-graph-group-cards'),
       ).toBe('character'),
     )
+  })
+
+  it('запоминает уровень: вернувшись, человек попадает в ту же группу (0.101.0)', async () => {
+    localStorage.clear()
+    const first = render(
+      <EntityGraph entities={[anna, earth, bob]} links={links} types={types} projectId="p-zapomnit" />,
+    )
+    fireEvent.click(await screen.findByRole('button', { name: 'Мир' }))
+    fireEvent.click(screen.getByRole('button', { name: /Группа «Персонаж»/ }))
+    await waitFor(() =>
+      expect(JSON.parse(localStorage.getItem('skyfraze-graph-view:p-zapomnit') ?? '{}').groupKind).toBe(
+        'character',
+      ),
+    )
+    first.unmount()
+
+    // Повторный заход в тот же проект открывается на той же группе, а не на карточке по умолчанию.
+    render(<EntityGraph entities={[anna, earth, bob]} links={links} types={types} projectId="p-zapomnit" />)
+    await waitFor(() =>
+      expect(
+        document.querySelector('[data-entity-graph-group-cards]')?.getAttribute('data-entity-graph-group-cards'),
+      ).toBe('character'),
+    )
+    localStorage.clear()
   })
 })

@@ -879,6 +879,18 @@
 .egraph__group-nav { display: flex; align-items: center; gap: 8px; margin: 8px 0 4px; }
 .egraph__group-nav button { min-width: 34px; min-height: 34px; }
 .egraph__group-cards { touch-action: pan-y; }
+/* Подгруппы по подписям связей (0.101.0): «живёт на · 2», «боится · 1». Заголовок подгруппы —
+   кнопка сворачивания, как у групп в списке карточек: один язык на обе области. */
+.egraph__cluster { border-top: 1px dashed var(--border); padding: 2px 0; }
+.egraph__cluster:first-child { border-top: none; }
+.egraph__cluster-head {
+  display: flex; align-items: baseline; gap: 8px; width: 100%;
+  padding: 6px 2px; background: none; border: none; cursor: pointer;
+  color: var(--fg-muted); font: inherit; font-size: 12px; text-align: left;
+}
+.egraph__cluster-head:hover { color: var(--fg); }
+.egraph__cluster-name { text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; }
+.egraph__cluster-list { list-style: none; margin: 0 0 4px; padding: 0 0 0 10px; border-left: 2px solid var(--border); display: grid; gap: 2px; }
 
 /* «Глубже» (0.100.0): уровни окрестности списком под холстом. Холст не перегружаем: кольцо
    остаётся прямым соседям, а дальше — читаемые строки. */

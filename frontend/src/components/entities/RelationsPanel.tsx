@@ -274,7 +274,7 @@ export function RelationsPanel({ projectId, canEdit, onOpenFrame }: Props) {
       {error !== null && <p className="ed-danger">{error}</p>}
 
       {entities.length > 0 ? (
-        <EntityGraph entities={entities} links={links} types={types} tall />
+        <EntityGraph entities={entities} links={links} types={types} projectId={projectId} tall />
       ) : (
         <p className="muted relations__empty" data-relations-empty>
           {eventsLoaded && loaded

@@ -132,19 +132,63 @@ async function checkWidth(
   if (groups.filter((group) => group.main).length !== 1) problems.push(`${width}px: главная группа не одна`)
   if (!groups[0]?.main) problems.push(`${width}px: главная группа не первая (первой создан «Персонаж»)`)
 
-  // 2. Вход в группу «Персонаж» и листание стрелками.
+  // 2. Вход в группу «Персонаж»: подгруппы по подписям связей (0.101.0).
   await page.locator('[data-entity-graph-group="character"]').click()
   await page.locator('[data-entity-graph-group-cards]').waitFor({ timeout: 15_000 })
   const first = await page.locator('[data-entity-graph-group-cards]').getAttribute('data-entity-graph-group-cards')
-  const cards = await page.locator('[data-entity-graph-group-card]').count()
-  console.log(`в группе «${first}» карточек: ${cards}`)
-  if (cards !== 2) problems.push(`${width}px: в группе персонажей ${cards} карточек вместо 2`)
+  // Строк в подгруппах больше, чем карточек: одна карточка может стоять в нескольких подгруппах
+  // (у Ани есть и «живёт на», и «боится»). Поэтому считаем УНИКАЛЬНЫЕ карточки.
+  const uniqueCards = (await page.evaluate(`(async () => {
+    const ids = new Set()
+    for (const node of document.querySelectorAll('[data-entity-graph-group-card]')) {
+      ids.add(node.getAttribute('data-entity-graph-group-card'))
+    }
+    return ids.size
+  })()`)) as number
+  console.log(`в группе «${first}» уникальных карточек: ${uniqueCards}`)
+  if (uniqueCards < 2) problems.push(`${width}px: в группе персонажей ${uniqueCards} карточек вместо 2`)
+
+  const clusters = (await page.evaluate(`(async () => {
+    return [...document.querySelectorAll('[data-entity-graph-cluster]')].map((node) => ({
+      label: node.getAttribute('data-entity-graph-cluster'),
+      cards: node.querySelectorAll('[data-entity-graph-group-card]').length,
+      text: (node.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 60),
+    }))
+  })()`)) as Array<{ label: string; cards: number; text: string }>
+  for (const cluster of clusters) {
+    console.log(`подгруппа «${cluster.label}»: карточек ${cluster.cards} — ${cluster.text}`)
+  }
+  if (clusters.length === 0) problems.push(`${width}px: подгрупп по подписям связей нет`)
+  const firstToggle = page.locator('[data-entity-graph-cluster-toggle]').first()
+  if ((await firstToggle.count()) > 0) {
+    const label = await firstToggle.getAttribute('data-entity-graph-cluster-toggle')
+    await firstToggle.click()
+    const expandedAfter = await firstToggle.getAttribute('aria-expanded')
+    console.log(`подгруппа «${label}» после нажатия: aria-expanded ${expandedAfter}`)
+    if (expandedAfter !== 'false') problems.push(`${width}px: подгруппа не свернулась`)
+    await firstToggle.click()
+  }
+
+  // 3. Запоминание уровня (0.101.0): после перезагрузки человек попадает в ту же группу.
+  //    Проверяем ДО входа в карточку: вход в карточку честно переключает запомненный уровень на «card».
+  await page.reload()
+  await tab.waitFor({ state: 'visible', timeout: 30_000 })
+  await tab.click()
+  await page.locator('[data-entity-graph-group-cards], [data-entity-graph-canvas], [data-entity-graph="rail"]')
+    .first()
+    .waitFor({ timeout: 20_000 })
+  const restored = await page.locator('[data-entity-graph-group-cards]').count()
+  console.log(`после перезагрузки: группа ${restored > 0 ? 'восстановлена' : 'не восстановлена'}`)
+  if (restored === 0) problems.push(`${width}px: уровень не запомнился — после перезагрузки открылась карточка`)
+
+  // 3.1. Листание групп стрелками — на восстановленном уровне.
+  const groupNow = await page.locator('[data-entity-graph-group-cards]').getAttribute('data-entity-graph-group-cards')
   await page.locator('[data-entity-graph-group-next]').click()
   const next = await page.locator('[data-entity-graph-group-cards]').getAttribute('data-entity-graph-group-cards')
   console.log(`после «→» группа: ${next}`)
-  if (next === first) problems.push(`${width}px: листание групп не переключило группу`)
+  if (next === groupNow) problems.push(`${width}px: листание групп не переключило группу`)
 
-  // 3. Открыть карточку из группы — она встаёт в центр.
+  // 3.2. Открыть карточку из группы — она встаёт в центр.
   await page.locator('[data-entity-graph-group-card]').first().click()
   await page.locator('[data-entity-graph-center], [data-entity-graph-list]').first().waitFor({ timeout: 15_000 })
   const center = ((await page.locator('[data-entity-graph-center]').first().innerText().catch(() => '')) || '').trim()
