@@ -29,7 +29,7 @@
 | Markdown в теле события | уже поддержан: markdown-it, KaTeX, Mermaid, таблицы | `frontend/src/lib/markdown.ts` |
 | Права на изменение | `projects.RequireEditor` (editor+), `RequireViewer` | `internal/projects/service.go` |
 | Внешний HTTP из бэкенда | `internal/update`: `http.Client` с таймаутом 12 с, кэш ответа 10 минут, аккуратные ошибки | `internal/update/service.go` |
-| Конфигурация развёртывания | `platform.Config` (env-переменные), README «Переменные окружения» | `internal/platform/config.go` |
+| Конфигурация развёртывания | `platform.Config` (env-переменные), docs/run.md, «Переменные окружения» | `internal/platform/config.go` |
 | Миграции | 0001–0007, следующая — 0008 | `backend/migrations/` |
 | Место под панель чата | страница проекта: стадия + панель редакторов | `frontend/src/pages/ProjectTimelinePage.tsx` |
 | Потоковые ответы | nginx уже проксирует `/api` с `proxy_read_timeout 600s` и `proxy_request_buffering off`; SSE возможен, но это отдельная фаза | `frontend/nginx.conf` |
