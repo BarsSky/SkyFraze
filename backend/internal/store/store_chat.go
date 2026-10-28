@@ -7,9 +7,11 @@ package store
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 // ChatKind — кто написал сообщение.
@@ -29,21 +31,53 @@ type ChatMessage struct {
 	// EventID — кадр, о котором речь (ссылка на элемент текста). Может пропасть: кадр удалили.
 	EventID *uuid.UUID `db:"event_id" json:"event_id,omitempty"`
 	// Quote — точная фраза из кадра, которую обсуждают. Пусто — ссылка на кадр целиком.
-	Quote     string    `db:"quote" json:"quote,omitempty"`
-	CreatedAt time.Time `db:"created_at" json:"created_at"`
+	Quote string `db:"quote" json:"quote,omitempty"`
+	// ReplyTo — сообщение, на которое это ответ (0.96.0). Может пропасть вместе с исходным.
+	ReplyTo *uuid.UUID `db:"reply_to" json:"reply_to,omitempty"`
+	// EditedAt — когда правили после отправки. Пусто — не правили.
+	EditedAt  *time.Time `db:"edited_at" json:"edited_at,omitempty"`
+	CreatedAt time.Time  `db:"created_at" json:"created_at"`
 }
 
-const chatColumns = `id, project_id, author_id, author_name, kind, body, event_id, quote, created_at`
+const chatColumns = `id, project_id, author_id, author_name, kind, body, event_id, quote, reply_to, edited_at, created_at`
 
 // AppendChatMessage добавляет сообщение и возвращает его с назначенными id и временем.
 func (s *Store) AppendChatMessage(ctx context.Context, m *ChatMessage) error {
 	return s.Pool.QueryRow(ctx,
 		`INSERT INTO project_chat_messages
-		   (project_id, author_id, author_name, kind, body, event_id, quote)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7)
+		   (project_id, author_id, author_name, kind, body, event_id, quote, reply_to)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
 		 RETURNING id, created_at`,
-		m.ProjectID, m.AuthorID, m.AuthorName, m.Kind, m.Body, m.EventID, m.Quote,
+		m.ProjectID, m.AuthorID, m.AuthorName, m.Kind, m.Body, m.EventID, m.Quote, m.ReplyTo,
 	).Scan(&m.ID, &m.CreatedAt)
+}
+
+// ChatMessageByID — одно сообщение проекта (nil, если его нет).
+func (s *Store) ChatMessageByID(ctx context.Context, projectID, id uuid.UUID) (*ChatMessage, error) {
+	row, err := qOne[ChatMessage](ctx, s.Pool,
+		`SELECT `+chatColumns+` FROM project_chat_messages
+		  WHERE project_id = $1 AND id = $2`, projectID, id)
+	if errors.Is(err, ErrNotFound) || errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	return row, err
+}
+
+// UpdateChatMessageBody меняет текст сообщения и ставит отметку «изменено».
+//
+// Автора не трогаем: правка не меняет авторство — иначе «это писал не я» стало бы возможно.
+func (s *Store) UpdateChatMessageBody(
+	ctx context.Context, projectID, id uuid.UUID, body string,
+) (*ChatMessage, error) {
+	row, err := qOne[ChatMessage](ctx, s.Pool,
+		`UPDATE project_chat_messages
+		    SET body = $3, edited_at = now()
+		  WHERE project_id = $1 AND id = $2
+		  RETURNING `+chatColumns, projectID, id, body)
+	if errors.Is(err, ErrNotFound) || errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	return row, err
 }
 
 // ListChatMessages — последние сообщения проекта в хронологическом порядке.

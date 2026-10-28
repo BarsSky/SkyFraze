@@ -123,6 +123,53 @@ async function main() {
     console.log(`после клика по ссылке открыт кадр: «${titleText}»`)
     if (titleText !== 'Пролог') problems.push(`открылся не тот кадр: «${titleText}»`)
 
+    // 4.1. Ответ на сообщение и правка своего (0.96.0).
+    await openChatTab()
+    const replyButton = page.locator('[data-chat-reply-button]').first()
+    await replyButton.waitFor({ state: 'visible', timeout: 20_000 })
+    await replyButton.click()
+    await page.locator('[data-chat-reply-chip]').waitFor({ state: 'visible', timeout: 10_000 })
+    await page.getByLabel('Сообщение в чат проекта').fill('Это ответ на первое.')
+    await page.getByRole('button', { name: 'Отправить' }).click()
+    await page.getByText('Это ответ на первое.').waitFor({ state: 'visible', timeout: 20_000 })
+    // Ждём цитату ожиданием, а не мгновенной проверкой: лента перерисовывается после ответа
+    // сервера, и «проверил сразу» здесь уже один раз дало ложную тревогу.
+    await page
+      .locator('[data-chat-reply]')
+      .first()
+      .waitFor({ state: 'visible', timeout: 15_000 })
+      .catch(() => problems.push('цитата ответа не появилась в ленте'))
+
+    const editButton = page.locator('[data-chat-edit]').first()
+    await editButton.waitFor({ state: 'visible', timeout: 20_000 })
+    await editButton.click()
+    const editArea = page.locator('.chat__edit textarea').first()
+    await editArea.waitFor({ state: 'visible', timeout: 10_000 })
+    await editArea.fill('Это ответ на первое (исправлено).')
+    await page.locator('[data-chat-edit-save]').first().click()
+    await page.getByText('Это ответ на первое (исправлено).').waitFor({ state: 'visible', timeout: 20_000 })
+    await page.getByText('изменено').first().waitFor({ state: 'visible', timeout: 10_000 })
+    console.log('ответ и правка: работают')
+
+    // 4.2. Мгновенная доставка: вторая открытая вкладка того же проекта получает сообщение по
+    // сокету, а не ждёт опроса (он теперь раз в 20 секунд).
+    const second = await page.context().newPage()
+    await second.goto(`${BASE}/projects/${projectId}`)
+    await second.locator('[data-assistant-fab]').click({ timeout: 30_000 })
+    const secondDock = second.locator('[data-assistant-panel]')
+    await secondDock.waitFor({ state: 'visible', timeout: 20_000 })
+    await secondDock.locator('[data-dock-tab="chat"]').click()
+    await secondDock.locator('[data-project-chat]').waitFor({ state: 'visible', timeout: 20_000 })
+    // Отправляем из первой вкладки и замеряем, за сколько сообщение появится во второй.
+    const startedAt = Date.now()
+    await page.getByLabel('Сообщение в чат проекта').fill('Привет из первой вкладки.')
+    await page.getByRole('button', { name: 'Отправить' }).click()
+    await secondDock.getByText('Привет из первой вкладки.').waitFor({ state: 'visible', timeout: 15_000 })
+    const latency = Date.now() - startedAt
+    console.log(`доставка во вторую вкладку: ${latency} мс`)
+    if (latency > 5000) problems.push(`доставка заняла ${latency} мс — похоже, ждали опрос`)
+    await second.close()
+
     // 5. Нестор в чате: отвечает и НЕ меняет проект.
     const framesBefore = (await (await page.request.get(`${API}/api/projects/${projectId}/events`, { headers })).json()) as unknown[]
     await openChatTab()

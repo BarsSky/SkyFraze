@@ -279,3 +279,96 @@ func TestChatPermissions(t *testing.T) {
 		t.Fatalf("пустое сообщение принято: %v", err)
 	}
 }
+
+// Бот видит последние сообщения чата (0.96.0): без них он отвечает вне обсуждения.
+func TestChatBotSeesRecentMessages(t *testing.T) {
+	e := setupChat(t)
+	ctx := context.Background()
+	bot := &stubBot{enabled: true, answer: "Отвечаю с учётом обсуждения."}
+	e.svc.UseBot(bot, "Нестор")
+
+	if _, err := e.svc.Post(ctx, e.owner, e.project, chat.Input{Body: "Начало обсуждения сцены."}); err != nil {
+		t.Fatalf("первое сообщение: %v", err)
+	}
+	if _, err := e.svc.Post(ctx, e.viewer, e.project, chat.Input{Body: "Согласен, но с оговоркой."}); err != nil {
+		t.Fatalf("второе сообщение: %v", err)
+	}
+	if _, err := e.svc.Post(ctx, e.owner, e.project, chat.Input{Body: "Нестор, а как же второе?", AskBot: true}); err != nil {
+		t.Fatalf("вопрос боту: %v", err)
+	}
+	if len(bot.questions) != 1 {
+		t.Fatalf("вопросов к модели: %d", len(bot.questions))
+	}
+	question := bot.questions[0]
+	if !strings.Contains(question, "Последние сообщения чата") {
+		t.Fatalf("в вопросе нет блока истории: %s", question)
+	}
+	for _, want := range []string{"Начало обсуждения сцены", "Согласен, но с оговоркой"} {
+		if !strings.Contains(question, want) {
+			t.Errorf("в истории нет %q: %s", want, question)
+		}
+	}
+	// Автор реплики в истории — по имени, иначе модель не поймёт, кто что сказал.
+	if !strings.Contains(question, "Человек:") {
+		t.Errorf("в истории нет автора: %s", question)
+	}
+}
+
+// Ответ на сообщение и правка своего (0.96.0).
+func TestChatReplyAndEdit(t *testing.T) {
+	e := setupChat(t)
+	ctx := context.Background()
+
+	first, err := e.svc.Post(ctx, e.owner, e.project, chat.Input{Body: "Первое сообщение."})
+	if err != nil {
+		t.Fatalf("первое сообщение: %v", err)
+	}
+	reply, err := e.svc.Post(ctx, e.viewer, e.project, chat.Input{
+		Body: "Отвечаю на первое.", ReplyTo: &first.Message.ID,
+	})
+	if err != nil {
+		t.Fatalf("ответ: %v", err)
+	}
+	if reply.Message.ReplyTo == nil || *reply.Message.ReplyTo != first.Message.ID {
+		t.Fatalf("ответ не указывает на исходное: %+v", reply.Message.ReplyTo)
+	}
+
+	// Ответ на сообщение из другого проекта (или несуществующее) — отказ: ссылка в чужой
+	// разговор была бы враньём.
+	foreign := uuid.New()
+	if _, err := e.svc.Post(ctx, e.owner, e.project, chat.Input{
+		Body: "Ответ в пустоту", ReplyTo: &foreign,
+	}); !errors.Is(err, chat.ErrReplyTarget) {
+		t.Fatalf("ответ на чужое сообщение принят: %v", err)
+	}
+
+	// Правка своего: текст меняется, отметка «изменено» появляется, автор — прежний.
+	edited, err := e.svc.Edit(ctx, e.owner, e.project, first.Message.ID, "  Первое, исправленное.  ")
+	if err != nil {
+		t.Fatalf("правка: %v", err)
+	}
+	if edited.Body != "Первое, исправленное." {
+		t.Fatalf("текст не очищен: %q", edited.Body)
+	}
+	if edited.EditedAt == nil {
+		t.Fatal("нет отметки «изменено»")
+	}
+	if edited.AuthorName != first.Message.AuthorName {
+		t.Fatalf("правка сменила автора: %q → %q", first.Message.AuthorName, edited.AuthorName)
+	}
+
+	// Чужое сообщение править нельзя: подмена сказанного невозможна.
+	if _, err := e.svc.Edit(ctx, e.viewer, e.project, first.Message.ID, "не моё"); !errors.Is(err, chat.ErrNotAuthor) {
+		t.Fatalf("чужое сообщение отредактировано: %v", err)
+	}
+	// Сообщение бота — запись разговора, а не текст для правки.
+	bot := &stubBot{enabled: true, answer: "Ответ Нестора."}
+	e.svc.UseBot(bot, "Нестор")
+	withBot, err := e.svc.Post(ctx, e.owner, e.project, chat.Input{Body: "Нестор, ау?", AskBot: true})
+	if err != nil || withBot.Reply == nil {
+		t.Fatalf("ответ бота: %v, %+v", err, withBot)
+	}
+	if _, err := e.svc.Edit(ctx, e.owner, e.project, withBot.Reply.ID, "подмена ответа"); !errors.Is(err, chat.ErrNotAuthor) {
+		t.Fatalf("ответ бота отредактирован: %v", err)
+	}
+}

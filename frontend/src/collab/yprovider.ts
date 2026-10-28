@@ -10,6 +10,8 @@ import { OFFLINE_AFTER_ATTEMPTS, type CollabStatus } from './connection'
 import { connectTabChannel, createTabChannel } from './broadcast'
 import { dateFromServer, dateToServer } from './eventDate'
 import { createPresence, type PeerState } from './awareness'
+import { notifyChatChanged } from '../lib/chatEvents'
+import { isChatNotify } from './chatFrame'
 import { ensureText, textString, titleString } from './text'
 import {
   clearDeferredState,
@@ -308,12 +310,24 @@ export function useCollab(projectId: string): CollabHandle | null {
         // Текстовые кадры — присутствие; бинарные — CRDT (снапшот при подключении
         // и апдейты соседей). `receive` сам решает по формату кадра, и если это не
         // присутствие, байты уходят в Yjs как обычно.
+        //
+        // Исключение — служебный кадр чата (0.96.0): он тоже бинарный, но документом не является.
+        // Если отдать его в Yjs, тот попытается разобрать мусор; поэтому проверяем префикс до
+        // применения апдейта и превращаем кадр в событие окна (чат по нему сразу спросит новое).
         if (typeof ev.data === 'string') {
+          if (isChatNotify(ev.data)) {
+            notifyChatChanged(projectId)
+            return
+          }
           presence.receive(ev.data)
           return
         }
         if (ev.data instanceof ArrayBuffer) {
           const bytes = new Uint8Array(ev.data)
+          if (isChatNotify(bytes)) {
+            notifyChatChanged(projectId)
+            return
+          }
           if (!presence.receive(bytes)) applyRemoteUpdate(bytes)
         }
       }

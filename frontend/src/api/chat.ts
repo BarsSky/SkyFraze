@@ -20,6 +20,10 @@ export interface ChatMessage {
   event_id?: string
   /** Точная фраза из кадра. */
   quote?: string
+  /** Ответ на сообщение (0.96.0). */
+  reply_to?: string
+  /** Когда правили после отправки. */
+  edited_at?: string
   created_at: string
 }
 
@@ -46,6 +50,7 @@ export interface ChatPostInput {
   eventId?: string
   quote?: string
   askBot?: boolean
+  replyTo?: string
 }
 
 /** Последние сообщения (или только новые после `after`). */
@@ -79,6 +84,7 @@ export async function postChat(projectId: string, input: ChatPostInput): Promise
         event_id: input.eventId ?? '',
         quote: input.quote ?? '',
         ask_bot: input.askBot === true,
+        reply_to: input.replyTo ?? '',
       },
       // Ответ Нестора — это обращение к модели: даём время, как у окна помощника.
       timeout: 180_000,
@@ -92,6 +98,16 @@ export async function postChat(projectId: string, input: ChatPostInput): Promise
     reply: reply ?? undefined,
     note: typeof raw?.note === 'string' && raw.note ? raw.note : undefined,
   }
+}
+
+/** Изменить текст своего сообщения (0.96.0). */
+export async function editChat(projectId: string, messageId: string, body: string): Promise<ChatMessage> {
+  const raw = await http
+    .patch(`projects/${projectId}/chat/messages/${messageId}`, { json: { body } })
+    .json<{ message?: unknown }>()
+  const message = readMessage(raw?.message)
+  if (message === null) throw new Error('сервер не вернул сообщение')
+  return message
 }
 
 function readMessage(raw: unknown): ChatMessage | null {
@@ -109,6 +125,8 @@ function readMessage(raw: unknown): ChatMessage | null {
     body: typeof record.body === 'string' ? record.body : '',
     event_id: typeof record.event_id === 'string' && record.event_id ? record.event_id : undefined,
     quote: typeof record.quote === 'string' && record.quote ? record.quote : undefined,
+    reply_to: typeof record.reply_to === 'string' && record.reply_to ? record.reply_to : undefined,
+    edited_at: typeof record.edited_at === 'string' && record.edited_at ? record.edited_at : undefined,
     created_at: typeof record.created_at === 'string' ? record.created_at : '',
   }
 }

@@ -176,6 +176,44 @@
 .chat__actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 .chat__actions button { min-height: 32px; }
 
+/* Ответ на сообщение и правка своего (0.96.0). Ветки не строим: в ленте проекта лесенка читается
+   хуже, чем цитата-ссылка, поэтому «ответ» — это строка «→ имя: начало текста» над сообщением. */
+.chat__edited { font-size: 11px; }
+.chat__quote-line {
+  margin: 2px 0 0;
+  padding-left: 8px;
+  border-left: 2px solid var(--border);
+  font-size: 12px;
+  color: var(--fg-muted);
+  overflow-wrap: anywhere;
+}
+.chat__item-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+.chat__mini {
+  background: none;
+  border: 0;
+  padding: 2px 4px;
+  min-height: 24px;
+  color: var(--fg-muted);
+  font-size: 11px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.chat__mini:hover { color: var(--fg); background: var(--bg); }
+.chat__edit { display: grid; gap: 6px; margin-top: 4px; }
+.chat__edit textarea { width: 100%; font-size: 13px; resize: vertical; }
+.chat__reply-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 8px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--fg-muted);
+  overflow-wrap: anywhere;
+}
+
 @supports (height: 100dvh) {
   .ai-window {
     height: min(620px, calc(100dvh - 140px));

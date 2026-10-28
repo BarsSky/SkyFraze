@@ -41,6 +41,8 @@ func NewHandler(svc *Service, logger *slog.Logger) *Handler {
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/chat/messages", h.List)
 	r.Post("/chat/messages", h.Post)
+	// Правка своего сообщения (0.96.0).
+	r.Patch("/chat/messages/{messageID}", h.Edit)
 }
 
 // List — GET /chat/messages.
@@ -82,6 +84,7 @@ type postInput struct {
 	EventID *string `json:"event_id"`
 	Quote   string  `json:"quote"`
 	AskBot  bool    `json:"ask_bot"`
+	ReplyTo string  `json:"reply_to"`
 }
 
 // Post — POST /chat/messages.
@@ -96,6 +99,14 @@ func (h *Handler) Post(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in := Input{Body: body.Body, Quote: body.Quote, AskBot: body.AskBot}
+	if strings.TrimSpace(body.ReplyTo) != "" {
+		replyTo, err := uuid.Parse(strings.TrimSpace(body.ReplyTo))
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid reply_to")
+			return
+		}
+		in.ReplyTo = &replyTo
+	}
 	if body.EventID != nil && strings.TrimSpace(*body.EventID) != "" {
 		id, err := uuid.Parse(strings.TrimSpace(*body.EventID))
 		if err != nil {
@@ -110,6 +121,32 @@ func (h *Handler) Post(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, answer)
+}
+
+// Edit — PATCH /chat/messages/{messageID}: изменить текст своего сообщения.
+func (h *Handler) Edit(w http.ResponseWriter, r *http.Request) {
+	userID, projectID, ok := h.target(w, r)
+	if !ok {
+		return
+	}
+	messageID, err := uuid.Parse(chi.URLParam(r, "messageID"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid message id")
+		return
+	}
+	var body struct {
+		Body string `json:"body"`
+	}
+	if err := decode(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	message, err := h.svc.Edit(r.Context(), userID, projectID, messageID, body.Body)
+	if err != nil {
+		h.fail(w, err, "chat edit")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"message": message})
 }
 
 func (h *Handler) target(w http.ResponseWriter, r *http.Request) (uuid.UUID, uuid.UUID, bool) {
@@ -133,6 +170,10 @@ func (h *Handler) fail(w http.ResponseWriter, err error, where string) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, ErrEventNotFound), errors.Is(err, ErrQuoteNotFound):
 		writeErr(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, ErrReplyTarget):
+		writeErr(w, http.StatusNotFound, err.Error())
+	case errors.Is(err, ErrNotAuthor):
+		writeErr(w, http.StatusForbidden, err.Error())
 	case errors.Is(err, projects.ErrForbidden):
 		writeErr(w, http.StatusForbidden, "forbidden")
 	case errors.Is(err, store.ErrNotFound), errors.Is(err, projects.ErrNotFound):

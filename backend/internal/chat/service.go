@@ -47,6 +47,10 @@ var (
 	ErrEventNotFound = errors.New("кадр для ссылки не найден в проекте")
 	// ErrQuoteNotFound — фразы нет в тексте кадра: ссылка вела бы в пустоту.
 	ErrQuoteNotFound = errors.New("такой фразы в тексте кадра нет")
+	// ErrReplyTarget — сообщение, на которое отвечают, не из этого проекта.
+	ErrReplyTarget = errors.New("сообщение, на которое отвечают, не найдено в этом проекте")
+	// ErrNotAuthor — править сообщение может только его автор.
+	ErrNotAuthor = errors.New("править сообщение может только его автор")
 	// ErrBotDisabled — Нестор выключен на стенде или в проекте.
 	ErrBotDisabled = errors.New("Нестор выключен — сообщение сохранено, ответа не будет")
 )
@@ -54,6 +58,13 @@ var (
 // ProjectAccess — права на проект (реализует projects.Service).
 type ProjectAccess interface {
 	RequireViewer(ctx context.Context, userID, projectID uuid.UUID) error
+}
+
+// Notifier — «в проекте появилось сообщение». Реализуется хабом совместной работы (сокет
+// документа уже открыт у каждого, кто в проекте): сигнал вместо второго канала и вместо ожидания
+// опроса. Ошибок не возвращает: сигнал — удобство, сообщение уже в базе.
+type Notifier interface {
+	NotifyChat(projectID uuid.UUID)
 }
 
 // Bot — Нестор. Отдельный интерфейс, а не зависимость на пакет assistant: чату нужен один метод,
@@ -85,6 +96,8 @@ type Service struct {
 	bot   Bot
 	// botName — имя, которым подписан ответ бота. Пусто — «Нестор».
 	botName string
+	// notify — сигнал «появилось сообщение» (WebSocket документа). Необязателен.
+	notify Notifier
 }
 
 // New собирает сервис чата.
@@ -99,6 +112,9 @@ func (s *Service) UseBot(bot Bot, name string) {
 		s.botName = strings.TrimSpace(name)
 	}
 }
+
+// UseNotifier подключает сигнал о новом сообщении (0.96.0): без него чат работает по опросу.
+func (s *Service) UseNotifier(n Notifier) { s.notify = n }
 
 // BotName — имя бота для интерфейса (подпись кнопки «спросить …»).
 func (s *Service) BotName() string { return s.botName }
@@ -132,6 +148,9 @@ type Input struct {
 	Quote string
 	// AskBot — позвать Нестора на это сообщение.
 	AskBot bool
+	// ReplyTo — сообщение, на которое это ответ (0.96.0). Ветки не строим: в ленте проекта
+	// цитата-ссылка читается лучше лесенки.
+	ReplyTo *uuid.UUID
 }
 
 // Post сохраняет сообщение участника и, если попросили, ответ Нестора.
@@ -178,13 +197,26 @@ func (s *Service) Post(
 	}
 
 	author := s.authorName(ctx, userID)
+	// Ответ на сообщение: оно обязано быть из этого проекта, иначе «ответ» указывал бы в чужой
+	// разговор. Проверяем ДО вставки — внешний ключ не знает про проект.
+	if in.ReplyTo != nil {
+		target, err := s.store.ChatMessageByID(ctx, projectID, *in.ReplyTo)
+		if err != nil {
+			return nil, err
+		}
+		if target == nil {
+			return nil, ErrReplyTarget
+		}
+	}
 	saved := store.ChatMessage{
 		ProjectID: projectID, AuthorID: &userID, AuthorName: author,
 		Kind: store.ChatKindUser, Body: body, EventID: in.EventID, Quote: quote,
+		ReplyTo: in.ReplyTo,
 	}
 	if err := s.store.AppendChatMessage(ctx, &saved); err != nil {
 		return nil, err
 	}
+	s.notifyChanged(projectID)
 	out := &Answer{Message: saved}
 
 	if !in.AskBot {
@@ -208,7 +240,11 @@ func (s *Service) Post(
 func (s *Service) askBot(
 	ctx context.Context, userID, projectID uuid.UUID, in Input, frame *store.Event, author string,
 ) (*store.ChatMessage, string) {
-	question := botQuestion(in.Body, in.Quote, frame, author)
+	// Последние сообщения чата — контекст разговора (0.96.0). Без него бот отвечает на реплику вне
+	// обсуждения: «а как же второе?» для него пустой вопрос. Берём немного и только текст: длинная
+	// лента съела бы запрос.
+	history := s.recentTranscript(ctx, projectID)
+	question := botQuestion(in.Body, in.Quote, frame, author, history)
 	answer, err := s.bot.Answer(ctx, userID, projectID, question)
 	if err != nil {
 		// Ошибку не выдаём 500-й: сообщение участника уже сохранено, и потерять его из-за
@@ -229,16 +265,23 @@ func (s *Service) askBot(
 	if err := s.store.AppendChatMessage(ctx, &reply); err != nil {
 		return nil, "ответ Нестора не сохранился: " + err.Error()
 	}
+	s.notifyChanged(projectID)
 	return &reply, ""
 }
 
-// botQuestion собирает вопрос для модели: контекст кадра и цитаты, если они есть.
+// botQuestion собирает вопрос для модели: контекст кадра, цитаты и последние реплики чата.
 //
 // Почему текстом, а не отдельными полями: у модели один вход — сообщения, и «вопрос из чата» с
 // ссылкой надо объяснить словами, иначе она не поймёт, о каком кадре речь.
-func botQuestion(body, quote string, frame *store.Event, author string) string {
+func botQuestion(body, quote string, frame *store.Event, author string, history []string) string {
 	var b strings.Builder
 	b.WriteString("Вопрос из общего чата проекта (отвечай коротко, по делу и по-русски).\n")
+	if len(history) > 0 {
+		b.WriteString("Последние сообщения чата, чтобы ты понимал, о чём речь:\n")
+		for _, line := range history {
+			b.WriteString(line + "\n")
+		}
+	}
 	if frame != nil {
 		fmt.Fprintf(&b, "Речь о кадре «%s».\n", frame.Title)
 		if quote != "" {
@@ -267,6 +310,78 @@ func botErrorText(err error) string {
 		return ErrBotDisabled.Error()
 	}
 	return "Нестор не смог ответить: " + text
+}
+
+// recentTranscript — последние реплики чата одной строкой на сообщение.
+//
+// Пустая история — нормально: первый вопрос в пустом чате. Ошибка чтения тоже не мешает ответу:
+// контекст разговора улучшает ответ, но без него бот всё равно ответит по кадру и цитате.
+func (s *Service) recentTranscript(ctx context.Context, projectID uuid.UUID) []string {
+	const limit = 8
+	messages, err := s.store.ListChatMessages(ctx, projectID, limit)
+	if err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(messages))
+	for _, message := range messages {
+		text := strings.TrimSpace(message.Body)
+		if text == "" {
+			continue
+		}
+		if runes := []rune(text); len(runes) > 300 {
+			text = string(runes[:300]) + "…"
+		}
+		out = append(out, fmt.Sprintf("%s: %s", message.AuthorName, text))
+	}
+	return out
+}
+
+// Edit меняет текст своего сообщения (0.96.0).
+//
+// Почему только автор: правка чужого сообщения — это подмена сказанного, и «это писал не я»
+// стало бы невозможно проверить. Бот (kind=bot) не правится вовсе: его ответ — запись разговора.
+func (s *Service) Edit(
+	ctx context.Context, userID, projectID, messageID uuid.UUID, body string,
+) (*Message, error) {
+	if err := s.proj.RequireViewer(ctx, userID, projectID); err != nil {
+		return nil, err
+	}
+	clean := strings.TrimSpace(body)
+	if utf8.RuneCountInString(clean) < minBodyRunes {
+		return nil, fmt.Errorf("%w: сообщение не может быть пустым", ErrInvalidMessage)
+	}
+	if utf8.RuneCountInString(clean) > maxBodyRunes {
+		return nil, fmt.Errorf("%w: сообщение не длиннее %d знаков", ErrInvalidMessage, maxBodyRunes)
+	}
+	message, err := s.store.ChatMessageByID(ctx, projectID, messageID)
+	if err != nil {
+		return nil, err
+	}
+	if message == nil {
+		return nil, ErrReplyTarget
+	}
+	if message.Kind != store.ChatKindUser {
+		return nil, ErrNotAuthor
+	}
+	if message.AuthorID == nil || *message.AuthorID != userID {
+		return nil, ErrNotAuthor
+	}
+	updated, err := s.store.UpdateChatMessageBody(ctx, projectID, messageID, clean)
+	if err != nil {
+		return nil, err
+	}
+	if updated == nil {
+		return nil, ErrReplyTarget
+	}
+	s.notifyChanged(projectID)
+	return updated, nil
+}
+
+// notifyChanged сообщает открытым вкладкам проекта, что появилось сообщение.
+func (s *Service) notifyChanged(projectID uuid.UUID) {
+	if s.notify != nil {
+		s.notify.NotifyChat(projectID)
+	}
 }
 
 // authorName — имя участника для подписи сообщения.

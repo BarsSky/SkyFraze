@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { ProjectChat } from './ProjectChat'
+import { notifyChatChanged } from '../../lib/chatEvents'
+import { useAuthStore } from '../../store/auth'
 
 /**
  * Чат проекта (0.95.0).
@@ -12,12 +14,21 @@ import { ProjectChat } from './ProjectChat'
 
 const listChat = vi.fn()
 const postChat = vi.fn()
+const editChat = vi.fn()
 const listEventRows = vi.fn()
 
 vi.mock('../../api/chat', () => ({
   listChat: (...args: unknown[]) => listChat(...args),
   postChat: (...args: unknown[]) => postChat(...args),
+  editChat: (...args: unknown[]) => editChat(...args),
 }))
+
+/** Текущий пользователь: «изменить» показывается только у своих сообщений. */
+const mockCurrentUser = (id: string | null) => {
+  useAuthStore.setState({
+    user: id ? { id, email: 'me@example.com', display_name: 'Я', is_admin: false } : null,
+  })
+}
 
 vi.mock('../../api/events', () => ({
   listEventRows: (...args: unknown[]) => listEventRows(...args),
@@ -125,7 +136,7 @@ describe('ProjectChat', () => {
     expect(onOpenFrame).toHaveBeenCalledWith('f1')
   })
 
-  it('опрос догружает новое и не дублирует уже показанное', async () => {
+  it('сигнал из сокета догружает новое и не дублирует показанное (0.96.0)', async () => {
     listChat.mockResolvedValueOnce({
       messages: [message({ id: 'm1' })],
       bot: { name: 'Нестор', available: false },
@@ -134,12 +145,68 @@ describe('ProjectChat', () => {
     render(<ProjectChat {...base} />)
     await waitFor(() => expect(screen.getAllByText('Как вам новая глава?').length).toBe(1))
 
-    // Второй опрос: сервер повторяет старое и отдаёт новое — дубликат не должен появиться.
+    // Сигнал «в чате есть новое» приходит по сокету документа; сервер при этом повторяет и
+    // старое — дубликат появляться не должен.
     listChat.mockResolvedValue({
       messages: [message({ id: 'm1' }), message({ id: 'm2', body: 'И ещё мысль.' })],
       bot: { name: 'Нестор', available: false },
     })
-    await waitFor(() => expect(screen.getByText('И ещё мысль.')).toBeTruthy(), { timeout: 6000 })
+    notifyChatChanged('p1')
+    await waitFor(() => expect(screen.getByText('И ещё мысль.')).toBeTruthy())
     expect(screen.getAllByText('Как вам новая глава?').length).toBe(1)
+  })
+
+  it('сигнал чужого проекта не трогает этот чат', async () => {
+    listChat.mockResolvedValue({ messages: [message({ id: 'm1' })], bot: { name: 'Нестор', available: false } })
+    listEventRows.mockResolvedValue([])
+    render(<ProjectChat {...base} />)
+    await waitFor(() => expect(screen.getAllByText('Как вам новая глава?').length).toBe(1))
+    const callsBefore = listChat.mock.calls.length
+    notifyChatChanged('другой-проект')
+    await waitFor(() => expect(listChat.mock.calls.length).toBe(callsBefore))
+  })
+
+  it('ответ на сообщение: цитата в ленте и reply_to в запросе', async () => {
+    listChat.mockResolvedValue({
+      messages: [message({ id: 'm1' }), message({ id: 'm2', reply_to: 'm1', body: 'Отвечаю.' })],
+      bot: { name: 'Нестор', available: false },
+    })
+    listEventRows.mockResolvedValue([])
+    postChat.mockResolvedValue({ message: message({ id: 'm5' }) })
+    render(<ProjectChat {...base} />)
+    // В ленте видно, на что отвечают.
+    await waitFor(() => expect(screen.getByText(/→ Аня: Как вам новая глава\?/)).toBeTruthy())
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'ответить' })[1])
+    expect(screen.getByText(/ответ Аня:/)).toBeTruthy()
+    fireEvent.change(screen.getByLabelText('Сообщение в чат проекта'), { target: { value: 'И мой ответ.' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Отправить' }))
+    await waitFor(() => expect(postChat).toHaveBeenCalled())
+    expect(postChat.mock.calls[0][1]).toMatchObject({ body: 'И мой ответ.', replyTo: 'm2' })
+  })
+
+  it('своё сообщение можно изменить, чужое — нет (0.96.0)', async () => {
+    const me = { id: 'm1', project_id: 'p1', author_id: 'u1', author_name: 'Я', kind: 'user' as const, body: 'Моё сообщение.', created_at: '2026-10-28T10:00:00Z' }
+    const other = { ...message({ id: 'm2' }), author_id: 'u2' }
+    listChat.mockResolvedValue({ messages: [me, other], bot: { name: 'Нестор', available: false } })
+    listEventRows.mockResolvedValue([])
+    mockCurrentUser('u1')
+    editChat.mockResolvedValue({ ...me, body: 'Моё, исправленное.', edited_at: '2026-10-28T10:05:00Z' })
+    render(<ProjectChat {...base} />)
+    await waitFor(() => expect(screen.getByText('Моё сообщение.')).toBeTruthy())
+    // У чужого кнопки правки нет.
+    expect(screen.queryByRole('button', { name: 'изменить' })).toBeTruthy()
+    expect(screen.getAllByRole('button', { name: 'изменить' })).toHaveLength(1)
+
+    fireEvent.click(screen.getByRole('button', { name: 'изменить' }))
+    fireEvent.change(screen.getByLabelText('Изменить сообщение Я'), { target: { value: 'Моё, исправленное.' } })
+    expect(screen.getByRole('button', { name: 'сохранить' })).toBeEnabled()
+    fireEvent.click(screen.getByRole('button', { name: 'сохранить' }))
+    await waitFor(() => expect(editChat).toHaveBeenCalled())
+    // Диагностика: какие аргументы пришли на самом деле.
+    expect(editChat.mock.calls[0]).toEqual(['p1', 'm1', 'Моё, исправленное.'])
+    await waitFor(() => expect(screen.getByText('Моё, исправленное.')).toBeTruthy())
+    // Отметка «изменено» появляется у правленого сообщения.
+    expect(screen.getByText('изменено')).toBeTruthy()
   })
 })

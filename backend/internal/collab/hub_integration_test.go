@@ -543,3 +543,73 @@ func readFullState(t *testing.T, wsURL, eventID string, wantLength int, markers 
 	}
 	return text, true
 }
+
+// NotifyChat доходит до открытых клиентов комнаты (0.96.0).
+//
+// Канал тот же, что у CRDT и присутствия: сигнал чата идёт по сокету документа, и клиент по нему
+// сразу спрашивает новое. Проверяем ровно доставку: два клиента в комнате получают кадр
+// `sfc1:`; кадр не похож на апдейт Yjs, иначе клиент пытался бы применить его к документу.
+func TestHubNotifyChatReachesClients(t *testing.T) {
+	pool := testdb.Setup(t, "collab")
+	testdb.Truncate(t, pool,
+		"project_ratings", "project_views", "registration_requests", "app_settings",
+		"project_event_state", "sessions", "invitations", "event_assets", "assets",
+		"events", "team_memberships", "projects", "users")
+
+	ctx := context.Background()
+	st := store.New(pool)
+	projSvc := projects.New(st)
+	evSvc := events.New(st, projSvc)
+	authSvc := auth.New(st, "test-secret")
+
+	user, tokens, err := authSvc.Register(ctx, "chat-hub@example.com", "hunter22!", "Чат")
+	if err != nil {
+		t.Fatalf("пользователь: %v", err)
+	}
+	project, err := projSvc.Create(ctx, user.ID, "Проект с чатом", "")
+	if err != nil {
+		t.Fatalf("проект: %v", err)
+	}
+
+	var logBuf strings.Builder
+	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelError}))
+	hub := collab.NewHub(logger, "test-secret", evSvc, "")
+	runCtx, stopHub := context.WithCancel(ctx)
+	defer stopHub()
+	go hub.Run(runCtx)
+
+	server := httptest.NewServer(http.HandlerFunc(hub.HandleWS))
+	defer server.Close()
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") +
+		"/api/projects/" + project.ID.String() + "/collab?token=" + tokens.Access
+
+	conns := make([]*websocket.Conn, 0, 2)
+	for i := 0; i < 2; i++ {
+		conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+		if err != nil {
+			t.Fatalf("клиент %d: %v", i, err)
+		}
+		defer func() { _ = conn.Close() }()
+		conns = append(conns, conn)
+	}
+	// Дать хабу зарегистрировать оба соединения в комнате.
+	waitFor(t, 5*time.Second, func() bool {
+		return hub.RoomSize(project.ID) == 2
+	}, "оба клиента в комнате")
+
+	hub.NotifyChat(project.ID)
+
+	for i, conn := range conns {
+		found := false
+		_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		for !found {
+			_, data, err := conn.ReadMessage()
+			if err != nil {
+				t.Fatalf("клиент %d не получил сигнал чата: %v", i, err)
+			}
+			if strings.HasPrefix(string(data), "sfc1:") {
+				found = true
+			}
+		}
+	}
+}
