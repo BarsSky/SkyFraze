@@ -848,6 +848,35 @@ describe('EntitiesPanel — действия в меню «⋮» (0.102.0)', () 
     expect(document.querySelectorAll('[data-entity-menu-list]')).toHaveLength(0)
   })
 
+  it('клавиатура: фокус в первом пункте, стрелки и Home/End ходят по меню, Escape — назад на «⋮»', async () => {
+    panel({ entities: two() })
+    await screen.findByText('Анна')
+
+    openCardMenu('Анна')
+    const items = Array.from(
+      document.querySelectorAll('[data-entity-menu-list] [role="menuitem"]'),
+    ) as HTMLButtonElement[]
+    expect(items.length).toBe(3)
+    // Меню открылось — фокус уже в нём, а не где-то в конце страницы.
+    await waitFor(() => expect(document.activeElement).toBe(items[0]))
+
+    fireEvent.keyDown(items[0], { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(items[1])
+    fireEvent.keyDown(items[1], { key: 'End' })
+    expect(document.activeElement).toBe(items[2])
+    fireEvent.keyDown(items[2], { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(items[0])
+    fireEvent.keyDown(items[0], { key: 'ArrowUp' })
+    expect(document.activeElement).toBe(items[2])
+    fireEvent.keyDown(items[2], { key: 'Home' })
+    expect(document.activeElement).toBe(items[0])
+
+    // Escape закрывает меню и возвращает фокус на свою кнопку: иначе он остаётся в пустоте.
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(document.querySelector('[data-entity-menu-list]')).toBeNull()
+    expect(document.activeElement).toBe(screen.getByLabelText('Действия с карточкой Анна'))
+  })
+
   it('удаление подтверждается строкой под карточкой, «Оставить» отменяет', async () => {
     panel({ entities: [entity()] })
     await screen.findByText('Анна')

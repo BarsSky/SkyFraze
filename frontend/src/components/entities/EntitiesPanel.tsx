@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   addEntityLink,
   aliasesText,
@@ -164,12 +164,17 @@ export function EntitiesPanel({
    * меню — иначе два списка действий висели бы одновременно и непонятно, к какой карточке какой.
    */
   const [menuFor, setMenuFor] = useState<string | null>(null)
+  /** Открытое меню: нужно, чтобы перевести в него фокус и ходить по пунктам стрелками. */
+  const menuEl = useRef<HTMLSpanElement | null>(null)
   /**
    * Закрытие меню «⋮» по клику мимо и по Escape.
    *
    * Клик внутри меню и по самой кнопке не перехватываем: выбранное действие само закрывает меню,
    * а кнопка переключает его нажатием. Иначе `pointerdown` гасил бы меню раньше, чем `click`
    * успевал переключить его на другую карточку.
+   *
+   * Escape возвращает фокус на «⋮» этой карточки: иначе после закрытия меню фокус остаётся в
+   * никуда не ведущем узле, и клавиатурный человек теряет место в списке.
    */
   useEffect(() => {
     if (menuFor === null) return undefined
@@ -179,7 +184,12 @@ export function EntitiesPanel({
       setMenuFor(null)
     }
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setMenuFor(null)
+      if (event.key !== 'Escape') return
+      const trigger = document.querySelector<HTMLButtonElement>(
+        `[data-entity-menu-root="${menuFor}"] [data-entity-menu]`,
+      )
+      setMenuFor(null)
+      trigger?.focus()
     }
     document.addEventListener('pointerdown', onDown)
     document.addEventListener('keydown', onKey)
@@ -187,6 +197,12 @@ export function EntitiesPanel({
       document.removeEventListener('pointerdown', onDown)
       document.removeEventListener('keydown', onKey)
     }
+  }, [menuFor])
+  /** Меню открылось — сразу в первый пункт: иначе Tab из «⋮» шёл бы по карточкам ниже. */
+  useEffect(() => {
+    if (menuFor === null) return
+    const first = menuEl.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')
+    first?.focus()
   }, [menuFor])
   /** У какой карточки раскрыта хронология. Одна за раз: две открытые — это уже не список. */
   const [chronology, setChronology] = useState<string | null>(null)
@@ -603,6 +619,27 @@ export function EntitiesPanel({
                           role="menu"
                           aria-label={`Меню карточки ${entity.name}`}
                           data-entity-menu-list={entity.id}
+                          ref={menuEl}
+                          onKeyDown={(event) => {
+                            // Стрелки и Home/End внутри меню: у `role="menu"` это ожидаемое
+                            // поведение, а без него пришлось бы жать Tab на каждый пункт.
+                            const keys = ['ArrowDown', 'ArrowUp', 'Home', 'End']
+                            if (!keys.includes(event.key)) return
+                            const items = Array.from(
+                              menuEl.current?.querySelectorAll<HTMLButtonElement>(
+                                '[role="menuitem"]',
+                              ) ?? [],
+                            )
+                            if (items.length === 0) return
+                            const at = items.indexOf(document.activeElement as HTMLButtonElement)
+                            let next = at
+                            if (event.key === 'ArrowDown') next = at < 0 ? 0 : (at + 1) % items.length
+                            if (event.key === 'ArrowUp') next = at <= 0 ? items.length - 1 : at - 1
+                            if (event.key === 'Home') next = 0
+                            if (event.key === 'End') next = items.length - 1
+                            event.preventDefault()
+                            items[next]?.focus()
+                          }}
                         >
                           {(framesByEntity?.[entity.id]?.length ?? 0) > 0 && (
                             <button
