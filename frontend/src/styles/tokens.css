@@ -219,6 +219,21 @@ html.sf-stage-on .layout header {
   background: color-mix(in srgb, var(--accent) 22%, transparent);
   color: var(--fg); font-weight: 600;
 }
+/* Действия в меню (0.88.0): тема и выход переехали сюда на совсем узком экране, иначе в строке
+   оставалась одна кнопка «Ещё» — шапка выглядела пустой. Отделены линией: это не разделы. */
+.header-more__action {
+  display: flex; align-items: center; min-height: 36px;
+  margin-top: 4px; padding: 6px 10px; border-radius: 8px;
+  border: 0; border-top: 1px solid var(--border); border-radius: 0 0 8px 8px;
+  background: none; color: var(--fg-muted); font: inherit; text-align: left;
+  white-space: nowrap; cursor: pointer;
+}
+.header-more__action:hover { background: var(--chip-bg); color: var(--fg); }
+/* На совсем узком экране меню раскрывается ВЛЕВО от кнопки: справа от неё места нет, и меню
+   вылезало за правый край (замер на 360 px: правый край 377 при экране 360). */
+@media (max-width: 420px) {
+  .header-more__menu { left: auto; right: 0; }
+}
 
 /* Знак SkyFraze рядом с названием: рисунок тот же, что в favicon.svg */
 .brand {

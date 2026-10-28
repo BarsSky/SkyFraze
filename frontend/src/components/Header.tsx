@@ -26,6 +26,13 @@ interface NavLink {
   className?: string
 }
 
+/** Действие в меню «Ещё» (0.88.0): не раздел, а команда — тема, выход. */
+interface MenuAction {
+  label: string
+  icon?: string
+  onSelect: () => void
+}
+
 /** С какого момента пункты уходят в меню: уже тесно, но ещё не «совсем узкий телефон». */
 const COMPACT_QUERY = '(max-width: 760px)'
 /**
@@ -93,19 +100,38 @@ export function Header() {
   if (user?.is_admin) links.push({ to: '/admin', label: 'Админка' })
 
   const visible = links.filter((link) => link.to === '/feed' || user)
-  // В строке на узком экране — те разделы, ради которых открывают приложение; на широком
-  // показываем всё. На совсем узком экране в строке остаётся только «Ещё»: две кнопки там уже
-  // не помещаются и перекрывали переключатель темы.
-  const inline = narrow
-    ? []
-    : compact
-      ? visible.filter((link) => link.to === '/projects' || (!user && link.to === '/feed'))
-      : visible
+  /**
+   * Что остаётся в строке на узком экране (0.88.0).
+   *
+   * До 0.88.0 на ≤420 px в строке не оставалось НИ ОДНОГО раздела — только кнопка «Ещё», и
+   * шапка выглядела пустой («из меню видно только кнопку Ещё и больше ничего»). Пространство
+   * освобождаем не магией: переключатель темы и «Выйти» уезжают в само меню «Ещё», а в строке
+   * остаётся главный раздел — «Мои проекты» (у анонимного — «Лента»).
+   */
+  const primary = visible.find((link) => link.to === '/projects' || (!user && link.to === '/feed'))
+  const inline = compact ? (primary ? [primary] : []) : visible
   const inMenu = compact ? visible.filter((link) => !inline.includes(link)) : []
-  // Порядок в меню: главный раздел первым — на 320 px это единственный вход в проекты из строки.
-  if (inMenu.length > 0) {
-    inMenu.sort((a, b) => Number(b.to === '/projects') - Number(a.to === '/projects'))
-  }
+  // Главный раздел — первым в меню (0.78.0): на 320 px он единственный вход в проекты из строки.
+  // Переставляем ЯВНО, а не сортировкой: компаратор, равный нулю для остальных пар, не поднимает
+  // нужный элемент наверх (нашёл тест 0.88.0 — «Лента» оказывалась первой).
+  const projectsAt = inMenu.findIndex((link) => link.to === '/projects')
+  if (projectsAt > 0) inMenu.unshift(...inMenu.splice(projectsAt, 1))
+  /**
+   * Действия, которым на узком экране не хватило места в строке: тема и выход. В меню они
+   * последними — пункты навигации важнее.
+   */
+  const menuActions: MenuAction[] = narrow
+    ? [
+        {
+          label: nextTheme === 'light' ? 'Светлая тема' : 'Тёмная тема',
+          onSelect: () => setTheme(nextTheme),
+          icon: theme === 'dark' ? '☾' : '☀',
+        },
+        user
+          ? { label: 'Выйти', onSelect: () => { logout(); nav('/login') } }
+          : { label: 'Войти', onSelect: () => nav('/login') },
+      ]
+    : []
 
   return (
     <header ref={headerRef}>
@@ -125,7 +151,9 @@ export function Header() {
               {link.label}
             </Link>
           ))}
-          {inMenu.length > 0 && <HeaderMenu links={inMenu} isActive={isActive} />}
+          {inMenu.length > 0 && (
+            <HeaderMenu links={inMenu} actions={menuActions} isActive={isActive} />
+          )}
         </nav>
       </div>
       <div className="row" style={{ gap: 8 }}>
@@ -143,22 +171,26 @@ export function Header() {
             человека нет ни проектов, ни обсуждений, а лишний значок в шапке ленты
             выглядел бы поломкой. */}
         {user && <NotificationBell />}
-        <button
-          className="secondary header-theme"
-          onClick={() => setTheme(nextTheme)}
-          title={nextTheme === 'light' ? 'Светлая тема (кремово-мятная)' : 'Тёмная тема'}
-          aria-label="Переключить тему"
-        >
-          {theme === 'dark' ? '☾' : '☀'}
-          <span className="header-theme__label">{theme === 'dark' ? ' тёмная' : ' светлая'}</span>
-        </button>
-        {user ? (
+        {/* На совсем узком экране тема и выход живут в меню «Ещё»: в строке иначе остаётся
+            только кнопка меню, и шапка выглядит пустой (0.88.0). */}
+        {!narrow && (
+          <button
+            className="secondary header-theme"
+            onClick={() => setTheme(nextTheme)}
+            title={nextTheme === 'light' ? 'Светлая тема (кремово-мятная)' : 'Тёмная тема'}
+            aria-label="Переключить тему"
+          >
+            {theme === 'dark' ? '☾' : '☀'}
+            <span className="header-theme__label">{theme === 'dark' ? ' тёмная' : ' светлая'}</span>
+          </button>
+        )}
+        {!narrow && (user ? (
           <button className="secondary" onClick={() => { logout(); nav('/login') }}>
             Выйти
           </button>
         ) : (
           <Link to="/login"><button className="secondary">Войти</button></Link>
-        )}
+        ))}
       </div>
     </header>
   )
@@ -174,7 +206,16 @@ export function Header() {
  * Доступность: `aria-expanded` и `aria-haspopup`, Escape закрывает и возвращает фокус на
  * кнопку, клик мимо закрывает, переход закрывает сам себя.
  */
-function HeaderMenu({ links, isActive }: { links: NavLink[]; isActive: (to: string) => boolean }) {
+function HeaderMenu({
+  links,
+  actions = [],
+  isActive,
+}: {
+  links: NavLink[]
+  /** Действия вне навигации (тема, выход) — последними, 0.88.0. */
+  actions?: MenuAction[]
+  isActive: (to: string) => boolean
+}) {
   const [open, setOpen] = useState(false)
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const buttonRef = useRef<HTMLButtonElement | null>(null)
@@ -236,6 +277,23 @@ function HeaderMenu({ links, isActive }: { links: NavLink[]; isActive: (to: stri
             >
               {link.label}
             </Link>
+          ))}
+          {/* Действия после навигации и отделены линией: тема и выход — не разделы. */}
+          {actions.map((action) => (
+            <button
+              key={action.label}
+              type="button"
+              role="menuitem"
+              className="header-more__action"
+              onClick={() => {
+                close()
+                action.onSelect()
+              }}
+              data-header-action={action.label}
+            >
+              {action.icon && <span aria-hidden="true">{action.icon} </span>}
+              {action.label}
+            </button>
           ))}
         </div>
       )}

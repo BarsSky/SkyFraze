@@ -26,6 +26,15 @@
 .ed-panel__meta { display: flex; align-items: center; gap: 10px; }
 .ed-filter { max-width: 240px; }
 .ed-panel__count { font-size: 12px; white-space: nowrap; }
+/* Телефон (0.88.0): в шапке панели фильтр занимает всю строку, счётчик уходит под него, а не
+   сжимает поле до «Поиск по названию и те». Раньше max-width: 240px оставлял поле узким, а
+   счётчик «событий: 58» стоял рядом и обрезался. */
+@media (max-width: 640px) {
+  .ed-panel__head { gap: 8px; }
+  .ed-panel__meta { width: 100%; flex-wrap: wrap; gap: 6px; }
+  .ed-filter { max-width: none; flex: 1 1 100%; min-width: 0; }
+  .ed-panel__count { white-space: normal; }
+}
 .ed-panel__note { font-size: 12px; margin: 0 0 12px; }
 .ed-panel__note--upload {
   color: var(--accent); border-left: 2px solid var(--accent);

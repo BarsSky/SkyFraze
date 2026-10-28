@@ -114,13 +114,33 @@
   background: var(--accent-strong, var(--accent)); border-color: transparent;
   color: var(--bg); font-weight: 600;
 }
-/* Панель вкладки начинается ПОД полосой вкладок (0.86.0).
+/* Панель вкладки начинается ПОД полосой вкладок (0.86.0) с ОДНИМ И ТЕМ ЖЕ зазором (0.88.0).
    Полоса — fixed поверх страницы, а содержимое «Редакторов», «Связей» и «Версий» идёт в потоке
-   <main> с самого верха: без этого отступа его заголовок и кнопки оказывались под вкладками
-   (отчёт «меню накрывает кнопки переключения»). У сцены и листа кадра свои absolute/fixed
-   смещения, посчитанные от --sf-free-top, — отступ панели их не двигает. У читателя вкладок нет,
-   переменная равна нулю, и поток остаётся прежним. */
-#project-tab-panel { padding-top: var(--sf-tabs-h, 0px); }
+   <main> с самого верха. Раньше отступ складывался из панели и собственных полей каждого
+   раздела: у «Редакторов» 64 px, у «Связей» 42, у «Версий» и «Проекта» 24 — содержимое
+   начиналось на разной высоте (отчёт: «в каждом табе пустой отступ на разном расстоянии»).
+   Теперь зазор один, а собственные верхние поля разделов внутри панели сняты.
+   У сцены и листа кадра свои absolute/fixed смещения от --sf-free-top — их это не двигает.
+   У читателя вкладок нет, переменная равна нулю, и поток остаётся прежним. */
+:root { --sf-tab-gap: 14px; }
+#project-tab-panel { padding-top: calc(var(--sf-tabs-h, 0px) + var(--sf-tab-gap)); }
+#project-tab-panel > .relations,
+#project-tab-panel > .ed-panel {
+  margin-top: 0;
+  border-top: 0;
+  /* Один и тот же внутренний отступ у всех рабочих вкладок: заголовок «Связей», «Редакторов»
+     и «Версий» встаёт на одной высоте от полосы вкладок (0.88.0). Раньше у каждого раздела был
+     свой (0, 12–14, 10 px), и содержимое начиналось на разном расстоянии. */
+  padding-top: 8px;
+  /* min-height: 100vh у панели редакторов нужен был, чтобы сцена гасла только когда панель
+     накрыла экран. На вкладке сцена уже не показывается — лишняя высота только добавляла
+     пустую прокрутку. */
+  min-height: 0;
+}
+/* То же для встроенных «Версий»: у окна свой внешний отступ, на вкладке он лишний, а шапка
+   получает такой же внутренний отступ, как у соседних вкладок. */
+#project-tab-panel > .sf-versions--embedded { margin-top: 0; }
+#project-tab-panel > .sf-versions--embedded .sf-versions__head { padding-top: 8px; }
 @media (max-width: 860px) {
   .sf-tabs { gap: 4px; }
   .sf-tabs__tab { padding: 4px 10px; font-size: 0.82rem; }
@@ -576,14 +596,29 @@ html.sf-viewer-open body { overflow: hidden; }
   .sf-route { display: none; }
   .sf-nav { display: none; }
   .sf-chips {
-    display: flex; position: fixed; left: 0; right: 0;
+    display: flex; flex-direction: column; position: fixed; left: 0; right: 0;
     /* Шапка приложения + верхняя панель стадии (~50px) + зазор: иначе чипы
        налезают на панель, и её кнопки перестают нажиматься. */
     top: calc(var(--sf-header-h, 46px) + var(--sf-tabs-h, 0px) + 62px); z-index: 45;
-    gap: 6px; padding: 8px 12px; overflow-x: auto; scrollbar-width: none;
+    gap: 6px; padding: 8px 12px;
     background: linear-gradient(to bottom, color-mix(in srgb, var(--sf-bg) 92%, transparent), transparent);
   }
+  /* Две полосы чипов (0.88.0): сверху главы, снизу под-события активной главы. Раньше всё шло
+     одной строкой — «все главы, потом шаги», и было неясно, где кончаются главы. */
+  .sf-chips__row {
+    display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none;
+    /* Полосы тянутся вниз, а не вбок: высоту меряет стадия (--sf-chips-h), поэтому сцена и лист
+       кадра сами сдвигаются ниже. */
+    min-width: 0;
+  }
+  .sf-chips__row::-webkit-scrollbar { display: none; }
   .sf-chips::-webkit-scrollbar { display: none; }
+  /* Шаги: номер уже короче, поэтому чип тянется по содержимому; под-шаги мельче — по ним видно
+     ветку дерева, не уходя с текущей главы. */
+  .sf-chips__row--steps { padding-top: 2px; }
+  .sf-chip--sub[data-depth='2'] { font-size: 0.72rem; opacity: 0.92; }
+  .sf-chip--sub[data-depth='3'],
+  .sf-chip--sub[data-depth='4'] { font-size: 0.69rem; opacity: 0.85; }
   /* Сцена начинается ПОД полосой чипов (её высоту стадия измеряет в --sf-chips-h):
      картинка и фон главы рисуются ниже переключателя событий, поэтому при
      прокрутке чипы остаются на виду и ничего не перекрывают. */

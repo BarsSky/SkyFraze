@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { Header } from './Header'
 import { useAuthStore } from '../store/auth'
@@ -122,22 +122,44 @@ describe('Header — навигация на узком экране', () => {
   })
 
   /**
-   * 320 px: в строке помещается только «Ещё». Прежде кнопка меню вылезала из своей полосы и
-   * перекрывала переключатель темы — клик по теме попадал в меню (нашёл аудит интерфейса).
+   * 320 px (0.88.0): в строке остаётся главный раздел, а тема и выход переезжают в меню.
+   *
+   * До этого на совсем узком экране в строке была ОДНА кнопка «Ещё» — шапка выглядела пустой
+   * (отчёт: «из меню видно только кнопку Ещё и больше ничего»).
    */
-  it('на 320 px в строке только «Ещё», а главный раздел — первым в меню', async () => {
+  it('на 320 px в строке «Мои проекты», а тема и выход — в меню', async () => {
     stubViewport(320)
     const view = renderHeader()
     const nav = view.container.querySelector('nav') as HTMLElement
-    expect(Array.from(nav.querySelectorAll('a')).map((a) => a.textContent)).toEqual([])
+    expect(Array.from(nav.querySelectorAll('a')).map((a) => a.textContent)).toEqual(['Мои проекты'])
+    // Переключателя темы и «Выйти» в строке нет: место отдано разделу.
+    expect(screen.queryByLabelText('Переключить тему')).toBeNull()
+    expect(within(nav).queryByRole('button', { name: 'Выйти' })).toBeNull()
+
     fireEvent.click(within(nav).getByRole('button', { name: 'Ещё разделы' }))
     const menu = await screen.findByRole('menu')
     const items = within(menu)
       .getAllByRole('menuitem')
-      .map((item) => item.textContent)
-    expect(items[0]).toBe('Мои проекты')
+      .map((item) => item.textContent?.trim())
+    // «Мои проекты» уже в строке — в меню его нет; остальные разделы на месте, действия — в конце.
+    expect(items).not.toContain('Мои проекты')
+    expect(items).toContain('Лента')
     expect(items).toContain('Резиденты')
     expect(items).toContain('Админка')
+    // Подпись темы зависит от текущей («Светлая тема» / «Тёмная тема») — проверяем по смыслу.
+    expect(items.some((item) => item !== undefined && /тема/i.test(item))).toBe(true)
+    expect(items[items.length - 1]).toBe('Выйти')
+  })
+
+  it('в меню на узком экране тема переключает тему, а не только показывает пункт', async () => {
+    stubViewport(320)
+    renderHeader()
+    const before = document.documentElement.dataset.theme
+    fireEvent.click(screen.getByRole('button', { name: 'Ещё разделы' }))
+    const menu = await screen.findByRole('menu')
+    fireEvent.click(within(menu).getByRole('menuitem', { name: /тема/ }))
+    await waitFor(() => expect(document.documentElement.dataset.theme).not.toBe(before))
+    expect(screen.queryByRole('menu')).toBeNull()
   })
 })
 
