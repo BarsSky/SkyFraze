@@ -59,6 +59,7 @@ type Snapshot = {
   tables: Array<{ rows: number; clientWidth: number; scrollWidth: number; right: number; columns: number[] }>
   overflowing: string[]
   still: { left: number; right: number; width: number } | null
+  parts: { copyH: number; scrollH: number; titleH: number; navH: number; bodyTop: number; bodyH: number }
 }
 
 async function measure(page: Page, label: string) {
@@ -89,9 +90,24 @@ async function measure(page: Page, label: string) {
     }
     const still = document.querySelector('.sf-scene__still, .sf-scene__still--photo')
     const stillRect = still ? still.getBoundingClientRect() : null
+    // Из чего сложился лист: если тексту не осталось места, видно только заголовок и кнопки.
+    const height = (selector) => {
+      const node = copy ? copy.querySelector(selector) : null
+      return node ? round(node.getBoundingClientRect().height) : 0
+    }
+    const body = copy ? copy.querySelector('.sf-copy__body') : null
+    const bodyRect = body ? body.getBoundingClientRect() : null
     return {
       vw: window.innerWidth,
       vh: window.innerHeight,
+      parts: {
+        copyH: copyRect ? round(copyRect.height) : 0,
+        scrollH: height('.sf-copy__scroll'),
+        titleH: height('.sf-copy__title'),
+        navH: height('.sf-copy__nav'),
+        bodyTop: bodyRect && copyRect ? round(bodyRect.top - copyRect.top) : 0,
+        bodyH: bodyRect ? round(bodyRect.height) : 0,
+      },
       pageScroll: document.documentElement.scrollWidth,
       copy: copyRect ? { left: round(copyRect.left), right: round(copyRect.right), width: round(copyRect.width), top: round(copyRect.top), bottom: round(copyRect.bottom) } : null,
       tables,
@@ -111,6 +127,17 @@ async function measure(page: Page, label: string) {
     )
   }
   if (data.still) console.log(`   картинка кадра: ${data.still.width} px, x ${data.still.left}..${data.still.right}`)
+  console.log(
+    `   части листа: всего ${data.parts.copyH}, область текста ${data.parts.scrollH}, ` +
+      `заголовок ${data.parts.titleH}, кнопки ${data.parts.navH}, текст с ${data.parts.bodyTop} высотой ${data.parts.bodyH}`,
+  )
+  // Текст должен хотя бы НАЧИНАТЬСЯ в области текста: если bodyTop больше её высоты, человек
+  // видит только заголовок с кнопками и ни строчки кадра.
+  if (data.parts.bodyH > 0 && data.parts.bodyTop >= data.parts.scrollH) {
+    console.warn(
+      `${label}: ВНИМАНИЕ — текст начинается на ${data.parts.bodyTop} px, а область текста всего ${data.parts.scrollH} px`,
+    )
+  }
   if (data.overflowing.length > 0) {
     console.log('   вылезает за лист:')
     for (const item of data.overflowing) console.log(`     ${item}`)
@@ -178,6 +205,33 @@ async function main() {
       problems.push(`полная версия: ${desktopMode.overflowing.length} элементов вылезают за лист`)
     }
     await page.screenshot({ path: '..\\_dev_shots\\stage-phone-desktop-mode.png', fullPage: false })
+
+    // 3. Телефон в полной версии, повёрнутый набок (0.97.8): правило плитки не должно
+    // зависеть только от портретной ориентации — иначе в ландшафте текст снова ложится на
+    // картинку без подложки.
+    await page.setViewportSize({ width: 980, height: 470 })
+    await page.waitForTimeout(600)
+    const landscape = await measure(page, 'полная версия, 980×470 (ландшафт)')
+    if (landscape.pageScroll > landscape.vw + 1) {
+      problems.push(`ландшафт: горизонтальная прокрутка страницы ${landscape.pageScroll} > ${landscape.vw}`)
+    }
+    if (landscape.copy && landscape.copy.right > landscape.vw + 1) {
+      problems.push(`ландшафт: лист кадра выходит за экран (${landscape.copy.right} > ${landscape.vw})`)
+    }
+    for (const table of landscape.tables) {
+      if (table.right > (landscape.copy?.right ?? 0) + 1) {
+        problems.push('ландшафт: таблица выходит за лист кадра')
+      }
+    }
+    const sheetBackground = (await page.evaluate(
+      `(async () => { const copy = document.querySelector('.sf-copy'); return copy ? getComputedStyle(copy).backgroundColor : '' })()`,
+    )) as string
+    console.log(`ландшафт: фон листа ${sheetBackground}`)
+    // Прозрачный фон — это и есть «текст поверх картинки»: у плитки он непрозрачный.
+    if (sheetBackground === 'rgba(0, 0, 0, 0)' || sheetBackground === 'transparent') {
+      problems.push('ландшафт: у листа кадра прозрачный фон — текст лежит прямо на иллюстрации')
+    }
+    await page.screenshot({ path: '..\\_dev_shots\\stage-phone-landscape.png', fullPage: false })
 
     // 2. Обычный телефон: тот же кадр в мобильной раскладке — для сравнения.
     await page.setViewportSize({ width: 360, height: 800 })
