@@ -75,9 +75,14 @@
 .ed-import__mode select { max-width: 220px; min-height: 32px; }
 
 .ed-panel__grid {
-  display: grid; grid-template-columns: minmax(240px, 340px) 1fr;
+  display: grid; grid-template-columns: minmax(240px, 340px) minmax(0, 1fr);
   gap: 16px; align-items: start;
+  /* 0.92.1: вторая колонка — minmax(0, 1fr), а не 1fr. У `1fr` минимальная ширина равна
+     min-content: длинное слово, имя файла или строка без пробелов растягивали колонку шире
+     панели, и всё, что правее, обрезалось (у #project-tab-panel стоит overflow-x: clip).
+     Колонки — ещё и min-width: 0, чтобы ни один ребёнок не мог распереть сетку. */
 }
+.ed-panel__grid > * { min-width: 0; }
 
 .ed-nav {
   display: flex; flex-direction: column; gap: 4px;
@@ -186,6 +191,8 @@
 .ed-editor {
   background: var(--bg-elev); border: 1px solid var(--border);
   border-radius: 8px; padding: 16px; min-height: 320px;
+  /* Ни поле, ни предпросмотр не должны выталкивать колонку за панель (0.92.1). */
+  min-width: 0; max-width: 100%; overflow-wrap: break-word;
 }
 .ed-editor__head { margin-bottom: 12px; }
 .ed-editor__path {
@@ -266,7 +273,9 @@
 .ed-bg__thumb.is-active { border-color: var(--accent); }
 
 @media (max-width: 860px) {
-  .ed-panel__grid { grid-template-columns: 1fr; }
+  /* minmax(0, 1fr), а не 1fr: см. пояснение у .ed-panel__grid — иначе одна длинная строка
+     в тексте кадра растягивает колонку и обрезает панель справа. */
+  .ed-panel__grid { grid-template-columns: minmax(0, 1fr); }
   .ed-nav { max-height: 40vh; }
   .ed-row { min-height: 34px; } /* палец на телефоне: строки дерева — тоже цель нажатия */
   /* Длинную подпись «Аня и Борис печатают…» рядом с именем на телефоне не
@@ -547,18 +556,45 @@
 
 /* ─── упоминания карточки в кадре (0.68.0) ───────────────────────────────────
    Список, а не подсветка внутри поля: поле кадра — textarea, и подсветка потребовала бы
-   зеркального слоя. Клик по чипу выделяет место в тексте нативно. */
-.frame-mentions { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin: 8px 0 0; font-size: 12px; }
+   зеркального слоя. Клик по чипу выделяет место в тексте нативно.
+   0.92.1: один чип на карточку со счётчиком вхождений; блок не может быть шире панели
+   (min-width: 0 + max-width: 100%), иначе длинный список распирал колонку и обрезался
+   правым краем — ровно то, на что был отчёт. */
+.frame-mentions {
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  margin: 8px 0 0; font-size: 12px; min-width: 0; max-width: 100%;
+}
 .frame-mentions__label { opacity: 0.75; }
-.frame-mentions__list { display: flex; gap: 6px; flex-wrap: wrap; list-style: none; margin: 0; padding: 0; }
+.frame-mentions__list {
+  display: flex; gap: 6px; flex-wrap: wrap; list-style: none;
+  margin: 0; padding: 0; min-width: 0; max-width: 100%;
+}
+.frame-mentions__list > li { min-width: 0; max-width: 100%; }
 .frame-mentions__chip {
-  display: inline-flex; align-items: baseline; gap: 6px;
+  display: inline-flex; align-items: baseline; gap: 6px; max-width: 100%;
   background: var(--bg-elev); border: 1px solid var(--border); border-radius: 999px;
   padding: 3px 10px; font-size: 12px; color: var(--fg); cursor: pointer;
 }
 .frame-mentions__chip:hover { border-color: var(--accent, var(--fg)); }
-.frame-mentions__name { font-weight: 600; }
-.frame-mentions__quote { opacity: 0.7; }
+.frame-mentions__name {
+  font-weight: 600; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 24ch;
+}
+.frame-mentions__quote {
+  opacity: 0.7; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 16ch;
+}
+/* Счётчик вхождений («Ганимед ×6») — вместо шести одинаковых чипов. */
+.frame-mentions__count {
+  font-variant-numeric: tabular-nums; color: var(--fg-muted); flex: 0 0 auto;
+}
+/* «ещё N» — кнопка, а не текст: на телефоне по ней надо попасть пальцем. */
+.frame-mentions__more {
+  display: inline-flex; align-items: center; min-height: 26px;
+  background: none; border: 1px dashed var(--border); border-radius: 999px;
+  padding: 3px 10px; font-size: 12px; color: var(--fg-soft); cursor: pointer;
+}
+.frame-mentions__more:hover { border-color: var(--accent, var(--fg)); color: var(--fg); }
 
 /* ─── хронология карточки и фильтр дерева по карточке (0.69.0) ──────────────── */
 .ent__chronology { list-style: none; flex: 1 0 100%; margin: 6px 0 4px; padding: 0 0 0 12px; border-left: 2px solid var(--border); }
@@ -601,6 +637,8 @@
 .ent__matrix:not([open]) { overflow: hidden; }
 @media (max-width: 520px) {
   .ent__matrix-link { min-width: 32px; min-height: 32px; }
+  /* Чип упоминания — цель нажатия: 12px текста и 3px полей давали 22 px высоты (замер 0.92.1). */
+  .frame-mentions__chip, .frame-mentions__more { min-height: 32px; }
 }
 
 /* ─── карточка упоминания (0.87.0 → 0.90.0) ─────────────────────────────────

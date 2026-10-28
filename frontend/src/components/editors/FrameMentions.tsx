@@ -1,4 +1,5 @@
-import type { Mention } from '../../collab/mentions'
+import { useMemo, useState } from 'react'
+import { groupMentions, type Mention } from '../../collab/mentions'
 
 /**
  * «Упоминания в кадре» — кто из карточек мира назван в этом кадре (фаза 2).
@@ -10,6 +11,12 @@ import type { Mention } from '../../collab/mentions'
  *
  * Ложные срабатывания видны прямо здесь: человек видит цитату и понимает, то ли это слово.
  * Поэтому список, а не молчаливая подсветка.
+ *
+ * 0.92.1 — один чип на КАРТОЧКУ, а не на каждое вхождение. Отчёт: «упоминания дублируются
+ * слишком много раз… при большем количестве будет расти список и вылезать». В кадре, где карточка
+ * названа шесть раз, было шесть одинаковых чипов: список переставал быть списком персонажей и
+ * становился списком мест в тексте. Теперь у чипа счётчик вхождений, а клик ПЕРЕБИРАЕТ вхождения
+ * («1 из 3» → «2 из 3»), поэтому ни одно место не потерялось.
  */
 
 interface Props {
@@ -25,6 +32,15 @@ interface Props {
 }
 
 /**
+ * Сколько чипов видно до «ещё N».
+ *
+ * Шесть — это две строки на телефоне: список карточек в кадре остаётся обозримым, а редкие
+ * кадры с десятком персонажей не растягивают панель на пол-экрана. Остальные не теряются —
+ * они за кнопкой.
+ */
+export const MENTIONS_VISIBLE = 6
+
+/**
  * Отличается ли цитата от имени по буквам.
  *
  * Регистр не считается отличием: «анна» в середине фразы — то же имя, и подпись «Анна анна»
@@ -35,7 +51,13 @@ export function differs(quote: string, name: string): boolean {
 }
 
 export function FrameMentions({ mentions, onShow, hasEntities }: Props) {
-  if (mentions.length === 0) {
+  /** Сколько раз нажали на карточку — по этому числу выбирается вхождение. */
+  const [cursor, setCursor] = useState<Record<string, number>>({})
+  const [expanded, setExpanded] = useState(false)
+
+  const groups = useMemo(() => groupMentions(mentions), [mentions])
+
+  if (groups.length === 0) {
     // Подсказка вместо молчания: карточки есть, а в кадре ни одного имени из них. Человек
     // должен узнать, что делать (добавить падеж в алиасы), а не решить, что связи сломаны.
     if (!hasEntities) return null
@@ -47,28 +69,77 @@ export function FrameMentions({ mentions, onShow, hasEntities }: Props) {
     )
   }
 
+  const visible = expanded ? groups : groups.slice(0, MENTIONS_VISIBLE)
+  const hidden = groups.length - visible.length
+
+  /** Показать следующее вхождение карточки: каждое нажатие ведёт к следующему месту в тексте. */
+  const show = (entityId: string, found: Mention[]) => {
+    const index = (cursor[entityId] ?? 0) % found.length
+    onShow(found[index])
+    if (found.length > 1) {
+      setCursor((current) => ({ ...current, [entityId]: (current[entityId] ?? 0) + 1 }))
+    }
+  }
+
   return (
     <div className="frame-mentions" data-frame-mentions>
       <span className="frame-mentions__label">Упоминания:</span>
       <ul className="frame-mentions__list">
-        {mentions.map((mention) => (
-          <li key={`${mention.entityId}-${mention.field}-${mention.from}`}>
+        {visible.map((group) => {
+          const total = group.mentions.length
+          const index = (cursor[group.entityId] ?? 0) % total
+          const current = group.mentions[index]
+          const title = total > 1
+            ? `Показать в тексте: «${current.quote}» (${index + 1} из ${total} — нажатие ведёт к следующему)`
+            : `Показать в тексте: «${current.quote}»`
+          return (
+            <li key={group.entityId}>
+              <button
+                type="button"
+                className="frame-mentions__chip"
+                onClick={() => show(group.entityId, group.mentions)}
+                title={title}
+                aria-label={total > 1 ? `${group.entityName}, упоминаний: ${total}` : group.entityName}
+                data-frame-mention={group.entityId}
+                data-frame-mention-count={total}
+                data-frame-mention-index={index}
+              >
+                <span className="frame-mentions__name">{group.entityName}</span>
+                {/* Счётчик вместо повторов: «Ганимед ×6» занимает один чип, а не шесть. */}
+                {total > 1 && <span className="frame-mentions__count">×{total}</span>}
+                {/* Цитата — только когда она отличается от имени по буквам: «Анна Анна» и
+                    «Письмо письмо» ничего не добавляют, а место в списке занимают. */}
+                {differs(current.quote, group.entityName) && (
+                  <span className="frame-mentions__quote">{current.quote}</span>
+                )}
+              </button>
+            </li>
+          )
+        })}
+        {hidden > 0 && (
+          <li>
             <button
               type="button"
-              className="frame-mentions__chip"
-              onClick={() => onShow(mention)}
-              title={`Показать в тексте: «${mention.quote}»`}
-              data-frame-mention={mention.entityId}
+              className="frame-mentions__more"
+              aria-expanded={false}
+              onClick={() => setExpanded(true)}
             >
-              <span className="frame-mentions__name">{mention.entityName}</span>
-              {/* Цитата — только когда она отличается от имени по буквам: «Анна Анна» и
-                  «Письмо письмо» ничего не добавляют, а место в списке занимают. */}
-              {differs(mention.quote, mention.entityName) && (
-                <span className="frame-mentions__quote">{mention.quote}</span>
-              )}
+              ещё {hidden}
             </button>
           </li>
-        ))}
+        )}
+        {expanded && groups.length > MENTIONS_VISIBLE && (
+          <li>
+            <button
+              type="button"
+              className="frame-mentions__more"
+              aria-expanded
+              onClick={() => setExpanded(false)}
+            >
+              свернуть
+            </button>
+          </li>
+        )}
       </ul>
     </div>
   )

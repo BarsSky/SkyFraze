@@ -105,6 +105,48 @@ export function frameMentions(frame: MentionFrame, entities: MentionEntity[]): M
   ]
 }
 
+/**
+ * Упоминания одной карточки в кадре (0.92.1).
+ *
+ * Зачем группировать. Раньше список показывал КАЖДОЕ вхождение: в кадре, где Ганимед назван
+ * шесть раз, появлялось шесть чипов «Ганимед» подряд — список распухал, и найти в нём нужную
+ * карточку становилось труднее, чем имя в тексте (отчёт: «упоминания дублируются слишком много
+ * раз»). Карточка — это сущность, а не место в тексте, поэтому чип один, а число вхождений
+ * показывается счётчиком.
+ */
+export interface MentionGroup {
+  entityId: string
+  entityName: string
+  /** Вхождения в порядке текста: сначала заголовок, потом тело. */
+  mentions: Mention[]
+}
+
+/**
+ * Сгруппировать упоминания по карточкам, сохранив порядок первого появления.
+ *
+ * Порядок важен: список читается как «кто здесь назван и в каком порядке», и пересортировка по
+ * алфавиту или по частоте ломала бы это соответствие тексту.
+ */
+export function groupMentions(mentions: Mention[]): MentionGroup[] {
+  const byId = new Map<string, MentionGroup>()
+  const out: MentionGroup[] = []
+  for (const mention of mentions) {
+    const existing = byId.get(mention.entityId)
+    if (existing) {
+      existing.mentions.push(mention)
+      continue
+    }
+    const group: MentionGroup = {
+      entityId: mention.entityId,
+      entityName: mention.entityName,
+      mentions: [mention],
+    }
+    byId.set(mention.entityId, group)
+    out.push(group)
+  }
+  return out
+}
+
 /** Сколько РАЗНЫХ кадров содержит каждую карточку и сколько всего упоминаний. */
 export interface EntityUsage {
   frames: number

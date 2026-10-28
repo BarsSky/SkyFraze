@@ -825,6 +825,12 @@ cd frontend && npx tsx tests/diag-docx-template.ts
 # _dev_shots/docx-markers-export.docx (распаковать и посмотреть word/document.xml).
 cd frontend && npx tsx tests/diag-docx-markers.ts
 
+# Упоминания в кадре (0.92.1): в кадре девять карточек, Ганимед назван шесть раз. Проверяем, что
+# чип ОДИН на карточку со счётчиком «×6», что перебор вхождений по нажатию ведёт в разные места
+# текста, что длинный список сворачивается в «ещё 3», и что на 360 px панель не шире себя, а
+# страница — без горизонтальной прокрутки. Проект создаётся и удаляется скриптом.
+cd frontend && npx tsx tests/diag-mentions.ts
+
 # E2E публичной ленты: права, просмотры, оценки
 cd frontend && npx tsx tests/public-feed.ts
 
