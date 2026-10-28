@@ -17,10 +17,13 @@ const postChat = vi.fn()
 const editChat = vi.fn()
 const listEventRows = vi.fn()
 
+const markChatSeen = vi.fn().mockResolvedValue(undefined)
+
 vi.mock('../../api/chat', () => ({
   listChat: (...args: unknown[]) => listChat(...args),
   postChat: (...args: unknown[]) => postChat(...args),
   editChat: (...args: unknown[]) => editChat(...args),
+  markChatSeen: (...args: unknown[]) => markChatSeen(...args),
 }))
 
 /** Текущий пользователь: «изменить» показывается только у своих сообщений. */
@@ -134,6 +137,13 @@ describe('ProjectChat', () => {
     const link = await screen.findByRole('button', { name: /к кадру/ })
     fireEvent.click(link)
     expect(onOpenFrame).toHaveBeenCalledWith('f1')
+  })
+
+  it('открытый чат отмечается прочитанным на сервере (0.97.0)', async () => {
+    listChat.mockResolvedValue({ messages: [message({ id: 'm1' })], bot: { name: 'Нестор', available: false } })
+    listEventRows.mockResolvedValue([])
+    render(<ProjectChat {...base} />)
+    await waitFor(() => expect(markChatSeen).toHaveBeenCalledWith('p1'))
   })
 
   it('сигнал из сокета догружает новое и не дублирует показанное (0.96.0)', async () => {

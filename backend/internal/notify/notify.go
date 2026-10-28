@@ -1,4 +1,4 @@
-﻿// Package notify — письма о новых замечаниях.
+// Package notify — письма о новых замечаниях.
 //
 // Что это и чего здесь нет. Уведомление — короткое письмо «в проекте X появились
 // замечания», собранное из очереди (comment_notifications, миграция 0020). Никакого
@@ -102,7 +102,27 @@ func (s *Service) Run(ctx context.Context) {
 }
 
 // Flush отправляет то, что накопилось: одно письмо на человека.
+//
+// Две очереди — замечания и сообщения чата (0.97.0): причина письма разная, и смешивать их в
+// одном письме значило бы объяснять получателю, что именно произошло. Сбои одной очереди не
+// мешают другой.
 func (s *Service) Flush(ctx context.Context) (sent, failed int, err error) {
+	commentSent, commentFailed, commentErr := s.flushComments(ctx)
+	chatSent, chatFailed, chatErr := s.flushChat(ctx)
+	sent = commentSent + chatSent
+	failed = commentFailed + chatFailed
+	switch {
+	case commentErr != nil && chatErr != nil:
+		return sent, failed, commentErr
+	case commentErr != nil:
+		return sent, failed, commentErr
+	default:
+		return sent, failed, chatErr
+	}
+}
+
+// flushComments — очередь замечаний (0.56.0).
+func (s *Service) flushComments(ctx context.Context) (sent, failed int, err error) {
 	pending, err := s.store.PendingCommentNotifications(ctx, 200, s.cfg.MaxAttempts)
 	if err != nil {
 		return 0, 0, err
@@ -147,6 +167,72 @@ func (s *Service) Flush(ctx context.Context) (sent, failed int, err error) {
 	return sent, failed, nil
 }
 
+// flushChat — очередь сообщений чата (0.97.0).
+func (s *Service) flushChat(ctx context.Context) (sent, failed int, err error) {
+	pending, err := s.store.PendingChatNotifications(ctx, 200, s.cfg.MaxAttempts)
+	if err != nil {
+		return 0, 0, err
+	}
+	if len(pending) == 0 {
+		return 0, 0, nil
+	}
+	byUser := make(map[uuid.UUID][]store.ChatNotification, len(pending))
+	order := make([]uuid.UUID, 0, len(pending))
+	for _, row := range pending {
+		if _, seen := byUser[row.UserID]; !seen {
+			order = append(order, row.UserID)
+		}
+		byUser[row.UserID] = append(byUser[row.UserID], row)
+	}
+	for _, userID := range order {
+		rows := byUser[userID]
+		ids := make([]uuid.UUID, 0, len(rows))
+		for _, row := range rows {
+			ids = append(ids, row.ID)
+		}
+		subject, body := composeChat(rows, s.cfg.BaseURL)
+		if sendErr := s.sender.Send(ctx, rows[0].Email, subject, body); sendErr != nil {
+			for _, id := range ids {
+				if markErr := s.store.FailChatNotification(ctx, id, sendErr.Error()); markErr != nil {
+					s.logger.Warn("notify: не удалось отметить неудачу чата", "err", markErr)
+				}
+			}
+			failed++
+			s.logger.Warn("notify: письмо о чате не отправлено", "to", rows[0].Email, "err", sendErr)
+			continue
+		}
+		if markErr := s.store.MarkChatNotificationsSent(ctx, ids); markErr != nil {
+			s.logger.Warn("notify: письмо о чате отправлено, но отметка не записалась", "err", markErr)
+		}
+		sent++
+		s.logger.Info("notify: письмо о сообщениях чата отправлено",
+			"to", rows[0].Email, "messages", len(rows))
+	}
+	return sent, failed, nil
+}
+
+// composeChat собирает письмо о сообщениях чата: «кто и что написал», без полного текста.
+func composeChat(rows []store.ChatNotification, baseURL string) (subject, body string) {
+	project := rows[0].ProjectTitle
+	if project == "" {
+		project = "проект"
+	}
+	count := len(rows)
+	subject = fmt.Sprintf("SkyFraze: %s чата в «%s»", messagesPlural(count), project)
+	var b strings.Builder
+	b.WriteString("Новые сообщения в общем чате проекта «" + project + "»:\n\n")
+	for _, row := range rows {
+		b.WriteString(fmt.Sprintf("• %s: %s\n", row.AuthorName, oneLine(row.Body, 300)))
+	}
+	if baseURL != "" {
+		link := strings.TrimSuffix(baseURL, "/") + "/projects/" + rows[0].ProjectID.String()
+		b.WriteString("\nОткрыть проект: " + link + "\n")
+	}
+	b.WriteString("\nВы получаете это письмо, потому что включили уведомления в профиле SkyFraze.")
+	b.WriteString("\nОтключить: профиль → «Присылать замечания и сообщения чата на почту».\n")
+	return subject, b.String()
+}
+
 // compose собирает тему и текст письма.
 //
 // Письмо короткое и без разметки: получатель должен понять «где и что», а не читать
@@ -175,6 +261,18 @@ func compose(rows []store.CommentNotification, baseURL string) (subject, body st
 	b.WriteString("\nВы получаете это письмо, потому что включили уведомления в профиле SkyFraze.")
 	b.WriteString("\nОтключить: профиль → «Присылать замечания на почту».\n")
 	return subject, b.String()
+}
+
+// messagesPlural — «1 новое сообщение», «2 новых сообщения», «5 новых сообщений».
+func messagesPlural(n int) string {
+	switch {
+	case n == 1:
+		return "новое сообщение"
+	case n >= 2 && n <= 4:
+		return fmt.Sprintf("%d новых сообщения", n)
+	default:
+		return fmt.Sprintf("%d новых сообщений", n)
+	}
 }
 
 // plural — «1 новое замечание», «2 новых замечания».
@@ -299,4 +397,3 @@ func validAddress(address string) error {
 	}
 	return nil
 }
-

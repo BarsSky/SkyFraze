@@ -12,11 +12,16 @@ import { NotificationBell } from './NotificationBell'
  * момент, когда счётчик мог уменьшиться (обсуждение открыли).
  */
 
-const mocks = vi.hoisted(() => ({ projects: vi.fn() }))
+const mocks = vi.hoisted(() => ({ projects: vi.fn(), chat: vi.fn() }))
 
 vi.mock('../api/comments', () => ({
   // Модуль отдаёт и типы, и разбор — компоненту нужен только этот вызов.
   projectsWithUnseen: mocks.projects,
+}))
+
+// Чат проекта (0.97.0): колокольчик показывает и «в проекте поговорили».
+vi.mock('../api/chat', () => ({
+  chatUnseen: mocks.chat,
 }))
 
 const row = (over: Record<string, unknown> = {}) => ({
@@ -38,6 +43,7 @@ function renderBell(initial = '/projects') {
 
 beforeEach(() => {
   mocks.projects.mockResolvedValue([])
+  mocks.chat.mockResolvedValue([])
 })
 
 afterEach(() => {
@@ -136,5 +142,26 @@ describe('NotificationBell', () => {
     renderBell()
     fireEvent.click(await screen.findByRole('button', { name: 'Новые замечания: 2' }))
     expect(document.querySelector('[data-notify-mention]')).toBeNull()
+  })
+})
+describe('колокольчик — непрочитанное в чате (0.97.0)', () => {
+  it('сообщения чата видны в панели и считаются в счётчике', async () => {
+    mocks.chat.mockResolvedValue([
+      { projectId: 'p1', title: 'Рукопись', unread: 2, lastAt: '2026-10-28T09:00:00Z' },
+    ])
+    renderBell()
+    await waitFor(() => expect(screen.getByRole('button', { name: /Новые замечания: 2/ })).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: /Новые замечания: 2/ }))
+    const item = screen.getByText(/чат: 2/)
+    expect(item).toBeTruthy()
+  })
+
+  it('чат и замечания складываются в один счётчик, а в панели видны раздельно', async () => {
+    mocks.projects.mockResolvedValue([row({ unread: 3 })])
+    mocks.chat.mockResolvedValue([{ projectId: 'p2', title: 'Повесть', unread: 1, lastAt: '2026-10-28T09:00:00Z' }])
+    renderBell()
+    await waitFor(() => expect(screen.getByRole('button', { name: /Новые замечания: 4/ })).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: /Новые замечания: 4/ }))
+    expect(screen.getByText(/чат: 1/)).toBeTruthy()
   })
 })

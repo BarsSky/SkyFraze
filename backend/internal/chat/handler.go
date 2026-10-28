@@ -43,6 +43,8 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/chat/messages", h.Post)
 	// Правка своего сообщения (0.96.0).
 	r.Patch("/chat/messages/{messageID}", h.Edit)
+	// «Прочитано» в чате проекта (0.97.0): колокольчик считает непрочитанное по серверу.
+	r.Post("/chat/seen", h.MarkSeen)
 }
 
 // List — GET /chat/messages.
@@ -147,6 +149,40 @@ func (h *Handler) Edit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"message": message})
+}
+
+// Unseen и MarkSeen вешает вызывающий: первая ручка живёт в корне (`/api/chat/unseen` — «где меня
+// ждут» по всем проектам) и требует входа, вторая — в под-дереве проекта.
+
+// Unseen — GET /api/chat/unseen: в каких моих проектах есть непрочитанные сообщения.
+func (h *Handler) Unseen(w http.ResponseWriter, r *http.Request) {
+	userID, err := auth.UserIDFromCtx(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	list, err := h.svc.Unread(r.Context(), userID)
+	if err != nil {
+		h.fail(w, err, "chat unseen")
+		return
+	}
+	if list == nil {
+		list = []store.ProjectChatUnread{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"projects": list})
+}
+
+// MarkSeen — POST /chat/seen: отметить чат проекта прочитанным.
+func (h *Handler) MarkSeen(w http.ResponseWriter, r *http.Request) {
+	userID, projectID, ok := h.target(w, r)
+	if !ok {
+		return
+	}
+	if err := h.svc.MarkSeen(r.Context(), userID, projectID); err != nil {
+		h.fail(w, err, "chat seen")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 func (h *Handler) target(w http.ResponseWriter, r *http.Request) (uuid.UUID, uuid.UUID, bool) {

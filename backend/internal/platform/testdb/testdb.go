@@ -166,6 +166,9 @@ var schemaSteps = []struct{ probe, file string }{
 	                  WHERE table_schema='public' AND table_name='project_chat_messages'
 	                    AND column_name='reply_to')`,
 		"0039_project_chat_threads.up.sql"},
+	{`SELECT EXISTS (SELECT 1 FROM information_schema.tables
+	                  WHERE table_schema='public' AND table_name='project_chat_reads')`,
+		"0040_chat_reads_and_notifications.up.sql"},
 }
 
 // Setup открывает отдельную БД для пакета (suffix), применяет миграции и

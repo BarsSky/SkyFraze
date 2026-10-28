@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { editChat, listChat, postChat, type ChatBotInfo, type ChatMessage } from '../../api/chat'
+import { editChat, listChat, markChatSeen, postChat, type ChatBotInfo, type ChatMessage } from '../../api/chat'
 import { listEventRows } from '../../api/events'
 import { serverErrorMessage } from '../../api/client'
 import { onChatChanged } from '../../lib/chatEvents'
@@ -132,11 +132,16 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread }: Props
   }, [frames, projectId, visible])
 
   // Прочитано: вкладка открыта — отмечаем последнее сообщение и гасим маркер.
+  //
+  // Отметка живёт в двух местах: локально (мгновенный маркер на кнопке) и на сервере (0.97.0) —
+  // колокольчик в шапке считает «где меня ждут» по всем проектам, и про другой браузер он иначе
+  // не знал бы. Ошибку сервера не показываем: «прочитано» — удобство, а не данные проекта.
   useEffect(() => {
     if (!visible) return
     const last = messages[messages.length - 1]
     if (last) writeSeen(projectId, last.id)
     onUnread?.(0)
+    void markChatSeen(projectId).catch(() => undefined)
   }, [messages, onUnread, projectId, visible])
 
   // Маркер непрочитанного: считаем сообщения после личного «последнего прочитанного».
@@ -326,7 +331,7 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread }: Props
           className="chat__input"
           value={text}
           rows={2}
-          placeholder={`Сообщение участникам… ${bot.available ? `Можно позвать ${bot.name}.` : ''}`}
+          placeholder={`Сообщение участникам… ${bot.available ? '@' + bot.name + ' в тексте — позвать бота.' : ''}`}
           aria-label="Сообщение в чат проекта"
           onChange={(event) => setText(event.target.value)}
           onKeyDown={(event) => {

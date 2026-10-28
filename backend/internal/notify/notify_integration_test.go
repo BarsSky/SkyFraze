@@ -365,3 +365,72 @@ func firstLine(message, prefix string) string {
 	return ""
 }
 
+// Письма о сообщениях чата (0.97.0): отдельная очередь, одно письмо на человека, с автором и
+// началом текста, и только тем, кто включил уведомления.
+func TestFlushChatMessages(t *testing.T) {
+	ctx := context.Background()
+	pool := testdb.Setup(t, "notify")
+	testdb.Truncate(t, pool,
+		"chat_notifications", "project_chat_messages", "project_chat_reads",
+		"comment_notifications", "comment_views", "event_comments",
+		"project_event_state", "sessions", "invitations", "event_assets", "assets",
+		"events", "team_memberships", "projects", "users")
+	st := store.New(pool)
+	projSvc := projects.New(st)
+	owner, err := st.CreateUser(ctx, "chat-owner@example.com", "hash", "Владелец")
+	if err != nil {
+		t.Fatalf("владелец: %v", err)
+	}
+	author, err := st.CreateUser(ctx, "chat-author@example.com", "hash", "Автор")
+	if err != nil {
+		t.Fatalf("автор: %v", err)
+	}
+	// Согласие: у владельца включено, у автора — нет (ему и не нужно: он автор).
+	if _, err := pool.Exec(ctx, `UPDATE users SET notify_comments = true WHERE id = $1`, owner.ID); err != nil {
+		t.Fatalf("согласие: %v", err)
+	}
+	project, err := projSvc.Create(ctx, owner.ID, "Проект с чатом", "")
+	if err != nil {
+		t.Fatalf("проект: %v", err)
+	}
+	if err := st.AddMembership(ctx, project.ID, author.ID, store.RoleEditor); err != nil {
+		t.Fatalf("участие: %v", err)
+	}
+	message := store.ChatMessage{
+		ProjectID: project.ID, AuthorID: &author.ID, AuthorName: "Автор",
+		Kind: store.ChatKindUser, Body: "Коллеги, посмотрите сцену — там важен ритм.",
+	}
+	if err := st.AppendChatMessage(ctx, &message); err != nil {
+		t.Fatalf("сообщение: %v", err)
+	}
+	if _, err := st.EnqueueChatNotifications(ctx, project.ID, message.ID, author.ID); err != nil {
+		t.Fatalf("очередь: %v", err)
+	}
+
+	fake := startFakeSMTP(t)
+	cfg := notify.Config{Host: "127.0.0.1", Port: fake.port(), From: "skyfraze@example.com",
+		BaseURL: "https://skyfraze.example", MaxAttempts: 3}
+	svc := notify.New(st, notify.NewSMTPSender(cfg), cfg,
+		slog.New(slog.NewTextHandler(io.Discard, nil)))
+	sent, failed, err := svc.Flush(ctx)
+	if err != nil {
+		t.Fatalf("отправка: %v", err)
+	}
+	if sent != 1 || failed != 0 {
+		t.Fatalf("отправлено %d, неудач %d — ожидалось одно письмо", sent, failed)
+	}
+	messages := fake.take()
+	if len(messages) != 1 {
+		t.Fatalf("писем: %d", len(messages))
+	}
+	raw := messages[0]
+	for _, want := range []string{"chat-owner@example.com", "Проект с чатом", "ритм"} {
+		if !strings.Contains(raw, want) {
+			t.Errorf("в письме нет %q: %s", want, raw)
+		}
+	}
+	// Повторный обход не шлёт то же письмо снова.
+	if again, _, err := svc.Flush(ctx); err != nil || again != 0 {
+		t.Fatalf("повторная отправка: %d, %v", again, err)
+	}
+}

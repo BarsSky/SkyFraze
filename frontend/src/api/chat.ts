@@ -53,6 +53,38 @@ export interface ChatPostInput {
   replyTo?: string
 }
 
+/** Непрочитанное в чате по проектам — для колокольчика (0.97.0). */
+export interface ChatUnseen {
+  projectId: string
+  title: string
+  unread: number
+  lastAt: string
+}
+
+export async function chatUnseen(): Promise<ChatUnseen[]> {
+  const raw = await http.get('chat/unseen').json<{ projects?: unknown }>()
+  const list = Array.isArray(raw?.projects) ? raw.projects : []
+  const out: ChatUnseen[] = []
+  for (const item of list) {
+    if (typeof item !== 'object' || item === null) continue
+    const record = item as Record<string, unknown>
+    const projectId = typeof record.project_id === 'string' ? record.project_id : ''
+    if (!projectId) continue
+    out.push({
+      projectId,
+      title: typeof record.title === 'string' ? record.title : '',
+      unread: typeof record.unread === 'number' ? record.unread : 0,
+      lastAt: typeof record.last_at === 'string' ? record.last_at : '',
+    })
+  }
+  return out
+}
+
+/** Отметить чат проекта прочитанным (0.97.0): по этому живёт колокольчик. */
+export async function markChatSeen(projectId: string): Promise<void> {
+  await http.post(`projects/${projectId}/chat/seen`).json()
+}
+
 /** Последние сообщения (или только новые после `after`). */
 export async function listChat(projectId: string, after?: string): Promise<ChatPage> {
   const raw = await http

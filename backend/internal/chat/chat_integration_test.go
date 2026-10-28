@@ -372,3 +372,122 @@ func TestChatReplyAndEdit(t *testing.T) {
 		t.Fatalf("ответ бота отредактирован: %v", err)
 	}
 }
+
+// «Прочитано» и непрочитанное (0.97.0): колокольчик считает по серверу.
+func TestChatUnreadAndSeen(t *testing.T) {
+	e := setupChat(t)
+	ctx := context.Background()
+
+	if _, err := e.svc.Post(ctx, e.viewer, e.project, chat.Input{Body: "Привет, коллеги."}); err != nil {
+		t.Fatalf("сообщение: %v", err)
+	}
+	unread, err := e.svc.Unread(ctx, e.owner)
+	if err != nil {
+		t.Fatalf("непрочитанное: %v", err)
+	}
+	if len(unread) != 1 || unread[0].Unread != 1 || unread[0].ProjectID != e.project {
+		t.Fatalf("непрочитанное владельца: %+v", unread)
+	}
+	if unread[0].Title != "Роман" {
+		t.Errorf("название проекта: %q", unread[0].Title)
+	}
+	// Свои сообщения не считаются: «я написал» — прочитано.
+	if own, err := e.svc.Unread(ctx, e.viewer); err != nil || len(own) != 0 {
+		t.Fatalf("своё сообщение посчитано непрочитанным: %+v, %v", own, err)
+	}
+
+	if err := e.svc.MarkSeen(ctx, e.owner, e.project); err != nil {
+		t.Fatalf("отметка: %v", err)
+	}
+	if after, err := e.svc.Unread(ctx, e.owner); err != nil || len(after) != 0 {
+		t.Fatalf("после отметки осталось непрочитанное: %+v, %v", after, err)
+	}
+
+	// Новое сообщение снова непрочитано — отметка не «глушит» чат навсегда.
+	if _, err := e.svc.Post(ctx, e.viewer, e.project, chat.Input{Body: "И ещё одно."}); err != nil {
+		t.Fatalf("второе сообщение: %v", err)
+	}
+	if again, err := e.svc.Unread(ctx, e.owner); err != nil || len(again) != 1 || again[0].Unread != 1 {
+		t.Fatalf("новое сообщение не посчитано: %+v, %v", again, err)
+	}
+}
+
+// «@Нестор» в тексте зовёт бота без кнопки (0.97.0).
+func TestChatMentionsBotInText(t *testing.T) {
+	e := setupChat(t)
+	ctx := context.Background()
+	bot := &stubBot{enabled: true, answer: "Отвечаю по делу."}
+	e.svc.UseBot(bot, "Нестор")
+
+	answer, err := e.svc.Post(ctx, e.owner, e.project, chat.Input{Body: "@Нестор, что скажешь про сцену?"})
+	if err != nil {
+		t.Fatalf("сообщение с упоминанием: %v", err)
+	}
+	if answer.Reply == nil {
+		t.Fatal("бот не ответил на «@Нестор» в тексте")
+	}
+
+	// Без собаки — просто имя в тексте, бот не отвечает: иначе он вмешивался бы в каждую главу,
+	// где героя зовут Нестор.
+	plain, err := e.svc.Post(ctx, e.owner, e.project, chat.Input{Body: "Нестор молчал весь вечер."})
+	if err != nil {
+		t.Fatalf("сообщение без упоминания: %v", err)
+	}
+	if plain.Reply != nil {
+		t.Fatal("бот ответил на имя без собаки")
+	}
+}
+
+// Письма о сообщениях чата ставятся в очередь (0.97.0): только участникам, только с согласием,
+// и никогда автору.
+func TestChatEnqueuesNotifications(t *testing.T) {
+	e := setupChat(t)
+	ctx := context.Background()
+
+	// Согласие на письма у читателя включено, у владельца — нет.
+	if _, err := e.st.Pool.Exec(ctx, `UPDATE users SET notify_comments = true WHERE id = $1`, e.viewer); err != nil {
+		t.Fatalf("флаг читателя: %v", err)
+	}
+	if _, err := e.svc.Post(ctx, e.owner, e.project, chat.Input{Body: "Всем привет."}); err != nil {
+		t.Fatalf("сообщение: %v", err)
+	}
+	pending, err := e.st.PendingChatNotifications(ctx, 10, 5)
+	if err != nil {
+		t.Fatalf("очередь: %v", err)
+	}
+	if len(pending) != 1 {
+		t.Fatalf("писем в очереди: %d (%+v)", len(pending), pending)
+	}
+	if pending[0].UserID != e.viewer {
+		t.Fatalf("письмо не тому: %+v", pending[0])
+	}
+	if pending[0].Email == "" || pending[0].ProjectTitle == "" || pending[0].AuthorName == "" {
+		t.Fatalf("в письме нет данных: %+v", pending[0])
+	}
+
+	// Автору своё сообщение письмом не приходит: включили согласие обоим, пишет читатель —
+	// письмо должно уйти ровно одно, владельцу.
+	if _, err := e.st.Pool.Exec(ctx, `UPDATE users SET notify_comments = true WHERE id = $1`, e.owner); err != nil {
+		t.Fatalf("флаг владельца: %v", err)
+	}
+	if _, err := e.st.Pool.Exec(ctx, `DELETE FROM chat_notifications`); err != nil {
+		t.Fatalf("чистка очереди: %v", err)
+	}
+	second, err := e.svc.Post(ctx, e.viewer, e.project, chat.Input{Body: "Ответ владельцу."})
+	if err != nil {
+		t.Fatalf("второе сообщение: %v", err)
+	}
+	pending, err = e.st.PendingChatNotifications(ctx, 10, 5)
+	if err != nil {
+		t.Fatalf("очередь после второго: %v", err)
+	}
+	if len(pending) != 1 {
+		t.Fatalf("писем после второго сообщения: %d (%+v)", len(pending), pending)
+	}
+	if pending[0].UserID != e.owner {
+		t.Fatalf("письмо ушло не владельцу: %+v", pending[0])
+	}
+	if pending[0].MessageID != second.Message.ID {
+		t.Fatalf("письмо о другом сообщении: %+v", pending[0])
+	}
+}

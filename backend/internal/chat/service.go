@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -98,12 +99,17 @@ type Service struct {
 	botName string
 	// notify — сигнал «появилось сообщение» (WebSocket документа). Необязателен.
 	notify Notifier
+	// logger — журнал сервиса: очередь писем и сигнал в сокет не должны ронять ответ.
+	logger *slog.Logger
 }
 
 // New собирает сервис чата.
 func New(st *store.Store, proj ProjectAccess) *Service {
 	return &Service{store: st, proj: proj, botName: "Нестор"}
 }
+
+// UseLogger подключает журнал (необязательно).
+func (s *Service) UseLogger(logger *slog.Logger) { s.logger = logger }
 
 // UseBot подключает Нестора и его имя. Без этого чат работает, но бота не предлагает.
 func (s *Service) UseBot(bot Bot, name string) {
@@ -137,6 +143,22 @@ func (s *Service) Messages(
 		return s.store.ListChatMessages(ctx, projectID, limit)
 	}
 	return s.store.ChatMessagesAfter(ctx, projectID, *after, limit)
+}
+
+// Unread — где человека ждут в чате: непрочитанные по проектам (0.97.0).
+//
+// Серверное, а не localStorage: колокольчик в шапке считает «где ждут» по всем проектам сразу, и
+// про другой браузер он иначе не знал бы.
+func (s *Service) Unread(ctx context.Context, userID uuid.UUID) ([]store.ProjectChatUnread, error) {
+	return s.store.ProjectsChatUnread(ctx, userID)
+}
+
+// MarkSeen отмечает чат проекта прочитанным (viewer+).
+func (s *Service) MarkSeen(ctx context.Context, userID, projectID uuid.UUID) error {
+	if err := s.proj.RequireViewer(ctx, userID, projectID); err != nil {
+		return err
+	}
+	return s.store.MarkChatSeen(ctx, projectID, userID)
 }
 
 // Input — что присылает участник.
@@ -216,10 +238,17 @@ func (s *Service) Post(
 	if err := s.store.AppendChatMessage(ctx, &saved); err != nil {
 		return nil, err
 	}
+	// Письма участникам — в очередь (0.97.0): отправкой занимается фоновый обход, а не этот
+	// запрос. Ошибку очереди не показываем: сообщение уже сохранено, и терять его нельзя.
+	if _, err := s.store.EnqueueChatNotifications(ctx, projectID, saved.ID, userID); err != nil && s.logger != nil {
+		s.logger.Warn("chat: письма о сообщении не поставлены в очередь", "project", projectID, "err", err)
+	}
 	s.notifyChanged(projectID)
 	out := &Answer{Message: saved}
 
-	if !in.AskBot {
+	// «@Нестор» в тексте — тоже просьба ответить (0.97.0). Порог один: имя бота в обращении,
+	// с собакой. Обычное упоминание «Нестор» без собаки — просто имя, на него бот не отвечает.
+	if !in.AskBot && !mentionsBot(body, s.botName) {
 		return out, nil
 	}
 	if !s.BotAvailable() {
@@ -310,6 +339,18 @@ func botErrorText(err error) string {
 		return ErrBotDisabled.Error()
 	}
 	return "Нестор не смог ответить: " + text
+}
+
+// mentionsBot — позвали ли бота по имени в тексте («@Нестор», «@нестор,»).
+//
+// Только с собакой: имя бота в обычной фразе («Нестор молчал») — это текст истории, и отвечать на
+// него ботом было бы навязчиво. Регистр не важен: «@нестор» — тот же человек.
+func mentionsBot(body, botName string) bool {
+	needle := "@" + strings.ToLower(strings.TrimSpace(botName))
+	if needle == "@" {
+		return false
+	}
+	return strings.Contains(strings.ToLower(body), needle)
 }
 
 // recentTranscript — последние реплики чата одной строкой на сообщение.

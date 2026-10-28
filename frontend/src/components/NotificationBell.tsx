@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { projectsWithUnseen, type ProjectUnseen } from '../api/comments'
+import { chatUnseen, type ChatUnseen } from '../api/chat'
 import { plural } from '../lib/format'
 
 /**
@@ -27,6 +28,9 @@ const REFRESH_MS = 60_000
 
 export function NotificationBell() {
   const [rows, setRows] = useState<ProjectUnseen[]>([])
+  /** Непрочитанное в чате (0.97.0): отдельный список, потому что новость другая — не «замечание к
+      кадру», а «в проекте поговорили». */
+  const [chatRows, setChatRows] = useState<ChatUnseen[]>([])
   const [open, setOpen] = useState(false)
   const { pathname } = useLocation()
   const root = useRef<HTMLDivElement | null>(null)
@@ -36,6 +40,9 @@ export function NotificationBell() {
       .then(setRows)
       // Тихо: колокольчик — подсказка, а не данные проекта. Ошибку показывать нечем и
       // незачем — при следующем переходе или через минуту запрос повторится.
+      .catch(() => undefined)
+    chatUnseen()
+      .then(setChatRows)
       .catch(() => undefined)
   }, [])
 
@@ -70,7 +77,8 @@ export function NotificationBell() {
     }
   }, [open])
 
-  const total = rows.reduce((sum, row) => sum + row.unread, 0)
+  const chatTotal = chatRows.reduce((sum, row) => sum + row.unread, 0)
+  const total = rows.reduce((sum, row) => sum + row.unread, 0) + chatTotal
   // Больше 99 показывать числом бессмысленно: важна не точность, а «много».
   const badge = total > 99 ? '99+' : String(total)
 
@@ -99,15 +107,29 @@ export function NotificationBell() {
       </button>
       {open && (
         <div className="notify__panel" data-notify-panel role="group" aria-label="Новые замечания">
-          {rows.length === 0 ? (
+          {rows.length === 0 && chatRows.length === 0 ? (
             <p className="muted notify__empty" data-notify-empty>
               Новых замечаний нет
             </p>
           ) : (
             <>
               <p className="muted notify__hint">
-                Замечания к вашим историям — откройте кадр, чтобы прочитать
+                Замечания к кадрам и сообщения в общем чате проектов
               </p>
+              {chatRows.map((row) => (
+                <Link
+                  key={`chat-${row.projectId}`}
+                  to={`/projects/${row.projectId}`}
+                  className="notify__item"
+                  data-notify-chat={row.projectId}
+                  onClick={() => setOpen(false)}
+                >
+                  <span className="notify__title">{row.title || 'Проект'}</span>
+                  <span className="notify__count">
+                    чат: {row.unread} {plural(row.unread, 'новое', 'новых', 'новых')}
+                  </span>
+                </Link>
+              ))}
               {rows.map((row) => (
                 <Link
                   key={row.projectId}

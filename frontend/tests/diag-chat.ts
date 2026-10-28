@@ -190,6 +190,31 @@ async function main() {
       }
     }
 
+    // 6. «Прочитано» по серверу и «@Нестор» в тексте (0.97.0).
+    const unreadOwn = await (await page.request.get(`${API}/api/chat/unseen`, { headers })).json()
+    const ownRows = (unreadOwn.projects ?? []) as Array<{ project_id: string }>
+    if (ownRows.some((row) => row.project_id === projectId)) {
+      problems.push('свои же сообщения посчитаны непрочитанными')
+    }
+    const seen = await page.request.post(`${API}/api/projects/${projectId}/chat/seen`, { headers })
+    console.log(`отметка «прочитано»: ${seen.status()}`)
+    if (seen.status() !== 200) problems.push(`отметка «прочитано»: ${seen.status()}`)
+
+    const botBefore = await page.locator('[data-chat-kind="bot"]').count()
+    await openChatTab()
+    await page.getByLabel('Сообщение в чат проекта').fill('@Нестор, а ритм сцены как?')
+    await page.getByRole('button', { name: 'Отправить' }).click()
+    // Ждём именно ПРИБАВЛЕНИЯ ответов: последний бот-месседж уже есть от прошлого шага, и
+    // «подождать его» разрешилось бы мгновенно — ложная зелёная проверка.
+    await page.waitForFunction(
+      (before: number) => document.querySelectorAll('[data-chat-kind="bot"]').length > before,
+      botBefore,
+      { timeout: 120_000 },
+    )
+    const botAfter = await page.locator('[data-chat-kind="bot"]').count()
+    console.log(`«@Нестор» в тексте: ответов бота было ${botBefore}, стало ${botAfter}`)
+    if (botAfter <= botBefore) problems.push('бот не ответил на «@Нестор» в тексте')
+
     await page.screenshot({ path: OUT })
   } finally {
     const removed = await page.request.delete(`${API}/api/projects/${projectId}`, { headers })
