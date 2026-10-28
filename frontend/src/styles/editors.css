@@ -6,6 +6,11 @@
   padding: 40px 12px;
   border-top: 1px solid var(--border);
   margin-top: 40px;
+  /* Длинные названия кадров и бейджи не должны растягивать панель шире окна (0.89.0):
+     на телефоне в режиме полной версии строки уезжали за правый край, и страница
+     прокручивалась вбок. */
+  min-width: 0;
+  max-width: 100%;
   /* Как и «Связи»: панель редакторов едет ПОВЕРХ fixed-слоя сцены, поэтому стадия гаснет
      только когда панель накрыла экран (0.82.0). Раньше она гасла заранее — и между ними
      оставалась пустая полоса. */
@@ -80,6 +85,9 @@
 }
 .ed-row {
   display: flex; align-items: center; gap: 8px; width: 100%;
+  /* Строка — flex-элемент дерева: без min-width: 0 она отказывается сжиматься ниже своего
+     содержимого, и длинный заголовок выталкивал её за экран (0.89.0). */
+  min-width: 0; max-width: 100%;
   background: var(--bg-elev); border: 1px solid var(--border);
   border-radius: 6px; padding: 6px 8px;
   color: var(--fg); font-size: 13px; text-align: left; cursor: pointer;
@@ -567,7 +575,9 @@
 .ed-entity-filter { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; flex: 1 0 100%; order: 3; margin-top: 4px; font-size: 12px; }
 
 /* ─── матрица «персонажи × главы» (0.71.0) ─────────────────────────────────── */
-.ent__matrix { margin-top: 10px; }
+/* Матрица — последний блок раздела: снизу нужен воздух, иначе последняя строка «прилипает» к
+   краю экрана (0.89.0). */
+.ent__matrix { margin-top: 10px; margin-bottom: 6px; }
 .ent__matrix-summary { cursor: pointer; font-weight: 600; font-size: 13px; }
 .ent__matrix-scroll { overflow-x: auto; margin-top: 8px; }
 .ent__matrix-table { border-collapse: collapse; font-size: 12px; }
