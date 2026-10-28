@@ -21,6 +21,7 @@ import (
 	"github.com/skyfraze/backend/internal/assistant"
 	"github.com/skyfraze/backend/internal/auth"
 	"github.com/skyfraze/backend/internal/coauthors"
+	"github.com/skyfraze/backend/internal/chat"
 	"github.com/skyfraze/backend/internal/collab"
 	"github.com/skyfraze/backend/internal/docxtpl"
 	"github.com/skyfraze/backend/internal/entities"
@@ -335,6 +336,14 @@ func main() {
 	assistantSvc.UseDocxStyles(docxTplSvc)
 	assistantH := assistant.NewHandler(assistantSvc, logger)
 
+	// Общий чат проекта (0.95.0, docs/project-chat.md): участники обсуждают, Нестор отвечает
+	// по просьбе. Бот подключается тем же сервисом помощника: ответ в чат идёт его правилами
+	// (роль проекта, лимиты, согласие на отправку), но в режиме «только чтение» — из чата
+	// проект не меняется.
+	chatSvc := chat.New(st, projSvc)
+	chatSvc.UseBot(assistant.NewChatBot(assistantSvc), ai.AgentName)
+	chatH := chat.NewHandler(chatSvc, logger)
+
 	collabHub := collab.NewHub(logger, cfg.JWTSecret, evSvc, cfg.CORSOrigins)
 	go collabHub.Run(ctx)
 	// Удаление файла обязано знать, прикреплён ли он к кадрам: ссылки живут в
@@ -543,6 +552,9 @@ func main() {
 
 		// Шаблоны оформления DOCX (0.91.0): загрузка своего .docx, активация и удаление.
 		docxTplH.Mount(r)
+
+		// Общий чат проекта (0.95.0): обсуждение участников, Нестор отвечает по просьбе.
+		chatH.Mount(r)
 
 		r.Post("/assets", assetsH.Upload(authSvc))
 		r.Get("/assets", assetsH.List(authSvc))

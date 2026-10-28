@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { AssistantPanel } from './AssistantPanel'
+import { ProjectChat } from '../chat/ProjectChat'
 
 /**
  * Плавающий помощник: кнопка в углу экрана + окно поверх проекта.
@@ -32,7 +33,18 @@ interface Props {
    * проекте первое осмысленное предложение — «собери проект с нуля», а не «продолжи».
    */
   projectIsEmpty?: boolean
+  /** Открыть кадр из ссылки в чате проекта (0.95.0): страница переключит вкладку редакторов. */
+  onOpenFrame?: (frameId: string) => void
 }
+
+/**
+ * Две вкладки одного окна (0.95.0): «Помощник» и «Чат проекта».
+ *
+ * Почему в одном плавающем окне, а не двумя кнопками. Кнопка уже одна и узнаваемая; участник,
+ * который открыл её, обычно хочет либо спросить Нестора, либо написать людям — и переключение
+ * вкладкой дешевле, чем второе плавающее окно поверх первого.
+ */
+type DockTab = 'assistant' | 'chat'
 
 export function AssistantDock({
   projectId,
@@ -41,8 +53,11 @@ export function AssistantDock({
   onProjectChanged,
   onOpenEditors,
   projectIsEmpty = true,
+  onOpenFrame,
 }: Props) {
   const [unread, setUnread] = useState(0)
+  const [chatUnread, setChatUnread] = useState(0)
+  const [tab, setTab] = useState<DockTab>('assistant')
   const [thinking, setThinking] = useState(false)
   const buttonRef = useRef<HTMLButtonElement | null>(null)
   const windowRef = useRef<HTMLDivElement | null>(null)
@@ -71,7 +86,7 @@ export function AssistantDock({
     return () => window.removeEventListener('keydown', onKey)
   }, [open, closeDock])
 
-  const badge = unread > 0 ? (unread > 9 ? '9+' : String(unread)) : null
+  const badge = unread + chatUnread > 0 ? (unread + chatUnread > 9 ? '9+' : String(unread + chatUnread)) : null
 
   return (
     <div className={`ai-dock${open ? ' ai-dock--open' : ''}`} data-assistant-dock>
@@ -80,19 +95,59 @@ export function AssistantDock({
         ref={windowRef}
         hidden={!open}
         role="dialog"
-        aria-label="ИИ-помощник"
+        aria-label="Помощник и чат проекта"
         data-assistant-panel
       >
-        <AssistantPanel
-          projectId={projectId}
-          open={open}
-          projectIsEmpty={projectIsEmpty}
-          onClose={() => closeDock(true)}
-          onUnread={() => setUnread((n) => n + 1)}
-          onThinkingChange={setThinking}
-          onProjectChanged={onProjectChanged}
-          onOpenEditors={onOpenEditors}
-        />
+        {/* Вкладки окна (0.95.0): помощник и общий чат проекта в одном месте. */}
+        <div className="ai-window__tabs" role="tablist" aria-label="Чем открыть окно">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === 'assistant'}
+            className={tab === 'assistant' ? 'ai-window__tab is-active' : 'ai-window__tab'}
+            onClick={() => setTab('assistant')}
+            data-dock-tab="assistant"
+          >
+            Помощник
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === 'chat'}
+            className={tab === 'chat' ? 'ai-window__tab is-active' : 'ai-window__tab'}
+            onClick={() => setTab('chat')}
+            data-dock-tab="chat"
+          >
+            Чат проекта
+            {chatUnread > 0 && (
+              <span className="ai-window__tab-badge" data-chat-badge>
+                {chatUnread > 9 ? '9+' : chatUnread}
+              </span>
+            )}
+          </button>
+        </div>
+        {/* Панель помощника не размонтируется при переключении вкладок: история, модель и
+            набранный вопрос должны остаться на месте. */}
+        <div className="ai-window__pane" hidden={tab !== 'assistant'}>
+          <AssistantPanel
+            projectId={projectId}
+            open={open && tab === 'assistant'}
+            projectIsEmpty={projectIsEmpty}
+            onClose={() => closeDock(true)}
+            onUnread={() => setUnread((n) => n + 1)}
+            onThinkingChange={setThinking}
+            onProjectChanged={onProjectChanged}
+            onOpenEditors={onOpenEditors}
+          />
+        </div>
+        <div className="ai-window__pane" hidden={tab !== 'chat'}>
+          <ProjectChat
+            projectId={projectId}
+            visible={open && tab === 'chat'}
+            onOpenFrame={onOpenFrame}
+            onUnread={setChatUnread}
+          />
+        </div>
       </div>
 
       <button

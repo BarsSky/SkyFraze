@@ -600,6 +600,32 @@ func (s *Service) SendStreamImages(
 	ctx context.Context, userID, projectID, conversationID uuid.UUID, modelRef, text string,
 	images []string, emit Emitter,
 ) (*Turn, error) {
+	return s.send(ctx, userID, projectID, conversationID, modelRef, text, images, emit, nil)
+}
+
+// Answer — короткий ответ текстом для общего чата проекта (0.95.0).
+//
+// Отличие от Send: возможности урезаны до ЧТЕНИЯ. Ответ в общий чат не должен менять проект —
+// участники обсуждают, а не заказывают правку, и «Нестор по пути переписал главу» из чата было бы
+// неприятной неожиданностью. Модель видит дерево и читает кадры, но правил «создавай/предлагай»
+// ей в этом режиме не дают.
+//
+// Своя беседа на каждый вопрос: чат — это разговор участников, и подмешивать в него историю
+// помощника из его окна значило бы отвечать то, что обсуждали в другом месте.
+func (s *Service) Answer(ctx context.Context, userID, projectID uuid.UUID, question string) (string, error) {
+	turn, err := s.send(ctx, userID, projectID, uuid.Nil, "", question, nil, nil, &Capabilities{ReadOnly: true})
+	if err != nil {
+		return "", err
+	}
+	return turn.Answer, nil
+}
+
+// send — общий путь вопроса к модели. override != nil заменяет возможности проекта: так чат
+// получает «только чтение», не заводя вторую копию цикла «спросили → выполнили → спросили снова».
+func (s *Service) send(
+	ctx context.Context, userID, projectID, conversationID uuid.UUID, modelRef, text string,
+	images []string, emit Emitter, override *Capabilities,
+) (*Turn, error) {
 	if !s.Enabled() {
 		return nil, ErrDisabled
 	}
@@ -629,7 +655,10 @@ func (s *Service) SendStreamImages(
 	// Возможности: что умеет стенд, что разрешил владелец и что реализовано. Без них
 	// модель обещала бы то, чего нет, а интерфейс не мог бы объяснить отказ.
 	caps := s.capabilities(ctx, settings)
-	if !caps.Text && !caps.Images {
+	readOnly := override != nil
+	if readOnly {
+		caps = *override
+	} else if !caps.Text && !caps.Images {
 		// Владелец выбрал режим «только картинки», а генерации нет: звать модель
 		// незачем — она всё равно ничего не сможет сделать, и человек получил бы
 		// пустой ответ вместо причины.
@@ -719,12 +748,17 @@ func (s *Service) SendStreamImages(
 	}
 
 	messages := make([]ai.Message, 0, len(history)+3)
-	messages = append(messages, ai.Message{
-		Role: "system",
-		Content: systemPrompt(project, personaOf(settings), s.limits.MaxToolCalls, caps, s.editor != nil) +
-			docxMarkupBlock(s.docxStyleNames(ctx, projectID)) + "\n\n" +
-			treeContext(list, s.limits.MaxEventsInPrompt),
-	})
+	// В режиме «только чтение» правила про правки не обещаем: чат — разговор, а не заказ на
+	// изменение проекта.
+	editing := s.editor != nil && !readOnly
+	system := systemPrompt(project, personaOf(settings), s.limits.MaxToolCalls, caps, editing) +
+		docxMarkupBlock(s.docxStyleNames(ctx, projectID)) + "\n\n" +
+		treeContext(list, s.limits.MaxEventsInPrompt)
+	if readOnly {
+		system += "\n\nТы отвечаешь в общем чате проекта. Дай короткий ответ текстом и ничего не " +
+			"создавай и не меняй в проекте: участники обсуждают, а не заказывают правку."
+	}
+	messages = append(messages, ai.Message{Role: "system", Content: system})
 	messages = append(messages, history...)
 	// Картинки идут с вопросом человека и только с ним: в историю они не пишутся (см.
 	// SendStreamImages), а в этом запросе модель должна их видеть.

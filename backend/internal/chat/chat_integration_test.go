@@ -1,0 +1,281 @@
+package chat_test
+
+// chat_integration_test.go — общий чат проекта (0.95.0).
+//
+// Проверяем то, что ломается молча:
+//   - сообщение сохраняется и читается участником (включая читателя): это разговор, а не правка;
+//   - ссылка на элемент текста: кадр обязан быть из этого проекта, цитата — из его текста;
+//   - «спросить Нестора»: бот отвечает и ответ ложится в чат отдельным сообщением с подписью;
+//   - выключенный бот не съедает вопрос участника: сообщение сохраняется, в ответе — причина;
+//   - опрос «что нового» отдаёт только новые сообщения.
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+
+	"github.com/google/uuid"
+
+	"github.com/skyfraze/backend/internal/auth"
+	"github.com/skyfraze/backend/internal/chat"
+	"github.com/skyfraze/backend/internal/platform/testdb"
+	"github.com/skyfraze/backend/internal/projects"
+	"github.com/skyfraze/backend/internal/store"
+)
+
+type chatEnv struct {
+	st      *store.Store
+	svc     *chat.Service
+	proj    *projects.Service
+	owner   uuid.UUID
+	viewer  uuid.UUID
+	project uuid.UUID
+}
+
+// stubBot — Нестор для тестов: отвечает предсказуемо и запоминает вопросы.
+type stubBot struct {
+	enabled   bool
+	answer    string
+	err       error
+	questions []string
+}
+
+func (b *stubBot) Enabled() bool { return b.enabled }
+
+func (b *stubBot) Answer(_ context.Context, _, _ uuid.UUID, question string) (string, error) {
+	b.questions = append(b.questions, question)
+	if b.err != nil {
+		return "", b.err
+	}
+	return b.answer, nil
+}
+
+func setupChat(t *testing.T) *chatEnv {
+	t.Helper()
+	pool := testdb.Setup(t, "chat")
+	testdb.Truncate(t, pool,
+		"project_chat_messages", "project_entities",
+		"login_audit", "webauthn_challenges", "user_webauthn_credentials",
+		"user_recovery_codes", "user_totp", "comment_notifications", "comment_views",
+		"event_comments", "project_revisions", "ai_changes", "ai_messages", "ai_conversations",
+		"project_event_state", "project_ratings", "project_views", "sessions",
+		"invitations", "event_assets", "assets", "events", "team_memberships",
+		"projects", "users")
+	st := store.New(pool)
+	proj := projects.New(st)
+	ctx := context.Background()
+
+	mkUser := func(email string) uuid.UUID {
+		hash, err := auth.HashPassword("hunter22!")
+		if err != nil {
+			t.Fatalf("хеш пароля: %v", err)
+		}
+		u, err := st.CreateUser(ctx, email, hash, "Человек")
+		if err != nil {
+			t.Fatalf("пользователь %s: %v", email, err)
+		}
+		return u.ID
+	}
+	env := &chatEnv{st: st, svc: chat.New(st, proj), proj: proj, owner: mkUser("owner@example.com")}
+	env.viewer = mkUser("viewer@example.com")
+	p, err := proj.Create(ctx, env.owner, "Роман", "")
+	if err != nil {
+		t.Fatalf("проект: %v", err)
+	}
+	env.project = p.ID
+	if err := st.AddMembership(ctx, env.project, env.viewer, store.RoleViewer); err != nil {
+		t.Fatalf("читатель: %v", err)
+	}
+	return env
+}
+
+// frame заводит кадр и возвращает его id.
+func (e *chatEnv) frame(t *testing.T, title, body string) uuid.UUID {
+	t.Helper()
+	id := uuid.New()
+	if err := e.st.ReplaceEventTree(context.Background(), e.project, e.owner, []store.Event{
+		{ID: id, ProjectID: e.project, Position: 0, Depth: 0, Title: title, Body: body},
+	}); err != nil {
+		t.Fatalf("кадр: %v", err)
+	}
+	return id
+}
+
+func TestChatPostAndList(t *testing.T) {
+	e := setupChat(t)
+	ctx := context.Background()
+
+	// Читатель тоже пишет: чат — разговор участников, а не правка текста.
+	answer, err := e.svc.Post(ctx, e.viewer, e.project, chat.Input{Body: "  Как вам новая глава?  "})
+	if err != nil {
+		t.Fatalf("сообщение: %v", err)
+	}
+	if answer.Message.Body != "Как вам новая глава?" {
+		t.Fatalf("текст не очищен: %q", answer.Message.Body)
+	}
+	if answer.Message.Kind != store.ChatKindUser || answer.Message.AuthorName == "" {
+		t.Fatalf("подпись сообщения: %+v", answer.Message)
+	}
+	if answer.Reply != nil || answer.Note != "" {
+		t.Fatalf("без просьбы бот не отвечает: %+v", answer)
+	}
+
+	list, err := e.svc.Messages(ctx, e.owner, e.project, nil, 0)
+	if err != nil {
+		t.Fatalf("список: %v", err)
+	}
+	if len(list) != 1 || list[0].ID != answer.Message.ID {
+		t.Fatalf("список сообщений: %+v", list)
+	}
+
+	// «Что нового» после последнего прочитанного — только новые.
+	newer, err := e.svc.Post(ctx, e.owner, e.project, chat.Input{Body: "Мне нравится."})
+	if err != nil {
+		t.Fatalf("второе сообщение: %v", err)
+	}
+	after := answer.Message.ID
+	fresh, err := e.svc.Messages(ctx, e.viewer, e.project, &after, 0)
+	if err != nil {
+		t.Fatalf("новые: %v", err)
+	}
+	if len(fresh) != 1 || fresh[0].ID != newer.Message.ID {
+		t.Fatalf("после отметки: %+v", fresh)
+	}
+}
+
+func TestChatLinkToFrameAndQuote(t *testing.T) {
+	e := setupChat(t)
+	ctx := context.Background()
+	frame := e.frame(t, "Пролог", "Анна стоит на пороге. Земля ещё спит.")
+
+	// Ссылка на кадр целиком.
+	link := frame
+	if _, err := e.svc.Post(ctx, e.owner, e.project, chat.Input{Body: "Смотрите сюда", EventID: &link}); err != nil {
+		t.Fatalf("ссылка на кадр: %v", err)
+	}
+	// Ссылка на фразу: она обязана быть в тексте кадра.
+	answer, err := e.svc.Post(ctx, e.owner, e.project, chat.Input{
+		Body: "Вот эта фраза", EventID: &link, Quote: "Земля ещё спит",
+	})
+	if err != nil {
+		t.Fatalf("ссылка на фразу: %v", err)
+	}
+	if answer.Message.Quote != "Земля ещё спит" {
+		t.Fatalf("цитата: %q", answer.Message.Quote)
+	}
+
+	// Фразы нет — отказ, а не ссылка в пустоту.
+	if _, err := e.svc.Post(ctx, e.owner, e.project, chat.Input{
+		Body: "Пустая ссылка", EventID: &link, Quote: "Такой фразы нет",
+	}); !errors.Is(err, chat.ErrQuoteNotFound) {
+		t.Fatalf("цитата не из текста принята: %v", err)
+	}
+	// Кадр чужого проекта — отказ.
+	other, err := e.proj.Create(ctx, e.owner, "Другой", "")
+	if err != nil {
+		t.Fatalf("второй проект: %v", err)
+	}
+	foreign := uuid.New()
+	if err := e.st.ReplaceEventTree(ctx, other.ID, e.owner, []store.Event{
+		{ID: foreign, ProjectID: other.ID, Position: 0, Depth: 0, Title: "Чужой", Body: "текст"},
+	}); err != nil {
+		t.Fatalf("кадр другого проекта: %v", err)
+	}
+	if _, err := e.svc.Post(ctx, e.owner, e.project, chat.Input{Body: "Чужое", EventID: &foreign}); !errors.Is(err, chat.ErrEventNotFound) {
+		t.Fatalf("чужой кадр принят: %v", err)
+	}
+}
+
+func TestChatBotAnswer(t *testing.T) {
+	e := setupChat(t)
+	ctx := context.Background()
+	bot := &stubBot{enabled: true, answer: "Мне кажется, сцена держит внимание."}
+	e.svc.UseBot(bot, "Нестор")
+	frame := e.frame(t, "Пролог", "Анна стоит на пороге.")
+
+	if !e.svc.BotAvailable() {
+		t.Fatal("включённый бот должен быть доступен")
+	}
+	link := frame
+	answer, err := e.svc.Post(ctx, e.viewer, e.project, chat.Input{
+		Body: "Нестор, что думаешь про сцену?", EventID: &link, Quote: "Анна стоит на пороге", AskBot: true,
+	})
+	if err != nil {
+		t.Fatalf("вопрос боту: %v", err)
+	}
+	if answer.Reply == nil {
+		t.Fatalf("ответа бота нет: %+v", answer)
+	}
+	if answer.Reply.Kind != store.ChatKindBot || answer.Reply.AuthorName != "Нестор" {
+		t.Fatalf("подпись ответа: %+v", answer.Reply)
+	}
+	if !strings.Contains(answer.Reply.Body, "держит внимание") {
+		t.Fatalf("текст ответа: %q", answer.Reply.Body)
+	}
+	// Вопрос к модели содержит контекст: без него бот отвечает «вообще».
+	if len(bot.questions) != 1 {
+		t.Fatalf("вопросов к модели: %d", len(bot.questions))
+	}
+	for _, want := range []string{"Пролог", "Анна стоит на пороге", "Нестор, что думаешь"} {
+		if !strings.Contains(bot.questions[0], want) {
+			t.Errorf("в вопросе модели нет %q: %s", want, bot.questions[0])
+		}
+	}
+
+	// Оба сообщения в чате: вопрос участника и ответ бота.
+	list, err := e.svc.Messages(ctx, e.owner, e.project, nil, 0)
+	if err != nil {
+		t.Fatalf("список: %v", err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("сообщений в чате: %d (%+v)", len(list), list)
+	}
+}
+
+func TestChatBotDisabledKeepsMessage(t *testing.T) {
+	e := setupChat(t)
+	ctx := context.Background()
+	// Бот не подключён вовсе.
+	answer, err := e.svc.Post(ctx, e.owner, e.project, chat.Input{Body: "Нестор, ау?", AskBot: true})
+	if err != nil {
+		t.Fatalf("сообщение: %v", err)
+	}
+	if answer.Reply != nil {
+		t.Fatalf("выключенный бот ответил: %+v", answer.Reply)
+	}
+	if !strings.Contains(answer.Note, "выключен") {
+		t.Fatalf("причина не объяснена: %q", answer.Note)
+	}
+	list, err := e.svc.Messages(ctx, e.owner, e.project, nil, 0)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("вопрос участника потерян: %+v, %v", list, err)
+	}
+
+	// Бот подключён, но ответил ошибкой — сообщение тоже остаётся.
+	bot := &stubBot{enabled: true, err: errors.New("модель недоступна")}
+	e.svc.UseBot(bot, "Нестор")
+	answer, err = e.svc.Post(ctx, e.owner, e.project, chat.Input{Body: "И ещё вопрос", AskBot: true})
+	if err != nil {
+		t.Fatalf("сообщение при ошибке бота: %v", err)
+	}
+	if !strings.Contains(answer.Note, "не смог ответить") {
+		t.Fatalf("ошибка бота не объяснена: %q", answer.Note)
+	}
+}
+
+func TestChatPermissions(t *testing.T) {
+	e := setupChat(t)
+	ctx := context.Background()
+	outsider := uuid.New()
+	if _, err := e.svc.Messages(ctx, outsider, e.project, nil, 0); !errors.Is(err, projects.ErrForbidden) {
+		t.Fatalf("посторонний прочитал чат: %v", err)
+	}
+	if _, err := e.svc.Post(ctx, outsider, e.project, chat.Input{Body: "Чужой"}); !errors.Is(err, projects.ErrForbidden) {
+		t.Fatalf("посторонний написал в чат: %v", err)
+	}
+	// Пустое сообщение — ошибка, а не пустая строка в чате.
+	if _, err := e.svc.Post(ctx, e.owner, e.project, chat.Input{Body: "   "}); !errors.Is(err, chat.ErrInvalidMessage) {
+		t.Fatalf("пустое сообщение принято: %v", err)
+	}
+}

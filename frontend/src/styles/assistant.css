@@ -50,6 +50,132 @@
 /* Окно скрыто — но остаётся в дереве: состояние (история, черновик) не теряется. */
 .ai-window[hidden] { display: none; }
 
+/* ── Вкладки окна: помощник и чат проекта (0.95.0) ──────────────────────
+   Одна кнопка и одно окно: участник либо спрашивает Нестора, либо пишет людям. Две вкладки
+   дешевле, чем второе плавающее окно поверх первого. */
+.ai-window__tabs {
+  display: flex;
+  gap: 4px;
+  padding: 6px 8px 0;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-elev) 92%, var(--accent) 8%);
+  flex: 0 0 auto;
+}
+.ai-window__tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 6px 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 8px 8px 0 0;
+}
+.ai-window__tab:hover { color: var(--fg); }
+.ai-window__tab.is-active {
+  color: var(--fg);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.ai-window__tab-badge {
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--bg);
+  font-size: 11px;
+  font-weight: 600;
+  text-align: center;
+}
+.ai-window__pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+.ai-window__pane[hidden] { display: none; }
+
+/* ── Чат проекта (0.95.0) ─────────────────────────────────────────────── */
+.chat {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+.chat__head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.chat__hint { font-size: 11px; }
+.chat__list {
+  list-style: none;
+  margin: 0;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+.chat__empty { font-size: 12px; }
+.chat__item { font-size: 13px; }
+.chat__item--bot {
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.chat__meta { display: flex; align-items: baseline; gap: 8px; }
+.chat__author { font-weight: 600; }
+.chat__time { font-size: 11px; }
+.chat__body { margin: 2px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat__link {
+  margin-top: 4px;
+  padding: 2px 8px;
+  min-height: 26px;
+  border: 1px dashed var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--accent);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+.chat__link:hover { border-color: var(--accent); }
+.chat__note { margin: 0 12px 4px; font-size: 12px; }
+.chat__composer {
+  border-top: 1px solid var(--border);
+  padding: 8px 12px 10px;
+  display: grid;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+.chat__input {
+  width: 100%;
+  resize: vertical;
+  min-height: 44px;
+  max-height: 120px;
+  font-size: 13px;
+}
+.chat__attach { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 12px; }
+.chat__attach label { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.chat__attach select { max-width: 150px; min-height: 30px; font-size: 12px; }
+.chat__quote { flex: 1 1 140px; }
+.chat__quote input { flex: 1 1 120px; min-width: 0; font-size: 12px; min-height: 30px; }
+.chat__actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.chat__actions button { min-height: 32px; }
+
 @supports (height: 100dvh) {
   .ai-window {
     height: min(620px, calc(100dvh - 140px));

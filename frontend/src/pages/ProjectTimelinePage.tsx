@@ -423,6 +423,28 @@ export function ProjectTimelinePage() {
     [canEdit, eventsCount, tabsShown],
   )
   /**
+   * Открыть кадр из ссылки в чате проекта (0.95.0).
+   *
+   * Без цитаты: сообщение хранит фразу, но точных позиций в тексте у чата нет (это не замечание
+   * с якорем). Кадр открывается, фраза видна в самой ссылке — подсвечивать «первым совпадением»
+   * значило бы подсветить не то место, если фраза встречается дважды.
+   */
+  const openFrameFromChat = useCallback(
+    (frameId: string) => {
+      if (!frameId) return
+      const nonce = Date.now()
+      const editorsAvailable = tabsShown && canEdit === true && eventsCount > 0
+      if (editorsAvailable) {
+        setOpenFrameRequest({ frameId, nonce })
+        setView('editors')
+        return
+      }
+      if (tabsShown) setView('project')
+      setFocusFrame({ id: frameId, nonce })
+    },
+    [canEdit, eventsCount, tabsShown],
+  )
+  /**
    * Высота строки вкладок — в CSS-переменную `--sf-tabs-h` (0.83.0).
    *
    * Стадия, её верхняя панель, чипы и лист кадра стоят от верха экрана на `--sf-header-h`;
@@ -611,6 +633,7 @@ export function ProjectTimelinePage() {
           onProjectChanged={assistantChanged}
           onOpenEditors={openEditors}
           projectIsEmpty={eventsCount === 0}
+          onOpenFrame={openFrameFromChat}
         />
       )}
     </div>

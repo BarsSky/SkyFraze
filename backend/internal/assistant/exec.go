@@ -66,6 +66,14 @@ func refusedCall(call ai.ToolCall, reason string) toolResult {
 func (s *Service) execute(
 	ctx context.Context, actorID, userID, projectID uuid.UUID, call ai.ToolCall, caps Capabilities,
 ) toolResult {
+	// Режим «только чтение» (0.95.0, ответ в общий чат проекта). Проверка стоит НА ИСПОЛНЕНИИ, а
+	// не только в списке инструментов: модель присылает вызов и текстовым блоком
+	// (`skyfraze-tools`), и «в списке не было» её не остановит. Поймано живой проверкой
+	// diag-chat: бот, которому запретили менять проект, всё равно создал главу и отчитался.
+	if caps.ReadOnly && !readOnlyTool(call.Name) {
+		return refusedCall(call,
+			"в этом режиме проект не меняется: ответь текстом, без инструментов изменения")
+	}
 	switch call.Name {
 	case ToolListEvents:
 		return s.toolListEvents(ctx, projectID, call)
@@ -93,6 +101,19 @@ func (s *Service) execute(
 		return s.toolGenerateImage(ctx, actorID, userID, projectID, call, caps)
 	default:
 		return refusedCall(call, fmt.Sprintf("%v: %s", ErrUnknownTool, call.Name))
+	}
+}
+
+// readOnlyTool — инструменты, которые можно вызывать в режиме «только чтение».
+//
+// Белый список, а не чёрный: новый инструмент по умолчанию окажется «меняющим», и его не
+// случайно разрешат там, где проект трогать нельзя.
+func readOnlyTool(name string) bool {
+	switch name {
+	case ToolListEvents, ToolReadEvent, ToolReadComments, ToolListEntities, ToolReadEntity:
+		return true
+	default:
+		return false
 	}
 }
 

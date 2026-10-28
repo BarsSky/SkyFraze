@@ -1,0 +1,286 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { listChat, postChat, type ChatBotInfo, type ChatMessage } from '../../api/chat'
+import { listEventRows } from '../../api/events'
+import { serverErrorMessage } from '../../api/client'
+
+/**
+ * «Чат проекта» — общий разговор участников (0.95.0).
+ *
+ * Почему отдельный чат, а не замечания к кадру. Замечание живёт в блоке кадра и говорит о
+ * фрагменте текста; «обсудить идею, спросить коллегу, позвать Нестора на разбор» — это разговор
+ * один на проект. Поэтому чат стоит рядом с окном помощника (две вкладки в одном плавающем окне),
+ * и в нём есть то, чего нет у замечаний: можно приложить ссылку на кадр (и точную фразу из него) и
+ * позвать Нестора, не уходя с обсуждения.
+ *
+ * Реальное время — опросом: сообщения спрашиваются «после последнего известного» раз в несколько
+ * секунд. Отдельный WebSocket ради чата не нужен и добавил бы второй канал состояния к уже
+ * существующему collaborативному; задержка в пару секунд для обсуждения незаметна.
+ */
+interface Props {
+  projectId: string
+  /** Открыта ли вкладка чата: пока закрыта — только опрос ради маркера «есть новое». */
+  visible: boolean
+  /** Открыть кадр в редакторах (ссылка из сообщения). */
+  onOpenFrame?: (frameId: string) => void
+  /** Сколько пришло, пока вкладка была закрыта. */
+  onUnread?: (count: number) => void
+}
+
+/** Ключ «последнее прочитанное» — в localStorage: он личный и переживает перезагрузку. */
+function seenKey(projectId: string): string {
+  return `sf-chat-seen:${projectId}`
+}
+
+function readSeen(projectId: string): string {
+  try {
+    return localStorage.getItem(seenKey(projectId)) ?? ''
+  } catch {
+    return ''
+  }
+}
+
+function writeSeen(projectId: string, id: string): void {
+  try {
+    localStorage.setItem(seenKey(projectId), id)
+  } catch {
+    // Приватный режим/переполнение: «прочитано» — удобство, не критично.
+  }
+}
+
+function timeOf(iso: string): string {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return ''
+  return date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+}
+
+export function ProjectChat({ projectId, visible, onOpenFrame, onUnread }: Props) {
+  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [bot, setBot] = useState<ChatBotInfo>({ name: 'Нестор', available: false })
+  const [text, setText] = useState('')
+  const [askBot, setAskBot] = useState(false)
+  const [linkId, setLinkId] = useState('')
+  const [quote, setQuote] = useState('')
+  const [frames, setFrames] = useState<Array<{ id: string; title: string }> | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const listRef = useRef<HTMLUListElement | null>(null)
+  const lastIdRef = useRef('')
+
+  const titles = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const frame of frames ?? []) map.set(frame.id, frame.title)
+    return map
+  }, [frames])
+
+  /** Догрузить новое (или всё, если ещё ничего не знаем). */
+  const load = useCallback(async () => {
+    try {
+      const page = await listChat(projectId, lastIdRef.current || undefined)
+      setBot(page.bot)
+      if (page.messages.length > 0) {
+        setMessages((current) => {
+          const seen = new Set(current.map((item) => item.id))
+          const fresh = page.messages.filter((item) => !seen.has(item.id))
+          if (fresh.length === 0) return current
+          return [...current, ...fresh]
+        })
+        lastIdRef.current = page.messages[page.messages.length - 1].id
+      }
+      setError(null)
+    } catch {
+      setError('Чат не загрузился — проверьте доступ к проекту.')
+    }
+  }, [projectId])
+
+  // Первая загрузка и опрос. Пока вкладка закрыта, опрос реже: нужен только маркер «есть новое».
+  useEffect(() => {
+    void load()
+    const interval = window.setInterval(() => void load(), visible ? 4000 : 8000)
+    return () => window.clearInterval(interval)
+  }, [load, visible])
+
+  // Кадры для привязки — один раз при открытии вкладки: список меняется редко, а выбор нужен
+  // только в момент написания.
+  useEffect(() => {
+    if (!visible || frames !== null) return
+    let alive = true
+    listEventRows(projectId)
+      .then((rows) => {
+        if (alive) setFrames(rows.map((row) => ({ id: row.id, title: row.title || 'без названия' })))
+      })
+      .catch(() => {
+        if (alive) setFrames([])
+      })
+    return () => {
+      alive = false
+    }
+  }, [frames, projectId, visible])
+
+  // Прочитано: вкладка открыта — отмечаем последнее сообщение и гасим маркер.
+  useEffect(() => {
+    if (!visible) return
+    const last = messages[messages.length - 1]
+    if (last) writeSeen(projectId, last.id)
+    onUnread?.(0)
+  }, [messages, onUnread, projectId, visible])
+
+  // Маркер непрочитанного: считаем сообщения после личного «последнего прочитанного».
+  useEffect(() => {
+    if (visible) return
+    const marker = messages.filter((item) => item.kind === 'user').map((item) => item.id)
+    if (marker.length === 0) return
+    const seen = readSeen(projectId)
+    if (!seen) return
+    const index = messages.findIndex((item) => item.id === seen)
+    const unread = index >= 0 ? messages.length - index - 1 : messages.length
+    onUnread?.(Math.max(0, unread))
+  }, [messages, onUnread, projectId, visible])
+
+  // Прокрутка к свежему сообщению — только если человек уже был внизу (иначе выдёргиваем из чтения).
+  useEffect(() => {
+    const list = listRef.current
+    if (!list) return
+    list.scrollTop = list.scrollHeight
+  }, [messages.length, visible])
+
+  const send = useCallback(async () => {
+    const body = text.trim()
+    if (body === '' || busy) return
+    setBusy(true)
+    setError(null)
+    setNote(null)
+    try {
+      const result = await postChat(projectId, {
+        body,
+        eventId: linkId || undefined,
+        quote: quote.trim() || undefined,
+        askBot,
+      })
+      const added = result.reply ? [result.message, result.reply] : [result.message]
+      setMessages((current) => [...current, ...added])
+      lastIdRef.current = added[added.length - 1].id
+      setText('')
+      if (result.note) setNote(result.note)
+    } catch (e) {
+      setError(await explain(e))
+    } finally {
+      setBusy(false)
+    }
+  }, [askBot, busy, linkId, projectId, quote, text])
+
+  return (
+    <div className="chat" data-project-chat>
+      <div className="chat__head">
+        <strong>Чат проекта</strong>
+        <span className="muted chat__hint">видят все участники</span>
+      </div>
+
+      <ul className="chat__list" ref={listRef} data-chat-list>
+        {messages.length === 0 && (
+          <li className="chat__empty muted">
+            Пока тихо. Напишите первым или позовите {bot.name} на разбор.
+          </li>
+        )}
+        {messages.map((message) => (
+          <li
+            key={message.id}
+            className={message.kind === 'bot' ? 'chat__item chat__item--bot' : 'chat__item'}
+            data-chat-message={message.id}
+            data-chat-kind={message.kind}
+          >
+            <div className="chat__meta">
+              <span className="chat__author">{message.author_name}</span>
+              <span className="muted chat__time">{timeOf(message.created_at)}</span>
+            </div>
+            <p className="chat__body">{message.body}</p>
+            {message.event_id !== undefined && (
+              <button
+                type="button"
+                className="chat__link"
+                onClick={() => onOpenFrame?.(message.event_id as string)}
+                title={message.quote ? `Открыть кадр: «${message.quote}»` : 'Открыть кадр'}
+                data-chat-link={message.event_id}
+              >
+                к кадру{message.quote ? `: «${message.quote}»` : ` «${titles.get(message.event_id) ?? 'кадр удалён'}»`}
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
+
+      {note !== null && <p className="muted chat__note" data-chat-note>{note}</p>}
+      {error !== null && <p className="ed-danger chat__note">{error}</p>}
+
+      <div className="chat__composer">
+        <textarea
+          className="chat__input"
+          value={text}
+          rows={2}
+          placeholder={`Сообщение участникам… ${bot.available ? `Можно позвать ${bot.name}.` : ''}`}
+          aria-label="Сообщение в чат проекта"
+          onChange={(event) => setText(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+              event.preventDefault()
+              void send()
+            }
+          }}
+        />
+
+        <div className="chat__attach">
+          <label>
+            <span className="muted">кадр</span>
+            <select
+              value={linkId}
+              aria-label="Приложить кадр"
+              onChange={(event) => setLinkId(event.target.value)}
+              data-chat-frame
+            >
+              <option value="">без ссылки</option>
+              {(frames ?? []).map((frame) => (
+                <option key={frame.id} value={frame.id}>{frame.title}</option>
+              ))}
+            </select>
+          </label>
+          {linkId !== '' && (
+            <label className="chat__quote">
+              <span className="muted">фраза</span>
+              <input
+                value={quote}
+                placeholder="точная фраза из кадра (необязательно)"
+                aria-label="Фраза из кадра"
+                onChange={(event) => setQuote(event.target.value)}
+              />
+            </label>
+          )}
+        </div>
+
+        <div className="chat__actions">
+          {bot.available && (
+            <button
+              type="button"
+              className={askBot ? undefined : 'secondary'}
+              aria-pressed={askBot}
+              title={`${bot.name} ответит в чате — разбор, а не правка: проект он не меняет`}
+              onClick={() => setAskBot((value) => !value)}
+              data-chat-ask-bot
+            >
+              {askBot ? `${bot.name} ответит` : 'спросить бота'}
+            </button>
+          )}
+          <button type="button" onClick={() => void send()} disabled={busy || text.trim() === ''} data-chat-send>
+            {busy ? 'Отправляю…' : 'Отправить'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+async function explain(error: unknown): Promise<string> {
+  const message = error instanceof Error ? error.message : String(error)
+  // Сервер объясняет отказы своими словами («такой фразы в тексте кадра нет»), и это полезнее
+  // кода состояния; ky кладёт тело в response, поэтому читаем его через общий помощник.
+  return (await serverErrorMessage(error)) ?? message ?? 'Не удалось отправить сообщение.'
+}
