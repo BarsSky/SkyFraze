@@ -189,4 +189,19 @@ describe('MarkdownEditor — панель «Разметка DOCX»', () => {
     expect(screen.getByText(/Стили шаблона появятся/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'разрыв страницы' })).toBeInTheDocument()
   })
+
+  it('с initialDocxOpen панель уже раскрыта — кнопку искать не надо (0.94.1)', () => {
+    render(
+      <MarkdownEditor
+        value="Текст."
+        onSave={() => {}}
+        onAdopt={() => {}}
+        onClose={() => {}}
+        initialDocxOpen
+      />,
+    )
+    const toggle = screen.getByRole('button', { name: /Разметка DOCX/ })
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByRole('button', { name: 'разрыв страницы' })).toBeInTheDocument()
+  })
 })

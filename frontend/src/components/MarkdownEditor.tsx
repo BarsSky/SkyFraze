@@ -42,6 +42,14 @@ interface Props {
    * несуществующих стилей хуже, чем его отсутствие.
    */
   docxStyles?: string[]
+  /**
+   * Открыть окно с уже раскрытой панелью «Разметка DOCX» (0.94.1).
+   *
+   * Зачем: панель маркеров живёт в этом окне, и человека, который нажал «Разметка DOCX» в
+   * редакторе, незачем заставлять искать ещё одну кнопку внутри. При обычном открытии окна
+   * панель свёрнута — маркеры нужны не каждый раз.
+   */
+  initialDocxOpen?: boolean
 }
 
 type Mode = 'split' | 'edit' | 'preview'
@@ -61,7 +69,7 @@ type Mode = 'split' | 'edit' | 'preview'
  * соавтора». Правило «что делать» целиком живёт в `resolveLiveText` и покрыто
  * тестом, здесь только его исполнение.
  */
-export function MarkdownEditor({ value, onSave, onAdopt, onClose, title, assetUrls, docxStyles }: Props) {
+export function MarkdownEditor({ value, onSave, onAdopt, onClose, title, assetUrls, docxStyles, initialDocxOpen = false }: Props) {
   const [text, setText] = useState(value)
   const [mode, setMode] = useState<Mode>('split')
   const [diagramKind, setDiagramKind] = useState<string>(DIAGRAM_KINDS[0].id)
@@ -71,7 +79,7 @@ export function MarkdownEditor({ value, onSave, onAdopt, onClose, title, assetUr
    * Панель «Разметка DOCX» (0.92.0). Свёрнута по умолчанию: маркеры нужны не каждый раз, а
    * человек, который их не знает, не должен упираться в них при первом открытии редактора.
    */
-  const [docxOpen, setDocxOpen] = useState(false)
+  const [docxOpen, setDocxOpen] = useState(initialDocxOpen)
   /** Выбранный стиль шаблона. Пусто — список ещё не пришёл или шаблона нет. */
   const [docxStyle, setDocxStyle] = useState('')
   /** Открыта справка «Как сделать шаблон» (0.94.0). */

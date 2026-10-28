@@ -520,7 +520,7 @@ export function ProjectTimelinePage() {
           уходит в `--sf-tabs-h`, сдвигая панель сцены, чипы и лист кадра ниже (0.83.0). */}
       {tabsShown && (
         <div className="sf-tabs-row" ref={tabsRowRef}>
-          <TabBar view={view} onChange={setView} />
+          <TabBar view={view} projectId={projectId} onChange={setView} />
         </div>
       )}
 
@@ -623,7 +623,15 @@ export function ProjectTimelinePage() {
  * Живут в шапке стадии на вкладке «Проект» и отдельной строкой на остальных вкладках: стадия —
  * fixed-слой, и вкладки внутри неё исчезали бы вместе с ней при переходе в другой режим.
  */
-function TabBar({ view, onChange }: { view: ProjectView; onChange: (next: ProjectView) => void }) {
+export function TabBar({
+  view,
+  projectId,
+  onChange,
+}: {
+  view: ProjectView
+  projectId: string
+  onChange: (next: ProjectView) => void
+}) {
   return (
     <nav className="sf-tabs" role="tablist" aria-label="Режим проекта" data-project-tabs>
       {PROJECT_TABS.map((tab) => (
@@ -643,6 +651,21 @@ function TabBar({ view, onChange }: { view: ProjectView; onChange: (next: Projec
           {tab.title}
         </button>
       ))}
+      {/* «Настройки» — ССЫЛКА, а не вкладка: это отдельная страница (`/projects/{id}/settings`)
+          со своими окнами и своими правами. До 0.94.1 попасть туда можно было только кнопкой
+          «Участники» в списке проектов, и её никто не находил: отчёт «кнопки Настройки проекта
+          тоже нигде не видно». Стоит последней, рядом с «Версиями»: это тоже «про проект», а не
+          «про текст». */}
+      <Link
+        to={`/projects/${projectId}/settings`}
+        role="tab"
+        aria-selected={false}
+        className="sf-tabs__tab sf-tabs__tab--link"
+        data-project-tab="settings"
+        title="Участники, оформление DOCX, шаблон проекта и прочие настройки проекта"
+      >
+        Настройки
+      </Link>
     </nav>
   )
 }

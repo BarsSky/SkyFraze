@@ -832,6 +832,11 @@ cd frontend && npx tsx tests/diag-docx-switch.ts
 # справку в настройках и в панели «Разметка DOCX». Снимки: docx-help-settings.png, docx-help-editor.png.
 cd frontend && npx tsx tests/diag-docx-help.ts
 
+# Точки входа в фичу DOCX (0.94.1): «Настройки» стоят в ряду вкладок проекта и ведут на страницу
+# с блоком «Оформление DOCX», а в редакторе кадра есть кнопка «Разметка DOCX», открывающая окно с
+# уже раскрытой панелью маркеров. Снимки: docx-entry-settings.png, docx-entry-editor.png.
+cd frontend && npx tsx tests/diag-docx-entry.ts
+
 # Маркеры DOCX (0.92.0): в редакторе открыть «Разметку DOCX», вставить разрыв страницы и
 # оглавление, сохранить — и убедиться, что сервер увидел маркеры (export.md), а .docx собран с
 # <w:br w:type="page"/> и полем TOC. Текст кадра возвращается на место. Файл —

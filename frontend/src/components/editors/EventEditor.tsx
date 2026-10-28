@@ -214,6 +214,8 @@ export function EventEditor({
   const eventDate = eventDateText(ymap.get('event_date'))
   const [viewer, setViewer] = useState<number | null>(null)
   const [mdOpen, setMdOpen] = useState(false)
+  /** Открыть окно Markdown сразу с раскрытой панелью «Разметка DOCX» (0.94.1). */
+  const [openDocxPanel, setOpenDocxPanel] = useState(false)
 
   const unattached = assets.filter((a) => !attachedIds.includes(a.id))
   const attached = assets.filter((a) => attachedIds.includes(a.id))
@@ -275,6 +277,21 @@ export function EventEditor({
           <button type="button" className="secondary" onClick={() => setMdOpen(true)}>
             Открыть редактор Markdown
           </button>
+          {/* Разметка DOCX (0.94.1). Панель маркеров живёт в окне Markdown, и её было не найти:
+              человек искал «Разметка DOCX» в самом редакторе и не видел её вовсе. Теперь есть
+              отдельная кнопка, которая открывает то же окно с уже раскрытой панелью. */}
+          <button
+            type="button"
+            className="secondary"
+            title="Маркеры для DOCX: разрыв страницы, оглавление, стиль шаблона"
+            onClick={() => {
+              setOpenDocxPanel(true)
+              setMdOpen(true)
+            }}
+            data-docx-panel-open
+          >
+            Разметка DOCX
+          </button>
           {looksLikeMarkdown(body) && (
             <span className="muted">разметка распознана — предпросмотр под полем</span>
           )}
@@ -291,6 +308,7 @@ export function EventEditor({
           // Ссылки на вложения в тексте должны открываться и в предпросмотре.
           assetUrls={assetUrls}
           docxStyles={docxStyles}
+          initialDocxOpen={openDocxPanel}
           onSave={(next) => {
             setText(ymap, 'body', next)
             onChange?.()
