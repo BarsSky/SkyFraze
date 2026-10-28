@@ -22,6 +22,7 @@ import (
 	"github.com/skyfraze/backend/internal/auth"
 	"github.com/skyfraze/backend/internal/coauthors"
 	"github.com/skyfraze/backend/internal/collab"
+	"github.com/skyfraze/backend/internal/docxtpl"
 	"github.com/skyfraze/backend/internal/entities"
 	"github.com/skyfraze/backend/internal/events"
 	"github.com/skyfraze/backend/internal/feed"
@@ -29,8 +30,8 @@ import (
 	"github.com/skyfraze/backend/internal/notify"
 	"github.com/skyfraze/backend/internal/people"
 	"github.com/skyfraze/backend/internal/platform"
-	"github.com/skyfraze/backend/internal/projecttemplate"
 	"github.com/skyfraze/backend/internal/projects"
+	"github.com/skyfraze/backend/internal/projecttemplate"
 	"github.com/skyfraze/backend/internal/ratelimit"
 	"github.com/skyfraze/backend/internal/storage"
 	"github.com/skyfraze/backend/internal/store"
@@ -213,7 +214,7 @@ func main() {
 		Host: cfg.NotifySMTPHost, Port: cfg.NotifySMTPPort,
 		Username: cfg.NotifySMTPUser, Password: cfg.NotifySMTPPass,
 		From: cfg.NotifyFrom, ImplicitTLS: cfg.NotifySMTPTLS,
-		BaseURL: cfg.AppBaseURL,
+		BaseURL:  cfg.AppBaseURL,
 		Interval: time.Duration(cfg.NotifyIntervalSeconds) * time.Second,
 	}
 	if notifyCfg.Enabled() {
@@ -303,6 +304,13 @@ func main() {
 	templateSvc := projecttemplate.New(st, projSvc, entitiesSvc)
 	templateH := projecttemplate.NewHandler(templateSvc, logger)
 	transferSvc.UseTemplates(templateSvc)
+
+	// Шаблоны оформления DOCX (0.91.0, docs/docx-template.md): автор загружает свой .docx, и
+	// скачивание собирается в его пакете — титул, колонтитулы, поля и стили остаются его.
+	docxTplSvc := docxtpl.New(st, objStore, projSvc)
+	docxTplH := docxtpl.NewHandler(docxTplSvc, logger)
+	transferSvc.UseDocxTemplates(docxTplSvc)
+	transferSvc.UseLogger(logger)
 	assistantSvc := assistant.New(st, aiSvc, projSvc, transferSvc, cfg.AIMaxToolCalls, logger)
 	// Иллюстрации помощника ложатся вложениями проекта: тот же путь загрузки, что у
 	// файлов из интерфейса (квота, пережатие в WebP, дедупликация).
@@ -529,6 +537,9 @@ func main() {
 		// Шаблон проекта (0.85.0): типы карточек, заготовки и настройки помощника.
 		// Читает editor+, применяет только владелец — шаблон меняет настройки целиком.
 		templateH.Mount(r)
+
+		// Шаблоны оформления DOCX (0.91.0): загрузка своего .docx, активация и удаление.
+		docxTplH.Mount(r)
 
 		r.Post("/assets", assetsH.Upload(authSvc))
 		r.Get("/assets", assetsH.List(authSvc))

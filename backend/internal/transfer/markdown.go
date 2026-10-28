@@ -51,6 +51,10 @@ type MarkdownInfo struct {
 	Events   int
 	Assets   int
 	Bytes    int64
+	// Template — каким оформлением собран DOCX (0.91.0): «custom» — шаблон автора,
+	// «builtin» — встроенное. Пусто у остальных форматов. Уходит в заголовок ответа, чтобы
+	// интерфейс мог сказать, применился ли шаблон.
+	Template string
 }
 
 // storyFrame — кадр истории в порядке таймлайна (pre-order, как на экране).

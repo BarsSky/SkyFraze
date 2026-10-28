@@ -80,6 +80,10 @@ func (h *Handler) exportBook(
 	w.Header().Set("Content-Length", strconv.Itoa(buf.Len()))
 	w.Header().Set("X-Skyfraze-Export-Events", strconv.Itoa(info.Events))
 	w.Header().Set("X-Skyfraze-Export-Assets", strconv.Itoa(info.Assets))
+	if info.Template != "" {
+		// 0.91.0: по этому заголовку интерфейс понимает, применился ли шаблон оформления DOCX.
+		w.Header().Set("X-Skyfraze-Docx-Template", info.Template)
+	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(buf.Bytes())
 }

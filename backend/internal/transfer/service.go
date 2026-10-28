@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -25,8 +26,8 @@ import (
 
 	"github.com/skyfraze/backend/internal/entities"
 	"github.com/skyfraze/backend/internal/events"
-	"github.com/skyfraze/backend/internal/projecttemplate"
 	"github.com/skyfraze/backend/internal/projects"
+	"github.com/skyfraze/backend/internal/projecttemplate"
 	"github.com/skyfraze/backend/internal/storage"
 	"github.com/skyfraze/backend/internal/store"
 )
@@ -171,7 +172,18 @@ type Service struct {
 	// templates — шаблон проекта (0.85.0): архив возит типы карточек и настройки помощника
 	// файлом template.json. Без подключённого шаблона архив просто не содержит этот файл.
 	templates Templates
+	// docxTemplates — шаблоны оформления DOCX (0.91.0): активный шаблон определяет вид
+	// скачиваемого документа. Без подключённых шаблонов DOCX собирается встроенным оформлением.
+	docxTemplates DocxTemplates
+	// logger — предупреждения выгрузки (например, шаблон не применился). Необязателен.
+	logger *slog.Logger
 }
+
+// UseDocxTemplates подключает шаблоны оформления DOCX (0.91.0).
+func (s *Service) UseDocxTemplates(templates DocxTemplates) { s.docxTemplates = templates }
+
+// UseLogger подключает лог для предупреждений выгрузки.
+func (s *Service) UseLogger(logger *slog.Logger) { s.logger = logger }
 
 // Templates — шаблон проекта (реализует projecttemplate.Service).
 //
@@ -656,4 +668,3 @@ func readZipFile(f *zip.File, limit int64) ([]byte, error) {
 	}
 	return buf.Bytes(), nil
 }
-

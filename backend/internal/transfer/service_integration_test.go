@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/skyfraze/backend/internal/assets"
+	"github.com/skyfraze/backend/internal/docxtpl"
 	"github.com/skyfraze/backend/internal/events"
 	"github.com/skyfraze/backend/internal/platform/testdb"
 	"github.com/skyfraze/backend/internal/projects"
@@ -54,6 +55,8 @@ type env struct {
 	proj     *projects.Service
 	transfer *transfer.Service
 	obj      storage.ObjectStore
+	// docx — шаблоны оформления DOCX (0.91.0): выгрузка берёт активный шаблон проекта.
+	docx *docxtpl.Service
 }
 
 func setup(t *testing.T) *env {
@@ -76,7 +79,10 @@ func setup(t *testing.T) *env {
 	transferSvc := transfer.New(st, obj, proj)
 	transferSvc.UseFileStore(assetsSvc)
 	proj.UseFiles(assetsSvc)
-	return &env{st: st, proj: proj, transfer: transferSvc, obj: obj}
+	// Шаблоны оформления DOCX: проверяем, что активный шаблон влияет на скачивание.
+	docxSvc := docxtpl.New(st, obj, proj)
+	transferSvc.UseDocxTemplates(docxSvc)
+	return &env{st: st, proj: proj, transfer: transferSvc, obj: obj, docx: docxSvc}
 }
 
 func (e *env) user(t *testing.T, email string) uuid.UUID {

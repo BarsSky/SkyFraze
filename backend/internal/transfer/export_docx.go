@@ -20,6 +20,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -27,11 +28,79 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/skyfraze/backend/internal/docxtpl"
 	"github.com/skyfraze/backend/internal/store"
 )
 
 // docxFileMime — MIME тип документа.
 const docxFileMime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+// DocxTemplates — шаблоны оформления проекта (0.91.0, docs/docx-template.md).
+//
+// Интерфейс, а не конкретный сервис: transfer собирает документ и не должен знать, как шаблоны
+// хранятся и кто их вправе менять. Выгрузке нужен активный шаблон (пакет + разбор) — и всё.
+type DocxTemplates interface {
+	Active(ctx context.Context, projectID uuid.UUID) (*docxtpl.ActiveTemplate, error)
+}
+
+// docxStyles — какие стили использовать при сборке тела.
+//
+// С шаблоном значения приходят из карты сопоставления разбора; без шаблона — встроенные, как до
+// 0.91.0. `BodyPPr` — свойства абзаца-плейсхолдера: именно они дают «мой шрифт и отступ» обычному
+// тексту, без ручной карты стилей.
+type docxStyleSet struct {
+	Title   string
+	Heading [5]string
+	Quote   string
+	Code    string
+	Date    string
+	List    string
+	Nested  string
+	Table   string
+	BodyPPr string
+}
+
+// builtinDocxStyles — прежнее оформление (шаблона нет).
+func builtinDocxStyles() docxStyleSet {
+	return docxStyleSet{
+		Title:   "Title",
+		Heading: [5]string{"", "Heading1", "Heading2", "Heading3", "Heading3"},
+		Quote:   "Quote",
+		Code:    "Code",
+		Date:    "Date",
+		List:    "",
+		Nested:  "ListNested",
+		Table:   "TableHead",
+	}
+}
+
+// docxStylesFrom — карта стилей из разбора шаблона, с встроенными запасными значениями.
+func docxStylesFrom(tpl *docxtpl.ActiveTemplate) docxStyleSet {
+	styles := builtinDocxStyles()
+	if tpl == nil {
+		return styles
+	}
+	mapping := tpl.Report.Mapping
+	pick := func(key, fallback string) string {
+		if value := strings.TrimSpace(mapping[key]); value != "" {
+			return value
+		}
+		return fallback
+	}
+	// Стиля может не быть в шаблоне: тогда блок собирается без pStyle — с абзацными свойствами
+	// плейсхолдера (шрифт и отступ автора), а не с несуществующим стилем Word.
+	styles.Title = pick("title", "")
+	for depth := 1; depth <= 4; depth++ {
+		styles.Heading[depth] = pick("heading"+fmt.Sprint(depth), "")
+	}
+	styles.Quote = pick("quote", "")
+	styles.Code = pick("code", "")
+	styles.Date = pick("date", "")
+	styles.List = pick("list", "")
+	styles.Nested = styles.List
+	styles.BodyPPr = tpl.Placeholder.BodyPPr
+	return styles
+}
 
 // docxMedia — картинка документа.
 type docxMedia struct {
@@ -45,6 +114,10 @@ type docxMedia struct {
 }
 
 // ExportDOCX собирает документ и пишет его в w.
+//
+// Если у проекта есть активный шаблон оформления (0.91.0), документ собирается В ЕГО ПАКЕТЕ: текст
+// встаёт на место абзаца {{content}}, остальное (титул, колонтитулы, поля, стили) остаётся автора.
+// Без шаблона — прежняя сборка с нуля.
 func (s *Service) ExportDOCX(
 	ctx context.Context, userID, projectID uuid.UUID, w io.Writer,
 ) (*MarkdownInfo, error) {
@@ -53,7 +126,21 @@ func (s *Service) ExportDOCX(
 		return nil, err
 	}
 
-	// Картинки: по одной на вложение, идентификатор связи — по порядку.
+	var template *docxtpl.ActiveTemplate
+	if s.docxTemplates != nil {
+		template, err = s.docxTemplates.Active(ctx, projectID)
+		if err != nil {
+			template = nil
+		}
+	}
+	styles := docxStylesFrom(template)
+
+	// Картинки: по одной на вложение. Идентификаторы связей в шаблоне уже заняты, поэтому
+	// начинаем с первого свободного; без шаблона — прежние rId10+.
+	nextRID := 10
+	if template != nil {
+		nextRID = docxtpl.NextRelationshipID(template.Raw)
+	}
 	media := make([]docxMedia, 0, len(st.Assets))
 	mediaByID := make(map[uuid.UUID]docxMedia, len(st.Assets))
 	for _, frame := range st.Frames {
@@ -62,11 +149,12 @@ func (s *Service) ExportDOCX(
 				continue
 			}
 			item := docxMedia{
-				RelID:     fmt.Sprintf("rId%d", len(media)+10),
+				RelID:     fmt.Sprintf("rId%d", nextRID),
 				Path:      fmt.Sprintf("media/%02d.%s", st.AssetNumber[a.ID], mimeExtension(a.Mime)),
 				MediaType: a.Mime,
 				Asset:     a,
 			}
+			nextRID++
 			if a.Width != nil {
 				item.Width = *a.Width
 			}
@@ -78,13 +166,56 @@ func (s *Service) ExportDOCX(
 		}
 	}
 
-	body := docxBody(st, mediaByID)
+	body := docxBody(st, mediaByID, styles)
 	title := oneLine(st.Project.Title)
 	if title == "" {
 		title = "Без названия"
 	}
 	author := "SkyFraze"
 	created := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+
+	if template != nil {
+		mediaBytes, err := s.readDocxMedia(ctx, media)
+		if err != nil {
+			return nil, err
+		}
+		parts := make([]docxtpl.Media, 0, len(media))
+		for _, item := range media {
+			data, ok := mediaBytes[item.Asset.ID]
+			if !ok {
+				continue
+			}
+			parts = append(parts, docxtpl.Media{
+				Name:  item.Path,
+				Data:  data,
+				Mime:  item.MediaType,
+				RelID: item.RelID,
+			})
+		}
+		result, injectErr := docxtpl.Inject(template.Raw, docxtpl.InjectOptions{
+			ContentXML: body,
+			Media:      parts,
+		})
+		if injectErr == nil {
+			_, writeErr := w.Write(result.Data)
+			if writeErr != nil {
+				return nil, writeErr
+			}
+			return &MarkdownInfo{
+				Title:    title,
+				Filename: bookFilename(st.Project.Title, ".docx"),
+				Events:   len(st.Frames),
+				Assets:   len(parts),
+				Bytes:    int64(len(result.Data)),
+				Template: "custom",
+			}, nil
+		}
+		// Шаблон не применился (например, плейсхолдер исчез после загрузки): собираем встроенным
+		// оформлением, но не молча — пишем в лог, а человек увидит это по виду файла.
+		if s.logger != nil && !errors.Is(injectErr, docxtpl.ErrNoPlaceholder) {
+			s.logger.Warn("docx template inject failed", "project", projectID, "err", injectErr)
+		}
+	}
 
 	counter := &countingWriter{w: w}
 	zw := zip.NewWriter(counter)
@@ -130,28 +261,55 @@ func (s *Service) ExportDOCX(
 		Events:   len(st.Frames),
 		Assets:   len(media),
 		Bytes:    counter.n,
+		Template: "builtin",
 	}, nil
 }
 
+// readDocxMedia читает файлы картинок проекта из хранилища (только те, что войдут в документ).
+func (s *Service) readDocxMedia(ctx context.Context, media []docxMedia) (map[uuid.UUID][]byte, error) {
+	out := make(map[uuid.UUID][]byte, len(media))
+	for _, item := range media {
+		rc, err := s.obj.Get(ctx, item.Asset.S3Key)
+		if err != nil {
+			// Картинки нет в хранилище — не роняем выгрузку, текст важнее.
+			continue
+		}
+		var buf bytes.Buffer
+		_, copyErr := io.Copy(&buf, rc)
+		_ = rc.Close()
+		if copyErr != nil {
+			continue
+		}
+		out[item.Asset.ID] = buf.Bytes()
+	}
+	return out, nil
+}
+
 // docxBody печатает тело документа: название, описание, затем кадры по порядку.
-func docxBody(st *story, media map[uuid.UUID]docxMedia) string {
+//
+// `styles` — какие стили использовать: с шаблоном оформления они приходят из его карты, без
+// шаблона — встроенные. Обычный текст получает свойства абзаца-плейсхолдера (BodyPPr): так
+// работают «мой шрифт и отступ» шаблона.
+func docxBody(st *story, media map[uuid.UUID]docxMedia, styles docxStyleSet) string {
 	var b strings.Builder
-	b.WriteString(docxParagraph(st.Project.Title, "Title", ""))
+	b.WriteString(docxParagraph(st.Project.Title, styles.Title, "", styles.BodyPPr))
 	if desc := oneLine(st.Project.Description); desc != "" {
-		b.WriteString(docxParagraph(desc, "", ""))
+		b.WriteString(docxParagraph(desc, "", "", styles.BodyPPr))
 	}
 	for _, frame := range st.Frames {
 		pictures := 0
-		style := "Heading1"
-		switch frame.Depth {
-		case 1:
-			style = "Heading2"
-		case 2:
-			style = "Heading3"
+		// Глубина кадра: глава (0) — заголовок 1, под-событие (1) — заголовок 2, и так далее.
+		level := frame.Depth + 1
+		if level < 1 {
+			level = 1
 		}
-		b.WriteString(docxParagraph(frameHeadline(frame), style, ""))
+		if level > 4 {
+			level = 4
+		}
+		style := styles.Heading[level]
+		b.WriteString(docxParagraph(frameHeadline(frame), style, "", ""))
 		if frame.Event.EventDate != nil {
-			b.WriteString(docxParagraph(frame.Event.EventDate.Format("2 January 2006"), "", "Date"))
+			b.WriteString(docxParagraph(frame.Event.EventDate.Format("2 January 2006"), "", "Date", ""))
 		}
 		for _, a := range frame.Images {
 			item, ok := media[a.ID]
@@ -162,14 +320,14 @@ func docxBody(st *story, media map[uuid.UUID]docxMedia) string {
 			b.WriteString(docxImage(item, pictures))
 		}
 		for _, block := range parseMarkdown(frame.Event.Body) {
-			b.WriteString(docxBlock(block))
+			b.WriteString(docxBlock(block, styles))
 		}
 	}
 	return b.String()
 }
 
 // docxBlock печатает один блок разметки.
-func docxBlock(block mdBlock) string {
+func docxBlock(block mdBlock, styles docxStyleSet) string {
 	switch block.Kind {
 	case "heading":
 		level := block.Level
@@ -179,13 +337,13 @@ func docxBlock(block mdBlock) string {
 		if level > 4 {
 			level = 4
 		}
-		return docxParagraph(inlinePlain(block.Text), fmt.Sprintf("Heading%d", level), "")
+		return docxParagraph(inlinePlain(block.Text), styles.Heading[level], "", "")
 	case "paragraph":
-		return docxRunsParagraph(inlineRuns(block.Text), "")
+		return docxRunsParagraph(inlineRuns(block.Text), "", styles.BodyPPr)
 	case "quote":
-		return docxRunsParagraph(inlineRuns(block.Text), "Quote")
+		return docxRunsParagraph(inlineRuns(block.Text), styles.Quote, "")
 	case "code":
-		return docxParagraph(block.Text, "Code", "")
+		return docxParagraph(block.Text, styles.Code, "", "")
 	case "list":
 		var b strings.Builder
 		for _, item := range block.Items {
@@ -193,12 +351,12 @@ func docxBlock(block mdBlock) string {
 			if item.Ordered {
 				prefix = "1. "
 			}
-			indent := ""
-			if item.Depth > 0 {
-				indent = "Nested"
+			style := styles.List
+			if item.Depth > 0 && styles.Nested != "" {
+				style = styles.Nested
 			}
 			b.WriteString(docxRunsParagraph(
-				append([]inlineRun{{Text: prefix}}, inlineRuns(item.Text)...), indent))
+				append([]inlineRun{{Text: prefix}}, inlineRuns(item.Text)...), style, styles.BodyPPr))
 		}
 		return b.String()
 	case "table":
@@ -207,22 +365,22 @@ func docxBlock(block mdBlock) string {
 			text := strings.Join(row, " | ")
 			style := ""
 			if rowIndex == 0 {
-				style = "TableHead"
+				style = styles.Table
 			}
-			b.WriteString(docxRunsParagraph([]inlineRun{{Text: text, Bold: rowIndex == 0}}, style))
+			b.WriteString(docxRunsParagraph([]inlineRun{{Text: text, Bold: rowIndex == 0}}, style, ""))
 		}
 		return b.String()
 	case "image":
 		// Картинки внутри текста кадра не привязываются к вложениям проекта, поэтому в
 		// DOCX они остаются строкой-ссылкой: текст не потерян, а ссылка открывается.
-		return docxParagraph(block.ImageAlt+" ("+block.ImageSrc+")", "Date", "")
+		return docxParagraph(block.ImageAlt+" ("+block.ImageSrc+")", styles.Date, "", "")
 	}
 	return ""
 }
 
 // docxParagraph — параграф одной строкой без выделения.
-func docxParagraph(text, style, extra string) string {
-	return docxRunsParagraph([]inlineRun{{Text: text}}, styleWithExtra(style, extra))
+func docxParagraph(text, style, extra, bodyPPr string) string {
+	return docxRunsParagraph([]inlineRun{{Text: text}}, styleWithExtra(style, extra), bodyPPr)
 }
 
 // styleWithExtra склеивает стиль и дополнительный класс (дата, вложенный список).
@@ -242,11 +400,18 @@ func styleWithExtra(style, extra string) string {
 }
 
 // docxRunsParagraph — параграф из кусков с начертанием.
-func docxRunsParagraph(runs []inlineRun, style string) string {
+//
+// `bodyPPr` — свойства абзаца из шаблона (шрифт, отступ, интервал). Применяются только к абзацу
+// БЕЗ своего стиля: у заголовка и цитаты оформление задаёт стиль, и навязывать им абзацные
+// свойства плейсхолдера значило бы спорить с шаблоном.
+func docxRunsParagraph(runs []inlineRun, style, bodyPPr string) string {
 	var b strings.Builder
 	b.WriteString("<w:p>")
-	if style != "" {
+	switch {
+	case style != "":
 		fmt.Fprintf(&b, `<w:pPr><w:pStyle w:val="%s"/></w:pPr>`, style)
+	case bodyPPr != "":
+		b.WriteString(bodyPPr)
 	}
 	for _, run := range runs {
 		if run.Text == "" {

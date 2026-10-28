@@ -17,6 +17,14 @@ import {
   templateFileName,
   type TemplateReport,
 } from '../api/projectTemplate'
+import {
+  activateDocxTemplate,
+  deleteDocxTemplate,
+  listDocxTemplates,
+  mappingRows,
+  uploadDocxTemplate,
+  type DocxTemplate,
+} from '../api/docxTemplates'
 import { useAuthStore } from '../store/auth'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { craftsOf } from '../lib/crafts'
@@ -331,8 +339,234 @@ export function ProjectSettingsPage() {
         </div>
       )}
       {isOwner && <ProjectTemplateCard projectId={projectId} projectTitle={project?.title ?? ''} onErr={setErr} />}
+      {isOwner && <DocxTemplateCard projectId={projectId} onErr={setErr} />}
     </div>
   )
+}
+
+/**
+ * Оформление DOCX по шаблону автора (0.91.0, docs/docx-template.md).
+ *
+ * Человек загружает свой .docx — с титулом, колонтитулами, полями и стилями заголовков — и
+ * скачивание проекта собирается В ЭТОМ ПАКЕТЕ: текст встаёт на место абзаца `{{content}}`.
+ * Шаблонов может быть несколько («рукопись», «самиздат»), активный используется при скачивании.
+ *
+ * Отчёт загрузки показываем целиком: без него непонятно, почему заголовок не того вида. Молча
+ * подставлять другой стиль нельзя.
+ */
+function DocxTemplateCard({ projectId, onErr }: { projectId: string; onErr: (err: unknown) => void }) {
+  const [templates, setTemplates] = useState<DocxTemplate[]>([])
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState<string | null>(null)
+  const [name, setName] = useState('')
+  const [file, setFile] = useState<File | null>(null)
+  const [openReport, setOpenReport] = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    try {
+      setTemplates(await listDocxTemplates(projectId))
+    } catch (e) {
+      onErr(e)
+    }
+  }, [onErr, projectId])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  async function upload() {
+    if (file === null) return
+    setBusy(true)
+    setNote(null)
+    try {
+      const entry = await uploadDocxTemplate(projectId, file, name)
+      setNote(
+        `Шаблон «${entry.name}» загружен` +
+          (entry.report.warnings?.length ? `, замечаний: ${entry.report.warnings.length}` : ''),
+      )
+      setFile(null)
+      setName('')
+      await load()
+    } catch (e) {
+      onErr(e)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function activate(id: string) {
+    setBusy(true)
+    setNote(null)
+    try {
+      const list = await activateDocxTemplate(projectId, id)
+      setTemplates(list)
+      setNote('Активный шаблон переключён: DOCX будет собираться в нём')
+    } catch (e) {
+      onErr(e)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function remove(id: string, label: string) {
+    setBusy(true)
+    setNote(null)
+    try {
+      const list = await deleteDocxTemplate(projectId, id)
+      setTemplates(list)
+      setNote(`Шаблон «${label}» удалён`)
+    } catch (e) {
+      onErr(e)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="card" data-docx-templates>
+      <h3 style={{ marginTop: 0 }}>Оформление DOCX</h3>
+      <p className="muted" style={{ marginTop: 0 }}>
+        Загрузите свой файл <b>.docx</b> — с титулом, колонтитулами, полями и стилями заголовков, — и
+        скачивание проекта соберётся в нём. В шаблоне нужен отдельный абзац <code>{'{{content}}'}</code>:
+        на его место встанет текст проекта. Без шаблона DOCX собирается встроенным оформлением.
+      </p>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+        <div style={{ flex: '1 1 200px', minWidth: 160 }}>
+          <label className="muted" style={{ display: 'block', marginBottom: 4 }}>
+            Название шаблона
+          </label>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="рукопись, самиздат…"
+            aria-label="Название шаблона DOCX"
+            data-docx-template-name
+            maxLength={40}
+          />
+        </div>
+        <label style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+          <input
+            type="file"
+            accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            aria-label="Файл шаблона DOCX"
+            style={{ width: 'auto', flex: '0 0 auto' }}
+            data-docx-template-file
+            onChange={(e) => {
+              const picked = e.target.files?.[0] ?? null
+              setFile(picked)
+              if (picked && name.trim() === '') {
+                setName(picked.name.replace(/\.docx$/i, '').slice(0, 40))
+              }
+            }}
+          />
+        </label>
+        <button type="button" onClick={() => void upload()} disabled={busy || file === null} data-docx-template-upload>
+          {busy ? 'Загружаю…' : 'Загрузить шаблон'}
+        </button>
+      </div>
+      {note && (
+        <p className="muted" role="status" data-docx-template-note>
+          {note}
+        </p>
+      )}
+
+      {templates.length === 0 ? (
+        <p className="muted" data-docx-template-empty>
+          Шаблонов пока нет.
+        </p>
+      ) : (
+        <ul className="docx-tpl" data-docx-template-list>
+          {templates.map((item) => (
+            <li key={item.id} className="docx-tpl__item" data-docx-template={item.id}>
+              <div className="docx-tpl__row">
+                <strong className="docx-tpl__name">{item.name}</strong>
+                {item.is_active && <span className="docx-tpl__active" data-docx-template-active>активный</span>}
+                <span className="muted docx-tpl__meta">
+                  {item.filename} · {formatBytes(item.size)} · стилей{' '}
+                  {(item.report?.styles ?? item.styles).length}
+                </span>
+              </div>
+              <div className="docx-tpl__actions">
+                {!item.is_active && (
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => void activate(item.id)}
+                    disabled={busy}
+                    data-docx-template-activate
+                  >
+                    Сделать активным
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => setOpenReport((current) => (current === item.id ? null : item.id))}
+                  aria-expanded={openReport === item.id}
+                  data-docx-template-report-toggle
+                >
+                  {openReport === item.id ? 'Скрыть отчёт' : 'Отчёт'}
+                </button>
+                <button
+                  type="button"
+                  className="secondary ed-danger"
+                  onClick={() => void remove(item.id, item.name)}
+                  disabled={busy}
+                  data-docx-template-delete
+                >
+                  Удалить
+                </button>
+              </div>
+              {openReport === item.id && (
+                <div className="docx-tpl__report" data-docx-template-report>
+                  <p className="muted" style={{ margin: 0 }}>
+                    {item.report.has_placeholder
+                      ? 'плейсхолдер найден'
+                      : 'плейсхолдера нет — шаблон не применится'}
+                    {item.page.orientation ? ` · страница: ${item.page.orientation}` : ''}
+                  </p>
+                  {mappingRows(item.report).length > 0 && (
+                    <table className="docx-tpl__mapping">
+                      <thead>
+                        <tr>
+                          <th scope="col">Что в проекте</th>
+                          <th scope="col">Стиль шаблона</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {mappingRows(item.report).map((row) => (
+                          <tr key={row.key}>
+                            <td>{row.label}</td>
+                            <td>
+                              <code>{row.style}</code>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                  {(item.report.warnings ?? []).length > 0 && (
+                    <ul className="muted docx-tpl__warnings" data-docx-template-warnings>
+                      {(item.report.warnings ?? []).map((warning) => (
+                        <li key={warning}>{warning}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+/** Размер файла словами: 1.4 МБ, 240 КБ. */
+function formatBytes(size: number): string {
+  if (size >= 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(1)} МБ`
+  if (size >= 1024) return `${Math.round(size / 1024)} КБ`
+  return `${size} Б`
 }
 
 /**

@@ -129,6 +129,33 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
   margin-bottom: var(--space);
 }
 
+/* ─── шаблоны оформления DOCX в настройках (0.91.0) ───────────────────────────
+   Список загруженных шаблонов и отчёт разбора: имя, активность, размер, карта стилей
+   «что в проекте → какой стиль шаблона» и предупреждения. */
+.docx-tpl { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 8px; }
+.docx-tpl__item {
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
+  display: grid; gap: 6px; background: var(--bg);
+}
+.docx-tpl__row { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.docx-tpl__name { overflow-wrap: anywhere; }
+.docx-tpl__active {
+  font-size: 11px; font-weight: 600; color: var(--bg);
+  background: var(--accent-strong, var(--accent)); border-radius: 999px; padding: 1px 8px;
+}
+.docx-tpl__meta { font-size: 12px; overflow-wrap: anywhere; }
+.docx-tpl__actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.docx-tpl__actions button { min-height: 32px; font-size: 12px; }
+.docx-tpl__report { font-size: 12px; display: grid; gap: 6px; }
+.docx-tpl__mapping { border-collapse: collapse; font-size: 12px; }
+.docx-tpl__mapping th, .docx-tpl__mapping td {
+  text-align: left; padding: 2px 8px; border-bottom: 1px dashed var(--border);
+}
+.docx-tpl__warnings { margin: 0; padding-left: 18px; }
+@media (max-width: 640px) {
+  .docx-tpl__actions button { flex: 1 1 auto; min-height: 36px; }
+}
+
 .layout {
   display: grid;
   grid-template-rows: auto 1fr;
