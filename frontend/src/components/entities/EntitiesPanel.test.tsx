@@ -113,7 +113,7 @@ describe('EntitiesPanel', () => {
     expect(await screen.findByText(/уже есть в проекте/)).toBeTruthy()
   })
 
-  it('карточки показываются в присланном порядке и с алиасами', async () => {
+  it('карточки разложены по видам, внутри вида — в присланном порядке (0.97.7)', async () => {
     panel({
       entities: [
         entity({ id: 'c1', kind: 'character', name: 'Анна' }),
@@ -121,10 +121,62 @@ describe('EntitiesPanel', () => {
         entity({ id: 't1', kind: 'theme', name: 'Письмо', aliases: [] }),
       ],
     })
-    const list = await screen.findByRole('list')
-    const names = Array.from(list.querySelectorAll('.ent__name')).map((n) => n.textContent)
+    await screen.findByText('Анна')
+    const names = Array.from(document.querySelectorAll('.ent__name')).map((n) => n.textContent)
     expect(names).toEqual(['Анна', 'Вокзал', 'Письмо'])
     expect(screen.getByText('(Аня)')).toBeTruthy()
+    // Каждый вид — своя группа с подписью и числом карточек.
+    expect(document.querySelectorAll('[data-entity-group]')).toHaveLength(3)
+    expect(document.querySelector('[data-entity-group="character"] .ent__group-summary')?.textContent).toBe(
+      'Персонаж · 1',
+    )
+  })
+
+  it('группу можно свернуть и развернуть, остальные остаются раскрытыми (0.97.7)', async () => {
+    panel({
+      entities: [
+        entity({ id: 'c1', kind: 'character', name: 'Анна' }),
+        entity({ id: 'c2', kind: 'character', name: 'Борис', aliases: [] }),
+        entity({ id: 'p1e', kind: 'place', name: 'Вокзал', aliases: [] }),
+      ],
+      types: [
+        { created_at: '2026-10-27T09:00:00Z', key: 'character', title: 'Персонажи', color: '', icon: '', position: 1, is_default: true },
+        { created_at: '2026-10-27T09:00:00Z', key: 'place', title: 'Места', color: '', icon: '', position: 2, is_default: true },
+      ],
+    })
+    await screen.findByText('Анна')
+    const characters = document.querySelector('[data-entity-group="character"]') as HTMLDetailsElement
+    const places = document.querySelector('[data-entity-group="place"]') as HTMLDetailsElement
+    expect(characters.open).toBe(true)
+    expect(places.open).toBe(true)
+    expect(characters.querySelector('.ent__group-count')?.textContent).toBe(' · 2')
+
+    fireEvent.click(characters.querySelector('summary') as HTMLElement)
+    expect(characters.open).toBe(false)
+    // Сворачивание одной группы не трогает соседнюю.
+    expect(places.open).toBe(true)
+
+    fireEvent.click(characters.querySelector('summary') as HTMLElement)
+    expect(characters.open).toBe(true)
+  })
+
+  it('вид, которого нет среди типов проекта, уходит в конец и не теряется (0.97.7)', async () => {
+    panel({
+      entities: [
+        entity({ id: 'f1', kind: 'faction', name: 'Совет', aliases: [] }),
+        entity({ id: 'c1', kind: 'character', name: 'Анна' }),
+      ],
+      types: [{ created_at: '2026-10-27T09:00:00Z', key: 'character', title: 'Персонажи', color: '', icon: '', position: 1, is_default: true }],
+    })
+    await screen.findByText('Анна')
+    const groups = Array.from(document.querySelectorAll('[data-entity-group]')).map((node) =>
+      node.getAttribute('data-entity-group'),
+    )
+    // Известный вид идёт по порядку типов, неизвестный — следом, со своим ключом в подписи.
+    expect(groups).toEqual(['character', 'faction'])
+    expect(document.querySelector('[data-entity-group="faction"] .ent__group-summary')?.textContent).toContain(
+      'faction',
+    )
   })
 
   it('счётчик упоминаний: кадры и упоминания, а ноль — словами', async () => {
@@ -476,7 +528,7 @@ describe('EntitiesPanel — клетка матрицы раскрывает к�
     fireEvent.click(screen.getByText(/Матрица: персонажи × главы/))
     fireEvent.click(await screen.findByRole('button', { name: '3' }))
     await screen.findByRole('region')
-    fireEvent.keyDown(window, { key: 'Escape' })
+    fireEvent.keyDown(window, { created_at: '2026-10-27T09:00:00Z', key: 'Escape' })
     expect(screen.queryByRole('region')).toBeNull()
   })
 

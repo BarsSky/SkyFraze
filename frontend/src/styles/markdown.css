@@ -42,13 +42,21 @@
 }
 .sf-md pre code { background: none; border: 0; padding: 0; font-size: 0.86em; line-height: 1.5; }
 
+/* Таблица (0.97.7): прокрутка — у обёртки, раскладка — у самой таблицы.
+   Было `display: block; overflow-x: auto` на таблице: блочная таблица сжимается под содержимое,
+   и в кадре на телефоне колонка «Поле» получала 88 px — «Название» рвалось на «На звани е».
+   `table-layout: auto` и `width: 100%` возвращают нормальное распределение колонок, а
+   `overflow-wrap: break-word` (вместо `anywhere`) не даёт рвать слова, пока есть место по пробелам:
+   длинный id или имя файла всё равно перенесётся, но «Название» — нет. */
+.sf-md-tablewrap { margin: 0 0 0.8em; max-width: 100%; overflow-x: auto; }
 .sf-md table {
-  border-collapse: collapse; width: 100%; margin: 0 0 0.8em;
-  font-size: 0.94em; display: block; overflow-x: auto;
+  border-collapse: collapse; width: 100%; margin: 0;
+  font-size: 0.94em; table-layout: auto;
 }
 .sf-md th, .sf-md td {
   border: 1px solid var(--border); padding: 6px 9px;
   text-align: left; vertical-align: top;
+  overflow-wrap: break-word;
 }
 .sf-md th { background: var(--chip-bg); font-weight: 600; }
 

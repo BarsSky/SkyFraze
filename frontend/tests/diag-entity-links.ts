@@ -144,6 +144,59 @@ async function main() {
     await page.locator('[data-entity-links]').first().scrollIntoViewIfNeeded()
     await page.screenshot({ path: '..\\_dev_shots\\entity-links-desktop.png' })
 
+    // 3. Карточки разложены по видам (0.97.7): «Персонажи · 3» и «Места · 1», каждая группа
+    // сворачивается, и свёрнутая не оставляет за собой пустых строк.
+    const groupData = await page.evaluate<{
+      groups: Array<{ kind: string; title: string; open: boolean; items: number }>
+    }>(`(async () => {
+      const groups = [...document.querySelectorAll('[data-entity-group]')].map((node) => ({
+        kind: node.getAttribute('data-entity-group') || '',
+        title: (node.querySelector('.ent__group-summary')?.textContent || '').trim(),
+        open: node.open === true,
+        items: node.querySelectorAll('[data-entity-kind]').length,
+      }))
+      return { groups }
+    })()`)
+    for (const group of groupData.groups) {
+      console.log(`группа «${group.title}»: карточек ${group.items}, раскрыта ${group.open}`)
+    }
+    const byKind = new Map(groupData.groups.map((group) => [group.kind, group]))
+    if (groupData.groups.length !== 2) {
+      problems.push(`ожидалось две группы (персонажи и места), а их ${groupData.groups.length}`)
+    }
+    if (byKind.get('character')?.items !== 3) {
+      problems.push(`в группе персонажей ${byKind.get('character')?.items ?? 0} карточек вместо 3`)
+    }
+    if (byKind.get('place')?.items !== 1) {
+      problems.push(`в группе мест ${byKind.get('place')?.items ?? 0} карточек вместо 1`)
+    }
+    if (!byKind.get('character')?.title.includes('3')) {
+      problems.push(`в подписи группы нет числа карточек: «${byKind.get('character')?.title ?? ''}»`)
+    }
+
+    const characters = page.locator('[data-entity-group="character"]')
+    const expandedHeight = (await characters.evaluate(
+      `(async (node) => Math.round(node.getBoundingClientRect().height))(document.querySelector('[data-entity-group="character"]'))`,
+    )) as number
+    await characters.locator('summary').first().click()
+    await page.waitForTimeout(200)
+    // Меряем высоту группы, а не «видимость» карточек: в свежем Chromium закрытый `details`
+    // прячет содержимое через content-visibility, и getBoundingClientRect у него не нулевой.
+    // Высота группы — то, что видит человек: одна строка подписи вместо трёх карточек.
+    const collapsed = (await characters.evaluate(
+      `(async (node) => ({ open: node.open === true, height: Math.round(node.getBoundingClientRect().height) }))(document.querySelector('[data-entity-group="character"]'))`,
+    )) as { open: boolean; height: number }
+    console.log(
+      `группа персонажей: было ${expandedHeight} px, свёрнуто ${collapsed.height} px (open ${collapsed.open})`,
+    )
+    if (collapsed.open) problems.push('группа не свернулась по нажатию на подпись')
+    if (collapsed.height > 120 || collapsed.height * 2 > expandedHeight) {
+      problems.push(`свёрнутая группа занимает ${collapsed.height} px — карточки остались на месте`)
+    }
+    await page.locator('[data-entity-links]').first().scrollIntoViewIfNeeded()
+    await page.screenshot({ path: '..\\_dev_shots\\entity-groups-collapsed.png' })
+    await characters.locator('summary').first().click()
+
     // 3. Телефон: тот же список не вылезает за экран.
     const mobile = await page.context().newPage()
     await mobile.setViewportSize({ width: 360, height: 800 })

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   addEntityLink,
   aliasesText,
@@ -193,6 +193,50 @@ export function EntitiesPanel({
 
   /** Связи карточки в обе стороны: прямые и обратные (0.74.0). */
   const entityLinks = (entityId: string) => connectionsOf(entityId, links ?? [], entities)
+
+  /**
+   * Карточки, разложенные по видам (0.97.7).
+   *
+   * Отчёт: «сделать группировку по темам в карточках и сделать сворачиваемыми». В проекте бывает
+   * тридцать карточек трёх-пяти видов, и одним списком «Аня, Земля, Письмо, Вокзал…» искать
+   * нужное приходилось глазами: вид указан в каждой строке, но порядок смешанный.
+   *
+   * Порядок групп — порядок видов в проекте (`position`), а не алфавит и не частота: человек сам
+   * расставил виды, когда заводил их, и список должен это повторять. Вид, которого в `types` нет
+   * (карточка пришла из импорта до 0.81.0), уходит в конец — но не теряется.
+   */
+  const groups = useMemo(() => {
+    const out: Array<{ kind: string; title: string; entities: ProjectEntity[] }> = []
+    const byKind = new Map<string, ProjectEntity[]>()
+    for (const entity of entities) {
+      const list = byKind.get(entity.kind)
+      if (list) list.push(entity)
+      else byKind.set(entity.kind, [entity])
+    }
+    const ordered = [...types].sort((a, b) => a.position - b.position).map((type) => type.key)
+    for (const kind of ordered) {
+      const list = byKind.get(kind)
+      if (list !== undefined) {
+        out.push({ kind, title: typeTitle(types, kind), entities: list })
+        byKind.delete(kind)
+      }
+    }
+    for (const [kind, list] of byKind) out.push({ kind, title: typeTitle(types, kind), entities: list })
+    return out
+  }, [entities, types])
+
+  /**
+   * Свёрнутые группы (0.97.7): по умолчанию раскрыты все — так виден весь мир проекта.
+   *
+   * Состояние НЕ запоминается между заходами, в отличие от самого блока «Связи проекта»: свернуть
+   * группу — движение внутри просмотра («убери пока персонажей»), а не настройка. Запоминание здесь
+   * дало бы карточкам «пропадать»: человек свернул места месяц назад и не понимает, где они.
+   */
+  const [closedGroups, setClosedGroups] = useState<string[]>([])
+  const toggleGroup = (kind: string, open: boolean) =>
+    setClosedGroups((current) =>
+      open ? current.filter((item) => item !== kind) : current.includes(kind) ? current : [...current, kind],
+    )
 
   /**
    * Название вида для человека (0.81.0): из типов проекта, а не из констант. Если типы ещё не
@@ -416,9 +460,26 @@ export function EntitiesPanel({
         </p>
       )}
 
-      {entities.length > 0 && (
-        <ul className="ent__list" data-entities-list>
-          {entities.map((entity) => (
+      {/* Карточки по видам (0.97.7): «Персонажи · 3», «Места · 5» — каждая группа сворачивается.
+          Внутри группы тот же список, что был раньше: группировка меняет только порядок и рамку,
+          а не строки карточек. */}
+      {entities.length > 0 &&
+        groups.map((group) => (
+          <details
+            key={group.kind}
+            className="ent__group"
+            data-entity-group={group.kind}
+            open={!closedGroups.includes(group.kind)}
+            onToggle={(e) => toggleGroup(group.kind, (e.currentTarget as HTMLDetailsElement).open)}
+          >
+            <summary className="ent__group-summary">
+              {group.title}
+              {/* Разделитель внутри того же узла: «Персонажи · 3» читается и глазами, и
+                  скринридером, который иначе произнёс бы «Персонажи3». */}
+              <span className="muted ent__group-count">{` · ${group.entities.length}`}</span>
+            </summary>
+            <ul className="ent__list" data-entities-list>
+              {entities.filter((entity) => entity.kind === group.kind).map((entity) => (
             <li key={entity.id} className="ent__item" data-entity-kind={entity.kind}>
               {editing === entity.id ? (
                 <div className="ent__edit">
@@ -632,8 +693,9 @@ export function EntitiesPanel({
               )}
             </li>
           ))}
-        </ul>
-      )}
+            </ul>
+          </details>
+        ))}
 
       {canEdit && (
         <div className="ent__form">

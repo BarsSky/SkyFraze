@@ -34,6 +34,8 @@ export interface MarkdownResult {
 /** Классы заготовок: по ним компонент находит узлы для оживления. */
 export const MATH_CLASS = 'sf-md-math'
 export const DIAGRAM_CLASS = 'sf-md-mermaid'
+/** Обёртка таблицы: ей, а не таблице, принадлежит горизонтальная прокрутка. */
+export const TABLE_WRAP_CLASS = 'sf-md-tablewrap'
 
 function escapeHtml(value: string): string {
   return value
@@ -165,6 +167,25 @@ function createRenderer(): MarkdownIt {
       ? defaultLinkOpen(tokens, idx, options, env, self)
       : self.renderToken(tokens, idx, options)
   }
+
+  /**
+   * Таблица — в обёртке с прокруткой (0.97.7).
+   *
+   * Раньше прокрутку держала сама таблица (`display: block; overflow-x: auto`), и в кадре на
+   * телефоне это выглядело сломанным: блочная таблица сжимается под содержимое, колонка «Поле»
+   * получала 88 px, и «Название» рвалось на «На звани е» (отчёт: «не аккуратно выглядит колонка
+   * текста»). Обёртка оставляет таблице нормальную раскладку (`display: table`, `width: 100%`),
+   * а прокрутку отдаёт блоку — она нужна только таблицам в шесть колонок, которых в кадре не
+   * помещается.
+   */
+  const defaultTableOpen = md.renderer.rules.table_open
+  md.renderer.rules.table_open = (tokens, idx, options, env, self) =>
+    `<div class="${TABLE_WRAP_CLASS}">` +
+    (defaultTableOpen ? defaultTableOpen(tokens, idx, options, env, self) : self.renderToken(tokens, idx, options))
+  const defaultTableClose = md.renderer.rules.table_close
+  md.renderer.rules.table_close = (tokens, idx, options, env, self) =>
+    (defaultTableClose ? defaultTableClose(tokens, idx, options, env, self) : self.renderToken(tokens, idx, options)) +
+    '</div>'
   return md
 }
 
