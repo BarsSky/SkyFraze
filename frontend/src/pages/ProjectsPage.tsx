@@ -12,6 +12,11 @@ import {
 } from '../api/projects'
 import { setPublication } from '../api/feed'
 import { exportProject, importProject } from '../api/transfer'
+import {
+  createProjectFromTemplate,
+  parseTemplate,
+  type ProjectTemplate,
+} from '../api/projectTemplate'
 import { exportStoryBook, exportStoryMarkdown } from '../api/storyFiles'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { ImportFolderModal } from '../components/ImportFolderModal'
@@ -28,6 +33,15 @@ export function ProjectsPage() {
   const [openImportFolder, setOpenImportFolder] = useState(false)
   const [title, setTitle] = useState('')
   const [desc, setDesc] = useState('')
+  /**
+   * Шаблон для нового проекта (0.85.0): «начни по образцу другого проекта».
+   *
+   * Файл, а не выбор из списка: шаблон приходит и из другой инсталляции (его скачали там), и
+   * выбор «из проекта» уже сделан в настройках проекта-образца. Здесь только «с нуля» или «по
+   * файлу».
+   */
+  const [template, setTemplate] = useState<ProjectTemplate | null>(null)
+  const [templateName, setTemplateName] = useState('')
   const [note, setNote] = useState<string | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [importing, setImporting] = useState(false)
@@ -102,6 +116,23 @@ export function ProjectsPage() {
   async function onCreate(e: React.FormEvent) {
     e.preventDefault()
     try {
+      // «По образцу» (0.85.0): если человек выбрал файл шаблона, проект создаётся сразу с типами
+      // карточек, карточками и настройками помощника — одной ручкой, а не «создай и потом примени».
+      if (template !== null) {
+        const created = await createProjectFromTemplate({
+          title,
+          description: desc,
+          template,
+        })
+        setTitle('')
+        setDesc('')
+        setTemplate(null)
+        setTemplateName('')
+        setOpenNew(false)
+        setNote(`«${created.project.title}» создан по шаблону: ${created.report.message}`)
+        await load()
+        return
+      }
       const p = await createProject({ title, description: desc })
       setList((cur) => [p, ...cur])
       setTitle('')
@@ -359,7 +390,50 @@ export function ProjectsPage() {
             rows={3}
           />
           <div style={{ height: 8 }} />
-          <button type="submit">Создать</button>
+          {/* «По образцу» (0.85.0): необязательный файл шаблона. Без файла — обычный новый
+              проект; с файлом — сразу с типами карточек, карточками и настройками помощника. */}
+          <label className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span className="muted">по образцу</span>
+            <input
+              type="file"
+              accept="application/json,.json"
+              aria-label="Файл шаблона проекта"
+              /* Глобальные стили делают input шириной 100% — для выбора файла это лишнее. */
+              style={{ width: 'auto', flex: '0 0 auto' }}
+              data-new-template-file
+              onChange={(e) => {
+                const file = e.target.files?.[0]
+                e.target.value = ''
+                if (!file) return
+                file
+                  .text()
+                  .then((text) => {
+                    setTemplate(parseTemplate(text))
+                    setTemplateName(file.name)
+                    setError(null)
+                  })
+                  .catch((err: unknown) => {
+                    setTemplate(null)
+                    setTemplateName('')
+                    setError(err)
+                  })
+              }}
+            />
+            {template !== null && (
+              <button type="button" className="secondary" onClick={() => { setTemplate(null); setTemplateName('') }}>
+                убрать шаблон
+              </button>
+            )}
+          </label>
+          {template !== null && (
+            <p className="muted" data-new-template-note style={{ margin: '4px 0 0' }}>
+              {templateName || 'шаблон'}: типов {template.entity_types.length}
+              {template.cards && template.cards.length > 0 ? `, карточек ${template.cards.length}` : ''}
+              {template.ai ? ', настройки помощника' : ''}
+            </p>
+          )}
+          <div style={{ height: 8 }} />
+          <button type="submit">{template !== null ? 'Создать по шаблону' : 'Создать'}</button>
         </form>
       )}
 

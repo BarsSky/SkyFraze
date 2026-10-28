@@ -25,6 +25,7 @@ import (
 
 	"github.com/skyfraze/backend/internal/entities"
 	"github.com/skyfraze/backend/internal/events"
+	"github.com/skyfraze/backend/internal/projecttemplate"
 	"github.com/skyfraze/backend/internal/projects"
 	"github.com/skyfraze/backend/internal/storage"
 	"github.com/skyfraze/backend/internal/store"
@@ -38,6 +39,13 @@ const (
 	manifestName = "manifest.json"
 	stateName    = "state.bin"
 	assetsDir    = "assets/"
+	// templateFile — шаблон проекта: типы карточек и настройки помощника (0.85.0).
+	//
+	// Отдельным файлом, а не полем манифеста: шаблон — самостоятельный формат (его отдаёт
+	// GET /api/projects/{id}/template и принимает POST), и держать его в двух видах значило бы
+	// поддерживать два парсера одного JSON. Старые сборки этот файл просто не читают: импорт
+	// ходит по манифесту, а лишние файлы в архиве уже есть (story.md).
+	templateFile = "template.json"
 
 	// MaxBundleSize — потолок размера архива (nginx пускает столько же).
 	MaxBundleSize = 200 << 20 // 200 MB
@@ -139,6 +147,9 @@ type Result struct {
 	HasState bool           `json:"has_state"`
 	// Entities — сколько карточек мира перенесено (0.69.0).
 	Entities int `json:"entities"`
+	// Template — что принёс шаблон проекта (0.85.0): типы карточек и настройки помощника.
+	// Нет в архиве шаблона — поля нет, и это не ошибка: старые архивы его не содержат.
+	Template *projecttemplate.Report `json:"template,omitempty"`
 }
 
 type Service struct {
@@ -157,7 +168,23 @@ type Service struct {
 	quotaSource QuotaSource
 	// entities — карточки мира: импорт архива переносит их вместе с проектом (0.69.0).
 	entities *entities.Service
+	// templates — шаблон проекта (0.85.0): архив возит типы карточек и настройки помощника
+	// файлом template.json. Без подключённого шаблона архив просто не содержит этот файл.
+	templates Templates
 }
+
+// Templates — шаблон проекта (реализует projecttemplate.Service).
+//
+// Интерфейс, а не конкретный тип: transfer переносит содержимое, а устройство проекта — чужая
+// забота, и связывать пакеты жёстко можно только ради двух вызовов. Импорт вызывает ApplyAs:
+// права уже проверены тем, что проект только что создан этим же человеком.
+type Templates interface {
+	Build(ctx context.Context, projectID uuid.UUID, withCards bool) (*projecttemplate.Template, error)
+	ApplyAs(ctx context.Context, userID, projectID uuid.UUID, t *projecttemplate.Template) (*projecttemplate.Report, error)
+}
+
+// UseTemplates подключает шаблон проекта: архив начнёт возить template.json.
+func (s *Service) UseTemplates(t Templates) { s.templates = t }
 
 func New(s *store.Store, obj storage.ObjectStore, proj *projects.Service) *Service {
 	return &Service{store: s, obj: obj, proj: proj}
@@ -256,6 +283,23 @@ func (s *Service) Export(ctx context.Context, userID, projectID uuid.UUID, w io.
 		stateBytes = state.YjsState
 	}
 
+	// Шаблон проекта (0.85.0) собираем ДО первой записи в поток: если он не собрался, ответ
+	// должен быть честной ошибкой, а не полуархивом с оборванным zip.
+	//
+	// Карточки в шаблон архива не кладём: они уже едут в манифесте, и второе их появление
+	// означало бы двойной проход при импорте.
+	var templateBytes []byte
+	if s.templates != nil {
+		template, terr := s.templates.Build(ctx, projectID, false)
+		if terr != nil {
+			return nil, terr
+		}
+		templateBytes, err = json.MarshalIndent(template, "", "  ")
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	counter := &countingWriter{w: w}
 	zw := zip.NewWriter(counter)
 
@@ -265,6 +309,11 @@ func (s *Service) Export(ctx context.Context, userID, projectID uuid.UUID, w io.
 	}
 	if err := writeZipFile(zw, manifestName, manifestBytes); err != nil {
 		return nil, err
+	}
+	if templateBytes != nil {
+		if err := writeZipFile(zw, templateFile, templateBytes); err != nil {
+			return nil, err
+		}
 	}
 	if m.HasState {
 		if err := writeZipFile(zw, stateName, state.YjsState); err != nil {
@@ -318,6 +367,9 @@ func (s *Service) Export(ctx context.Context, userID, projectID uuid.UUID, w io.
 type ParsedBundle struct {
 	Manifest Manifest
 	State    []byte
+	// Template — шаблон проекта из архива (0.85.0). nil означает «файла нет» — так выглядят
+	// архивы, собранные до 0.85.0, и это нормальный случай, а не ошибка.
+	Template *projecttemplate.Template
 	// AssetFiles — содержимое вложений по id (читается лениво из zip.Reader).
 	zip *zip.Reader
 }
@@ -351,6 +403,19 @@ func ParseBundle(r io.ReaderAt, size int64) (*ParsedBundle, error) {
 			if err := json.Unmarshal(data, &b.Manifest); err != nil {
 				return nil, fmt.Errorf("%w: manifest.json не разобран: %v", ErrBadBundle, err)
 			}
+		case templateFile:
+			// Битый шаблон НЕ отменяет импорт: содержимое проекта от него не зависит, а
+			// потерять из-за настроек весь архив было бы хуже. Файл просто игнорируется —
+			// ровно так же поступают старые сборки, которые его не читают вовсе.
+			data, err := readZipFile(f, 1<<20)
+			if err != nil {
+				continue
+			}
+			var template projecttemplate.Template
+			if err := json.Unmarshal(data, &template); err != nil {
+				continue
+			}
+			b.Template = &template
 		case stateName:
 			data, err := readZipFile(f, MaxBundleSize)
 			if err != nil {
@@ -516,7 +581,19 @@ func (s *Service) Import(ctx context.Context, userID uuid.UUID, b *ParsedBundle)
 		}
 	}
 
-	// 7. Карточки мира (0.69.0). Ошибка одной карточки не отменяет импорт: занятое имя или
+	// 7. Шаблон проекта (0.85.0): типы карточек и настройки помощника. Раньше карточек — иначе
+	//    первая же карточка своего типа нарушила бы внешний ключ на тип.
+	//
+	//    Ошибка шаблона не отменяет импорт: содержимое проекта уже перенесено, а настройки — это
+	//    то, что можно применить повторно вручную (POST /template).
+	var templateReport *projecttemplate.Report
+	if m := b.Template; m != nil && s.templates != nil {
+		if report, terr := s.templates.ApplyAs(ctx, userID, p.ID, m); terr == nil {
+			templateReport = report
+		}
+	}
+
+	// 8. Карточки мира (0.69.0). Ошибка одной карточки не отменяет импорт: занятое имя или
 	//    неизвестный вид — это дефект архива, а не повод потерять весь проект. Пропущенные
 	//    считаем и отдаём в результате, чтобы «импорт прошёл» не было полуправдой.
 	importedEntities := 0
@@ -532,7 +609,7 @@ func (s *Service) Import(ctx context.Context, userID uuid.UUID, b *ParsedBundle)
 
 	return &Result{
 		Project: p, Events: len(rows), Assets: len(m.Assets), HasState: hasState,
-		Entities: importedEntities,
+		Entities: importedEntities, Template: templateReport,
 	}, nil
 }
 
@@ -579,3 +656,4 @@ func readZipFile(f *zip.File, limit int64) ([]byte, error) {
 	}
 	return buf.Bytes(), nil
 }
+

@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   addEntityLink,
   aliasesText,
@@ -14,7 +14,7 @@ import {
   type ProjectEntity,
 } from '../../api/entities'
 import { serverErrorMessage } from '../../api/client'
-import { typeTitle, type EntityType } from '../../api/entityTypes'
+import { cardTemplateFor, typeTitle, type EntityCardTemplate, type EntityType } from '../../api/entityTypes'
 import type { FrameWithMentions, Mention, MentionMatrix } from '../../collab/mentions'
 
 /**
@@ -77,7 +77,7 @@ interface Props {
    */
   types?: EntityType[]
   /** Завести свой тип: вызывает владелец данных и перечитывает список (появится в выборе). */
-  onCreateType?: (title: string) => Promise<void>
+  onCreateType?: (title: string, cardTemplate?: EntityCardTemplate) => Promise<void>
   /** Связи карточек проекта (0.74.0): чипы «Аня — живёт на → Земля». */
   links?: EntityLink[]
 }
@@ -103,14 +103,29 @@ export function EntitiesPanel({
   /** Раскрыта ли форма нового типа (0.81.0). */
   const [typeDraftOpen, setTypeDraftOpen] = useState(false)
   const [typeDraft, setTypeDraft] = useState('')
+  /**
+   * Заготовка карточки нового типа (0.85.0, docs/entity-types.md §4).
+   *
+   * Тип отвечает «что это за класс» («Фракция»), а заготовка — «что написать в карточке этого
+   * класса»: описание с подстановкой `{{name}}` и типичные алиасы. Пустые поля — норма: у
+   * большинства типов заготовки нет.
+   */
+  const [typeTemplateDesc, setTypeTemplateDesc] = useState('')
+  const [typeTemplateAliases, setTypeTemplateAliases] = useState('')
   const [name, setName] = useState('')
   const [aliases, setAliases] = useState('')
+  /** Описание новой карточки: раньше его нельзя было написать из интерфейса вовсе (0.85.0). */
+  const [description, setDescription] = useState('')
+  /** Правка описания руками: после неё заготовка типа больше не переписывает поле. */
+  const [descriptionEdited, setDescriptionEdited] = useState(false)
+  const [aliasesEdited, setAliasesEdited] = useState(false)
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null)
   /** Какая карточка сейчас правится: правка на месте, без отдельного окна. */
   const [editing, setEditing] = useState<string | null>(null)
   const [draftName, setDraftName] = useState('')
   const [draftAliases, setDraftAliases] = useState('')
+  const [draftDescription, setDraftDescription] = useState('')
   const [pendingDelete, setPendingDelete] = useState<string | null>(null)
   /** У какой карточки раскрыта хронология. Одна за раз: две открытые — это уже не список. */
   const [chronology, setChronology] = useState<string | null>(null)
@@ -138,6 +153,20 @@ export function EntitiesPanel({
   const kindTitle = (key: string) => typeTitle(types, key)
 
   /**
+   * Заготовка карточки выбранного типа (0.85.0): подставляется в описание и алиасы.
+   *
+   * Почему эффектом, а не «только при смене вида»: в заготовке есть `{{name}}`, и текст должен
+   * обновиться, когда человек ввёл имя. Но переписать уже правленное руками поле нельзя — он мог
+   * изменить текст, а мы бы его стёрли. Поэтому `descriptionEdited`/`aliasesEdited`: после первой
+   * ручной правки заготовка эти поля больше не трогает.
+   */
+  useEffect(() => {
+    const prefill = cardTemplateFor(types, kind, name)
+    if (!descriptionEdited) setDescription(prefill.description)
+    if (!aliasesEdited) setAliases(prefill.aliases)
+  }, [aliasesEdited, descriptionEdited, kind, name, types])
+
+  /**
    * Завести свой тип. Название вводит человек («Фракция»), ключ придумывает сервер.
    *
    * Почему форма раскрывается в том же списке видов: тип придумывают В МОМЕНТ, когда заводят
@@ -150,8 +179,14 @@ export function EntitiesPanel({
     setBusy(true)
     setNote(null)
     try {
-      await onCreateType(title)
+      const cardTemplate: EntityCardTemplate = {
+        description: typeTemplateDesc.trim(),
+        aliases: splitAliases(typeTemplateAliases),
+      }
+      await onCreateType(title, cardTemplate)
       setTypeDraft('')
+      setTypeTemplateDesc('')
+      setTypeTemplateAliases('')
       setTypeDraftOpen(false)
       setNote({ kind: 'ok', text: `Тип «${title}» создан.` })
     } catch (e) {
@@ -159,7 +194,7 @@ export function EntitiesPanel({
     } finally {
       setBusy(false)
     }
-  }, [onCreateType, typeDraft])
+  }, [onCreateType, typeDraft, typeTemplateAliases, typeTemplateDesc])
 
   /** Убрать связь. Спрашиваем подтверждение браузером? Нет: связь — не данные человека, а
    *  метка между карточками, и вернуть её — одно действие. */
@@ -210,9 +245,13 @@ export function EntitiesPanel({
         kind,
         name: name.trim(),
         aliases: splitAliases(aliases),
+        description: description.trim(),
       })
       setName('')
       setAliases('')
+      setDescription('')
+      setDescriptionEdited(false)
+      setAliasesEdited(false)
       setNote({ kind: 'ok', text: `Карточка «${created.name}» создана.` })
       reload()
     } catch (e) {
@@ -220,7 +259,7 @@ export function EntitiesPanel({
     } finally {
       setBusy(false)
     }
-  }, [aliases, kind, name, projectId, reload])
+  }, [aliases, description, kind, name, projectId, reload])
 
   const save = useCallback(
     async (id: string) => {
@@ -230,6 +269,7 @@ export function EntitiesPanel({
         await updateEntity(projectId, id, {
           name: draftName.trim(),
           aliases: splitAliases(draftAliases),
+          description: draftDescription.trim(),
         })
         setEditing(null)
         setNote({ kind: 'ok', text: 'Изменения сохранены.' })
@@ -240,7 +280,7 @@ export function EntitiesPanel({
         setBusy(false)
       }
     },
-    [draftAliases, draftName, projectId, reload],
+    [draftAliases, draftDescription, draftName, projectId, reload],
   )
 
   const remove = useCallback(
@@ -308,6 +348,16 @@ export function EntitiesPanel({
                     placeholder="алиасы через запятую"
                     aria-label={`Алиасы карточки ${entity.name}`}
                   />
+                  {/* Описание правится здесь же (0.85.0): раньше его можно было только
+                      прочитать, если оно приехало из импорта или от помощника. */}
+                  <textarea
+                    value={draftDescription}
+                    onChange={(e) => setDraftDescription(e.target.value)}
+                    placeholder="описание: кто это, чем важен"
+                    aria-label={`Описание карточки ${entity.name}`}
+                    rows={2}
+                    data-entity-desc-edit
+                  />
                   <button
                     type="button"
                     onClick={() => void save(entity.id)}
@@ -326,6 +376,12 @@ export function EntitiesPanel({
                   <span className="ent__name">{entity.name}</span>
                   {entity.aliases.length > 0 && (
                     <span className="muted ent__aliases">({aliasesText(entity)})</span>
+                  )}
+                  {/* Описание (0.85.0): то, что подставила заготовка типа или написал человек. */}
+                  {entity.description !== '' && (
+                    <span className="muted ent__desc" data-entity-desc>
+                      {entity.description}
+                    </span>
                   )}
                   {/* Связи с другими карточками (0.74.0): чип показывает подпись и сторону. */}
                   {!editing && entityLinks(entity.id).length > 0 && (
@@ -387,6 +443,7 @@ export function EntitiesPanel({
                           setEditing(entity.id)
                           setDraftName(entity.name)
                           setDraftAliases(aliasesText(entity))
+                          setDraftDescription(entity.description)
                           setNote(null)
                         }}
                         aria-label={`Изменить карточку ${entity.name}`}
@@ -543,9 +600,25 @@ export function EntitiesPanel({
           />
           <input
             value={aliases}
-            onChange={(e) => setAliases(e.target.value)}
+            onChange={(e) => {
+              setAliases(e.target.value)
+              setAliasesEdited(true)
+            }}
             placeholder="алиасы: Аня, Анны"
             aria-label="Алиасы карточки"
+          />
+          {/* Описание (0.85.0): пусто у типа без заготовки, предзаполнено у типа с заготовкой.
+              Правка руками отменяет автоподстановку — человек решает сам. */}
+          <textarea
+            value={description}
+            onChange={(e) => {
+              setDescription(e.target.value)
+              setDescriptionEdited(true)
+            }}
+            placeholder="описание: кто это, чем важен"
+            aria-label="Описание карточки"
+            rows={2}
+            data-entity-desc-input
           />
           <button
             type="button"
@@ -558,8 +631,9 @@ export function EntitiesPanel({
         </div>
       )}
 
-      {/* Новый тип карточки (0.81.0). Форма в той же строке, где заводят карточку: тип
-          придумывают в этот момент, а не в настройках проекта. */}
+      {/* Новый тип карточки (0.81.0 → 0.85.0). Форма в той же строке, где заводят карточку:
+          тип придумывают в этот момент, а не в настройках проекта. Заготовка — то, что потом
+          подставится в форму карточки этого типа (docs/entity-types.md §4). */}
       {canEdit && onCreateType && typeDraftOpen && (
         <div className="ent__form ent__form--type" data-entity-type-form>
           <input
@@ -569,6 +643,22 @@ export function EntitiesPanel({
             aria-label="Название нового типа"
             maxLength={40}
             autoFocus
+          />
+          <input
+            value={typeTemplateAliases}
+            onChange={(e) => setTypeTemplateAliases(e.target.value)}
+            placeholder="алиасы заготовки: фракция, союз"
+            aria-label="Алиасы заготовки типа"
+            data-entity-type-aliases
+          />
+          <textarea
+            value={typeTemplateDesc}
+            onChange={(e) => setTypeTemplateDesc(e.target.value)}
+            placeholder="заготовка описания: {{name}} — союз городов…"
+            aria-label="Заготовка описания карточки типа"
+            rows={2}
+            maxLength={2000}
+            data-entity-type-template
           />
           <button
             type="button"
@@ -584,6 +674,8 @@ export function EntitiesPanel({
             onClick={() => {
               setTypeDraftOpen(false)
               setTypeDraft('')
+              setTypeTemplateDesc('')
+              setTypeTemplateAliases('')
             }}
           >
             Отмена

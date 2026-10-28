@@ -258,3 +258,73 @@ func TestEntityTypeKeyCollision(t *testing.T) {
 	}
 	_ = store.EntityTypeCharacter
 }
+
+// Заготовка карточки у типа (0.85.0, миграция 0035): сохраняется, читается, правится и
+// стирается; алиасы чистятся от повторов и пустых.
+func TestEntityTypeCardTemplate(t *testing.T) {
+	e := setupEntities(t)
+	ctx := context.Background()
+
+	created, err := e.svc.CreateType(ctx, e.owner, e.project, "Порт", "⚓", "", store.EntityCardTemplate{
+		Description: "  {{name}} — порт на северном берегу.  ",
+		Aliases:     []string{"Порт", " порт ", "", "гавань"},
+	})
+	if err != nil {
+		t.Fatalf("создание типа с заготовкой: %v", err)
+	}
+	if created.CardTemplate.Description != "{{name}} — порт на северном берегу." {
+		t.Fatalf("описание заготовки: %q", created.CardTemplate.Description)
+	}
+	// Повтор «Порт»/«порт» и пустая строка отброшены, регистр сохраняется у первого.
+	if len(created.CardTemplate.Aliases) != 2 {
+		t.Fatalf("алиасы заготовки: %+v", created.CardTemplate.Aliases)
+	}
+
+	list, err := e.svc.Types(ctx, e.owner, e.project)
+	if err != nil {
+		t.Fatalf("список типов: %v", err)
+	}
+	var found bool
+	for _, item := range list {
+		if item.Key == created.Key {
+			found = true
+			if item.CardTemplate.Description == "" {
+				t.Fatal("заготовка не читается из списка типов")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("созданный тип не найден в списке")
+	}
+
+	// Переименование со сменой заготовки.
+	updated, err := e.svc.UpdateType(ctx, e.owner, e.project, created.Key, "Порт", "⚓", "",
+		store.EntityCardTemplate{Description: "Коротко про {{name}}."})
+	if err != nil {
+		t.Fatalf("правка типа: %v", err)
+	}
+	if updated.CardTemplate.Description != "Коротко про {{name}}." || len(updated.CardTemplate.Aliases) != 0 {
+		t.Fatalf("заготовка после правки: %+v", updated.CardTemplate)
+	}
+
+	// Тип без заготовки — законный случай: пустая заготовка, а не ошибка.
+	plain, err := e.svc.CreateType(ctx, e.owner, e.project, "Орден", "", "")
+	if err != nil {
+		t.Fatalf("тип без заготовки: %v", err)
+	}
+	if !plain.CardTemplate.Empty() {
+		t.Fatalf("у типа без заготовки она не пустая: %+v", plain.CardTemplate)
+	}
+}
+
+// Слишком длинная заготовка отвергается: она обещала бы больше, чем форма умеет показать.
+func TestEntityTypeCardTemplateTooLong(t *testing.T) {
+	e := setupEntities(t)
+	ctx := context.Background()
+	long := strings.Repeat("я", 2001)
+	_, err := e.svc.CreateType(ctx, e.owner, e.project, "Длинный", "", "",
+		store.EntityCardTemplate{Description: long})
+	if !errors.Is(err, entities.ErrInvalidEntity) {
+		t.Fatalf("длинная заготовка: %v, ожидался отказ", err)
+	}
+}

@@ -509,10 +509,23 @@
 }
 .ent__name { font-weight: 600; }
 .ent__aliases { font-size: 12px; }
+/* Описание карточки (0.85.0): строкой под именем и алиасами, а не в отдельном окне.
+   `overflow-wrap` — длинная фраза не должна растягивать панель. */
+.ent__desc { font-size: 12px; overflow-wrap: anywhere; }
 .ent__actions { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
 .ent__edit { display: flex; gap: 6px; flex-wrap: wrap; width: 100%; }
 .ent__form { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
 .ent__form input { min-width: 140px; }
+/* Текстовое поле описания (0.85.0): одна строка в общей ленте формы, растягивается по ширине
+   панели — в 140 px описание не читается. */
+.ent__form textarea,
+.ent__edit textarea {
+  flex: 1 1 240px; min-width: 180px; min-height: 44px; resize: vertical;
+  background: var(--bg); color: var(--fg); border: 1px solid var(--border);
+  border-radius: 6px; padding: 6px 8px; font: inherit; font-size: 12px;
+}
+/* Форма типа: заготовка описания занимает всю строку — она длиннее названия. */
+.ent__form--type textarea { flex-basis: 100%; }
 .ent__note { font-size: 12px; margin: 8px 0 0; }
 
 /* ─── упоминания карточки в кадре (0.68.0) ───────────────────────────────────

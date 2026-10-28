@@ -30,6 +30,12 @@ const (
 	maxTypeTitleRunes  = 40
 	maxTypeIconRunes   = 8
 	maxTypesPerProject = 24
+
+	// Заготовка карточки (0.85.0): описание с подстановкой {{name}} и типичные алиасы.
+	maxTemplateDescRunes    = 2000
+	maxTemplateAliases      = 12
+	maxTemplateAliasRunes   = 60
+	maxTemplateAliasesBytes = 12
 )
 
 // ErrTypeNotFound — типа нет в проекте.
@@ -62,9 +68,11 @@ func (s *Service) Types(ctx context.Context, userID, projectID uuid.UUID) ([]sto
 	return s.store.ListEntityTypes(ctx, projectID)
 }
 
-// CreateType заводит свой тип карточки (редактор и выше).
+// CreateType заводит свой тип карточки (редактор и выше). Заготовка карточки — необязательна:
+// вызовы без неё читаются как «тип без заготовки» и остаются валидными.
 func (s *Service) CreateType(
 	ctx context.Context, userID, projectID uuid.UUID, title, icon, color string,
+	templates ...store.EntityCardTemplate,
 ) (*store.EntityType, error) {
 	if err := s.proj.RequireEditor(ctx, userID, projectID); err != nil {
 		return nil, err
@@ -80,6 +88,10 @@ func (s *Service) CreateType(
 	color = strings.TrimSpace(color)
 	if color != "" && !validColor(color) {
 		return nil, fmt.Errorf("%w: цвет в виде #rrggbb", ErrInvalidEntity)
+	}
+	template, err := normalizeCardTemplate(templates)
+	if err != nil {
+		return nil, err
 	}
 	if err := s.store.EnsureEntityTypes(ctx, projectID); err != nil {
 		return nil, err
@@ -100,12 +112,14 @@ func (s *Service) CreateType(
 	key := uniqueTypeKey(slugifyType(title), existing)
 	return s.store.CreateEntityType(ctx, store.EntityType{
 		ProjectID: projectID, Key: key, Title: title, Color: color, Icon: icon,
+		CardTemplate: template,
 	})
 }
 
-// UpdateType переименовывает тип и меняет его цвет/значок. Ключ не меняется.
+// UpdateType переименовывает тип, меняет цвет, значок и заготовку карточки. Ключ не меняется.
 func (s *Service) UpdateType(
 	ctx context.Context, userID, projectID uuid.UUID, key, title, icon, color string,
+	templates ...store.EntityCardTemplate,
 ) (*store.EntityType, error) {
 	if err := s.proj.RequireEditor(ctx, userID, projectID); err != nil {
 		return nil, err
@@ -134,6 +148,10 @@ func (s *Service) UpdateType(
 	if color != "" && !validColor(color) {
 		return nil, fmt.Errorf("%w: цвет в виде #rrggbb", ErrInvalidEntity)
 	}
+	template, err := normalizeCardTemplate(templates)
+	if err != nil {
+		return nil, err
+	}
 	all, err := s.store.ListEntityTypes(ctx, projectID)
 	if err != nil {
 		return nil, err
@@ -143,7 +161,45 @@ func (s *Service) UpdateType(
 			return nil, fmt.Errorf("%w: тип «%s» уже есть в проекте", ErrInvalidEntity, item.Title)
 		}
 	}
-	return s.store.UpdateEntityType(ctx, projectID, current.Key, title, color, icon)
+	return s.store.UpdateEntityType(ctx, projectID, current.Key, title, color, icon, template)
+}
+
+// normalizeCardTemplate чистит и проверяет заготовку карточки.
+//
+// Пустая заготовка — нормальный случай (у большинства типов её нет). Ограничения — те же, что у
+// полей карточки: заготовка не должна обещать больше, чем форма умеет показать.
+func normalizeCardTemplate(given []store.EntityCardTemplate) (store.EntityCardTemplate, error) {
+	if len(given) == 0 {
+		return store.EntityCardTemplate{}, nil
+	}
+	raw := given[0]
+	description := strings.TrimSpace(raw.Description)
+	if utf8.RuneCountInString(description) > maxTemplateDescRunes {
+		return store.EntityCardTemplate{}, fmt.Errorf(
+			"%w: заготовка описания не длиннее %d знаков", ErrInvalidEntity, maxTemplateDescRunes)
+	}
+	aliases := make([]string, 0, len(raw.Aliases))
+	seen := make(map[string]bool, len(raw.Aliases))
+	for _, alias := range raw.Aliases {
+		alias = strings.TrimSpace(alias)
+		if alias == "" {
+			continue
+		}
+		if utf8.RuneCountInString(alias) > maxTemplateAliasRunes {
+			return store.EntityCardTemplate{}, fmt.Errorf(
+				"%w: алиас в заготовке не длиннее %d знаков", ErrInvalidEntity, maxTemplateAliasRunes)
+		}
+		lower := strings.ToLower(alias)
+		if seen[lower] {
+			continue
+		}
+		seen[lower] = true
+		aliases = append(aliases, alias)
+	}
+	if len(aliases) > maxTemplateAliases {
+		aliases = aliases[:maxTemplateAliases]
+	}
+	return store.EntityCardTemplate{Description: description, Aliases: aliases}, nil
 }
 
 // DeleteType удаляет свой тип. Стартовые и типы с карточками — отказ со словами.

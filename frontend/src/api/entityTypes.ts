@@ -16,7 +16,18 @@ export interface EntityType {
   icon: string
   position: number
   is_default: boolean
+  /**
+   * Заготовка карточки этого типа (0.85.0): описание с подстановкой `{{name}}` и типичные
+   * алиасы. Пустые значения — «заготовки нет», это норма для большинства типов.
+   */
+  card_template?: EntityCardTemplate
   created_at: string
+}
+
+/** Заготовка карточки у типа (0.85.0, миграция 0035). */
+export interface EntityCardTemplate {
+  description?: string
+  aliases?: string[]
 }
 
 export async function listEntityTypes(projectId: string): Promise<EntityType[]> {
@@ -29,11 +40,16 @@ export async function listEntityTypes(projectId: string): Promise<EntityType[]> 
 
 export async function createEntityType(
   projectId: string,
-  input: { title: string; icon?: string; color?: string },
+  input: { title: string; icon?: string; color?: string; cardTemplate?: EntityCardTemplate },
 ): Promise<EntityType> {
   const raw = await http
     .post(`projects/${projectId}/entity-types`, {
-      json: { title: input.title, icon: input.icon ?? '', color: input.color ?? '' },
+      json: {
+        title: input.title,
+        icon: input.icon ?? '',
+        color: input.color ?? '',
+        ...(input.cardTemplate ? { card_template: input.cardTemplate } : {}),
+      },
     })
     .json<{ type?: unknown }>()
   const type = readType(raw?.type)
@@ -44,11 +60,18 @@ export async function createEntityType(
 export async function updateEntityType(
   projectId: string,
   key: string,
-  input: { title: string; icon?: string; color?: string },
+  input: { title: string; icon?: string; color?: string; cardTemplate?: EntityCardTemplate },
 ): Promise<EntityType> {
   const raw = await http
     .patch(`projects/${projectId}/entity-types/${encodeURIComponent(key)}`, {
-      json: { title: input.title, icon: input.icon ?? '', color: input.color ?? '' },
+      json: {
+        title: input.title,
+        icon: input.icon ?? '',
+        color: input.color ?? '',
+        // Заготовку отправляем всегда (в том числе пустую): PATCH присылает полный объект, и
+        // «не прислали» здесь означало бы «оставь как было» — а стереть заготовку тоже нужно.
+        card_template: input.cardTemplate ?? {},
+      },
     })
     .json<{ type?: unknown }>()
   const type = readType(raw?.type)
@@ -92,6 +115,38 @@ function readType(raw: unknown): EntityType | null {
     icon: typeof record.icon === 'string' ? record.icon : '',
     position: typeof record.position === 'number' ? record.position : 0,
     is_default: record.is_default === true,
+    card_template: readCardTemplate(record.card_template),
     created_at: typeof record.created_at === 'string' ? record.created_at : '',
   }
+}
+
+/** Заготовка карточки из ответа сервера: лишние поля не переносим, мусор отбрасываем. */
+function readCardTemplate(raw: unknown): EntityCardTemplate {
+  if (typeof raw !== 'object' || raw === null) return {}
+  const record = raw as Record<string, unknown>
+  const description = typeof record.description === 'string' ? record.description : ''
+  const aliases = Array.isArray(record.aliases)
+    ? record.aliases.filter((item): item is string => typeof item === 'string')
+    : []
+  return { description, aliases }
+}
+
+/**
+ * Что подставить в форму новой карточки этого типа (0.85.0).
+ *
+ * `{{name}}` заменяется на введённое имя; пустое имя оставляет текст как есть — человек ещё не
+ * решил, кого заводит, и «{{name}}» в поле лучше пустоты: видно, куда это попадёт.
+ */
+export function cardTemplateFor(
+  types: EntityType[],
+  key: string,
+  name: string,
+): { description: string; aliases: string } {
+  const template = types.find((item) => item.key === key)?.card_template
+  if (!template) return { description: '', aliases: '' }
+  const cleanName = name.trim()
+  const description = cleanName === ''
+    ? template.description ?? ''
+    : (template.description ?? '').replaceAll('{{name}}', cleanName)
+  return { description, aliases: (template.aliases ?? []).join(', ') }
 }

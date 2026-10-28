@@ -71,13 +71,16 @@ describe('EntitiesPanel', () => {
     expect(screen.getByText(/главного героя и места/)).toBeTruthy()
   })
 
-  it('создание: имя и алиасы уезжают на сервер, список перечитывается', async () => {
+  it('создание: имя, алиасы и описание уезжают на сервер, список перечитывается', async () => {
     mocks.create.mockResolvedValue(entity({ id: 'e9', name: 'Сторож', aliases: ['Сторожа'] }))
     const { reload } = panel()
     await screen.findByText(/Карточек пока нет/)
 
     fireEvent.change(screen.getByLabelText('Имя карточки'), { target: { value: 'Сторож' } })
     fireEvent.change(screen.getByLabelText('Алиасы карточки'), { target: { value: 'Сторожа, ' } })
+    fireEvent.change(screen.getByLabelText('Описание карточки'), {
+      target: { value: '  молчаливый сторож  ' },
+    })
     fireEvent.click(screen.getByRole('button', { name: /Добавить/ }))
 
     await waitFor(() =>
@@ -85,6 +88,7 @@ describe('EntitiesPanel', () => {
         kind: 'character',
         name: 'Сторож',
         aliases: ['Сторожа'],
+        description: 'молчаливый сторож',
       }),
     )
     expect(await screen.findByText(/Карточка «Сторож» создана/)).toBeTruthy()
@@ -144,7 +148,7 @@ describe('EntitiesPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }))
 
     await waitFor(() =>
-      expect(mocks.update).toHaveBeenCalledWith('p1', 'e1', { name: 'Анна', aliases: ['Аня', 'Аннушка'] }),
+      expect(mocks.update).toHaveBeenCalledWith('p1', 'e1', { name: 'Анна', aliases: ['Аня', 'Аннушка'], description: '' }),
     )
     expect(await screen.findByText(/Изменения сохранены/)).toBeTruthy()
     expect(reload).toHaveBeenCalled()
@@ -479,8 +483,80 @@ describe('EntitiesPanel — свои типы карточек (0.81.0)', () => 
     const input = await screen.findByLabelText('Название нового типа')
     fireEvent.change(input, { target: { value: 'Артефакт' } })
     fireEvent.click(screen.getByRole('button', { name: 'Создать тип' }))
-    await waitFor(() => expect(onCreateType).toHaveBeenCalledWith('Артефакт'))
+    await waitFor(() => expect(onCreateType).toHaveBeenCalledWith('Артефакт', { description: '', aliases: [] }))
     expect(await screen.findByText(/Тип «Артефакт» создан/)).toBeTruthy()
+  })
+
+  /**
+   * Заготовка карточки у типа (0.85.0, docs/entity-types.md §4): «Порт: имя, алиасы, описание —
+   * вот пустая заготовка, чтобы не писать одно и то же». Тип даёт название и цвет, заготовка —
+   * предзаполненные поля.
+   */
+  it('заготовка типа подставляется в форму карточки, {{name}} — введённое имя', async () => {
+    const withTemplate = types.map((item) =>
+      item.key === 'frakciya'
+        ? {
+            ...item,
+            card_template: {
+              description: '{{name}} — союз городов на севере.',
+              aliases: ['фракция', 'союз'],
+            },
+          }
+        : item,
+    )
+    panel({ types: withTemplate })
+    fireEvent.change(await screen.findByLabelText('Вид карточки'), { target: { value: 'frakciya' } })
+    await waitFor(() =>
+      expect((screen.getByLabelText('Алиасы карточки') as HTMLInputElement).value).toBe('фракция, союз'),
+    )
+    // Пока имени нет, подстановка оставляет {{name}} — видно, куда попадёт имя.
+    const desc = screen.getByLabelText('Описание карточки') as HTMLTextAreaElement
+    expect(desc.value).toContain('{{name}}')
+
+    fireEvent.change(screen.getByLabelText('Имя карточки'), { target: { value: 'Северный союз' } })
+    await waitFor(() =>
+      expect((screen.getByLabelText('Описание карточки') as HTMLTextAreaElement).value).toBe(
+        'Северный союз — союз городов на севере.',
+      ),
+    )
+  })
+
+  it('правка описания руками отменяет подстановку заготовки', async () => {
+    const withTemplate = types.map((item) =>
+      item.key === 'character'
+        ? { ...item, card_template: { description: '{{name}} — герой.', aliases: [] } }
+        : item,
+    )
+    panel({ types: withTemplate })
+    await screen.findByLabelText('Описание карточки')
+    fireEvent.change(screen.getByLabelText('Описание карточки'), { target: { value: 'своё описание' } })
+    fireEvent.change(screen.getByLabelText('Имя карточки'), { target: { value: 'Анна' } })
+    // Заготовка не перетёрла написанное человеком.
+    expect((screen.getByLabelText('Описание карточки') as HTMLTextAreaElement).value).toBe('своё описание')
+  })
+
+  it('заготовка типа из формы уходит на сервер вместе с названием', async () => {
+    const onCreateType = vi.fn().mockResolvedValue(undefined)
+    panel({ types, onCreateType })
+    fireEvent.change(await screen.findByLabelText('Вид карточки'), {
+      target: { value: '__new_type__' },
+    })
+    fireEvent.change(await screen.findByLabelText('Название нового типа'), {
+      target: { value: 'Порт' },
+    })
+    fireEvent.change(screen.getByLabelText('Алиасы заготовки типа'), {
+      target: { value: 'порт, гавань' },
+    })
+    fireEvent.change(screen.getByLabelText('Заготовка описания карточки типа'), {
+      target: { value: '  {{name}} — порт.  ' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Создать тип' }))
+    await waitFor(() =>
+      expect(onCreateType).toHaveBeenCalledWith('Порт', {
+        description: '{{name}} — порт.',
+        aliases: ['порт', 'гавань'],
+      }),
+    )
   })
 
   it('без права создавать типы пункта «+ новый тип…» нет', async () => {

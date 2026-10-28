@@ -29,8 +29,9 @@ import (
 	"github.com/skyfraze/backend/internal/notify"
 	"github.com/skyfraze/backend/internal/people"
 	"github.com/skyfraze/backend/internal/platform"
-	"github.com/skyfraze/backend/internal/ratelimit"
+	"github.com/skyfraze/backend/internal/projecttemplate"
 	"github.com/skyfraze/backend/internal/projects"
+	"github.com/skyfraze/backend/internal/ratelimit"
 	"github.com/skyfraze/backend/internal/storage"
 	"github.com/skyfraze/backend/internal/store"
 	"github.com/skyfraze/backend/internal/teams"
@@ -296,6 +297,12 @@ func main() {
 	entitiesH := entities.NewHandler(entitiesSvc, logger)
 	// Карточки мира едут в архиве проекта (0.69.0): без этого импорт терял бы связи.
 	transferSvc.UseEntities(entitiesSvc)
+
+	// Шаблон проекта (0.85.0): типы карточек, карточки-заготовки и настройки помощника —
+	// перенос между проектами и инсталляциями. Архив возит шаблон файлом template.json.
+	templateSvc := projecttemplate.New(st, projSvc, entitiesSvc)
+	templateH := projecttemplate.NewHandler(templateSvc, logger)
+	transferSvc.UseTemplates(templateSvc)
 	assistantSvc := assistant.New(st, aiSvc, projSvc, transferSvc, cfg.AIMaxToolCalls, logger)
 	// Иллюстрации помощника ложатся вложениями проекта: тот же путь загрузки, что у
 	// файлов из интерфейса (квота, пережатие в WebP, дедупликация).
@@ -422,6 +429,9 @@ func main() {
 	// Оба пути статические и лежат под уже занятым /api/projects/import.
 	r.With(authSvc.WithUser).Post("/api/projects/import/markdown/preview", transferH.MarkdownPreview)
 	r.With(authSvc.WithUser).Post("/api/projects/import/markdown", transferH.MarkdownImport)
+	// Проект «по образцу»: создать и сразу применить шаблон (0.85.0). Статический путь по той
+	// же причине, что и импорт выше.
+	r.With(authSvc.WithUser).Post("/api/projects/from-template", templateH.CreateFrom)
 
 	// Корзина проектов — тоже СТАТИЧЕСКИЙ путь, и поэтому регистрируется здесь, а не внутри
 	// projH.Routes (смонтированного через Mount): param-ветка /api/projects/{id} ниже
@@ -515,6 +525,10 @@ func main() {
 		// Карточки сущностей проекта (миграция 0030): персонажи, места, темы. Не текст:
 		// в CRDT-документ и в книгу они не попадают, поэтому читаются и пишутся напрямую.
 		entitiesH.Mount(r)
+
+		// Шаблон проекта (0.85.0): типы карточек, заготовки и настройки помощника.
+		// Читает editor+, применяет только владелец — шаблон меняет настройки целиком.
+		templateH.Mount(r)
 
 		r.Post("/assets", assetsH.Upload(authSvc))
 		r.Get("/assets", assetsH.List(authSvc))

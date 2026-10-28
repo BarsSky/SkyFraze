@@ -36,6 +36,18 @@ type typeInput struct {
 	Title string `json:"title"`
 	Icon  string `json:"icon"`
 	Color string `json:"color"`
+	// Template — заготовка карточки этого типа (0.85.0): описание с подстановкой {{name}} и
+	// типичные алиасы. Необязательна; отсутствие поля = «заготовки нет» при создании и
+	// «сотри заготовку» при изменении (PATCH присылает полный объект, как и остальные поля).
+	Template *store.EntityCardTemplate `json:"card_template,omitempty"`
+}
+
+// template возвращает заготовку для сервиса: nil — «не задана».
+func (t typeInput) template() []store.EntityCardTemplate {
+	if t.Template == nil {
+		return nil
+	}
+	return []store.EntityCardTemplate{*t.Template}
 }
 
 // CreateType — POST /entity-types: завести свой тип.
@@ -49,7 +61,8 @@ func (h *Handler) CreateType(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	created, err := h.svc.CreateType(r.Context(), userID, projectID, body.Title, body.Icon, body.Color)
+	created, err := h.svc.CreateType(
+		r.Context(), userID, projectID, body.Title, body.Icon, body.Color, body.template()...)
 	if err != nil {
 		h.fail(w, err, "entity type create")
 		return
@@ -58,7 +71,7 @@ func (h *Handler) CreateType(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{"type": created})
 }
 
-// UpdateType — PATCH /entity-types/{key}: переименовать, сменить значок или цвет.
+// UpdateType — PATCH /entity-types/{key}: переименовать, сменить значок, цвет или заготовку.
 func (h *Handler) UpdateType(w http.ResponseWriter, r *http.Request) {
 	userID, projectID, ok := h.target(w, r)
 	if !ok {
@@ -70,7 +83,8 @@ func (h *Handler) UpdateType(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	updated, err := h.svc.UpdateType(
-		r.Context(), userID, projectID, strings.TrimSpace(chi.URLParam(r, "key")), body.Title, body.Icon, body.Color)
+		r.Context(), userID, projectID, strings.TrimSpace(chi.URLParam(r, "key")),
+		body.Title, body.Icon, body.Color, body.template()...)
 	if err != nil {
 		h.fail(w, err, "entity type update")
 		return

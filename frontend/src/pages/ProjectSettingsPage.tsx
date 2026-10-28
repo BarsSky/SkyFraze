@@ -9,7 +9,14 @@ import {
   type TeamMember,
 } from '../api/teams'
 import { listCoauthors, searchUsers, type CoauthorLink, type UserSearchResult } from '../api/coauthors'
-import { getProject, type Project } from '../api/projects'
+import { getProject, listProjects, type Project } from '../api/projects'
+import {
+  applyProjectTemplate,
+  getProjectTemplate,
+  parseTemplate,
+  templateFileName,
+  type TemplateReport,
+} from '../api/projectTemplate'
 import { useAuthStore } from '../store/auth'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { craftsOf } from '../lib/crafts'
@@ -320,6 +327,190 @@ export function ProjectSettingsPage() {
                 {window.location.origin}/invitations/{lastInvite.token}
               </code>
             </div>
+          )}
+        </div>
+      )}
+      {isOwner && <ProjectTemplateCard projectId={projectId} projectTitle={project?.title ?? ''} onErr={setErr} />}
+    </div>
+  )
+}
+
+/**
+ * Шаблон проекта (0.85.0, docs/entity-types.md §3).
+ *
+ * Здесь два действия: забрать устройство проекта файлом и применить чужое. Перенос — СЛИЯНИЕ:
+ * типы с теми же ключами обновляются, новые добавляются, карточки с занятыми именами
+ * пропускаются и называются в отчёте. Ничего не удаляется — это обещание, а не настройка.
+ *
+ * Отдельная карточка в настройках, а не в панели связей: шаблон меняет и настройки помощника, а
+ * они живут не в редакторе. И только владельцу: шаблон меняет устройство проекта целиком.
+ */
+function ProjectTemplateCard({
+  projectId,
+  projectTitle,
+  onErr,
+}: {
+  projectId: string
+  projectTitle: string
+  onErr: (err: unknown) => void
+}) {
+  const [projects, setProjects] = useState<Project[]>([])
+  const [sourceId, setSourceId] = useState('')
+  const [withCards, setWithCards] = useState(true)
+  const [report, setReport] = useState<TemplateReport | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState<string | null>(null)
+
+  useEffect(() => {
+    listProjects()
+      .then((list) => setProjects(list.filter((item) => item.id !== projectId)))
+      .catch(() => setProjects([]))
+  }, [projectId])
+
+  // Скачать шаблон файлом: тот же JSON, что уедет в архив. Скачиваем через Blob, а не ссылкой:
+  // нужен токен авторизации, а <a download> его не отправит.
+  async function download() {
+    setBusy(true)
+    setNote(null)
+    try {
+      const template = await getProjectTemplate(projectId, withCards)
+      const blob = new Blob([JSON.stringify(template, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = templateFileName(projectTitle)
+      link.click()
+      URL.revokeObjectURL(url)
+      setNote(
+        `Шаблон сохранён: типов ${template.entity_types.length}` +
+          (withCards ? `, карточек ${template.cards?.length ?? 0}` : ', без карточек'),
+      )
+    } catch (e) {
+      onErr(e)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function applyFromProject() {
+    if (sourceId === '') return
+    setBusy(true)
+    setNote(null)
+    try {
+      const template = await getProjectTemplate(sourceId, withCards)
+      setReport(await applyProjectTemplate(projectId, template))
+    } catch (e) {
+      onErr(e)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function applyFromFile(file: File) {
+    setBusy(true)
+    setNote(null)
+    try {
+      const text = await file.text()
+      const template = parseTemplate(text)
+      setReport(await applyProjectTemplate(projectId, template))
+    } catch (e) {
+      setReport(null)
+      setNote(e instanceof Error ? e.message : 'Не удалось прочитать шаблон.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="card" data-project-template>
+      <h3 style={{ marginTop: 0 }}>Шаблон проекта</h3>
+      <p className="muted" style={{ marginTop: 0 }}>
+        Устройство проекта: типы карточек с заготовками, карточки и настройки помощника — роль,
+        указания, режим генерации, стиль. Кадры и текст не переносятся: для них есть архив.
+        Применение — <b>слияние</b>: типы с теми же ключами обновляются, новые добавляются,
+        карточки с занятыми именами пропускаются. Ничего не удаляется.
+      </p>
+      {/* Строки идут столбиком, а не полосой `.row`: у `.row` `justify-content: space-between`,
+          и подпись галочки уезжала к правому краю, а «или файлом» ломалось на два слова. */}
+      <label style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 }}>
+        <input
+          type="checkbox"
+          checked={withCards}
+          onChange={(e) => setWithCards(e.target.checked)}
+          /* Глобальные стили делают input шириной 100% — для галочки это лишнее: она
+             растягивалась, а подпись уезжала к правому краю. */
+          style={{ width: 'auto', flex: '0 0 auto', margin: 0 }}
+          data-template-with-cards
+        />
+        <span>вместе с карточками (персонажи, места, темы)</span>
+      </label>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: 16 }}>
+        <button type="button" className="secondary" onClick={() => void download()} disabled={busy} data-template-download>
+          {busy ? 'Готовлю…' : 'Скачать шаблон'}
+        </button>
+        <span className="muted" style={{ fontSize: 12 }}>
+          тот же файл лежит в архиве проекта как template.json
+        </span>
+      </div>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+        <div style={{ flex: '1 1 240px', minWidth: 200 }}>
+          <label className="muted" style={{ display: 'block', marginBottom: 4 }}>
+            Применить шаблон из моего проекта
+          </label>
+          <select
+            value={sourceId}
+            onChange={(e) => setSourceId(e.target.value)}
+            aria-label="Проект-образец"
+            data-template-source
+          >
+            <option value="">— выберите проект —</option>
+            {projects.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.title}
+              </option>
+            ))}
+          </select>
+        </div>
+        <button type="button" onClick={() => void applyFromProject()} disabled={busy || sourceId === ''} data-template-apply-project>
+          Применить
+        </button>
+        <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <span className="muted" style={{ whiteSpace: 'nowrap' }}>или файлом</span>
+          <input
+            type="file"
+            accept="application/json,.json"
+            aria-label="Файл шаблона"
+            style={{ width: 'auto', flex: '0 0 auto' }}
+            data-template-file
+            onChange={(e) => {
+              const file = e.target.files?.[0]
+              if (file) void applyFromFile(file)
+              e.target.value = ''
+            }}
+          />
+        </label>
+      </div>
+      {note && (
+        <p className="muted" role="status" data-template-note>
+          {note}
+        </p>
+      )}
+      {report !== null && (
+        <div className="card" style={{ marginTop: 12 }} data-template-report>
+          <p style={{ marginTop: 0 }}>{report.message}</p>
+          {report.changed === 0 && (
+            <p className="muted" style={{ margin: 0 }}>
+              Повторное применение того же шаблона ничего не меняет — это ожидаемо.
+            </p>
+          )}
+          {[...(report.types_skipped ?? []), ...(report.cards_skipped ?? [])].length > 0 && (
+            <ul className="muted" style={{ margin: '6px 0 0', paddingLeft: 18 }}>
+              {[...(report.types_skipped ?? []), ...(report.cards_skipped ?? [])].map((skip) => (
+                <li key={`${skip.name}-${skip.reason}`}>
+                  «{skip.name}»: {skip.reason}
+                </li>
+              ))}
+            </ul>
           )}
         </div>
       )}

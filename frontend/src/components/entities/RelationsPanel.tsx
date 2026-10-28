@@ -195,8 +195,8 @@ export function RelationsPanel({ projectId, canEdit }: Props) {
         types={types}
         onCreateType={
           canEdit
-            ? async (title: string) => {
-                await createEntityType(projectId, { title })
+            ? async (title: string, cardTemplate?: { description?: string; aliases?: string[] }) => {
+                await createEntityType(projectId, { title, cardTemplate })
                 await reload()
               }
             : undefined
