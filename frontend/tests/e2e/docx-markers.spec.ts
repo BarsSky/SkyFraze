@@ -48,6 +48,28 @@ test('маркеры DOCX вставляются панелью, доезжаю�
   expect(markerLines).toHaveLength(2)
   await editor.getByRole('button', { name: 'Сохранить текст' }).click()
 
+  /**
+   * Два шага вместо одного (0.120.1).
+   *
+   * Ночной прогон 29.10 уронил этот сценарий: клик «Сохранить текст» прошёл, а маркеры до
+   * `export.md` не доехали за минуту. Причин может быть две — сохранение не попало в документ
+   * вкладки ИЛИ документ ещё не слился с сервером, — и старый разбор (`опрашивать экспорт») их не
+   * различал: падение говорило «экспорт без маркеров» и ничего о том, где потерялось.
+   *
+   * Теперь сначала подтверждается документ ВКЛАДКИ (поле кадра — оно читает CRDT), и только потом
+   * сервер. Если сломается сохранение, ошибка будет про редактор; если сервер, будет про слияние.
+   */
+  await editor.waitFor({ state: 'hidden', timeout: 20_000 }).catch(() => undefined)
+  await expect(page.locator('.ed-editor textarea').first()).toContainText('<!-- sf:pagebreak -->', {
+    timeout: 20_000,
+  })
+  // Значение поля кадра на момент разбора ошибки: видно, остались ли маркеры в документе вкладки.
+  const markersInFrame = await page
+    .locator('.ed-editor textarea')
+    .first()
+    .inputValue()
+    .catch(() => 'поле не найдено')
+
   // Текст с маркерами доехал до сервера: в `.md` маркеры остаются исходником.
   const headers = await apiHeaders(page)
   let markdown = ''
@@ -60,12 +82,16 @@ test('маркеры DOCX вставляются панелью, доезжаю�
         markdown = await response.text()
         return markdown.includes('<!-- sf:pagebreak -->') && markdown.includes('<!-- sf:toc -->')
       },
-      { timeout: 60_000, intervals: [1000, 2000] },
+      // 120 с вместо 60 (0.120.1): слияние документа с сервером идёт своим темпом, и на
+      // загруженном раннере минуты не хватило. Ждём терпеливо, но с внятным разбором ниже.
+      { timeout: 120_000, intervals: [1000, 2000, 5000] },
     )
     .toBe(true)
     .catch((error) => {
       throw new Error(
-        `${error.message}\nстатус export.md: ${lastStatus}\nначало текста: ${markdown.slice(0, 400)}`,
+        `${error.message}\nстатус export.md: ${lastStatus}\n` +
+          `начало текста: ${markdown.slice(0, 400)}\n` +
+          `маркеры в поле кадра: ${markersInFrame}`,
       )
     })
 
