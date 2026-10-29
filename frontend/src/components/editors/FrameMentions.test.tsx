@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { FrameMentions, MENTIONS_VISIBLE } from './FrameMentions'
+import { setLang } from '../../store/lang'
 import { groupMentions, type Mention } from '../../collab/mentions'
 
 /**
@@ -176,4 +177,27 @@ it('кадр без упоминаний: подсказка про алиасы
 it('без карточек подсказки нет: подсказывать нечего', () => {
   const { container } = render(<FrameMentions mentions={[]} onShow={() => {}} />)
   expect(container.textContent).toBe('')
+})
+
+/**
+ * 0.123.0: подписи блока — из словаря. Имя карточки и цитата остаются данными, поэтому
+ * в подсказке чипа переводится только обвязка («Show in the text: … — each press …»).
+ */
+it('на английском подпись блока и подсказки переведены', () => {
+  setLang('en')
+  const two = [
+    mention({ entityId: 'e1', entityName: 'Анна', quote: 'Анну' }),
+    mention({ entityId: 'e1', entityName: 'Анна', quote: 'Анна' }),
+  ]
+  render(<FrameMentions mentions={two} onShow={() => {}} />)
+  expect(screen.getByText('Mentions:')).toBeTruthy()
+  const chip = screen.getAllByRole('button')[0]
+  expect(chip.getAttribute('aria-label')).toBe('Анна, mentions: 2')
+  expect(chip.getAttribute('title')).toContain('Show in the text:')
+  expect(chip.getAttribute('title')).toContain('each press goes to the next one')
+
+  cleanup()
+  setLang('en')
+  render(<FrameMentions mentions={[]} onShow={() => {}} hasEntities />)
+  expect(screen.getByText(/add it to the card aliases/)).toBeTruthy()
 })

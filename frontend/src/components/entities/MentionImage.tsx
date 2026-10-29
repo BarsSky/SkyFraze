@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { listAssets, type Asset } from '../../api/assets'
 import { useAssetObjectUrl } from '../../api/assetObject'
-import { useT } from '../../i18n'
+import { tStatic, useT } from '../../i18n'
 
 /**
  * Картинка у упоминания карточки в кадре (0.93.0, docs/entity-links.md §3.4.1).
@@ -67,9 +67,9 @@ export function MentionImage({
       setImages(list.filter((asset) => asset.mime.startsWith('image/')))
     } catch {
       setImages([])
-      setNote(t('mi.errRead'))
+      setNote(tStatic('mi.errRead'))
     }
-  }, [images, projectId, t])
+  }, [images, projectId])
 
   const attach = useCallback(() => {
     if (!choice) return

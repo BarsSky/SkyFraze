@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { eventFrames, type TimelineChapter } from '../timelineModel'
+import { useT } from '../../../i18n'
 
 interface Props {
   chapters: TimelineChapter[]
@@ -27,6 +28,7 @@ interface Props {
  * при переходе к следующей главе чип остаётся за краем.
  */
 export function ChapterChips({ chapters, activeChapter, activeFrame, onChapter, onFrame }: Props) {
+  const t = useT()
   const chapter = chapters[activeChapter]
   const steps = chapter ? eventFrames(chapter.frames).slice(1) : []
   const chaptersRef = useRef<HTMLDivElement>(null)
@@ -48,7 +50,7 @@ export function ChapterChips({ chapters, activeChapter, activeFrame, onChapter, 
   useEffect(() => center(stepsRef.current), [activeChapter, activeFrame])
 
   return (
-    <div className="sf-chips" role="navigation" aria-label="Главы и под-события">
+    <div className="sf-chips" role="navigation" aria-label={t('stage.chipsAria')}>
       <div className="sf-chips__row" data-chips-row="chapters" ref={chaptersRef}>
         {chapters.map((ch, ci) => (
           <button
@@ -58,7 +60,7 @@ export function ChapterChips({ chapters, activeChapter, activeFrame, onChapter, 
             onClick={() => onChapter(ci)}
             aria-current={ci === activeChapter ? 'true' : undefined}
           >
-            {ch.number} {ch.title || 'Без названия'}
+            {ch.number} {ch.title || t('common.untitled')}
           </button>
         ))}
       </div>

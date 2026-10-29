@@ -1,4 +1,5 @@
 import { eventFrames, type TimelineChapter } from '../timelineModel'
+import { useT } from '../../../i18n'
 
 interface Props {
   chapters: TimelineChapter[]
@@ -19,9 +20,10 @@ interface Props {
  * кадров (глава → под-события → под-шаги).
  */
 export function RouteTree({ chapters, activeChapter, activeFrame, onChapter, onFrame }: Props) {
+  const t = useT()
   return (
-    <nav className="sf-route" aria-label="Маршрут по главам">
-      <p className="sf-route__head">Маршрут</p>
+    <nav className="sf-route" aria-label={t('stage.routeAria')}>
+      <p className="sf-route__head">{t('stage.routeHead')}</p>
       <div className="sf-route__list">
         <span className="sf-route__rail" aria-hidden />
         {chapters.map((chapter, ci) => {
@@ -35,11 +37,13 @@ export function RouteTree({ chapters, activeChapter, activeFrame, onChapter, onF
                 className={'sf-route__row' + state}
                 onClick={() => onChapter(ci)}
                 aria-current={isActive ? 'true' : undefined}
-                title={chapter.title || `Глава ${chapter.number}`}
+                title={chapter.title || t('stage.chapterFallback', { number: chapter.number })}
               >
                 <i className="sf-route__dot" aria-hidden />
                 <span className="sf-route__num">{chapter.number}</span>
-                <span className="sf-route__label">{chapter.title || `Глава ${chapter.number}`}</span>
+                <span className="sf-route__label">
+                  {chapter.title || t('stage.chapterFallback', { number: chapter.number })}
+                </span>
               </button>
 
               {isActive && events.length > 1 && (
@@ -56,11 +60,13 @@ export function RouteTree({ chapters, activeChapter, activeFrame, onChapter, onF
                         className={fi === activeFrame ? 'sf-route__row sf-route__row--sub is-active' : 'sf-route__row sf-route__row--sub'}
                         onClick={() => onFrame(ci, fi)}
                         aria-current={fi === activeFrame ? 'true' : undefined}
-                        title={`${frame.number} ${fi === 0 ? 'глава' : frame.title}`}
+                        title={`${frame.number} ${fi === 0 ? t('stage.routeChapter') : frame.title}`}
                       >
                         <i className="sf-route__dot" aria-hidden />
                         <span className="sf-route__num">{frame.number}</span>
-                        <span className="sf-route__label">{fi === 0 ? 'глава' : frame.title}</span>
+                        <span className="sf-route__label">
+                          {fi === 0 ? t('stage.routeChapter') : frame.title}
+                        </span>
                       </button>
                     )
                   })}

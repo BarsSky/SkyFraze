@@ -10,7 +10,9 @@ import {
   type ProjectVersionPreview,
 } from '../../api/versions'
 import { serverErrorMessage } from '../../api/client'
-import { formatBytes, formatDate, plural } from '../../lib/format'
+import { formatBytes, formatDate } from '../../lib/format'
+import { pluralWord, tStatic, useT } from '../../i18n'
+import { useLang, type Lang } from '../../store/lang'
 
 /** Дата и время версии: по одной дате «когда это было» не понять — версии идут парами в день. */
 function formatStamp(iso: string): string {
@@ -19,6 +21,17 @@ function formatStamp(iso: string): string {
   if (Number.isNaN(time.getTime())) return date
   const pad = (value: number) => String(value).padStart(2, '0')
   return `${date} ${pad(time.getHours())}:${pad(time.getMinutes())}`.trim()
+}
+
+/**
+ * «3 кадра» / «3 frames» (0.123.0): число и слово в нужной форме языка.
+ *
+ * Слова с формами — в словаре (`ver.unit.frame.*`), а склейку делает эта функция: держать
+ * её в разметке значило бы повторять `${n} ${pluralWord(...)}` в пяти местах и однажды
+ * забыть форму в одном из них.
+ */
+function withUnit(lang: Lang, prefix: string, count: number): string {
+  return `${count} ${pluralWord(lang, prefix, count)}`
 }
 
 interface Props {
@@ -62,6 +75,8 @@ export function VersionsModal({
   onRestored,
   embedded = false,
 }: Props) {
+  const t = useT()
+  const [lang] = useLang()
   const [versions, setVersions] = useState<ProjectVersion[]>([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
@@ -92,7 +107,7 @@ export function VersionsModal({
       setVersions(await listProjectVersions(projectId))
       setError(null)
     } catch (e) {
-      setError((await serverErrorMessage(e)) ?? 'Не удалось прочитать историю версий.')
+      setError((await serverErrorMessage(e)) ?? tStatic('ver.errLoad'))
     } finally {
       setLoading(false)
     }
@@ -111,16 +126,19 @@ export function VersionsModal({
       setLabel('')
       setNote(
         created
-          ? `Версия сохранена: ${plural(created.events, 'кадр', 'кадра', 'кадров')}, ${formatBytes(created.size)}.`
-          : 'Версия сохранена.',
+          ? tStatic('ver.savedDetailed', {
+              frames: withUnit(lang, 'ver.unit.frame', created.events),
+              bytes: formatBytes(created.size, lang),
+            })
+          : tStatic('ver.saved'),
       )
       await load()
     } catch (e) {
-      setError((await serverErrorMessage(e)) ?? 'Не удалось сохранить версию.')
+      setError((await serverErrorMessage(e)) ?? tStatic('ver.errSave'))
     } finally {
       setBusy(null)
     }
-  }, [projectId, label, load])
+  }, [projectId, label, load, lang])
 
   const show = useCallback(
     async (version: ProjectVersion) => {
@@ -129,7 +147,7 @@ export function VersionsModal({
       try {
         setPreview(await getProjectVersion(projectId, version.id))
       } catch (e) {
-        setError((await serverErrorMessage(e)) ?? 'Не удалось прочитать версию.')
+        setError((await serverErrorMessage(e)) ?? tStatic('ver.errShow'))
       } finally {
         setBusy(null)
       }
@@ -151,21 +169,19 @@ export function VersionsModal({
       try {
         const result = await restoreProjectVersion(projectId, version.id)
         const parts: string[] = []
-        if (result.added > 0) parts.push(`возвращено ${result.added}`)
-        if (result.updated > 0) parts.push(`переписано ${result.updated}`)
-        if (result.moved > 0) parts.push(`переставлено ${result.moved}`)
-        if (result.removed > 0) parts.push(`удалено ${result.removed}`)
+        if (result.added > 0) parts.push(tStatic('ver.partAdded', { count: result.added }))
+        if (result.updated > 0) parts.push(tStatic('ver.partUpdated', { count: result.updated }))
+        if (result.moved > 0) parts.push(tStatic('ver.partMoved', { count: result.moved }))
+        if (result.removed > 0) parts.push(tStatic('ver.partRemoved', { count: result.removed }))
         setNote(
           result.warning ||
-            (parts.length > 0
-              ? `Проект восстановлен: ${parts.join(', ')}.`
-              : 'Проект уже в этом состоянии — менять нечего.'),
+            (parts.length > 0 ? tStatic('ver.restored', { parts: parts.join(', ') }) : tStatic('ver.restoredNothing')),
         )
         setPreview(null)
         onRestored()
         await load()
       } catch (e) {
-        setError((await serverErrorMessage(e)) ?? 'Не удалось восстановить версию.')
+        setError((await serverErrorMessage(e)) ?? tStatic('ver.errRestore'))
       } finally {
         setBusy(null)
       }
@@ -183,7 +199,7 @@ export function VersionsModal({
         if (preview?.version.id === version.id) setPreview(null)
         await load()
       } catch (e) {
-        setError((await serverErrorMessage(e)) ?? 'Не удалось удалить версию.')
+        setError((await serverErrorMessage(e)) ?? tStatic('ver.errRemove'))
       } finally {
         setBusy(null)
       }
@@ -197,14 +213,11 @@ export function VersionsModal({
     <div className="sf-versions__window">
         <div className="sf-versions__head">
           <div className="sf-versions__titles">
-            <strong>История версий</strong>
-            <span className="muted">
-              Версии снимаются сами по ходу работы и по кнопке. Восстановление — обычная
-              правка: открытые вкладки увидят её сразу.
-            </span>
+            <strong>{t('ver.head')}</strong>
+            <span className="muted">{t('ver.hint')}</span>
           </div>
-          <button ref={closeRef} className="secondary" onClick={onClose} aria-label="Закрыть">
-            Закрыть
+          <button ref={closeRef} className="secondary" onClick={onClose} aria-label={t('ver.close')}>
+            {t('ver.close')}
           </button>
         </div>
 
@@ -214,12 +227,12 @@ export function VersionsModal({
               <input
                 type="text"
                 value={label}
-                placeholder="подпись версии (необязательно)"
-                aria-label="Подпись версии"
+                placeholder={t('ver.labelPlaceholder')}
+                aria-label={t('ver.labelAria')}
                 onChange={(e) => setLabel(e.target.value)}
               />
               <button onClick={() => void save()} disabled={busy === 'save'}>
-                {busy === 'save' ? 'Сохраняю…' : 'Сохранить версию'}
+                {busy === 'save' ? t('ver.saving') : t('ver.save')}
               </button>
             </div>
           )}
@@ -232,11 +245,10 @@ export function VersionsModal({
           )}
 
           {loading ? (
-            <p className="muted">Читаю историю…</p>
+            <p className="muted">{t('ver.loading')}</p>
           ) : versions.length === 0 ? (
             <p className="muted" data-versions-empty>
-              Версий пока нет. Первая появится сама после первых правок — или нажмите
-              «Сохранить версию».
+              {t('ver.empty')}
             </p>
           ) : (
             <ul className="sf-versions__list">
@@ -244,13 +256,13 @@ export function VersionsModal({
                 <li key={version.id} className="sf-versions__item" data-version-id={version.id}>
                   <div className="sf-versions__meta">
                     <strong>
-                      {version.kind === 'manual' ? 'Вручную' : 'Автоматически'}
+                      {version.kind === 'manual' ? t('ver.kindManual') : t('ver.kindAuto')}
                       {version.label ? ` · ${version.label}` : ''}
                     </strong>
                     <span className="muted">
                       {formatStamp(version.createdAt)} ·{' '}
-                      {version.events} {plural(version.events, 'кадр', 'кадра', 'кадров')} ·{' '}
-                      {formatBytes(version.size)}
+                      {withUnit(lang, 'ver.unit.frame', version.events)} ·{' '}
+                      {formatBytes(version.size, lang)}
                     </span>
                   </div>
                   <div className="sf-versions__actions">
@@ -259,7 +271,7 @@ export function VersionsModal({
                       onClick={() => void show(version)}
                       disabled={busy === `show:${version.id}`}
                     >
-                      Показать
+                      {t('ver.show')}
                     </button>
                     {canEdit && (
                       <>
@@ -267,15 +279,15 @@ export function VersionsModal({
                           onClick={() => void restore(version)}
                           disabled={busy === `restore:${version.id}`}
                         >
-                          {confirming === version.id ? 'Точно восстановить?' : 'Восстановить'}
+                          {confirming === version.id ? t('ver.restoreConfirm') : t('ver.restore')}
                         </button>
                         <button
                           className="secondary"
                           onClick={() => void remove(version)}
                           disabled={busy === `delete:${version.id}`}
-                          aria-label={`Удалить версию ${formatStamp(version.createdAt)}`}
+                          aria-label={t('ver.removeAria', { stamp: formatStamp(version.createdAt) })}
                         >
-                          Удалить
+                          {t('ver.remove')}
                         </button>
                       </>
                     )}
@@ -288,16 +300,18 @@ export function VersionsModal({
           {preview != null && (
             <div className="sf-versions__preview" data-versions-preview>
               <strong>
-                В версии {formatStamp(preview.version.createdAt)}:{' '}
-                {preview.frames.length} {plural(preview.frames.length, 'кадр', 'кадра', 'кадров')}, {preview.chars}{' '}
-                {plural(preview.chars, 'знак', 'знака', 'знаков')}
+                {t('ver.previewHead', {
+                  stamp: formatStamp(preview.version.createdAt),
+                  frames: withUnit(lang, 'ver.unit.frame', preview.frames.length),
+                  chars: withUnit(lang, 'ver.unit.char', preview.chars),
+                })}
               </strong>
               <ul>
                 {preview.frames.map((frame) => (
                   <li key={frame.id} style={{ paddingLeft: `${frame.depth * 14}px` }}>
-                    {frame.title || '(без названия)'}
-                    {frame.date ? ` · ${frame.date}` : ''} · {frame.chars}{' '}
-                    {plural(frame.chars, 'знак', 'знака', 'знаков')}
+                    {frame.title || t('ver.untitled')}
+                    {frame.date ? ` · ${frame.date}` : ''} ·{' '}
+                    {withUnit(lang, 'ver.unit.char', frame.chars)}
                   </li>
                 ))}
               </ul>
@@ -314,7 +328,7 @@ export function VersionsModal({
       <section
         className="sf-versions sf-versions--embedded"
         role="region"
-        aria-label="История версий"
+        aria-label={t('ver.head')}
         data-versions-embedded
       >
         {body}
@@ -323,7 +337,7 @@ export function VersionsModal({
   }
 
   return createPortal(
-    <div className="sf-versions" role="dialog" aria-modal="true" aria-label="История версий">
+    <div className="sf-versions" role="dialog" aria-modal="true" aria-label={t('ver.head')}>
       {body}
     </div>,
     document.body,

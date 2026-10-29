@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import * as Y from 'yjs'
 import { FrameComments } from './FrameComments'
+import { setLang } from '../../store/lang'
 import { encodeAnchor } from '../../collab/anchors'
 import type { YMap } from '../../collab/yprovider'
 import type { FrameComment } from '../../api/comments'
@@ -73,6 +74,7 @@ function show(canEdit = true, onCountChange = vi.fn()) {
 }
 
 beforeEach(() => {
+  setLang('ru')
   mocks.list.mockResolvedValue([OWN, OTHER])
   mocks.seen.mockResolvedValue(undefined)
   mocks.create.mockResolvedValue(comment({ id: 'c3', body: 'Новое замечание.', createdAt: '2026-10-25T12:00:00Z' }))
@@ -378,5 +380,24 @@ describe('FrameComments', () => {
     )
     // Фрагмент забран: следующее замечание не должно молча уехать к тому же куску.
     expect(onConsumed).toHaveBeenCalled()
+  })
+
+  /**
+   * 0.123.0: подписи обсуждения — из словаря. Проверяем то, что видит человек: заголовок,
+   * кнопку отправки, поле ввода и реакции. Тексты комментариев и имена авторов — данные,
+   * они не переводятся.
+   */
+  it('на английском подписи обсуждения переведены', async () => {
+    setLang('en')
+    show()
+    expect(await screen.findByText('Discussion')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Send' })).toBeTruthy()
+    expect(screen.getByLabelText('New comment')).toBeTruthy()
+    // Реакции: подпись внутри кнопки и её aria-label (кнопок столько же, сколько замечаний).
+    expect(screen.getAllByRole('button', { name: /^agree: 0$/ }).length).toBeGreaterThan(0)
+    expect(screen.getAllByRole('button', { name: /^done: 0$/ }).length).toBeGreaterThan(0)
+    expect(screen.getAllByText('agree').length).toBeGreaterThan(0)
+    // Тексты людей остаются как есть.
+    expect(screen.getByText('Согласен, перепишу.')).toBeTruthy()
   })
 })

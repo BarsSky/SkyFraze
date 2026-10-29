@@ -8,6 +8,7 @@ import {
 import { ImageViewer } from '../../ImageViewer'
 import { MarkdownBlock } from '../../MarkdownBlock'
 import { dateLabel } from '../../../collab/eventDate'
+import { useT } from '../../../i18n'
 
 interface Props {
   chapter: TimelineChapter
@@ -48,6 +49,7 @@ interface Props {
 export function CopyPanel({
   chapter, frame, onJumpFrame, onPrev, onNext, prevLabel, nextLabel, footer, assetUrls,
 }: Props) {
+  const t = useT()
   const images = frame.assets.filter((a) => a.mime.startsWith(IMAGE_MIME_PREFIX))
   const [viewer, setViewer] = useState<number | null>(null)
 
@@ -78,16 +80,19 @@ export function CopyPanel({
         {isPhoto ? (
           <>
             <div className="sf-copy__num">
-              {frame.ownerNumber ?? frame.number} · фото {photoIndex + 1} / {photoCount}
+              {frame.ownerNumber ?? frame.number} ·{' '}
+              {t('copy.photo', { index: photoIndex + 1, total: photoCount })}
             </div>
             <span className="sf-copy__eyebrow">{frame.eyebrow}</span>
-            <h2 className="sf-copy__title sf-copy__title--photo">{frame.title || 'Без названия'}</h2>
+            <h2 className="sf-copy__title sf-copy__title--photo">
+              {frame.title || t('common.untitled')}
+            </h2>
             <ul className="sf-copy__meta">
-              <li>глава {chapter.number}: {chapter.title}</li>
-              {photoCount > 1 && <li>картинок у события: {photoCount}</li>}
+              <li>{t('copy.chapter', { number: chapter.number, title: chapter.title })}</li>
+              {photoCount > 1 && <li>{t('copy.photosOfEvent', { count: photoCount })}</li>}
             </ul>
             <button type="button" className="sf-btn sf-btn--ghost" onClick={() => setViewer(photoIndex)}>
-              открыть в полный размер
+              {t('copy.openFull')}
             </button>
           </>
         ) : (
@@ -96,29 +101,35 @@ export function CopyPanel({
               {frame.number} · {position.index} / {position.total}
             </div>
             <span className="sf-copy__eyebrow">{frame.eyebrow}</span>
-            <h2 className="sf-copy__title">{frame.title || 'Без названия'}</h2>
+            <h2 className="sf-copy__title">{frame.title || t('common.untitled')}</h2>
             {frame.body && (
               <MarkdownBlock source={frame.body} className="sf-copy__body" assetUrls={assetUrls} />
             )}
 
           <ul className="sf-copy__meta">
-            {!frame.isChapter && <li>глава {chapter.number}: {chapter.title}</li>}
-            {frame.isChapter && (
-              <li>{position.total > 1 ? `кадров в главе: ${position.total}` : 'без под-событий'}</li>
+            {!frame.isChapter && (
+              <li>{t('copy.chapter', { number: chapter.number, title: chapter.title })}</li>
             )}
-            {dateText && <li>дата: {dateText}</li>}
-            {images.length > 0 && <li>картинок: {images.length}</li>}
+            {frame.isChapter && (
+              <li>
+                {position.total > 1
+                  ? t('copy.framesInChapter', { count: position.total })
+                  : t('copy.noSubEvents')}
+              </li>
+            )}
+            {dateText && <li>{t('copy.date', { date: dateText })}</li>}
+            {images.length > 0 && <li>{t('copy.images', { count: images.length })}</li>}
           </ul>
 
           {images.length > 0 && (
-            <div className="sf-copy__gallery" aria-label="Картинки события">
+            <div className="sf-copy__gallery" aria-label={t('copy.galleryAria')}>
               {images.map((asset, i) => (
                 <button
                   key={asset.id}
                   type="button"
                   className="sf-copy__shot"
                   onClick={() => setViewer(i)}
-                  title="Открыть в полный размер"
+                  title={t('copy.openFullTitle')}
                 >
                   <img src={asset.url} alt="" loading="lazy" />
                 </button>
@@ -127,7 +138,7 @@ export function CopyPanel({
           )}
 
           {frame.childFrames.length > 0 && (
-            <ol className="sf-copy__next" aria-label="Вложенные события">
+            <ol className="sf-copy__next" aria-label={t('copy.childrenAria')}>
               {frame.childFrames.map((child) => {
                 const childIndex = chapter.frames.findIndex((f) => f.id === child.id)
                 return (
@@ -138,7 +149,7 @@ export function CopyPanel({
                       onClick={() => childIndex >= 0 && onJumpFrame(chapter.chapterIndex, childIndex)}
                     >
                       <span className="sf-copy__next-num">{child.number}</span>
-                      <span className="sf-copy__next-title">{child.title || 'Без названия'}</span>
+                      <span className="sf-copy__next-title">{child.title || t('common.untitled')}</span>
                     </button>
                   </li>
                 )
@@ -151,10 +162,10 @@ export function CopyPanel({
 
       <div className="sf-copy__nav">
         <button type="button" className="sf-btn sf-btn--ghost" disabled={!onPrev} onClick={() => onPrev?.()}>
-          ← {prevLabel ? `назад: ${prevLabel}` : 'назад'}
+          ← {prevLabel ? t('copy.prevNamed', { label: prevLabel }) : t('copy.prev')}
         </button>
         <button type="button" className="sf-btn sf-btn--primary" disabled={!onNext} onClick={() => onNext?.()}>
-          {nextLabel ? `дальше: ${nextLabel} →` : 'конец таймлайна'}
+          {nextLabel ? t('copy.nextNamed', { label: nextLabel }) : t('copy.end')}
         </button>
       </div>
 

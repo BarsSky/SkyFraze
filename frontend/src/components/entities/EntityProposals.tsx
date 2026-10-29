@@ -9,7 +9,7 @@ import {
 } from '../../api/assistant'
 import { serverErrorMessage } from '../../api/client'
 import { kindLabel } from '../../api/entities'
-import { pluralWord, translate, useT } from '../../i18n'
+import { pluralWord, tStatic, translate, useT } from '../../i18n'
 import { useLang, type Lang } from '../../store/lang'
 
 /**
@@ -84,13 +84,13 @@ export function EntityProposals({ projectId, refreshKey = 0 }: Props) {
       } catch (e) {
         setNote({
           kind: 'error',
-          text: (await serverErrorMessage(e)) ?? t('prop.errApply'),
+          text: (await serverErrorMessage(e)) ?? tStatic('prop.errApply'),
         })
       } finally {
         setBusy(null)
       }
     },
-    [projectId, t],
+    [projectId],
   )
 
   const discard = useCallback(
@@ -104,13 +104,13 @@ export function EntityProposals({ projectId, refreshKey = 0 }: Props) {
       } catch (e) {
         setNote({
           kind: 'error',
-          text: (await serverErrorMessage(e)) ?? t('prop.errDiscard'),
+          text: (await serverErrorMessage(e)) ?? tStatic('prop.errDiscard'),
         })
       } finally {
         setBusy(null)
       }
     },
-    [projectId, t],
+    [projectId],
   )
 
   if (proposals.length === 0 && applied.length === 0 && note === null) return null

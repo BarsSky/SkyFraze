@@ -21,6 +21,8 @@ import {
   type TimelineFrame,
 } from './timelineModel'
 import { useTheme } from '../../store/theme'
+import { useT } from '../../i18n'
+import { useLang } from '../../store/lang'
 import { SkyLayer } from './stage/SkyLayer'
 import { SceneFrame } from './stage/SceneFrame'
 import { CopyPanel } from './stage/CopyPanel'
@@ -121,6 +123,8 @@ export function TimelineStage({ events, assetsById, projectTitle, actions, copyF
     return map
   }, [assetsById])
   const [theme] = useTheme()
+  const t = useT()
+  const [lang] = useLang()
   const trackRef = useRef<HTMLDivElement>(null)
   const stageActiveRef = useRef(true)
   const [meta, setMeta] = useState<EventMeta[]>([])
@@ -240,7 +244,7 @@ export function TimelineStage({ events, assetsById, projectTitle, actions, copyF
   )
 
   const accents = theme === 'light' ? CHAPTER_ACCENTS_LIGHT : CHAPTER_ACCENTS_DARK
-  const model = useMemo(() => buildTimelineModel(items, accents), [items, accents])
+  const model = useMemo(() => buildTimelineModel(items, accents, lang), [items, accents, lang])
 
   // Высота полосы чипов (переключение по событиям): сцена и лист кадра начинаются
   // ПОД ней, поэтому чипы никогда не налезают на картинку. Зависимость от наличия
@@ -278,7 +282,7 @@ export function TimelineStage({ events, assetsById, projectTitle, actions, copyF
         chapter.frames.map((frame, frameIndex) => ({
           id: frame.id,
           number: frame.number,
-          label: frameLabel(frame),
+          label: frameLabel(frame, lang),
           chapterIndex: chapter.chapterIndex,
           frameIndex,
         })),
@@ -568,7 +572,7 @@ export function TimelineStage({ events, assetsById, projectTitle, actions, copyF
   if (!events || model.chapters.length === 0) {
     return (
       <div style={{ padding: '60px 24px', textAlign: 'center' }}>
-        <p className="muted">Нет событий. Добавьте главу в блоке «Редакторы».</p>
+        <p className="muted">{t('stage.empty')}</p>
       </div>
     )
   }
@@ -670,7 +674,7 @@ export function TimelineStage({ events, assetsById, projectTitle, actions, copyF
       />
 
       <div className="sf-hint" style={{ opacity: state.progress > 0.01 ? 0 : 1 }}>
-        <span>прокрутите — кадры идут по порядку</span>
+        <span>{t('stage.scrollHint')}</span>
         <i />
       </div>
 

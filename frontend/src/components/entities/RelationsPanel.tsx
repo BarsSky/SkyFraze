@@ -332,7 +332,7 @@ export function numberRows(flat: Array<EventLike & { title: string; body?: strin
       id: node.item.id,
       parentId,
       number,
-title: node.item.title || tStatic('rel.untitled'),
+      title: node.item.title || tStatic('common.untitled'),
       body: node.item.body ?? '',
       date: dateFromServer(node.item.event_date ?? null),
       order: out.length,

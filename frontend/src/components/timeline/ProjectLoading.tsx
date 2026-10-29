@@ -9,7 +9,10 @@
  * Анимация отключается при `prefers-reduced-motion` (см. styles/timeline.css): блик —
  * украшение, а не смысл, и для тех, кому движение мешает, он не нужен.
  */
-export function ProjectLoading({ label = 'Загружаю проект…' }: { label?: string }) {
+import { useT } from '../../i18n'
+
+export function ProjectLoading({ label }: { label?: string }) {
+  const t = useT()
   return (
     <div className="sf-loading" data-project-loading role="status" aria-live="polite">
       <div className="sf-loading__stage" aria-hidden="true">
@@ -22,7 +25,7 @@ export function ProjectLoading({ label = 'Загружаю проект…' }: {
           <div className="sf-loading__chip" />
         </div>
       </div>
-      <p className="muted sf-loading__label">{label}</p>
+      <p className="muted sf-loading__label">{label ?? t('stage.loading')}</p>
     </div>
   )
 }

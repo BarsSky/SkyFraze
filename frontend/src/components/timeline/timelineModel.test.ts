@@ -210,6 +210,28 @@ describe('кадры-картинки', () => {
     const ids = model.chapters[0].frames.map((f) => f.id)
     expect(new Set(ids).size).toBe(ids.length)
   })
+
+  /**
+   * 0.123.0: подписи кадра (`eyebrow`) и «фото N/M» собираются в модели, поэтому язык —
+   * её параметр. До этого английский интерфейс показывал над кадром «Глава» и «Иллюстрация»:
+   * слова жили в коде модели, а не в словаре.
+   */
+  it('на английском подписи кадра переведены', () => {
+    const model = buildTimelineModel(ITEMS, ['#111'], 'en')
+    const frames = model.chapters[0].frames
+    expect(frames.map((f) => f.eyebrow)).toEqual(['Chapter', 'Sub-event', 'Sub-step', 'Sub-event'])
+
+    const items = [
+      ev('c', null, 'Глава', 0, {
+        assets: [asset('a1'), asset('a2')],
+      }),
+    ]
+    const withImages = buildTimelineModel(items, ['#111'], 'en').chapters[0]
+    const image = withImages.frames.find((f) => f.kind === 'image')
+    expect(image?.eyebrow).toBe('Illustration')
+    expect(frameLabel(image!)).toBe('фото 1/2')
+    expect(frameLabel(image!, 'en')).toBe('photo 1/2')
+  })
 })
 
 describe('resolveScrollState', () => {

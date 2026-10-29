@@ -21,6 +21,7 @@ vi.mock('../../api/versions', () => ({
 vi.mock('../../api/client', () => ({ serverErrorMessage: mocks.error }))
 
 import { VersionsModal } from './VersionsModal'
+import { setLang } from '../../store/lang'
 
 const VERSION = {
   id: 'v1',
@@ -44,6 +45,7 @@ function renderModal(props: Partial<Parameters<typeof VersionsModal>[0]> = {}) {
 }
 
 beforeEach(() => {
+  setLang('ru')
   for (const fn of Object.values(mocks)) fn.mockReset()
   mocks.list.mockResolvedValue([VERSION])
   mocks.error.mockResolvedValue(null)
@@ -108,5 +110,23 @@ describe('VersionsModal', () => {
     await waitFor(() => expect(mocks.save).toHaveBeenCalledWith('p1', 'черновик'))
     expect(await screen.findByText(/Версия сохранена/)).toBeTruthy()
     expect(mocks.list).toHaveBeenCalledTimes(2)
+  })
+
+  /**
+   * 0.123.0: подписи истории версий — из словаря, включая число кадров и вес файла
+   * («3 кадра» → «3 frames»). Подпись версии («перед переписыванием») — данные человека.
+   */
+  it('на английском подписи истории версий переведены', async () => {
+    setLang('en')
+    renderModal()
+    expect(await screen.findByText('Version history')).toBeTruthy()
+    expect(screen.getByText(/Manual · перед переписыванием/)).toBeTruthy()
+    expect(screen.getByText(/3 frames/)).toBeTruthy()
+    expect(screen.getByText(/2 KB/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Save a version' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Restore' })).toBeTruthy()
+    // У «Удалить» доступное имя — из aria-label, чтобы скринридер называл какую версию удаляют.
+    expect(screen.getByRole('button', { name: /^Delete the version / })).toBeTruthy()
+    expect(screen.getByLabelText('Version label')).toBeTruthy()
   })
 })

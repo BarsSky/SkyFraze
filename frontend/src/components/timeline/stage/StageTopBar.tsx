@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import type { TimelineChapter } from '../timelineModel'
 import { BrandMark } from '../../BrandMark'
+import { useT } from '../../../i18n'
 
 interface Props {
   projectTitle?: string
@@ -18,13 +19,14 @@ interface Props {
  * вкладка и страница узнаются как одно.
  */
 export function StageTopBar({ projectTitle, chapters, activeChapter, onChapter, actions }: Props) {
+  const t = useT()
   return (
     <div className="sf-topbar">
       <span className="sf-topbar__title">
         <BrandMark size={22} className="sf-topbar__mark" />
-        <span className="sf-topbar__name">{projectTitle ?? 'Таймлайн'}</span>
+        <span className="sf-topbar__name">{projectTitle ?? t('stage.timeline')}</span>
       </span>
-      <nav className="sf-nav" aria-label="Главы">
+      <nav className="sf-nav" aria-label={t('stage.chaptersAria')}>
         {chapters.map((chapter, ci) => (
           <button
             key={chapter.id}

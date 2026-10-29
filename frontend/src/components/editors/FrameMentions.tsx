@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { groupMentions, type Mention } from '../../collab/mentions'
+import { useT } from '../../i18n'
 
 /**
  * «Упоминания в кадре» — кто из карточек мира назван в этом кадре (фаза 2).
@@ -51,6 +52,7 @@ export function differs(quote: string, name: string): boolean {
 }
 
 export function FrameMentions({ mentions, onShow, hasEntities }: Props) {
+  const t = useT()
   /** Сколько раз нажали на карточку — по этому числу выбирается вхождение. */
   const [cursor, setCursor] = useState<Record<string, number>>({})
   const [expanded, setExpanded] = useState(false)
@@ -63,8 +65,7 @@ export function FrameMentions({ mentions, onShow, hasEntities }: Props) {
     if (!hasEntities) return null
     return (
       <p className="muted frame-mentions__empty" data-frame-mentions-empty>
-        В этом кадре не названо ни одной карточки. Если герой здесь под другим именем — добавьте
-        его в алиасы карточки, и связь появится.
+        {t('fm.empty')}
       </p>
     )
   }
@@ -83,15 +84,15 @@ export function FrameMentions({ mentions, onShow, hasEntities }: Props) {
 
   return (
     <div className="frame-mentions" data-frame-mentions>
-      <span className="frame-mentions__label">Упоминания:</span>
+      <span className="frame-mentions__label">{t('fm.label')}</span>
       <ul className="frame-mentions__list">
         {visible.map((group) => {
           const total = group.mentions.length
           const index = (cursor[group.entityId] ?? 0) % total
           const current = group.mentions[index]
           const title = total > 1
-            ? `Показать в тексте: «${current.quote}» (${index + 1} из ${total} — нажатие ведёт к следующему)`
-            : `Показать в тексте: «${current.quote}»`
+            ? t('fm.showMore', { quote: current.quote, index: index + 1, total })
+            : t('fm.show', { quote: current.quote })
           return (
             <li key={group.entityId}>
               <button
@@ -99,7 +100,11 @@ export function FrameMentions({ mentions, onShow, hasEntities }: Props) {
                 className="frame-mentions__chip"
                 onClick={() => show(group.entityId, group.mentions)}
                 title={title}
-                aria-label={total > 1 ? `${group.entityName}, упоминаний: ${total}` : group.entityName}
+                aria-label={
+                  total > 1
+                    ? t('fm.chipAria', { name: group.entityName, total })
+                    : group.entityName
+                }
                 data-frame-mention={group.entityId}
                 data-frame-mention-count={total}
                 data-frame-mention-index={index}
@@ -124,7 +129,7 @@ export function FrameMentions({ mentions, onShow, hasEntities }: Props) {
               aria-expanded={false}
               onClick={() => setExpanded(true)}
             >
-              ещё {hidden}
+              {t('fm.more', { count: hidden })}
             </button>
           </li>
         )}
@@ -136,7 +141,7 @@ export function FrameMentions({ mentions, onShow, hasEntities }: Props) {
               aria-expanded
               onClick={() => setExpanded(false)}
             >
-              свернуть
+              {t('fm.collapse')}
             </button>
           </li>
         )}

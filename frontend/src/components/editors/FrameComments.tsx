@@ -21,6 +21,8 @@ import {
   mentionQueryAt,
   splitMentions,
 } from '../../lib/mentions'
+import { localeOf, tStatic, useT, type Key } from '../../i18n'
+import { useLang, type Lang } from '../../store/lang'
 
 /**
  * Обсуждение кадра.
@@ -90,6 +92,7 @@ function AnchorQuote({
   text: ReturnType<typeof ensureText> | null
   onShow?: (range: { from: number; to: number }) => void
 }) {
+  const t = useT()
   const status = text ? anchorStatus(text, anchor) : 'ok'
   const range = text ? resolveAnchor(text, anchor) : null
   const canShow = onShow !== undefined && range !== null && range.to > range.from
@@ -102,28 +105,30 @@ function AnchorQuote({
       <span className="fc__quote-mark" aria-hidden="true">
         »
       </span>
-      {status === 'collapsed' && <span className="fc__quote-note"> — фрагмент удалён</span>}
-      {status === 'orphan' && <span className="fc__quote-note"> — фрагмент не найден</span>}
+      {status === 'collapsed' && (
+        <span className="fc__quote-note">{t('fc.fragmentRemoved')}</span>
+      )}
+      {status === 'orphan' && <span className="fc__quote-note">{t('fc.fragmentMissing')}</span>}
       {canShow && (
         <button
           type="button"
           className="fc__quote-show"
           data-frame-anchor-show
-          title="Показать этот фрагмент в тексте кадра"
+          title={t('fc.showFragmentTitle')}
           onClick={() => onShow?.(range)}
         >
-          показать в тексте
+          {t('fc.showFragment')}
         </button>
       )}
     </p>
   )
 }
 
-/** Время комментария: коротко и по-русски — «25.10, 14:32». */
-function commentStamp(iso: string): string {
+/** Время комментария: коротко и на языке интерфейса — «25.10, 14:32». */
+function commentStamp(iso: string, lang: Lang = 'ru'): string {
   const date = new Date(iso)
   if (Number.isNaN(date.getTime())) return ''
-  return date.toLocaleString('ru-RU', {
+  return date.toLocaleString(localeOf(lang), {
     day: '2-digit',
     month: '2-digit',
     hour: '2-digit',
@@ -175,9 +180,9 @@ function CommentBody({ text }: { text: string }) {
  * Читателю кнопки не показываются: реакция — след в проекте, а читатель следов не оставляет
  * (то же правило, что у комментариев).
  */
-const REACTIONS: Array<{ kind: ReactionKind; label: string; hint: string; icon: string }> = [
-  { kind: 'agree', label: 'согласен', hint: 'Замечание принято к работе', icon: '👍' },
-  { kind: 'done', label: 'сделано', hint: 'Правка внесена', icon: '✅' },
+const REACTIONS: Array<{ kind: ReactionKind; labelKey: Key; hintKey: Key; icon: string }> = [
+  { kind: 'agree', labelKey: 'fc.reactionAgree', hintKey: 'fc.reactionAgreeHint', icon: '👍' },
+  { kind: 'done', labelKey: 'fc.reactionDone', hintKey: 'fc.reactionDoneHint', icon: '✅' },
 ]
 
 function ReactionBar({
@@ -191,11 +196,14 @@ function ReactionBar({
   busy: boolean
   onToggle: (kind: ReactionKind, on: boolean) => void
 }) {
+  const t = useT()
   return (
     <div className="fc__reactions" data-frame-reactions>
       {REACTIONS.map((item) => {
         const count = reactions[item.kind]
         const mine = reactions.mine.includes(item.kind)
+        const label = t(item.labelKey)
+        const hint = t(item.hintKey)
         // Счётчик и кнопка — одно: у непрореагировавшего замечания с нулём реакций кнопка
         // всё равно нужна, иначе поставить первую реакцию нечем.
         if (!canEdit && count === 0) return null
@@ -206,14 +214,14 @@ function ReactionBar({
             className={mine ? 'fc__reaction fc__reaction--mine' : 'fc__reaction'}
             data-frame-reaction={`${item.kind}:${count}`}
             aria-pressed={mine}
-            aria-label={`${item.label}: ${count}`}
-            title={canEdit ? item.hint : `${item.hint} (ставит участник проекта)`}
+            aria-label={t('fc.reactionAria', { label, count })}
+            title={canEdit ? hint : t('fc.reactionByMember', { hint })}
             disabled={!canEdit || busy}
             onClick={() => onToggle(item.kind, !mine)}
           >
             <span aria-hidden="true">{item.icon}</span>
             {count > 0 && <span className="fc__reaction-count">{count}</span>}
-            <span className="fc__reaction-label">{item.label}</span>
+            <span className="fc__reaction-label">{label}</span>
           </button>
         )
       })}
@@ -248,6 +256,7 @@ function MentionInput({
   autoFocus?: boolean
 }) {
   const ref = useRef<HTMLTextAreaElement | null>(null)
+  const t = useT()
   const [query, setQuery] = useState<{ start: number; query: string } | null>(null)
   const suggestions = query ? matchMentionCandidates(candidates, query.query) : []
   const show = query !== null && suggestions.length > 0
@@ -293,7 +302,7 @@ function MentionInput({
         autoFocus={autoFocus}
       />
       {show && (
-        <ul className="fc__mention-menu" data-frame-mention-menu aria-label="Участники проекта">
+        <ul className="fc__mention-menu" data-frame-mention-menu aria-label={t('fc.membersAria')}>
           {suggestions.map((candidate) => (
             <li key={candidate.username}>
               <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => pick(candidate.username)}>
@@ -362,6 +371,8 @@ export function FrameComments({
   onShowFragment,
 }: Props) {
   const me = useAuthStore((state) => state.user)
+  const t = useT()
+  const [lang] = useLang()
   const [comments, setComments] = useState<FrameComment[]>([])
   const [draft, setDraft] = useState('')
   /** Корень, на который сейчас отвечают: под ним открывается поле ответа. */
@@ -449,8 +460,8 @@ export function FrameComments({
     } catch (e) {
       setNote(
         e instanceof Error && e.message
-          ? 'Не удалось отправить: ' + e.message
-          : 'Не удалось отправить комментарий.',
+          ? tStatic('fc.errSendReason', { reason: e.message })
+          : tStatic('fc.errSend'),
       )
     } finally {
       setBusy(false)
@@ -479,8 +490,8 @@ export function FrameComments({
       } catch (e) {
         setNote(
           e instanceof Error && e.message
-            ? 'Не удалось ответить: ' + e.message
-            : 'Не удалось отправить ответ.',
+            ? tStatic('fc.errReplyReason', { reason: e.message })
+            : tStatic('fc.errReply'),
         )
       } finally {
         setBusy(false)
@@ -499,7 +510,7 @@ export function FrameComments({
         // остаться на месте. Перечитываем, чтобы порядок и счётчики пришли с сервера.
         await load(eventId)
       } catch {
-        setNote('Не удалось удалить комментарий.')
+        setNote(tStatic('fc.errDelete'))
       } finally {
         setBusy(false)
       }
@@ -519,7 +530,7 @@ export function FrameComments({
         const reactions = await setCommentReaction(projectId, comment.id, kind, on)
         setComments((list) => list.map((item) => (item.id === comment.id ? { ...item, reactions } : item)))
       } catch {
-        setNote('Не удалось поставить реакцию.')
+        setNote(tStatic('fc.errReaction'))
       } finally {
         setBusy(false)
       }
@@ -543,17 +554,17 @@ export function FrameComments({
     >
       <div className="fc__meta">
         <span className="fc__author">
-          {comment.deleted ? <em>Комментарий удалён</em> : comment.authorName || 'Участник'}
+          {comment.deleted ? <em>{t('fc.deleted')}</em> : comment.authorName || t('fc.member')}
         </span>
-        <span className="muted fc__stamp">{commentStamp(comment.createdAt)}</span>
+        <span className="muted fc__stamp">{commentStamp(comment.createdAt, lang)}</span>
         {!comment.deleted && me?.id === comment.userId && (
           <button
             type="button"
             className="fc__remove"
             disabled={busy}
             onClick={() => void remove(comment)}
-            aria-label={`Удалить комментарий ${commentStamp(comment.createdAt)}`}
-            title="Удалить свой комментарий"
+            aria-label={t('fc.removeAria', { stamp: commentStamp(comment.createdAt, lang) })}
+            title={t('fc.removeTitle')}
           >
             ×
           </button>
@@ -575,11 +586,11 @@ export function FrameComments({
   )
 
   return (
-    <section className="fc" data-frame-comments aria-label="Обсуждение кадра">
+    <section className="fc" data-frame-comments aria-label={t('fc.sectionAria')}>
       <div className="fc__head">
-        <strong>Обсуждение</strong>
+        <strong>{t('fc.title')}</strong>
         <span className="muted fc__count" data-frame-comments-count>
-          {total > 0 ? `${total}` : 'пока пусто'}
+          {total > 0 ? `${total}` : t('fc.empty')}
         </span>
       </div>
 
@@ -598,8 +609,8 @@ export function FrameComments({
                   {replyTo === root.id ? (
                     <div className="fc__reply-form" data-frame-reply-form={root.id}>
                       <MentionInput
-                        label="Ответ на замечание"
-                        placeholder="Ответ на замечание… (ник — через @)"
+                        label={t('fc.replyLabel')}
+                        placeholder={t('fc.replyPlaceholder')}
                         rows={2}
                         value={replyDraft}
                         onChange={setReplyDraft}
@@ -613,7 +624,7 @@ export function FrameComments({
                           disabled={busy || replyDraft.trim() === ''}
                           onClick={() => void sendReply(root)}
                         >
-                          {busy ? 'Отправляю…' : 'Ответить'}
+                          {busy ? t('fc.sending') : t('fc.reply')}
                         </button>
                         <button
                           type="button"
@@ -623,7 +634,7 @@ export function FrameComments({
                             setReplyDraft('')
                           }}
                         >
-                          Отмена
+                          {t('fc.cancel')}
                         </button>
                       </div>
                     </div>
@@ -638,7 +649,7 @@ export function FrameComments({
                       }}
                       data-frame-reply-open={root.id}
                     >
-                      Ответить
+                      {t('fc.reply')}
                     </button>
                   )}
                 </>
@@ -656,13 +667,13 @@ export function FrameComments({
               «к кадру» и «к абзацу» это разные замечания, и путать их нельзя. */}
           {pendingAnchor && (
             <div className="fc__pending" data-frame-anchor-pending>
-              <span className="fc__pending-label">замечание к фрагменту:</span>
+              <span className="fc__pending-label">{t('fc.pendingLabel')}</span>
               <span className="fc__pending-quote">«{pendingAnchor.quote}»</span>
               <button
                 type="button"
                 className="fc__remove"
-                title="Убрать выделение: замечание будет к кадру целиком"
-                aria-label="Убрать выделенный фрагмент"
+                title={t('fc.pendingClearTitle')}
+                aria-label={t('fc.pendingClearAria')}
                 onClick={() => onAnchorClear?.()}
                 data-frame-anchor-clear
               >
@@ -672,9 +683,9 @@ export function FrameComments({
           )}
           <div className="fc__form">
             <MentionInput
-              label="Новый комментарий"
+              label={t('fc.newComment')}
               placeholder={
-                pendingAnchor ? 'Замечание к фрагменту… (ник — через @)' : 'Замечание к кадру… (ник — через @)'
+                pendingAnchor ? t('fc.placeholderAnchor') : t('fc.placeholderFrame')
               }
               rows={2}
               value={draft}
@@ -683,12 +694,12 @@ export function FrameComments({
               disabled={busy}
             />
             <button type="button" onClick={() => void send()} disabled={busy || draft.trim() === ''}>
-              {busy ? 'Отправляю…' : 'Написать'}
+              {busy ? t('fc.sending') : t('fc.send')}
             </button>
           </div>
         </>
       ) : (
-        <p className="muted fc__readonly">Читать обсуждение можно, писать — нет: у вас доступ на просмотр.</p>
+        <p className="muted fc__readonly">{t('fc.readonly')}</p>
       )}
 
       {note !== null && (

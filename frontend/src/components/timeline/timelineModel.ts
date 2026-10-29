@@ -12,6 +12,8 @@ import { buildEventTree, type EventLike } from '../../collab/eventTree'
  */
 
 import { maskDocxMarkers } from '../../lib/docxMarkers'
+import { translate } from '../../i18n'
+import type { Lang } from '../../store/lang'
 
 export interface StageAsset {
   id: string
@@ -194,8 +196,16 @@ function frameBackgroundOf(item: StageEvent, accent: string, parent: FrameBackgr
 /**
  * Собирает модель из плоского списка событий (порядок = порядок массива).
  * Дерево нормализуется: сироты и участники циклов становятся главами.
+ *
+ * Язык — параметром (0.123.0), по умолчанию русский: подпись кадра («Глава», «Иллюстрация»)
+ * собирается здесь, а не в разметке, и без явного языка английский интерфейс оставлял бы её
+ * русской. Прежние вызовы и тесты не тронуты — аргумент необязательный.
  */
-export function buildTimelineModel(items: StageEvent[], accents: string[]): TimelineModel {
+export function buildTimelineModel(
+  items: StageEvent[],
+  accents: string[],
+  lang: Lang = 'ru',
+): TimelineModel {
   const palette = accents.length > 0 ? accents : CHAPTER_ACCENTS_DARK
   const roots = buildEventTree(items, 4)
   const chapters: TimelineChapter[] = []
@@ -226,7 +236,12 @@ export function buildTimelineModel(items: StageEvent[], accents: string[]): Time
         chapterNumber: chapterNumber(chapterIndex),
         isChapter: depth === 0,
         kind: 'event',
-        eyebrow: depth === 0 ? 'Глава' : depth === 1 ? 'Подсобытие' : 'Под-шаг',
+        eyebrow:
+          depth === 0
+            ? translate(lang, 'stage.eyebrowChapter')
+            : depth === 1
+              ? translate(lang, 'stage.eyebrowSub')
+              : translate(lang, 'stage.eyebrowSubStep'),
         title: node.item.title,
         body: node.item.body,
         accent,
@@ -255,7 +270,7 @@ export function buildTimelineModel(items: StageEvent[], accents: string[]): Time
           chapterNumber: chapterNumber(chapterIndex),
           isChapter: false,
           kind: 'image',
-          eyebrow: 'Иллюстрация',
+          eyebrow: translate(lang, 'stage.eyebrowImage'),
           title: node.item.title,
           body: '',
           accent,
@@ -435,7 +450,10 @@ export function eventPosition(frames: TimelineFrame[], frame: TimelineFrame): { 
 }
 
 /** Короткая подпись кадра для кнопок «назад / дальше» и подсказок. */
-export function frameLabel(frame: TimelineFrame): string {
+export function frameLabel(frame: TimelineFrame, lang: Lang = 'ru'): string {
   if (frame.kind !== 'image') return frame.number
-  return `фото ${(frame.imageIndex ?? 0) + 1}/${frame.imageCount ?? 1}`
+  return translate(lang, 'stage.photo', {
+    index: (frame.imageIndex ?? 0) + 1,
+    total: frame.imageCount ?? 1,
+  })
 }
