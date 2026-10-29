@@ -160,7 +160,7 @@ then people and access.
 - **Interface language** (0.115.0) — Russian and English: an **EN / RU** switch in the header, and
   on a phone a "More" («Ещё») menu item named after the language itself; the choice is stored in the
   browser and `<html lang>` follows it. The "shell" is translated so far: navigation and menu, sign-in,
-  registration and requests, the About page, the project list and the trash; the rest stays Russian — phases and volume measurement
+  registration and requests, the About page, the project list and the trash, the project page tabs; the rest stays Russian — phases and volume measurement
   in `docs/ui-localization.md`
 - **"About" («О проекте»)** (`/about`) — a page instead of a site footer: what the platform is, the
   license and copyright notices, source and releases, documentation in Russian and English, privacy

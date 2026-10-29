@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach } from 'vitest'
 import { TabBar } from './ProjectTimelinePage'
+import { setLang } from '../store/lang'
 
 /**
  * Строка вкладок проекта (0.94.1).
@@ -12,7 +13,11 @@ import { TabBar } from './ProjectTimelinePage'
  * страницу настроек, а вкладки режима по-прежнему переключаются кнопками.
  */
 
-afterEach(() => cleanup())
+afterEach(() => {
+  cleanup()
+  // Язык — модульное состояние: без сброса английский «протёк» бы в соседние тесты.
+  setLang('ru')
+})
 
 const renderTabs = (view: 'project' | 'editors' | 'relations' | 'versions' = 'project') => {
   const onChange = vi.fn()
@@ -53,5 +58,28 @@ describe('TabBar', () => {
     expect(editors.getAttribute('aria-selected')).toBe('true')
     fireEvent.click(screen.getByRole('tab', { name: 'Связи' }))
     expect(onChange).toHaveBeenCalledWith('relations')
+  })
+
+  /**
+   * Подписи вкладок — из словаря (0.117.0), а не константы модуля.
+   *
+   * Что закрепляем: после переключения языка вкладки меняются БЕЗ перезагрузки. До 0.117.0
+   * `PROJECT_TABS` был массивом строк, и английский интерфейс оставлял «Проект · Редакторы ·
+   * Связи · Версии» русскими — то есть весь переход в проект оставался непереведённым.
+   */
+  it('на английском вкладки переведены, включая «Настройки»', () => {
+    setLang('en')
+    renderTabs()
+    const tabs = screen.getAllByRole('tab')
+    expect(tabs.map((tab) => tab.textContent)).toEqual([
+      'Project',
+      'Editors',
+      'Relations',
+      'Versions',
+      'Settings',
+    ])
+    expect(screen.getByRole('tablist').getAttribute('aria-label')).toBe('Project view')
+    const settings = screen.getByRole('tab', { name: 'Settings' }) as HTMLAnchorElement
+    expect(settings.getAttribute('href')).toBe('/projects/p1/settings')
   })
 })

@@ -247,6 +247,38 @@ export const ru = {
   'trash.purge': 'Удалить навсегда',
   'trash.purgeTitle': 'Удалить проект окончательно: файлы и история исчезнут',
 
+  // ── страница проекта: вкладки, баннеры, пустое состояние (фаза 2.2) ──────────────────────
+  'project.tabs.project': 'Проект',
+  'project.tabs.editors': 'Редакторы',
+  'project.tabs.relations': 'Связи',
+  'project.tabs.versions': 'Версии',
+  'project.tabs.settings': 'Настройки',
+  'project.tabs.aria': 'Режим проекта',
+  'project.tabs.settingsHint':
+    'Участники, оформление DOCX, шаблон проекта и прочие настройки проекта',
+  'project.titleFallback': 'Таймлайн',
+  'project.errorWhat': 'Проект',
+  'project.backToProjects': '← К проектам',
+  'project.feed': 'Лента',
+  'project.readOnlyCoauthor': 'Проект открыт вам как соавтору: только чтение, правок здесь нет.',
+  'project.readOnlyViewer': 'Вы наблюдатель в этом проекте: только чтение, правок здесь нет.',
+  'project.emptyTitle': 'Таймлайн пока пуст',
+  'project.emptyAuthor': 'Автор ещё не добавил ни одной главы.',
+  'project.emptyFirstLine': 'Создайте первую главу: дальше появится сценический таймлайн — прокрутка ведёт по кадрам,',
+  'project.emptySecondLine': 'а внутри главы по одному раскрываются её под-события.',
+  'project.emptyCreate': '+ Добавить первую главу',
+  'project.emptyFilesHint':
+    'Тексты, вложения и фон кадров настраиваются в блоке «Редакторы» под таймлайном.',
+  'project.errAssetDelete': 'Не удалось удалить файл.',
+  'project.errLoad':
+    'Не удалось загрузить содержимое проекта: сервер не ответил или соединение прервалось.',
+  'project.newChapter': 'Новая глава',
+  'project.sync.repaired': 'структура исправлена на сервере ({count})',
+  'project.sync.updated': 'серверная копия обновлена',
+  'project.sync.readOnly': 'только чтение: ваша роль не позволяет менять таймлайн',
+  'project.sync.rejected': 'сервер отклонил структуру дерева (цикл/глубина)',
+  'project.sync.behind': 'сервер обгоняет по ревизии: проекция дерева не применилась, повторю позже',
+  'project.sync.failed': 'не удалось синхронизировать дерево с сервером',
   // ── форматирование чисел (lib/format) ───────────────────────────────────────────────────
   'weight.of': 'файлы: {used} из {limit}',
   'weight.used': 'файлы: {used}',

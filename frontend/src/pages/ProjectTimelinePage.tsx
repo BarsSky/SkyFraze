@@ -24,6 +24,7 @@ import {
 import { useAssetObjectUrls } from '../api/assetObject'
 import type { Project } from '../api/projects'
 import { getProject } from '../api/projects'
+import { useT, type Key } from '../i18n'
 
 /**
  * Режим работы над проектом (0.83.0).
@@ -35,11 +36,11 @@ import { getProject } from '../api/projects'
 type ProjectView = 'project' | 'editors' | 'relations' | 'versions'
 
 /** Подписи вкладок в порядке показа: сначала «как выглядит», потом «что править». */
-const PROJECT_TABS: Array<{ id: ProjectView; title: string }> = [
-  { id: 'project', title: 'Проект' },
-  { id: 'editors', title: 'Редакторы' },
-  { id: 'relations', title: 'Связи' },
-  { id: 'versions', title: 'Версии' },
+const PROJECT_TABS: Array<{ id: ProjectView; labelKey: Key }> = [
+  { id: 'project', labelKey: 'project.tabs.project' },
+  { id: 'editors', labelKey: 'project.tabs.editors' },
+  { id: 'relations', labelKey: 'project.tabs.relations' },
+  { id: 'versions', labelKey: 'project.tabs.versions' },
 ]
 
 /**
@@ -49,6 +50,7 @@ const PROJECT_TABS: Array<{ id: ProjectView; title: string }> = [
  * проецирует дерево на сервер и, при необходимости, просит стадию перейти к кадру.
  */
 export function ProjectTimelinePage() {
+  const t = useT()
   const params = useParams()
   const projectId = params.id ?? ''
   const [project, setProject] = useState<Project | null>(null)
@@ -185,7 +187,7 @@ export function ProjectTimelinePage() {
         await refreshAssets()
         assetUsage(projectId).then(setAssetUsage).catch(() => undefined)
       } catch (e) {
-        setAssetNote((await serverErrorMessage(e)) ?? 'Не удалось удалить файл.')
+      setAssetNote((await serverErrorMessage(e)) ?? t('project.errAssetDelete'))
       } finally {
         setAssetBusyId(null)
       }
@@ -255,15 +257,15 @@ export function ProjectTimelinePage() {
     if (!collab || collab.connected) return
     const res = await collab.syncTree()
     if (res.ok) {
-      setSyncNote(res.repaired ? `структура исправлена на сервере (${res.repaired})` : 'серверная копия обновлена')
+      setSyncNote(res.repaired ? t('project.sync.repaired', { count: res.repaired }) : t('project.sync.updated'))
     } else if (res.reason === 'forbidden') {
-      setSyncNote('только чтение: ваша роль не позволяет менять таймлайн')
+        setSyncNote(t('project.sync.readOnly'))
     } else if (res.reason === 'rejected') {
-      setSyncNote('сервер отклонил структуру дерева (цикл/глубина)')
+        setSyncNote(t('project.sync.rejected'))
     } else if (res.reason === 'conflict') {
-      setSyncNote('сервер обгоняет по ревизии: проекция дерева не применилась, повторю позже')
+        setSyncNote(t('project.sync.behind'))
     } else {
-      setSyncNote('не удалось синхронизировать дерево с сервером')
+        setSyncNote(t('project.sync.failed'))
     }
   }, [collab])
 
@@ -309,7 +311,7 @@ export function ProjectTimelinePage() {
 
   const createFirstChapter = useCallback(async () => {
     if (!events) return
-    yAddEvent(events, 'Новая глава', '')
+    yAddEvent(events, t('project.newChapter'), '')
     await pushTree()
   }, [events, pushTree])
 
@@ -492,12 +494,16 @@ export function ProjectTimelinePage() {
         <div style={{ padding: '16px 24px 0' }}>
           <ErrorBanner
             error={error}
-            what="Проект"
+            what={t('project.errorWhat')}
             onRetry={() => setAttempt((n) => n + 1)}
             actions={
               <>
-                <Link className="banner__link" to="/projects">← К проектам</Link>
-                <Link className="banner__link" to="/feed">Лента</Link>
+                <Link className="banner__link" to="/projects">
+                  {t('project.backToProjects')}
+                </Link>
+                <Link className="banner__link" to="/feed">
+                  {t('project.feed')}
+                </Link>
               </>
             }
           />
@@ -506,12 +512,8 @@ export function ProjectTimelinePage() {
       {phase === 'failed' && (
         <div style={{ padding: '16px 24px 0' }}>
           <ErrorBanner
-            error={
-              new Error(
-                'Не удалось загрузить содержимое проекта: сервер не ответил или соединение прервалось.',
-              )
-            }
-            what="Проект"
+            error={new Error(t('project.errLoad'))}
+            what={t('project.errorWhat')}
             onRetry={retryContent}
           />
         </div>
@@ -520,15 +522,15 @@ export function ProjectTimelinePage() {
       {canEdit === false && !loading && (
         <div className="sf-readonly" data-readonly-banner>
           {project?.coauthor_access
-            ? 'Проект открыт вам как соавтору: только чтение, правок здесь нет.'
-            : 'Вы наблюдатель в этом проекте: только чтение, правок здесь нет.'}
+          ? t('project.readOnlyCoauthor')
+          : t('project.readOnlyViewer')}
         </div>
       )}
       {!loading && eventsCount === 0 && showEditors && <EmptyState onCreate={createFirstChapter} />}
       {!loading && eventsCount === 0 && !showEditors && (
         <div className="sf-empty">
-          <h3 className="sf-empty__title">Таймлайн пока пуст</h3>
-          <p className="muted sf-empty__text">Автор ещё не добавил ни одной главы.</p>
+        <h3 className="sf-empty__title">{t('project.emptyTitle')}</h3>
+        <p className="muted sf-empty__text">{t('project.emptyAuthor')}</p>
         </div>
       )}
 
@@ -552,7 +554,7 @@ export function ProjectTimelinePage() {
           <TimelineStage
             events={events}
             assetsById={assetsById}
-            projectTitle={project?.title ?? 'Таймлайн'}
+            projectTitle={project?.title ?? t('project.titleFallback')}
             /* Кнопок режимов в шапке стадии больше нет: вкладки живут своей строкой сверху,
                а помощник — плавающий чат, доступный в любом режиме. */
             actions={undefined}
@@ -655,8 +657,9 @@ export function TabBar({
   projectId: string
   onChange: (next: ProjectView) => void
 }) {
+  const t = useT()
   return (
-    <nav className="sf-tabs" role="tablist" aria-label="Режим проекта" data-project-tabs>
+    <nav className="sf-tabs" role="tablist" aria-label={t('project.tabs.aria')} data-project-tabs>
       {PROJECT_TABS.map((tab) => (
         <button
           key={tab.id}
@@ -671,7 +674,7 @@ export function TabBar({
           data-versions-open={tab.id === 'versions' ? true : undefined}
           data-relations-open={tab.id === 'relations' ? true : undefined}
         >
-          {tab.title}
+          {t(tab.labelKey)}
         </button>
       ))}
       {/* «Настройки» — ССЫЛКА, а не вкладка: это отдельная страница (`/projects/{id}/settings`)
@@ -685,9 +688,9 @@ export function TabBar({
         aria-selected={false}
         className="sf-tabs__tab sf-tabs__tab--link"
         data-project-tab="settings"
-        title="Участники, оформление DOCX, шаблон проекта и прочие настройки проекта"
+        title={t('project.tabs.settingsHint')}
       >
-        Настройки
+        {t('project.tabs.settings')}
       </Link>
     </nav>
   )
@@ -713,17 +716,18 @@ function sameEventTitles(
 
 /** Empty-state: единственное действие — создать первую главу. */
 function EmptyState({ onCreate }: { onCreate: () => void }) {
+  const t = useT()
   return (
     <div className="sf-empty">
       <div className="sf-empty__mark">+</div>
-      <h3 className="sf-empty__title">Таймлайн пока пуст</h3>
+      <h3 className="sf-empty__title">{t('project.emptyTitle')}</h3>
       <p className="muted sf-empty__text">
-        Создайте первую главу: дальше появится сценический таймлайн — прокрутка ведёт по кадрам,
-        а внутри главы по одному раскрываются её под-события.
+        {t('project.emptyFirstLine')}
+        {t('project.emptySecondLine')}
       </p>
-      <button onClick={onCreate}>+ Добавить первую главу</button>
+      <button onClick={onCreate}>{t('project.emptyCreate')}</button>
       <p className="muted sf-empty__hint">
-        Тексты, вложения и фон кадров настраиваются в блоке «Редакторы» под таймлайном
+        {t('project.emptyFilesHint')}
       </p>
     </div>
   )
