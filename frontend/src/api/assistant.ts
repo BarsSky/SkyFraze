@@ -296,6 +296,8 @@ export interface AISettings {
   generation: string
   /** Стиль иллюстраций словами (дописывается в каждый промпт генератора). */
   imageStyle: string
+  /** Чего не должно быть на картинке (пусто — негативный промпт стенда). */
+  imageNegative: string
   capabilities: AICapabilities
   /** Какие режимы можно выбрать и почему нельзя остальные. */
   generations: AIGenerationOption[]
@@ -315,7 +317,14 @@ export async function getAISettings(projectId: string): Promise<AISettings> {
 /** Сохранить роль, указания и режим генерации (владелец проекта). */
 export async function saveAISettings(
   projectId: string,
-  patch: { role: string; instructions: string; enabled: boolean; generation: string; imageStyle: string },
+  patch: {
+    role: string
+    instructions: string
+    enabled: boolean
+    generation: string
+    imageStyle: string
+    imageNegative: string
+  },
 ): Promise<AISettings> {
   const raw = await http
     .put(`projects/${encodeURIComponent(projectId)}/ai/settings`, {
@@ -325,6 +334,7 @@ export async function saveAISettings(
         enabled: patch.enabled,
         generation: patch.generation,
         image_style: patch.imageStyle,
+        image_negative: patch.imageNegative,
       },
     })
     .json<unknown>()
@@ -357,6 +367,7 @@ export function parseAISettings(raw: unknown): AISettings {
       : [],
     generation: asText(record?.generation) || 'auto',
     imageStyle: asText(record?.image_style),
+    imageNegative: asText(record?.image_negative),
     capabilities: {
       text: capabilities?.text !== false,
       images: capabilities?.images === true,

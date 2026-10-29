@@ -148,6 +148,7 @@ const AGENT: AISettings = {
   ],
   generation: 'auto',
   imageStyle: '',
+  imageNegative: '',
   capabilities: {
     text: true,
     images: false,
@@ -1073,6 +1074,7 @@ describe('AssistantPanel', () => {
         enabled: true,
         generation: 'auto',
         imageStyle: '',
+        imageNegative: '',
       }),
     )
     expect(await screen.findByText(/роль «Летописец»/)).toBeTruthy()
@@ -1101,6 +1103,14 @@ describe('AssistantPanel', () => {
     fireEvent.change(screen.getByLabelText('Стиль иллюстраций'), {
       target: { value: 'акварель, тёплый свет' },
     })
+    // Негативный промпт — тоже настройка проекта (0.105.0), и пустое поле объясняется словами:
+    // «как на стенде», а не «без ограничений».
+    expect(document.querySelector('[data-assistant-negative-hint]')?.textContent).toMatch(
+      /как на стенде/,
+    )
+    fireEvent.change(screen.getByLabelText('Чего не должно быть на картинке'), {
+      target: { value: 'люди, современная одежда' },
+    })
     fireEvent.click(screen.getByRole('button', { name: 'Сохранить роль' }))
     await waitFor(() =>
       expect(mocks.saveSettings).toHaveBeenCalledWith('p1', {
@@ -1109,8 +1119,28 @@ describe('AssistantPanel', () => {
         enabled: true,
         generation: 'auto',
         imageStyle: 'акварель, тёплый свет',
+        imageNegative: 'люди, современная одежда',
       }),
     )
+  })
+
+  // Загруженный негативный промпт виден в поле, а не «сохранился, но показывается пустым».
+  it('показывает сохранённый негативный промпт проекта', async () => {
+    mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
+    mocks.settings.mockResolvedValue({
+      ...AGENT,
+      generation: 'both',
+      imageStyle: 'акварель',
+      imageNegative: 'без текста и водяных знаков',
+      capabilities: { ...AGENT.capabilities, images: true, imageStyle: 'акварель' },
+    })
+    renderPanel()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Настройка помощника' }))
+    const negative = (await screen.findByLabelText(
+      'Чего не должно быть на картинке',
+    )) as HTMLInputElement
+    expect(negative.value).toBe('без текста и водяных знаков')
   })
 
   it('редактору роль агента показывают, но менять не дают', async () => {

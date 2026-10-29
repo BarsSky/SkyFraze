@@ -279,9 +279,15 @@ type ProjectAISettings struct {
 	// доступен, а владелец не хочет, чтобы агент тратил на картинки время и видеокарту.
 	Generation string `db:"generation" json:"generation"`
 	// ImageStyle — стиль иллюстраций словами; дописывается в каждый промпт.
-	ImageStyle string     `db:"image_style" json:"image_style"`
-	UpdatedAt  time.Time  `db:"updated_at" json:"updated_at"`
-	UpdatedBy  *uuid.UUID `db:"updated_by" json:"updated_by,omitempty"`
+	ImageStyle string `db:"image_style" json:"image_style"`
+	// ImageNegative — чего не должно быть на картинке (пусто — негативный промпт стенда).
+	//
+	// Почему это настройка ПРОЕКТА, а не стенда: «текст и водяные знаки» — общее правило, но
+	// «современная одежда», «люди вообще», «оружие» — часть замысла книги. Админ стенда о нём
+	// не знает, а автор меняет его по ходу работы.
+	ImageNegative string     `db:"image_negative" json:"image_negative"`
+	UpdatedAt     time.Time  `db:"updated_at" json:"updated_at"`
+	UpdatedBy     *uuid.UUID `db:"updated_by" json:"updated_by,omitempty"`
 }
 
 // AISettingsForProject читает настройки агента. Нет строки — умолчания проекта:
@@ -289,7 +295,7 @@ type ProjectAISettings struct {
 // режим генерации — auto (оба, если стенд умеет, иначе текст).
 func (s *Store) AISettingsForProject(ctx context.Context, projectID uuid.UUID) (*ProjectAISettings, error) {
 	settings, err := qOne[ProjectAISettings](ctx, s.Pool,
-		`SELECT project_id, role, instructions, enabled, generation, image_style,
+		`SELECT project_id, role, instructions, enabled, generation, image_style, image_negative,
 		        updated_at, updated_by
 		   FROM project_ai_settings WHERE project_id=$1`, projectID)
 	if errors.Is(err, ErrNotFound) {
@@ -331,21 +337,22 @@ func ValidGeneration(mode string) bool {
 // SaveAISettings записывает роль, указания и режим генерации агента.
 func (s *Store) SaveAISettings(
 	ctx context.Context, projectID, by uuid.UUID, role, instructions string, enabled bool,
-	generation, imageStyle string,
+	generation, imageStyle, imageNegative string,
 ) (*ProjectAISettings, error) {
 	return qOne[ProjectAISettings](ctx, s.Pool,
 		`INSERT INTO project_ai_settings
-		   (project_id, role, instructions, enabled, generation, image_style, updated_by)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)
+		   (project_id, role, instructions, enabled, generation, image_style, image_negative, updated_by)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		 ON CONFLICT (project_id) DO UPDATE
 		    SET role = EXCLUDED.role,
 		        instructions = EXCLUDED.instructions,
 		        enabled = EXCLUDED.enabled,
 		        generation = EXCLUDED.generation,
 		        image_style = EXCLUDED.image_style,
+		        image_negative = EXCLUDED.image_negative,
 		        updated_at = now(),
 		        updated_by = EXCLUDED.updated_by
-		 RETURNING project_id, role, instructions, enabled, generation, image_style,
+		 RETURNING project_id, role, instructions, enabled, generation, image_style, image_negative,
 		           updated_at, updated_by`,
-		projectID, role, instructions, enabled, generation, imageStyle, by)
+		projectID, role, instructions, enabled, generation, imageStyle, imageNegative, by)
 }

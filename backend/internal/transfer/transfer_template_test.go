@@ -20,8 +20,8 @@ import (
 
 	"github.com/skyfraze/backend/internal/entities"
 	"github.com/skyfraze/backend/internal/platform/testdb"
-	"github.com/skyfraze/backend/internal/projecttemplate"
 	"github.com/skyfraze/backend/internal/projects"
+	"github.com/skyfraze/backend/internal/projecttemplate"
 	"github.com/skyfraze/backend/internal/storage"
 	"github.com/skyfraze/backend/internal/store"
 	"github.com/skyfraze/backend/internal/transfer"
@@ -94,7 +94,7 @@ func TestArchiveCarriesProjectTemplate(t *testing.T) {
 		t.Fatalf("тип: %v", err)
 	}
 	if _, err := e.st.SaveAISettings(ctx, project.ID, e.user,
-		"Летописец", "Пиши сдержанно.", true, store.GenerationText, "карандаш"); err != nil {
+		"Летописец", "Пиши сдержанно.", true, store.GenerationText, "карандаш", "без текста"); err != nil {
 		t.Fatalf("настройки агента: %v", err)
 	}
 

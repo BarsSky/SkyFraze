@@ -159,9 +159,18 @@ func (s *Service) toolGenerateImage(
 	// видит ни проект, ни главу.
 	prompt = fmt.Sprintf("%s. Иллюстрация к кадру «%s».", prompt, event.Title)
 
+	// Негативный промпт: сначала проектный, потом стендовый. Настройка автора говорит о замысле
+	// (в этой книге нет людей / нет современной одежды), стендовая — о технике (водяные знаки,
+	// текст). Одно другого не заменяет, поэтому проектная побеждает только когда задана: пустое
+	// поле означает «как на стенде», а не «без ограничений».
+	negative := strings.TrimSpace(caps.ImageNegative)
+	if negative == "" {
+		negative = s.models.DefaultImageNegative()
+	}
+
 	result, err := generator.Generate(ctx, ai.ImageRequest{
 		Prompt:   prompt,
-		Negative: s.models.DefaultImageNegative(),
+		Negative: negative,
 		Steps:    s.models.DefaultImageSteps(),
 	})
 	if err != nil {

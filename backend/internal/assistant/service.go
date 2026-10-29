@@ -67,6 +67,11 @@ const maxInstructionsChars = 4000
 // генератора, а промпт уходит в модель картинок целиком.
 const maxImageStyleChars = 400
 
+// maxImageNegativeChars — предел на «чего не должно быть на картинке». Тот же порядок, что у
+// стиля: оба уходят в один промпт генератора, и простыня на десять тысяч знаков не помещается
+// в контекст модели картинок.
+const maxImageNegativeChars = 400
+
 // Guard — проверка доступа к проекту (реализует projects.Service).
 //
 // Две проверки, а не одна: чтение беседы доступно тому, кто проект хотя бы видит, а
@@ -290,6 +295,8 @@ type Settings struct {
 	Generation string `json:"generation"`
 	// ImageStyle — стиль иллюстраций словами.
 	ImageStyle string `json:"image_style"`
+	// ImageNegative — чего не должно быть на картинке (пусто — промпт стенда).
+	ImageNegative string `json:"image_negative"`
 	// Capabilities — что агент умеет СЕЙЧАС (стенд + разрешение владельца + реализация).
 	Capabilities Capabilities `json:"capabilities"`
 	// Generations — какие режимы можно выбрать и почему нельзя остальные.
@@ -327,6 +334,7 @@ func (s *Service) capabilities(ctx context.Context, settings *store.ProjectAISet
 	}
 	if settings != nil {
 		cap.ImageStyle = strings.TrimSpace(settings.ImageStyle)
+		cap.ImageNegative = strings.TrimSpace(settings.ImageNegative)
 	}
 	return cap
 }
@@ -410,6 +418,7 @@ func (s *Service) ProjectSettings(ctx context.Context, userID, projectID uuid.UU
 		Roles:          ai.AgentRolePresets,
 		Generation:     caps.Generation,
 		ImageStyle:     stored.ImageStyle,
+		ImageNegative:  stored.ImageNegative,
 		Capabilities:   caps,
 		Generations:    s.generationOptions(ctx),
 		ImageAvailable: imageAvailable,
@@ -429,7 +438,7 @@ func (s *Service) ProjectSettings(ctx context.Context, userID, projectID uuid.UU
 // при первом сохранении настроек (и восстанавливается, если её убрали).
 func (s *Service) SaveProjectSettings(
 	ctx context.Context, userID, projectID uuid.UUID, role, instructions string, enabled bool,
-	generation, imageStyle string,
+	generation, imageStyle, imageNegative string,
 ) (*Settings, error) {
 	if err := s.RequireProject(ctx, userID, projectID, true); err != nil {
 		return nil, err
@@ -483,8 +492,12 @@ func (s *Service) SaveProjectSettings(
 	if len([]rune(imageStyle)) > maxImageStyleChars {
 		return nil, fmt.Errorf("стиль иллюстраций длиннее %d символов — сократите", maxImageStyleChars)
 	}
+	imageNegative = strings.TrimSpace(imageNegative)
+	if len([]rune(imageNegative)) > maxImageNegativeChars {
+		return nil, fmt.Errorf("негативный промпт длиннее %d символов — сократите", maxImageNegativeChars)
+	}
 	if _, err := s.store.SaveAISettings(ctx, projectID, userID, role, instructions, enabled,
-		generation, imageStyle); err != nil {
+		generation, imageStyle, imageNegative); err != nil {
 		return nil, err
 	}
 	// Агент — соавтор проекта: его правки должны быть видны в списке участников.

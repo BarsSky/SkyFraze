@@ -87,11 +87,12 @@ type CardRecord struct {
 
 // AISettings — роль, указания и режим генерации помощника.
 type AISettings struct {
-	Role         string `json:"role"`
-	Instructions string `json:"instructions"`
-	Enabled      bool   `json:"enabled"`
-	Generation   string `json:"generation"`
-	ImageStyle   string `json:"image_style"`
+	Role          string `json:"role"`
+	Instructions  string `json:"instructions"`
+	Enabled       bool   `json:"enabled"`
+	Generation    string `json:"generation"`
+	ImageStyle    string `json:"image_style"`
+	ImageNegative string `json:"image_negative,omitempty"`
 }
 
 // Skipped — что не перенеслось и почему: отчёт без причин бесполезен.
@@ -177,6 +178,7 @@ func (s *Service) Build(ctx context.Context, projectID uuid.UUID, withCards bool
 	out.AI = &AISettings{
 		Role: settings.Role, Instructions: settings.Instructions, Enabled: settings.Enabled,
 		Generation: settings.Generation, ImageStyle: settings.ImageStyle,
+		ImageNegative: settings.ImageNegative,
 	}
 	return out, nil
 }
@@ -392,12 +394,13 @@ func (s *Service) applyAI(ctx context.Context, by, projectID uuid.UUID, ai *AISe
 	}
 	same := current.Role == ai.Role && current.Instructions == ai.Instructions &&
 		current.Enabled == ai.Enabled && current.Generation == generation &&
-		current.ImageStyle == ai.ImageStyle
+		current.ImageStyle == ai.ImageStyle && current.ImageNegative == ai.ImageNegative
 	if same {
 		return false, nil
 	}
 	if _, err := s.store.SaveAISettings(
 		ctx, projectID, by, ai.Role, ai.Instructions, ai.Enabled, generation, ai.ImageStyle,
+		ai.ImageNegative,
 	); err != nil {
 		return false, err
 	}

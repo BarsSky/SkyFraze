@@ -91,4 +91,3 @@ func (s *Store) CountMentionImagesByAsset(ctx context.Context, assetID uuid.UUID
 		`SELECT count(*) FROM mention_images WHERE asset_id = $1`, assetID).Scan(&count)
 	return count, err
 }
-

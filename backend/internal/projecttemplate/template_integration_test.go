@@ -23,21 +23,21 @@ import (
 	"github.com/skyfraze/backend/internal/auth"
 	"github.com/skyfraze/backend/internal/entities"
 	"github.com/skyfraze/backend/internal/platform/testdb"
-	"github.com/skyfraze/backend/internal/projecttemplate"
 	"github.com/skyfraze/backend/internal/projects"
+	"github.com/skyfraze/backend/internal/projecttemplate"
 	"github.com/skyfraze/backend/internal/store"
 )
 
 type templateEnv struct {
-	st      *store.Store
-	svc     *projecttemplate.Service
-	proj    *projects.Service
-	ent     *entities.Service
-	owner   uuid.UUID
-	editor  uuid.UUID
-	viewer  uuid.UUID
-	source  uuid.UUID
-	target  uuid.UUID
+	st     *store.Store
+	svc    *projecttemplate.Service
+	proj   *projects.Service
+	ent    *entities.Service
+	owner  uuid.UUID
+	editor uuid.UUID
+	viewer uuid.UUID
+	source uuid.UUID
+	target uuid.UUID
 }
 
 func setupTemplates(t *testing.T) *templateEnv {
@@ -108,7 +108,8 @@ func seedSource(t *testing.T, e *templateEnv) {
 		}
 	}
 	if _, err := e.st.SaveAISettings(ctx, e.source, e.owner,
-		"Летописец", "Пиши сдержанно.", true, store.GenerationText, "карандаш"); err != nil {
+		"Летописец", "Пиши сдержанно.", true, store.GenerationText, "карандаш",
+		"без современных зданий"); err != nil {
 		t.Fatalf("настройки агента: %v", err)
 	}
 }
@@ -304,7 +305,7 @@ func TestTemplateWithoutAIDoesNotResetSettings(t *testing.T) {
 	e := setupTemplates(t)
 	ctx := context.Background()
 	if _, err := e.st.SaveAISettings(ctx, e.target, e.owner,
-		"Соавтор", "Свои указания.", true, store.GenerationText, "тушь"); err != nil {
+		"Соавтор", "Свои указания.", true, store.GenerationText, "тушь", "без людей"); err != nil {
 		t.Fatalf("настройки цели: %v", err)
 	}
 	template := &projecttemplate.Template{
@@ -322,7 +323,7 @@ func TestTemplateWithoutAIDoesNotResetSettings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("настройки: %v", err)
 	}
-	if settings.Role != "Соавтор" || settings.ImageStyle != "тушь" {
+	if settings.Role != "Соавтор" || settings.ImageStyle != "тушь" || settings.ImageNegative != "без людей" {
 		t.Fatalf("настройки затёрты: %+v", settings)
 	}
 }

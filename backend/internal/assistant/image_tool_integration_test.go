@@ -30,10 +30,11 @@ var tinyPNGForTool, _ = base64.StdEncoding.DecodeString(
 	"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==")
 
 // stubGenerator — заглушка A1111-совместимого генератора: список моделей и картинка.
-// Записывает промпт, который ушёл: стиль проекта должен доехать до генератора.
-func stubGenerator(t *testing.T) (*httptest.Server, *string) {
+// Записывает промпт и негативный промпт, которые ушли: и стиль проекта, и «чего не должно
+// быть на картинке» сервер собирает сам, и оба обязаны доехать до генератора.
+func stubGenerator(t *testing.T) (*httptest.Server, *imageRequestForTest) {
 	t.Helper()
-	var lastPrompt string
+	last := &imageRequestForTest{}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/sdapi/v1/sd-models", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode([]map[string]any{{"model_name": "stub-sd"}})
@@ -42,7 +43,10 @@ func stubGenerator(t *testing.T) (*httptest.Server, *string) {
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		if prompt, ok := body["prompt"].(string); ok {
-			lastPrompt = prompt
+			last.prompt = prompt
+		}
+		if negative, ok := body["negative_prompt"].(string); ok {
+			last.negative = negative
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"images": []string{base64.StdEncoding.EncodeToString(tinyPNGForTool)},
@@ -51,11 +55,17 @@ func stubGenerator(t *testing.T) (*httptest.Server, *string) {
 	})
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
-	return server, &lastPrompt
+	return server, last
+}
+
+// imageRequestForTest — что генератор получил: промпт и негативный промпт.
+type imageRequestForTest struct {
+	prompt   string
+	negative string
 }
 
 func TestGenerateImageToolCreatesAssetAndAttaches(t *testing.T) {
-	generator, lastPrompt := stubGenerator(t)
+	generator, last := stubGenerator(t)
 	imageURLForTests = generator.URL
 	t.Cleanup(func() { imageURLForTests = "" })
 
@@ -71,9 +81,9 @@ func TestGenerateImageToolCreatesAssetAndAttaches(t *testing.T) {
 	owner := e.user(t, "owner@example.com")
 	projectID, chapter, _ := e.seedProject(t, owner)
 
-	// Стиль проекта дописывает сервер — задаём его заранее.
+	// Стиль и негативный промпт проекта дописывает сервер — задаём их заранее.
 	if _, err := e.st.SaveAISettings(ctx, projectID, owner, "", "", true,
-		store.GenerationBoth, "акварель, тёплый свет"); err != nil {
+		store.GenerationBoth, "акварель, тёплый свет", "без водяных знаков и текста"); err != nil {
 		t.Fatalf("настройки: %v", err)
 	}
 	// Идентификатор кадра модель берёт из list_events; в тесте подставляем его прямо в
@@ -103,11 +113,15 @@ func TestGenerateImageToolCreatesAssetAndAttaches(t *testing.T) {
 	}
 
 	// Промпт ушёл со стилем проекта и заголовком кадра: модель картинок проекта не видит.
-	prompt := *lastPrompt
+	prompt := last.prompt
 	if !strings.Contains(prompt, "смотритель у маяка") ||
 		!strings.Contains(prompt, "акварель, тёплый свет") ||
 		!strings.Contains(prompt, "Глава 1") {
 		t.Errorf("промпт генератора: %q", prompt)
+	}
+	// Негативный промпт проекта тоже доехал: он часть замысла и задаётся автором, а не стендом.
+	if last.negative != "без водяных знаков и текста" {
+		t.Errorf("негативный промпт генератора: %q, ожидался проектный", last.negative)
 	}
 
 	// Картинка лежит в проекте вложением.
@@ -174,5 +188,48 @@ func TestGenerateImageToolNotOfferedWithoutGenerator(t *testing.T) {
 	}
 	if !strings.Contains(turn.Calls[0].Error, "недоступна") {
 		t.Errorf("причина отказа: %q", turn.Calls[0].Error)
+	}
+}
+
+// TestGenerateImageToolFallsBackToStandNegative — пустое поле в проекте значит «как на стенде».
+//
+// Это не мелочь: при переезде проекта на другой стенд у него не должно остаться «без
+// ограничений» там, где стенд ставит водяные знаки и текст. Проверяем именно подстановку, а не
+// отсутствие ошибки: генератор обязан получить негативный промпт стенда.
+func TestGenerateImageToolFallsBackToStandNegative(t *testing.T) {
+	generator, last := stubGenerator(t)
+	imageURLForTests = generator.URL
+	imageNegativeForTests = "текст, водяные знаки"
+	t.Cleanup(func() {
+		imageURLForTests = ""
+		imageNegativeForTests = ""
+	})
+
+	e := setup(t,
+		ai.Reply{ToolCalls: []ai.ToolCall{createCall(assistant.ToolGenerateImage, map[string]any{
+			"event_id": "ПОДСТАВИМ", "prompt": "маяк в шторм",
+		})}},
+		ai.Reply{Content: "Нарисовал."},
+	)
+	ctx := context.Background()
+	owner := e.user(t, "owner@example.com")
+	projectID, chapter, _ := e.seedProject(t, owner)
+
+	// В проекте негативный промпт НЕ задан: поле пустое.
+	if _, err := e.st.SaveAISettings(ctx, projectID, owner, "", "", true,
+		store.GenerationBoth, "", ""); err != nil {
+		t.Fatalf("настройки: %v", err)
+	}
+	e.stub.setReplies(
+		ai.Reply{ToolCalls: []ai.ToolCall{createCall(assistant.ToolGenerateImage, map[string]any{
+			"event_id": chapter.String(), "prompt": "маяк в шторм",
+		})}},
+		ai.Reply{Content: "Нарисовал."},
+	)
+	if _, err := e.asst.Send(ctx, owner, projectID, uuid.Nil, "stub:stub-1", "Нарисуй маяк"); err != nil {
+		t.Fatalf("вопрос: %v", err)
+	}
+	if last.negative != "текст, водяные знаки" {
+		t.Errorf("негативный промпт генератора: %q, ожидался стендовый", last.negative)
 	}
 }

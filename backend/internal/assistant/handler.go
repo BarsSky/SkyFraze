@@ -84,11 +84,12 @@ func (h *Handler) SaveSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Role         string `json:"role"`
-		Instructions string `json:"instructions"`
-		Enabled      *bool  `json:"enabled"`
-		Generation   string `json:"generation"`
-		ImageStyle   string `json:"image_style"`
+		Role          string `json:"role"`
+		Instructions  string `json:"instructions"`
+		Enabled       *bool  `json:"enabled"`
+		Generation    string `json:"generation"`
+		ImageStyle    string `json:"image_style"`
+		ImageNegative string `json:"image_negative"`
 	}
 	if err := decodeJSON(w, r, &body); err != nil {
 		return
@@ -107,7 +108,7 @@ func (h *Handler) SaveSettings(w http.ResponseWriter, r *http.Request) {
 		enabled = current.Enabled
 	}
 	settings, err := h.svc.SaveProjectSettings(r.Context(), uid, pid, body.Role, body.Instructions,
-		enabled, body.Generation, body.ImageStyle)
+		enabled, body.Generation, body.ImageStyle, body.ImageNegative)
 	if err != nil {
 		h.fail(w, "save settings", err)
 		return

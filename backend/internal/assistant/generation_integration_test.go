@@ -73,7 +73,7 @@ func TestSaveGenerationRefusesModesWithoutGenerator(t *testing.T) {
 	projectID, _, _ := e.seedProject(t, owner)
 
 	for _, mode := range []string{store.GenerationImages, store.GenerationBoth} {
-		_, err := e.asst.SaveProjectSettings(ctx, owner, projectID, "", "", true, mode, "акварель")
+		_, err := e.asst.SaveProjectSettings(ctx, owner, projectID, "", "", true, mode, "акварель", "")
 		if !errors.Is(err, assistant.ErrImagesUnavailable) {
 			t.Errorf("режим %q: ожидался отказ «генерация недоступна», получено %v", mode, err)
 		}
@@ -82,11 +82,11 @@ func TestSaveGenerationRefusesModesWithoutGenerator(t *testing.T) {
 	// Текстовый режим сохраняется, и стиль иллюстраций ему не мешает (он пригодится,
 	// когда генератор появится).
 	saved, err := e.asst.SaveProjectSettings(ctx, owner, projectID, "chronicler", "Кратко.",
-		true, store.GenerationText, "акварель, тёплый свет")
+		true, store.GenerationText, "акварель, тёплый свет", "без текста на картинке")
 	if err != nil {
 		t.Fatalf("текстовый режим: %v", err)
 	}
-	if saved.Generation != store.GenerationText || saved.ImageStyle != "акварель, тёплый свет" {
+	if saved.Generation != store.GenerationText || saved.ImageStyle != "акварель, тёплый свет" || saved.ImageNegative != "без текста на картинке" {
 		t.Fatalf("сохранённые настройки: %+v", saved)
 	}
 	// И это видно при следующем чтении — настройка живёт на проекте.
@@ -100,7 +100,7 @@ func TestSaveGenerationRefusesModesWithoutGenerator(t *testing.T) {
 	// Пустая строка режима означает «не менять» — интерфейс может сохранять форму,
 	// не трогая режим.
 	kept, err := e.asst.SaveProjectSettings(ctx, owner, projectID, "chronicler", "Кратко.",
-		true, "", "")
+		true, "", "", "")
 	if err != nil {
 		t.Fatalf("сохранение без режима: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestSendRefusesImagesOnlyModeWithoutGenerator(t *testing.T) {
 	// Пишем режим напрямую в базу: через API его не сохранить (и это правильно —
 	// проверено выше), а состояние «режим выбран, генератор пропал» возможно.
 	if _, err := e.st.SaveAISettings(ctx, projectID, owner, "", "", true,
-		store.GenerationImages, ""); err != nil {
+		store.GenerationImages, "", ""); err != nil {
 		t.Fatalf("настройки: %v", err)
 	}
 	_, err := e.asst.Send(ctx, owner, projectID, uuid.Nil, "stub:stub-1", "Нарисуй маяк")

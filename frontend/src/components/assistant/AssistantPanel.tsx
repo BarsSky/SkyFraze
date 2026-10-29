@@ -167,12 +167,14 @@ export function AssistantPanel({
     enabled: boolean
     generation: string
     imageStyle: string
+    imageNegative: string
   }>({
     role: '',
     instructions: '',
     enabled: true,
     generation: 'auto',
     imageStyle: '',
+    imageNegative: '',
   })
   const [agentNote, setAgentNote] = useState<string | null>(null)
   const [agentBusy, setAgentBusy] = useState(false)
@@ -223,6 +225,7 @@ export function AssistantPanel({
           enabled: loaded.enabled,
           generation: loaded.generation,
           imageStyle: loaded.imageStyle,
+          imageNegative: loaded.imageNegative,
         })
       })
       .catch(() => {
@@ -1185,6 +1188,25 @@ export function AssistantPanel({
                     placeholder="Например: акварель, тёплый свет, без текста на картинке"
                     onChange={(e) => setAgentDraft((d) => ({ ...d, imageStyle: e.target.value }))}
                   />
+                </label>
+
+                {/* Негативный промпт (0.105.0). Раньше он задавался только на стенде, и автор не
+                    мог сказать «в этой книге нет людей»: это часть замысла, а не техника сервера.
+                    Пустое поле — не «без ограничений», а «как на стенде», и так и написано. */}
+                <label className="ai-field">
+                  <span>Чего не должно быть на картинке</span>
+                  <input
+                    type="text"
+                    value={agentDraft.imageNegative}
+                    aria-label="Чего не должно быть на картинке"
+                    maxLength={400}
+                    placeholder="Например: люди, современная одежда, текст на картинке"
+                    onChange={(e) => setAgentDraft((d) => ({ ...d, imageNegative: e.target.value }))}
+                  />
+                  <span className="ai-note" data-assistant-negative-hint>
+                    Пусто — значит «как на стенде»: сервер подставит своё ограничение. Заданное
+                    здесь важнее стендового.
+                  </span>
                 </label>
 
                 <label className="ai-field">

@@ -56,6 +56,11 @@ const stubKeyEnv = "STUB_API_KEY"
 // Пусто — генерации нет: так проверяется и честное «картинки недоступны».
 var imageURLForTests string
 
+// imageNegativeForTests — негативный промпт СТЕНДА для текущего теста (AI_IMAGE_NEGATIVE).
+// Он уходит в генератор, только если в проекте свой не задан: проверяется в
+// image_tool_integration_test.go.
+var imageNegativeForTests string
+
 // stubProvider — «провайдер модели» на localhost: отвечает заранее заготовленными
 // ответами и записывает, что у него спросили. Никакой сети в тестах нет.
 type stubProvider struct {
@@ -366,6 +371,7 @@ func setup(t *testing.T, replies ...ai.Reply) *env {
 		DefaultModel: "stub:stub-1", TimeoutSeconds: 10,
 		// Генератор изображений — только если тест его подставил (см. image_tool_integration_test.go).
 		ImageURL: imageURLForTests, ImageTimeoutSeconds: 10, ImageModel: "stub-sd", ImageAutoLoad: true,
+		ImageNegative: imageNegativeForTests,
 	}, map[string]string{stubKeyEnv: "stub-stand-key"}, testLogger())
 	models.UseProviders([]ai.Provider{
 		{
@@ -1073,7 +1079,7 @@ func TestProjectSettingsRoleMembershipAndPrompt(t *testing.T) {
 	owner := e.user(t, "owner@example.com")
 	projectID, _, _ := e.seedProject(t, owner)
 
-	settings, err := e.asst.SaveProjectSettings(ctx, owner, projectID, "chronicler", "Пиши сдержанно.", true, store.GenerationAuto, "")
+	settings, err := e.asst.SaveProjectSettings(ctx, owner, projectID, "chronicler", "Пиши сдержанно.", true, store.GenerationAuto, "", "")
 	if err != nil {
 		t.Fatalf("сохранение настроек: %v", err)
 	}
@@ -1119,7 +1125,7 @@ func TestProjectSettingsOwnerOnly(t *testing.T) {
 		t.Fatalf("membership: %v", err)
 	}
 
-	if _, err := e.asst.SaveProjectSettings(ctx, editor, projectID, "editor", "", true, store.GenerationAuto, ""); !errors.Is(err, assistant.ErrForbidden) {
+	if _, err := e.asst.SaveProjectSettings(ctx, editor, projectID, "editor", "", true, store.GenerationAuto, "", ""); !errors.Is(err, assistant.ErrForbidden) {
 		t.Fatalf("редактор не должен менять роль агента, получено %v", err)
 	}
 	// Читать настройки участник может — и видит, что менять их не вправе.
@@ -1131,7 +1137,7 @@ func TestProjectSettingsOwnerOnly(t *testing.T) {
 		t.Fatalf("редактору нельзя показывать право менять роль агента")
 	}
 	// Неизвестная роль — понятный отказ, а не «сохранили что попало».
-	if _, err := e.asst.SaveProjectSettings(ctx, owner, projectID, "придумать-всё", "", true, store.GenerationAuto, ""); err == nil {
+	if _, err := e.asst.SaveProjectSettings(ctx, owner, projectID, "придумать-всё", "", true, store.GenerationAuto, "", ""); err == nil {
 		t.Fatalf("неизвестная роль должна отвергаться")
 	}
 }
@@ -1143,7 +1149,7 @@ func TestSendRefusesWhenAgentDisabledInProject(t *testing.T) {
 	owner := e.user(t, "owner@example.com")
 	projectID, _, _ := e.seedProject(t, owner)
 
-	if _, err := e.asst.SaveProjectSettings(ctx, owner, projectID, "", "", false, store.GenerationAuto, ""); err != nil {
+	if _, err := e.asst.SaveProjectSettings(ctx, owner, projectID, "", "", false, store.GenerationAuto, "", ""); err != nil {
 		t.Fatalf("выключение агента: %v", err)
 	}
 	_, err := e.asst.Send(ctx, owner, projectID, uuid.Nil, "stub:stub-1", "Создай главу")
