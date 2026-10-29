@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { signIn, openEditorsTab } from './support'
+import { signIn, openEditorsTab, gateAssistant } from './support'
 
 /**
  * Помощник в браузере: человек пишет в поле, модель просит создать главу, глава
@@ -43,11 +43,9 @@ test('помощник создаёт главу по просьбе в чате
   const panel = page.locator('[data-assistant-panel]')
   await expect(panel).toBeVisible()
 
-  // Помощник выключен на стенде (нет AI_ENABLED) — сценарий не имеет смысла.
-  const disabled = panel.getByText('Помощник выключен на этом стенде')
-  if (await disabled.isVisible().catch(() => false)) {
-    test.skip(true, 'помощник выключен на стенде')
-  }
+  // Помощник выключен на стенде (нет AI_ENABLED) — сценарий не имеет смысла. В CI это
+  // провал, а не пропуск: `gateAssistant` объясняет, что именно поднять.
+  await gateAssistant(panel, 'глава и картинка через помощника')
 
   // Пока настройка не приехала, поля нет; ждём его появления.
   const input = panel.getByLabel('Сообщение помощнику')

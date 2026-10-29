@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { signIn, openEditorsTab } from './support'
+import { signIn, openEditorsTab, gateAssistant } from './support'
 
 /**
  * Правка существующего кадра по подтверждению — целиком через браузер.
@@ -32,9 +32,7 @@ test('агент предлагает правку, а применяет её �
   await fab.click()
   const panel = page.locator('[data-assistant-panel]')
   await expect(panel).toBeVisible()
-  if (await panel.getByText('Помощник выключен на этом стенде').isVisible().catch(() => false)) {
-    test.skip(true, 'помощник выключен на стенде')
-  }
+  await gateAssistant(panel, 'правка кадра по подтверждению')
   const input = panel.getByLabel('Сообщение помощнику')
   await expect(input).toBeEnabled({ timeout: 15_000 })
   await input.fill('Добавь главу «Пролог» с описанием начала истории')
@@ -98,9 +96,7 @@ test('удалённый агентом кадр можно вернуть', asy
   await page.locator('[data-assistant-fab]').click()
   const panel = page.locator('[data-assistant-panel]')
   await expect(panel).toBeVisible()
-  if (await panel.getByText('Помощник выключен на этом стенде').isVisible().catch(() => false)) {
-    test.skip(true, 'помощник выключен на стенде')
-  }
+  await gateAssistant(panel, 'правка кадра по подтверждению')
   const input = panel.getByLabel('Сообщение помощнику')
   await expect(input).toBeEnabled({ timeout: 15_000 })
   await input.fill('Добавь главу «Пролог» с описанием начала истории')
@@ -160,9 +156,7 @@ test('отклонённое предложение не меняет текст
   await page.locator('[data-assistant-fab]').click()
   const panel = page.locator('[data-assistant-panel]')
   await expect(panel).toBeVisible()
-  if (await panel.getByText('Помощник выключен на этом стенде').isVisible().catch(() => false)) {
-    test.skip(true, 'помощник выключен на стенде')
-  }
+  await gateAssistant(panel, 'правка кадра по подтверждению')
   const input = panel.getByLabel('Сообщение помощнику')
   await expect(input).toBeEnabled({ timeout: 15_000 })
   await input.fill('Добавь главу «Пролог» с описанием начала истории')

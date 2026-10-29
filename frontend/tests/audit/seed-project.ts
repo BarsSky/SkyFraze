@@ -41,6 +41,33 @@ async function call<T>(path: string, init: RequestInit = {}, token?: string): Pr
   return (await res.json()) as T
 }
 
+/**
+ * Импорт Markdown «в место» набором файлов (0.109.0).
+ *
+ * Имена файлов — это ПУТИ, а не подписи: вложенность дерева задаёт каталог (`Пролог/01-Сцена.md`).
+ * Сервер читает относительный путь из заголовка части (`partFileName`), поэтому `FormData` с
+ * именем, содержащим `/`, даёт нужную структуру. Content-Type не ставим: границу multipart
+ * подставляет сам `fetch`, ручной заголовок её ломает.
+ */
+async function postMarkdown(
+  projectId: string,
+  token: string,
+  files: { name: string; body: string }[],
+): Promise<void> {
+  const form = new FormData()
+  for (const file of files) {
+    form.append('files', new Blob([file.body], { type: 'text/markdown; charset=utf-8' }), file.name)
+  }
+  const res = await fetch(`${API}/api/projects/${projectId}/import/markdown`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: form,
+  })
+  if (!res.ok) {
+    throw new ApiError(`импорт Markdown → ${res.status}: ${(await res.text()).slice(0, 300)}`)
+  }
+}
+
 /** Вход конкретной учёткой. `null` — учётки ещё нет (пустая база CI). */
 async function loginAs(email: string): Promise<string | null> {
   const res = await fetch(`${API}/api/auth/login`, {
@@ -159,49 +186,56 @@ async function main() {
   // и дерево читают документ CRDT — проект с «табличными» событиями выглядит пустым («Таймлайн
   // пока пуст»), и аудит честно ругался «стадия не открылась». Импорт Markdown идёт тем же путём,
   // что и помощник (`LiveDoc` + `SetEventTextLive`), поэтому документ и таблица согласованы.
-  const markdown = [
-    '# Аудит интерфейса',
-    'Проект для визуального аудита.',
-    '',
-    '## 01 Начало',
-    '',
-    '### 01.1 Утро на Земле',
-    '',
-    'Аня пришла на **Землю** и нашла письмо.',
-    '',
-    '| Место | Когда |',
-    '| --- | --- |',
-    '| Земля | утро |',
-    '',
-    '> «Так начинается история», — сказала Аня.',
-    '',
-    '### 01.2 Письмо',
-    '',
-    'Письмо было от Земли. Аня перечитала его дважды.',
-    '',
-  ].join('\n')
+  //
+  // Вложенность задаёт КАТАЛОГ, а не заголовки в одном файле (исправлено в 0.109.0). До этого
+  // здесь лежал один `audit.md` с `##`/`###` внутри, и проект получался с ОДНИМ событием, в тексте
+  // которого заголовки стояли строками: дерево без вложенности, «глава и два кадра» — только в
+  // описании. Правило разбора простое: один файл — одно событие, каталог — уровень дерева.
+  const imported = await postMarkdown(projectId, token, [
+    {
+      name: '01-Начало/index.md',
+      body: ['# 01 Начало', '', 'Глава открывает историю проекта. Аня нашла письмо.'].join('\n'),
+    },
+    {
+      name: '01-Начало/01.1-Утро на Земле.md',
+      body: [
+        'Аня пришла на **Землю** и нашла письмо.',
+        '',
+        '| Место | Когда |',
+        '| --- | --- |',
+        '| Земля | утро |',
+        '',
+        '> «Так начинается история», — сказала Аня.',
+      ].join('\n'),
+    },
+    {
+      name: '01-Начало/01.2-Письмо.md',
+      body: 'Письмо было от Земли. Аня перечитала его дважды.',
+    },
+  ])
 
-  const form = new FormData()
-  form.append('files', new Blob([markdown], { type: 'text/markdown; charset=utf-8' }), 'audit.md')
-  const imported = await fetch(`${API}/api/projects/${projectId}/import/markdown`, {
-    method: 'POST',
-    // Content-Type не ставим: границу multipart подставляет сам fetch, ручной заголовок её ломает.
-    headers: { Authorization: `Bearer ${token}` },
-    body: form,
-  })
-  if (!imported.ok) {
-    throw new ApiError(`импорт Markdown → ${imported.status}: ${(await imported.text()).slice(0, 300)}`)
-  }
 
   // Проверка, что данные видит ИНТЕРФЕЙС, а не только таблица: документ непустой и в дереве есть
   // события. Без неё подготовка «проходила», а аудит шёл по пустым экранам — ровно та ложная
   // зелень, из-за которой этот скрипт и появился.
+  //
+  // Вложенность проверяется отдельно (0.109.0): раньше «глава и два кадра» на деле были одним
+  // событием с заголовками в тексте, и проверка «дерево непустое» этого не замечала. Теперь
+  // требование явное — один корень с двумя детьми (иначе экраны проекта проверяются на плоском
+  // дереве, а раскрытие главы не проверяется вовсе).
   const treeRes = await fetch(`${API}/api/projects/${projectId}/events`, {
     headers: { Authorization: `Bearer ${token}` },
   })
-  const tree = (await treeRes.json()) as Array<{ children?: unknown[] }>
+  const tree = (await treeRes.json()) as Array<{ title?: string; children?: unknown[] }>
   if (!Array.isArray(tree) || tree.length === 0) {
     throw new ApiError('после импорта дерево событий пустое — аудиту нечего показывать')
+  }
+  if (tree.length !== 1 || (tree[0]?.children?.length ?? 0) < 2) {
+    throw new ApiError(
+      `после импорта дерево плоское (корней ${tree.length}, детей у первого ` +
+        `${tree[0]?.children?.length ?? 0}) — вложенность задаётся каталогом в именах файлов, ` +
+        'проверьте имена в seed-project.ts',
+    )
   }
   const stateRes = await fetch(`${API}/api/projects/${projectId}/events/state`, {
     headers: { Authorization: `Bearer ${token}` },

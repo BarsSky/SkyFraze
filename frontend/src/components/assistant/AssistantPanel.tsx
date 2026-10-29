@@ -1641,11 +1641,12 @@ function proposalTitle(proposal: AIProposal, stage: 'pending' | 'applied'): stri
 }
 
 /**
- * Коротко, что изменится: «заголовок: было → станет» и первая строка текста.
+ * Коротко, что изменится: «заголовок: было → станет», место или первая строка текста.
  *
  * Полный diff здесь был бы не нужен: человек решает «применять или нет», а не читает
  * сравнение целиком — полный текст кадра он посмотрит в редакторе до или после.
- */function diffSummary(proposal: AIProposal): string {
+ */
+function diffSummary(proposal: AIProposal): string {
   const parts: string[] = []
   if (proposal.kind === 'move_event') {
     // Место в дереве — не текст: показываем прежнюю и новую главу, а «верхний уровень» —
@@ -1657,14 +1658,6 @@ function proposalTitle(proposal: AIProposal, stage: 'pending' | 'applied'): stri
   }
   if (proposal.newTitle !== '' && proposal.newTitle !== proposal.oldTitle) {
     parts.push(`заголовок: «${proposal.oldTitle}» → «${proposal.newTitle}»`)
-  }
-  if (proposal.kind === 'move_event') {
-    // Место в дереве — не текст: показываем прежнюю и новую главу, а «верхний уровень» —
-    // словами, иначе пустое «было» читалось бы как «данных нет».
-    const before = proposal.oldParentTitle === '' ? 'верхний уровень' : proposal.oldParentTitle
-    const after = proposal.newParentTitle === '' ? 'верхний уровень' : proposal.newParentTitle
-    parts.push(`место: ${before} → ${after}`)
-    return parts.join('; ')
   }
   if (proposal.kind === 'update_date') {
     // Дата — не текст: человеку нужно увидеть ровно «было → станет», а «без изменений» здесь

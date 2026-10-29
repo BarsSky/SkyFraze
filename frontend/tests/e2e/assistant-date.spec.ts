@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { signIn, openEditorsTab } from './support'
+import { signIn, openEditorsTab, gateAssistant } from './support'
 
 /**
  * Дата кадра по подтверждению (0.106.0) — целиком через браузер.
@@ -44,9 +44,7 @@ test('агент предлагает дату кадра, а ставит её 
   //    появилось, а не только «Создал главу» в переписке.
   await fab.click()
   await expect(panel).toBeVisible()
-  if (await panel.getByText('Помощник выключен на этом стенде').isVisible().catch(() => false)) {
-    test.skip(true, 'помощник выключен на стенде')
-  }
+  await gateAssistant(panel, 'дата кадра по подтверждению')
   const input = panel.getByLabel('Сообщение помощнику')
   await expect(input).toBeEnabled({ timeout: 15_000 })
   await input.fill('Добавь главу «Пролог» с описанием начала истории')

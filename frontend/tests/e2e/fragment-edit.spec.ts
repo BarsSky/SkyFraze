@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { signIn, openEditorsTab } from './support'
+import { signIn, openEditorsTab, gateAssistant } from './support'
 
 /**
  * Правка ФРАГМЕНТА по замечанию — целиком через браузер (0.104.0).
@@ -28,9 +28,7 @@ async function projectWithFrame(page: import('@playwright/test').Page): Promise<
   await page.locator('[data-assistant-fab]').click()
   const panel = page.locator('[data-assistant-panel]')
   await expect(panel).toBeVisible()
-  if (await panel.getByText('Помощник выключен на этом стенде').isVisible().catch(() => false)) {
-    test.skip(true, 'помощник выключен на стенде')
-  }
+  await gateAssistant(panel, 'правка фрагмента по замечанию')
   const input = panel.getByLabel('Сообщение помощнику')
   await expect(input).toBeEnabled({ timeout: 15_000 })
   await input.fill('Добавь главу «Пролог» с описанием начала истории')

@@ -14,6 +14,12 @@ name: nightly
 #      же базе нельзя: `install` проверяет первую регистрацию, а ключ доступа выдаёт коды
 #      восстановления только при привязке первого ключа (поймано первым же ночным прогоном).
 #
+#   3. **Функциональная матрица.** С 0.109.0 она идёт каждую ночь, а не только по кнопке:
+#      до этого 32 проверки (проекты, иерархия, вложения, темы, роли, приглашения, realtime)
+#      выполнялись только при ручном запуске, то есть на практике — никогда. Экраны и матрица
+#      разведены по шагам и по каталогам отчёта: второй прогон скрипта чистит `_audit_out`, и в
+#      одном шаге отчёт экранов пропадал бы.
+#
 # Оба прогона не блокируют push: падение ночью — повод открыть задачу, а не остановить работу.
 # Запустить руками (например, перед релизом с правками вёрстки) — через `workflow_dispatch`.
 
@@ -23,11 +29,6 @@ on:
     # не совпадает с часовыми поясами, в которых кто-то ждёт сборку.
     - cron: '17 3 * * *'
   workflow_dispatch:
-    inputs:
-      functional:
-        description: 'Полный аудит: ещё и функциональная матрица (создаёт проекты и данные)'
-        type: boolean
-        default: false
 
 concurrency:
   group: nightly-${{ github.ref }}
@@ -157,31 +158,44 @@ jobs:
           sed -e 's/^AUDIT_PROJECT_ID=/AUDIT_PROJECT=/' /tmp/audit-env >> "$GITHUB_ENV"
           grep -E '^AUDIT_' "$GITHUB_ENV"
 
-      - name: визуальный аудит
+      - name: визуальный аудит (экраны)
         run: |
           # pipefail обязателен: без него код возврата конвейера — это код `tee`, то есть 0, и
           # аудит с найденными ошибками не валил бы job. На этом уже обожглись: первый ночной
           # прогон показал «ИТОГ: ошибок 16», а шаг был зелёным.
           set -o pipefail
           cd frontend
-          # Экраны — всегда: это и есть проверка вёрстки. Функциональная матрица создаёт
-          # собственные проекты и данные, поэтому по умолчанию выключена, а включается вручную.
-          # Переменную экспортируем в этом же шелле: запись в $GITHUB_ENV подействовала бы
-          # только на СЛЕДУЮЩИЙ шаг, и аудит молча пошёл бы полным.
-          if [ "${{ inputs.functional }}" = "true" ]; then
-            echo "режим: экраны + функциональная матрица"
-          else
-            export ONLY_SCREENS=1
-          fi
+          # В этом шаге — только экраны: функциональная матрица идёт следующим шагом, со своим
+          # каталогом отчёта (скрипт чистит `AUDIT_OUT` при старте, и в общем каталоге отчёт
+          # экранов пропал бы). Переменную экспортируем в этом же шелле: запись в $GITHUB_ENV
+          # подействовала бы только на СЛЕДУЮЩИЙ шаг.
+          export ONLY_SCREENS=1
           npx tsx ../.dsh/skills/ui-visual-audit/scripts/visual-audit.ts | tee /tmp/audit.log
+          grep -E 'ИТОГ' /tmp/audit.log || true
+
+      - name: функциональная матрица
+        run: |
+          # С 0.109.0 — каждую ночь. Раньше шаг включался только вручную (`-f functional=true`),
+          # поэтому 32 проверки (проекты, иерархия, вложения, темы, роли, приглашения, realtime)
+          # на деле не выполнялись никогда. Данные для них готовит тот же seed, что и для
+          # экранов, — отдельная подготовка не нужна.
+          set -o pipefail
+          cd frontend
+          export ONLY_FUNCTIONAL=1
+          export AUDIT_OUT="$GITHUB_WORKSPACE/_audit_out-functional"
+          npx tsx ../.dsh/skills/ui-visual-audit/scripts/visual-audit.ts | tee -a /tmp/audit.log
           grep -E 'ИТОГ' /tmp/audit.log || true
 
       - name: отчёт аудита
         if: always()
         run: |
           if [ -f _audit_out/visual-report.md ]; then
-            echo "── шапка отчёта"
+            echo "── экраны"
             head -40 _audit_out/visual-report.md
+          fi
+          if [ -f _audit_out-functional/visual-report.md ]; then
+            echo "── функциональная матрица"
+            head -40 _audit_out-functional/visual-report.md
           fi
 
       - uses: actions/upload-artifact@v4
@@ -191,6 +205,8 @@ jobs:
           path: |
             _audit_out/visual-report.md
             _audit_out/visual-report.json
+            _audit_out-functional/visual-report.md
+            _audit_out-functional/visual-report.json
           if-no-files-found: warn
 
       - name: логи при падении
@@ -223,6 +239,9 @@ jobs:
       REGISTRATION_MODE: request
       AI_ENABLED: "true"
       AI_OLLAMA_URL: http://127.0.0.1:11490
+      # Как и в ci.yml: помощник выключиться не должен, иначе восемь сценариев про него
+      # молча становятся «пропущенными» (0.109.0).
+      E2E_REQUIRE_AI: "1"
       AUTH_RATE_PER_MINUTE: "0"
       AUTH_LOGIN_PER_EMAIL_PER_MINUTE: "0"
       APP_BASE_URL: http://localhost:5173

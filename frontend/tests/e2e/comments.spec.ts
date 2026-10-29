@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { signIn, openEditorsTab } from './support'
+import { signIn, openEditorsTab, gateAssistant } from './support'
 
 /**
  * Обсуждение кадра — целиком через браузер.
@@ -27,9 +27,7 @@ test('замечание к кадру пишется, видно в дерев�
   await page.locator('[data-assistant-fab]').click()
   const panel = page.locator('[data-assistant-panel]')
   await expect(panel).toBeVisible()
-  if (await panel.getByText('Помощник выключен на этом стенде').isVisible().catch(() => false)) {
-    test.skip(true, 'помощник выключен на стенде')
-  }
+  await gateAssistant(panel, 'замечания к кадру')
   const input = panel.getByLabel('Сообщение помощнику')
   await expect(input).toBeEnabled({ timeout: 15_000 })
   await input.fill('Добавь главу «Пролог» с описанием начала истории')

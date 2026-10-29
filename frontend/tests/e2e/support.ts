@@ -1,4 +1,4 @@
-import { expect, type Page } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
 
 /**
  * Вход для сценариев e2e на чистой базе.
@@ -105,6 +105,37 @@ export async function signIn(page: Page, email: string = E2E_ADMIN_EMAIL): Promi
     )
   }
   return ok
+}
+
+/**
+ * Помощник выключен на стенде — сценарий проверять нечего (0.109.0).
+ *
+ * До 0.109.0 в шести файлах стояла одна и та же строка: если в окне помощника написано
+ * «Помощник выключен на этом стенде», сценарий помечался `skipped` и считался пройденным. На
+ * dev-стенде это разумно (там помощника можно выключить), но у пропуска есть неприятное
+ * свойство: он ВЫГЛЯДИТ зелёным. Стоит отвалиться `AI_ENABLED` или не подняться заглушке
+ * провайдера — и восемь сценариев про помощника молча перестают проверять что-либо, а CI
+ * остаётся зелёным. Ровно так уже было с входом на чистой базе: пять сценариев рапортовали
+ * «skipped», а регрессии никто не видел.
+ *
+ * Поэтому поведение теперь зависит от стенда, как у `signIn`:
+ *   * CI (или явный `E2E_REQUIRE_AI=1`) — ПРОВАЛ с объяснением, что именно поднять;
+ *   * локально — пропуск, потому что локальный стенд человек собирает под себя.
+ *
+ * `panel` — окно помощника (`[data-assistant-panel]`); `scenario` — название сценария, чтобы из
+ * сообщения об ошибке было видно, какая проверка не выполнилась.
+ */
+export async function gateAssistant(panel: Locator, scenario: string): Promise<void> {
+  const off = panel.getByText('Помощник выключен на этом стенде')
+  if (!(await off.isVisible().catch(() => false))) return
+  if (process.env.CI || process.env.E2E_REQUIRE_AI === '1') {
+    throw new Error(
+      `помощник выключен на стенде, а сценарий «${scenario}» написан ради его проверки: ` +
+        'включите AI_ENABLED и заглушку провайдера (frontend/tests/e2e/stub-ollama.mjs). ' +
+        'В CI это провал, а не пропуск — пропуск выглядит зелёным.',
+    )
+  }
+  test.skip(true, 'помощник выключен на стенде')
 }
 
 async function register(page: Page, email: string): Promise<void> {

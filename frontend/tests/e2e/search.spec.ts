@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { signIn, openEditorsTab } from './support'
+import { signIn, openEditorsTab, gateAssistant } from './support'
 
 /**
  * Поиск по тексту проекта — через браузер.
@@ -29,9 +29,7 @@ test('поиск находит кадр по слову из текста, а �
   await page.locator('[data-assistant-fab]').click()
   const panel = page.locator('[data-assistant-panel]')
   await expect(panel).toBeVisible()
-  if (await panel.getByText('Помощник выключен на этом стенде').isVisible().catch(() => false)) {
-    test.skip(true, 'помощник выключен на стенде')
-  }
+  await gateAssistant(panel, 'поиск по тексту кадра')
   const input = panel.getByLabel('Сообщение помощнику')
   await expect(input).toBeEnabled({ timeout: 15_000 })
   await input.fill('Добавь главу «Пролог» с описанием начала истории')
