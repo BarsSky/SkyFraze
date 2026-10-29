@@ -228,3 +228,42 @@ func TestDocSetEventTextSurvivesSnapshot(t *testing.T) {
 		t.Errorf("после снапшота: %+v", event)
 	}
 }
+
+// TestDocSetEventDate — дата кадра: ставится, снимается и не пускает мусор.
+//
+// Дата — скалярное поле `event_date` (в редакторе это `<input type="date">`), поэтому
+// проверяем именно документ: после «поставить» поле есть и читается как YYYY-MM-DD, после
+// «убрать» — поля нет вовсе (а не пустая строка: для проекции дерева это разные вещи).
+func TestDocSetEventDate(t *testing.T) {
+	first := uuid.NewString()
+	doc := yjs.NewDoc()
+	if err := doc.InsertEvents(0, []yjs.EventSeed{{ID: first, Title: "Глава 1", Body: "текст"}}); err != nil {
+		t.Fatalf("документ: %v", err)
+	}
+
+	found, err := doc.SetEventDate(first, "2026-03-02")
+	if err != nil || !found {
+		t.Fatalf("поставить дату: found=%v err=%v", found, err)
+	}
+	event, ok := doc.EventByID(first)
+	if !ok || event.EventDate != "2026-03-02" {
+		t.Fatalf("дата в документе: %+v", event)
+	}
+
+	// Снять дату — значит удалить поле.
+	if found, err := doc.SetEventDate(first, ""); err != nil || !found {
+		t.Fatalf("убрать дату: found=%v err=%v", found, err)
+	}
+	if event, _ := doc.EventByID(first); event.EventDate != "" {
+		t.Errorf("дата после снятия: %q", event.EventDate)
+	}
+
+	// Формат проверяется до записи: «3 марта» не должно доехать до документа.
+	if _, err := doc.SetEventDate(first, "3 марта"); err == nil {
+		t.Fatal("ожидался отказ на не-ISO дату")
+	}
+	// Неизвестный кадр — не ошибка, а «нечего менять»: вызывающий сам решает, что сказать.
+	if found, err := doc.SetEventDate(uuid.NewString(), "2026-03-02"); found || err != nil {
+		t.Errorf("чужой кадр: found=%v err=%v", found, err)
+	}
+}

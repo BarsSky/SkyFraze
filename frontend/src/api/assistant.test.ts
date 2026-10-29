@@ -178,6 +178,9 @@ describe('предложения правок', () => {
       commentId: null,
       oldSpan: '',
       newSpan: '',
+      // Дата (0.106.0): у правки текста её нет — пустые строки, а не undefined.
+      oldDate: '',
+      newDate: '',
     })
     // Вид по умолчанию — перезапись: удаление опаснее, и «по умолчанию» им быть не должно.
     expect(turn.proposals![1].kind).toBe('update_text')

@@ -1734,6 +1734,8 @@ type LiveDoc interface {
 	// SetEventTextLive — переписать заголовок и/или текст кадра (nil — «не трогать»).
 	// Исход тот же, что у привязки: кадр мог не найтись, а комната — ещё грузиться.
 	SetEventTextLive(ctx context.Context, projectID, by uuid.UUID, eventID string, title, body *string) (yjs.EditOutcome, error)
+	// SetEventDateLive — поставить или снять дату кадра (пустая строка — очистка).
+	SetEventDateLive(ctx context.Context, projectID, by uuid.UUID, eventID, date string) (yjs.EditOutcome, error)
 	// DeleteEventLive — удалить кадр. Детей проверяет вызывающий: правило «что делать с
 	// под-событиями» — решение уровня сервиса, а не документа. Снимок удалённого кадра
 	// возвращается вызывающему: без него удаление необратимо.

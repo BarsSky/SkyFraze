@@ -36,6 +36,12 @@ const (
 	AIChangeApplied = "applied"
 	// AIChangeDiscarded — человек отказался.
 	AIChangeDiscarded = "discarded"
+	// AIChangeUpdateDate — поставить или снять ДАТУ кадра (0.106.0).
+	//
+	// Отдельный вид, а не «правка текста с датой»: дата — скалярное поле документа, её меняют
+	// отдельным действием («перенеси этот кадр на 3 марта»), и «Вернуть» должно отменять
+	// ровно дату, а не текст вместе с ней.
+	AIChangeUpdateDate = "update_date"
 	// AIChangeSuperseded — кадр изменился (или удалён) до подтверждения: применять
 	// старое предложение нельзя, иначе оно затрёт чужие правки.
 	AIChangeSuperseded = "superseded"
@@ -76,23 +82,30 @@ type AIChange struct {
 	// OldSpan: «фрагмент не изменился» — то же правило, что у правки кадра, но уровнем ниже.
 	OldSpan string `db:"old_span" json:"old_span"`
 	NewSpan string `db:"new_span" json:"new_span"`
+	// OldDate/NewDate — дата кадра «было» и «станет» в формате YYYY-MM-DD (kind=update_date,
+	// миграция 0043). Пустая строка — «даты нет»: это и осознанная очистка, и исходное
+	// состояние кадра без даты.
+	OldDate string `db:"old_date" json:"old_date"`
+	NewDate string `db:"new_date" json:"new_date"`
 }
 
 const aiChangeColumns = `id, project_id, conversation_id, user_id, kind, event_id, event_title,
 	old_title, old_body, new_title, new_body, status, created_at, applied_at, frame,
-	comment_id, anchor_start, anchor_end, old_span, new_span`
+	comment_id, anchor_start, anchor_end, old_span, new_span, old_date, new_date`
 
 // CreateAIChange сохраняет предложение.
 func (s *Store) CreateAIChange(ctx context.Context, c AIChange) (*AIChange, error) {
 	return qOne[AIChange](ctx, s.Pool,
 		`INSERT INTO ai_changes (project_id, conversation_id, user_id, kind, event_id, event_title,
 		                         old_title, old_body, new_title, new_body, status,
-		                         comment_id, anchor_start, anchor_end, old_span, new_span)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+		                         comment_id, anchor_start, anchor_end, old_span, new_span,
+		                         old_date, new_date)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 		 RETURNING `+aiChangeColumns,
 		c.ProjectID, c.ConversationID, c.UserID, c.Kind, c.EventID, c.EventTitle,
 		c.OldTitle, c.OldBody, c.NewTitle, c.NewBody, AIChangePending,
-		c.CommentID, c.AnchorStart, c.AnchorEnd, c.OldSpan, c.NewSpan)
+		c.CommentID, c.AnchorStart, c.AnchorEnd, c.OldSpan, c.NewSpan,
+		c.OldDate, c.NewDate)
 }
 
 // AIChangeByID читает предложение проекта.

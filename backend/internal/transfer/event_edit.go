@@ -195,6 +195,61 @@ func (s *Service) DeleteEvent(
 	return "", gone, nil
 }
 
+// SetEventDate ставит или снимает дату кадра.
+//
+// Почему отдельным методом, а не «правка текста с датой в нагрузке». `UpdateEventText`
+// переписывает `title_text`/`body_text` целиком, а дата — скалярное поле, и человек меняет
+// её отдельным действием («перенеси этот кадр на 3 марта»). Смешать их значило бы разрешить
+// модели переписывать текст там, где просили поправить только дату.
+//
+// Пустая строка — очистка даты (см. yjs.Doc.SetEventDate). Возвращает предупреждение
+// (пустое — всё доехало): дата уже в документе, но что-то на серверной стороне не обновилось.
+func (s *Service) SetEventDate(
+	ctx context.Context, actorID, userID, projectID uuid.UUID, eventID, date string,
+) (string, error) {
+	if err := s.proj.RequireEditor(ctx, userID, projectID); err != nil {
+		if errors.Is(err, projects.ErrForbidden) {
+			return "", ErrForbidden
+		}
+		return "", err
+	}
+
+	if s.live != nil {
+		outcome, err := s.live.SetEventDateLive(ctx, projectID, actorID, eventID, date)
+		if err != nil {
+			return "", err
+		}
+		switch {
+		case outcome.RoomLoading:
+			return "", ErrMarkdownBusy
+		case outcome.Handled && !outcome.Found:
+			return "", ErrEventNotFound
+		case outcome.Handled:
+			return outcome.Warning, nil
+		}
+	}
+
+	doc, err := s.serverDocument(ctx, projectID)
+	if err != nil {
+		return "", err
+	}
+	found, err := doc.SetEventDate(eventID, date)
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		return "", ErrEventNotFound
+	}
+	if _, err := s.store.SaveProjectEventStateServer(ctx, projectID, actorID, doc.EncodeState()); err != nil {
+		return "", err
+	}
+	if err := s.projectDocument(ctx, projectID, actorID, doc); err != nil {
+		return fmt.Sprintf("дата изменена, но таблица событий не перестроена (%v) — "+
+			"она обновится при следующем сохранении", err), nil
+	}
+	return "", nil
+}
+
 // ReviveEvent возвращает удалённый кадр на прежнее место — отмена удаления.
 //
 // Обратная операция к DeleteEvent, и по той же причине живёт здесь: возврат кадра — это

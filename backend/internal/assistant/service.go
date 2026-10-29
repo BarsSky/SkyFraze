@@ -137,6 +137,10 @@ type EventEditor interface {
 	// схлопывается, и «Вернуть» идёт уже по новому.
 	ReplaceSpanChecked(ctx context.Context, actorID, userID, projectID uuid.UUID,
 		eventID, field string, start, end []byte, expect, replacement string) (string, []byte, []byte, error)
+	// SetEventDate — поставить или снять дату кадра (0.106.0). Отдельный метод, а не поле в
+	// UpdateEventText: дату меняют отдельным действием, и «Вернуть» отменяет ровно её.
+	SetEventDate(ctx context.Context, actorID, userID, projectID uuid.UUID,
+		eventID, date string) (string, error)
 	// SpanText — текущий текст фрагмента: предложение показывает «было», и по этому тексту
 	// потом проверяется «фрагмент не изменился».
 	SpanText(ctx context.Context, userID, projectID uuid.UUID, eventID, field string,

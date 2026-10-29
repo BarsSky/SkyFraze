@@ -273,6 +273,9 @@ type stubLive struct {
 	deleteEvent string
 	// Возврат удалённого кадра: что вернула «комната».
 	revived yjs.RemovedEvent
+	// Правка даты: что ушло в «комнату».
+	dateEvent string
+	dateValue string
 }
 
 // SetEventTextLive — заглушка правки текста (см. LiveDoc).
@@ -285,6 +288,15 @@ func (s *stubLive) SetEventTextLive(
 		return yjs.EditOutcome{Handled: true}, nil
 	}
 	return yjs.EditOutcome{Handled: true, Found: true, Warning: s.editWarn}, nil
+}
+
+// SetEventDateLive — заглушка правки даты (см. LiveDoc).
+func (s *stubLive) SetEventDateLive(
+	_ context.Context, _ uuid.UUID, _ uuid.UUID, eventID, date string,
+) (yjs.EditOutcome, error) {
+	s.calls++
+	s.dateEvent, s.dateValue = eventID, date
+	return yjs.EditOutcome{Handled: true, Found: true}, nil
 }
 
 // DeleteEventLive — заглушка удаления кадра (см. LiveDoc).

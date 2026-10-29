@@ -50,6 +50,10 @@ type Proposal struct {
 	CommentID *uuid.UUID `json:"comment_id,omitempty"`
 	OldSpan   string     `json:"old_span"`
 	NewSpan   string     `json:"new_span"`
+	// Дата (kind=update_date, 0.106.0): «было» и «станет» в формате YYYY-MM-DD; пусто — даты
+	// нет. Отдельные поля, а не OldTitle: «Вернуть прежний текст» не должен трогать дату.
+	OldDate string `json:"old_date"`
+	NewDate string `json:"new_date"`
 }
 
 // Ошибки работы с предложениями.
@@ -73,6 +77,7 @@ func ProposalDTO(c store.AIChange) Proposal {
 		EventID: c.EventID, EventTitle: c.EventTitle,
 		OldTitle: c.OldTitle, OldBody: c.OldBody, NewTitle: c.NewTitle, NewBody: c.NewBody,
 		CommentID: c.CommentID, OldSpan: c.OldSpan, NewSpan: c.NewSpan,
+		OldDate: c.OldDate, NewDate: c.NewDate,
 	}
 }
 
@@ -212,6 +217,26 @@ func (s *Service) applyProposal(
 		}
 		warning, err := s.editor.UpdateEventText(ctx, actorID, userID, projectID,
 			change.EventID.String(), &title, &body)
+		if err != nil {
+			return nil, "", editErrorText(err)
+		}
+		return change, warning, nil
+	}
+
+	// Правка даты (kind=update_date, 0.106.0): сверяется ДАТА, а не текст и не кадр целиком.
+	// Применяем old_date → new_date, возвращаем new_date → old_date; «дата уже другая» —
+	// отказ, а не тихая перезапись чужой правки.
+	if change.Kind == store.AIChangeUpdateDate {
+		expect, date := change.OldDate, change.NewDate
+		if revert {
+			expect, date = change.NewDate, change.OldDate
+		}
+		if err := s.requireDateUnchanged(ctx, projectID, change.EventID, expect); err != nil {
+			_ = s.store.SetAIChangeStatus(ctx, change.ID, from, store.AIChangeSuperseded)
+			return nil, "", err
+		}
+		warning, err := s.editor.SetEventDate(ctx, actorID, userID, projectID,
+			change.EventID.String(), date)
 		if err != nil {
 			return nil, "", editErrorText(err)
 		}
@@ -362,6 +387,35 @@ func (s *Service) requireUnchanged(
 	return ErrProposalStale
 }
 
+// requireDateUnchanged проверяет, что дата кадра та же, что была в предложении.
+//
+// Тем же путём, что и сверка текста: читаем проекцию (`ListEvents`), а не часы. Проекция
+// отстаёт от документа не больше чем на период сохранения комнаты (5 с) — этого достаточно,
+// чтобы «человек успел поправить дату в другой вкладке» не затиралось молча. Кадр мог
+// исчезнуть — тогда тоже отказ: применять правку некуда.
+func (s *Service) requireDateUnchanged(
+	ctx context.Context, projectID, eventID uuid.UUID, want string,
+) error {
+	rows, err := s.store.ListEvents(ctx, projectID)
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		if row.ID != eventID {
+			continue
+		}
+		current := ""
+		if row.EventDate != nil {
+			current = row.EventDate.Format("2006-01-02")
+		}
+		if current != want {
+			return ErrProposalStale
+		}
+		return nil
+	}
+	return ErrProposalStale
+}
+
 // editErrorText переводит отказы пути правки в текст для человека.
 func editErrorText(err error) error {
 	switch {
@@ -385,6 +439,10 @@ func editErrorText(err error) error {
 // Модели важно понимать разницу: она НЕ изменила проект, и повторять вызов нельзя.
 // Иначе она честно решит, что «не получилось», и предложит то же самое ещё три раза.
 func proposalNote(kind string) string {
+	if kind == store.AIChangeUpdateDate {
+		return "предложение даты сохранено и ждёт подтверждения человеком; дата пока НЕ изменена " +
+			"и повторять вызов не нужно — скажи человеку, что он может применить правку в окне помощника"
+	}
 	if kind == store.AIChangeDeleteEvent {
 		return "предложение удаления сохранено и ждёт подтверждения человеком; кадр пока НЕ удалён " +
 			"и повторять вызов не нужно — скажи человеку, что он может подтвердить удаление в окне помощника"
@@ -396,8 +454,13 @@ func proposalNote(kind string) string {
 // proposalTitle — короткая подпись для журнала и интерфейса.
 func proposalTitle(kind, eventTitle string) string {
 	what := "переписать"
-	if kind == store.AIChangeDeleteEvent {
+	switch kind {
+	case store.AIChangeDeleteEvent:
 		what = "удалить"
+	case store.AIChangeUpdateDate:
+		what = "перенести"
+	case store.AIChangeUpdateSpan:
+		what = "поправить фрагмент в"
 	}
 	return fmt.Sprintf("%s кадр «%s»", what, strings.TrimSpace(eventTitle))
 }

@@ -43,6 +43,8 @@ const (
 	ToolCreateSub     = "create_sub_event"
 	ToolUpdateText    = "update_event_text"
 	ToolDeleteEvent   = "delete_event"
+	// ToolUpdateDate — поставить или снять дату кадра (0.106.0).
+	ToolUpdateDate    = "update_event_date"
 	ToolGenerateImage = "generate_image"
 	// Обсуждение и правка фрагмента по замечанию (0.62.0).
 	ToolReadComments        = "read_comments"
@@ -236,6 +238,25 @@ func ToolDefs(caps Capabilities, editing, world, worldWrite bool, entityKinds []
 					"required": []string{"id"},
 				},
 			},
+			// Дата кадра (0.106.0): отдельный инструмент, а не поле в update_event_text.
+			// «Перенеси этот кадр на 3 марта» — частая просьба, и разрешать заодно переписать
+			// текст там, где просили поправить только дату, значит давать больше, чем просили.
+			ai.ToolDef{
+				Name: ToolUpdateDate,
+				Description: "Предложить поставить или снять ДАТУ СУЩЕСТВУЮЩЕГО кадра. " +
+					"Дата в формате YYYY-MM-DD; пустая строка — убрать дату. Текст кадра не меняется. " +
+					"Ставь дату только из слов человека или из текста кадра: придумывать хронологию нельзя. " +
+					"Дату применяет человек — ты только предлагаешь.",
+				Parameters: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"id":     map[string]any{"type": "string", "description": "Идентификатор кадра из list_events"},
+						"date":   map[string]any{"type": "string", "description": "Дата YYYY-MM-DD или пустая строка, чтобы убрать"},
+						"reason": map[string]any{"type": "string", "description": "Коротко, откуда дата: это увидит человек перед подтверждением"},
+					},
+					"required": []string{"id", "date"},
+				},
+			},
 			// Обсуждение кадров и правка по замечанию к фрагменту. Оба инструмента
 			// предлагаются только вместе с правкой: читать обсуждение, чтобы ничего не мочь
 			// исправить, — бесполезная подсказка модели.
@@ -359,6 +380,51 @@ func ParseUpdate(args map[string]any, limits Limits) (UpdateArgs, error) {
 	if out.Title == nil && out.Body == nil {
 		return out, errors.New("нечего менять: передай title и/или body_md с новым содержимым")
 	}
+	out.Reason = argString(args, "reason")
+	if len([]rune(out.Reason)) > limits.MaxReasonChars {
+		out.Reason = string([]rune(out.Reason)[:limits.MaxReasonChars])
+	}
+	return out, nil
+}
+
+// DateArgs — аргументы предложения «поставить дату».
+type DateArgs struct {
+	EventID uuid.UUID
+	// Date — YYYY-MM-DD; пустая строка значит «убрать дату» (осознанное действие, а не
+	// отсутствие аргумента: без аргумента инструмент не вызывается).
+	Date   string
+	Reason string
+}
+
+// ParseDateUpdate разбирает аргументы update_event_date.
+//
+// Формат проверяется ДО предложения: модель охотно пишет «3 марта» и «2026-3-3», а человек
+// потом видит предложение, которое нельзя применить. Пустая строка — допустимое значение
+// («убрать дату»), отсутствие аргумента — нет.
+func ParseDateUpdate(args map[string]any, limits Limits) (DateArgs, error) {
+	var out DateArgs
+	rawID := argString(args, "id")
+	if rawID == "" {
+		return out, errors.New("не задан id — скажи, какому кадру менять дату (возьми из list_events)")
+	}
+	eventID, err := uuid.Parse(rawID)
+	if err != nil {
+		return out, errors.New("id не похож на идентификатор — возьми его из list_events")
+	}
+	out.EventID = eventID
+
+	raw, ok := args["date"]
+	if !ok || raw == nil {
+		return out, errors.New("не задана date: YYYY-MM-DD или пустая строка, чтобы убрать дату")
+	}
+	date := strings.TrimSpace(argString(args, "date"))
+	if date != "" {
+		if _, err := time.Parse("2006-01-02", date); err != nil {
+			return out, errors.New("дата должна быть в формате YYYY-MM-DD (например 2026-03-02), " +
+				"или пустой строкой, чтобы убрать дату")
+		}
+	}
+	out.Date = date
 	out.Reason = argString(args, "reason")
 	if len([]rune(out.Reason)) > limits.MaxReasonChars {
 		out.Reason = string([]rune(out.Reason)[:limits.MaxReasonChars])

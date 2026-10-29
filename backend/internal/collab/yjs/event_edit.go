@@ -16,6 +16,7 @@ package yjs
 import (
 	"errors"
 	"strings"
+	"time"
 
 	ygo "github.com/Deln0r/ygo"
 )
@@ -107,6 +108,41 @@ func (d *Doc) SetEventText(eventID string, title, body *string) (bool, error) {
 			txn.Commit()
 			return true, err
 		}
+	}
+	txn.Commit()
+	return true, nil
+}
+
+// SetEventDate ставит или снимает дату кадра.
+//
+// Дата — скалярное поле `event_date`, а не `Y.Text`: в редакторе это `<input type="date">`,
+// и человек выбирает день целиком, а не правит символы. Поэтому здесь `Set`/`Delete`, как это
+// делает и сама вкладка (`ymap.set('event_date', value)`) — открытые вкладки увидят ту же
+// правку, что сделали бы пальцем.
+//
+// Пустая строка — осознанная очистка даты. Это отличается от «поля нет»: для проекции дерева
+// отсутствие поля значит «клиент даты не видел, не трогать» (старый снапшот, импорт без CRDT),
+// и путать эти два состояния нельзя — иначе «убрать дату» стирало бы её у проектов, которые
+// её просто не присылали.
+func (d *Doc) SetEventDate(eventID, date string) (bool, error) {
+	if strings.TrimSpace(eventID) == "" {
+		return false, errors.New("нужен идентификатор кадра")
+	}
+	date = strings.TrimSpace(date)
+	if date != "" {
+		if _, err := time.Parse("2006-01-02", date); err != nil {
+			return false, errors.New("дата должна быть в формате 2026-03-02 или пустой")
+		}
+	}
+	target, ok := d.eventMap(eventID)
+	if !ok {
+		return false, nil
+	}
+	txn := d.inner.WriteTxn()
+	if date == "" {
+		target.Delete(txn, "event_date")
+	} else {
+		target.Set(txn, "event_date", date)
 	}
 	txn.Commit()
 	return true, nil

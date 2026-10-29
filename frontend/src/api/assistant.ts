@@ -189,6 +189,9 @@ export interface AIProposal {
   commentId?: string | null
   oldSpan: string
   newSpan: string
+  /** Дата (kind=update_date): «было» и «станет» в формате YYYY-MM-DD; пусто — даты нет. */
+  oldDate: string
+  newDate: string
 }
 
 /** Карточка мира, которую предлагает завести агент (0.77.0). */
@@ -1112,6 +1115,8 @@ export function parseProposal(raw: unknown): AIProposal | null {
     newBody: asText(record?.new_body),
     commentId: asText(record?.comment_id) || null,
     oldSpan: asText(record?.old_span),
+    oldDate: asText(record?.old_date),
+    newDate: asText(record?.new_date),
     newSpan: asText(record?.new_span),
   }
 }

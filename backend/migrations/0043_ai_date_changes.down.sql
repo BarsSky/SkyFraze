@@ -1,0 +1,2 @@
+﻿ALTER TABLE ai_changes DROP COLUMN IF EXISTS old_date;
+ALTER TABLE ai_changes DROP COLUMN IF EXISTS new_date;

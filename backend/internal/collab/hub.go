@@ -365,6 +365,17 @@ func (h *Hub) SetEventTextLive(
 	})
 }
 
+// SetEventDateLive ставит или снимает дату кадра в живом документе.
+//
+// Пустая строка — очистка даты (см. yjs.Doc.SetEventDate).
+func (h *Hub) SetEventDateLive(
+	ctx context.Context, projectID, by uuid.UUID, eventID, date string,
+) (yjs.EditOutcome, error) {
+	return h.editLive(ctx, projectID, by, "date updated", func(doc *yjs.Doc) (bool, error) {
+		return doc.SetEventDate(eventID, date)
+	})
+}
+
 // DeleteEventLive удаляет кадр из живого документа.
 //
 // Возвращает снимок удалённого кадра: он уходит в сторону вызывающего, чтобы удаление

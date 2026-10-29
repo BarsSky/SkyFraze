@@ -1431,7 +1431,9 @@ export function AssistantPanel({
                           ? 'Вернуть кадр'
                           : proposal.kind === 'update_span'
                             ? 'Вернуть прежний фрагмент'
-                            : 'Вернуть прежний текст'}
+                            : proposal.kind === 'update_date'
+                              ? 'Вернуть прежнюю дату'
+                              : 'Вернуть прежний текст'}
                       </button>
                     </span>
                   </li>
@@ -1621,6 +1623,11 @@ function proposalTitle(proposal: AIProposal, stage: 'pending' | 'applied'): stri
       ? `Правка фрагмента в кадре «${title}»`
       : `Фрагмент в кадре «${title}» изменён`
   }
+  if (proposal.kind === 'update_date') {
+    return stage === 'pending'
+      ? `Поменять дату кадра «${title}»`
+      : `Дата кадра «${title}» изменена`
+  }
   return stage === 'pending' ? `Переписать кадр «${title}»` : `Переписан кадр «${title}»`
 }
 
@@ -1633,6 +1640,16 @@ function proposalTitle(proposal: AIProposal, stage: 'pending' | 'applied'): stri
   const parts: string[] = []
   if (proposal.newTitle !== '' && proposal.newTitle !== proposal.oldTitle) {
     parts.push(`заголовок: «${proposal.oldTitle}» → «${proposal.newTitle}»`)
+  }
+  if (proposal.kind === 'update_date') {
+    // Дата — не текст: человеку нужно увидеть ровно «было → станет», а «без изменений» здесь
+    // означало бы, что он не понял, что подтверждает.
+    // Дату показываем как есть (YYYY-MM-DD): так она выглядит в дереве и в поле редактора, и
+    // человек не сверяет «05.03» с «2026-03-05» в другом формате.
+    const before = proposal.oldDate === '' ? 'без даты' : proposal.oldDate
+    const after = proposal.newDate === '' ? 'без даты' : proposal.newDate
+    parts.push(`дата: ${before} → ${after}`)
+    return parts.join('; ')
   }
   if (proposal.newBody !== proposal.oldBody) {
     const before = firstLine(proposal.oldBody)

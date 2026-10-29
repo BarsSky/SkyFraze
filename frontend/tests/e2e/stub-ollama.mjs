@@ -124,6 +124,11 @@ const server = createServer((req, res) => {
       const wantsDelete =
         typeof lastUser?.content === 'string' &&
         lastUser.content.toLowerCase().includes('удали')
+      // Дата кадра (0.106.0): отдельная ветка, чтобы сценарий «поставь 5 марта» проверял именно
+      // update_event_date, а не «правку текста», и человек видел предложение только даты.
+      const wantsDate =
+        typeof lastUser?.content === 'string' &&
+        lastUser.content.toLowerCase().includes('дату')
       // Правка по замечанию к фрагменту (docs/fragment-comments.md §6). Здесь нужен настоящий
       // двухшаговый обмен, как у живой модели: сначала `read_comments` — иначе идентификатора
       // замечания неоткуда взять, — и только потом `propose_fragment_edit`. Заглушка делает то
@@ -133,13 +138,32 @@ const server = createServer((req, res) => {
         typeof lastUser?.content === 'string' &&
         lastUser.content.toLowerCase().includes('фрагмент')
       const systemText = messages.find((message) => message.role === 'system')?.content ?? ''
-      const eventID = wantsUpdate || wantsDelete || wantsFragment ? firstEventID(systemText) : null
+      const eventID =
+        wantsUpdate || wantsDelete || wantsFragment || wantsDate ? firstEventID(systemText) : null
       // Результаты инструментов В ЭТОМ ХОДЕ: по их числу решается, какой шаг следующий.
       const toolMessages = messages.slice(lastUserIndex + 1).filter((m) => m.role === 'tool')
       const commentID = wantsFragment ? firstCommentID(toolMessages) : null
       const answer = hasImage
         ? { content: 'Вижу картинку: на ней маяк.', toolCalls: [] }
-        : wantsFragment
+        : wantsDate
+          ? toolDone || !eventID
+            ? { content: 'Предлагаю поставить кадру дату — подтвердите в окне помощника.', toolCalls: [] }
+            : {
+                content: '',
+                toolCalls: [
+                  {
+                    function: {
+                      name: 'update_event_date',
+                      arguments: {
+                        id: eventID,
+                        date: '2026-03-05',
+                        reason: 'проверка e2e: дата по подтверждению',
+                      },
+                    },
+                  },
+                ],
+              }
+          : wantsFragment
           ? !eventID
             ? { content: 'Не нашёл кадр, о котором речь.', toolCalls: [] }
             : toolMessages.length === 0

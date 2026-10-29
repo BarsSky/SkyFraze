@@ -768,6 +768,8 @@ describe('AssistantPanel', () => {
       newTitle: 'Пролог',
       newBody: 'Новый текст главы.',
       oldSpan: '',
+      oldDate: '',
+      newDate: '',
       newSpan: '',
     }
     mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
@@ -801,6 +803,8 @@ describe('AssistantPanel', () => {
       newBody: '',
       commentId: 'c1',
       oldSpan: 'текст главы',
+      oldDate: '',
+      newDate: '',
       newSpan: 'логика восстановлена',
     }
     mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
@@ -820,6 +824,41 @@ describe('AssistantPanel', () => {
     // Кнопка возврата говорит про фрагмент, а не про весь текст кадра.
     expect(screen.getByRole('button', { name: 'Вернуть прежний фрагмент' })).toBeTruthy()
   })
+  it('правка даты показывается как «было → станет» и возвращается прежней датой', async () => {
+    const dateProposal: AIProposal = {
+      id: 'dp1',
+      kind: 'update_date',
+      status: 'pending',
+      eventId: 'e1',
+      eventTitle: 'Пролог',
+      oldTitle: '',
+      oldBody: '',
+      newTitle: '',
+      newBody: '',
+      oldSpan: '',
+      newSpan: '',
+      oldDate: '',
+      newDate: '2026-03-05',
+    }
+    mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
+    mocks.proposals.mockResolvedValue([dateProposal])
+    mocks.applyProposal.mockResolvedValue({
+      proposal: { ...dateProposal, status: 'applied' },
+      warning: '',
+    })
+    renderPanel()
+
+    // Подпись отличает правку даты от перезаписи текста: человек подтверждает то, что прочитал.
+    expect(await screen.findByText(/Поменять дату кадра «Пролог»/)).toBeTruthy()
+    expect(screen.getByText(/дата: без даты → 2026-03-05/)).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Применить' }))
+    await waitFor(() => expect(mocks.applyProposal).toHaveBeenCalledWith('p1', 'dp1'))
+    expect(await screen.findByText(/Дата кадра «Пролог» изменена/)).toBeTruthy()
+    // Возврат говорит именно про дату: текст кадра эта правка не трогала.
+    expect(screen.getByRole('button', { name: 'Вернуть прежнюю дату' })).toBeTruthy()
+  })
+
   it('применённую перезапись можно вернуть прежним текстом', async () => {
     const update: AIProposal = {
       id: 'p1',
@@ -832,6 +871,8 @@ describe('AssistantPanel', () => {
       newTitle: 'Пролог',
       newBody: 'Новый текст.',
       oldSpan: '',
+      oldDate: '',
+      newDate: '',
       newSpan: '',
     }
     mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
@@ -860,6 +901,8 @@ describe('AssistantPanel', () => {
       newTitle: '',
       newBody: '',
   oldSpan: '',
+  oldDate: '',
+  newDate: '',
   newSpan: '',
     }
     const applied: AIProposal = { ...removal, status: 'applied' }
@@ -891,6 +934,8 @@ describe('AssistantPanel', () => {
       newTitle: '',
       newBody: '',
   oldSpan: '',
+  oldDate: '',
+  newDate: '',
   newSpan: '',
     }
     mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
@@ -916,6 +961,8 @@ describe('AssistantPanel', () => {
       newTitle: 'Пролог',
       newBody: 'Новый текст.',
       oldSpan: '',
+      oldDate: '',
+      newDate: '',
       newSpan: '',
     }
     mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
@@ -948,6 +995,8 @@ describe('AssistantPanel', () => {
       newTitle: 'Пролог',
       newBody: 'Новый текст.',
       oldSpan: '',
+      oldDate: '',
+      newDate: '',
       newSpan: '',
     }
     mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })

@@ -85,6 +85,8 @@ func (s *Service) execute(
 		return s.toolCreate(ctx, actorID, userID, projectID, call, true)
 	case ToolUpdateText:
 		return s.toolUpdateText(ctx, userID, projectID, call)
+	case ToolUpdateDate:
+		return s.toolUpdateDate(ctx, userID, projectID, call)
 	case ToolDeleteEvent:
 		return s.toolDeleteEvent(ctx, userID, projectID, call)
 	case ToolReadComments:
@@ -275,6 +277,62 @@ func (s *Service) toolUpdateText(
 			"event_id":    event.ID.String(),
 			"status":      "ждёт подтверждения человеком",
 			"note":        proposalNote(store.AIChangeUpdateText),
+		},
+		proposal: change,
+	}
+}
+
+// toolUpdateDate предлагает поставить или снять дату кадра (0.106.0).
+//
+// Почему отдельное предложение, а не поле в правке текста. Дата — не текст: её меняют
+// отдельным действием («перенеси этот кадр на 3 марта»), и человек, подтверждая, видит
+// ровно «дата: 2026-03-02 → 2026-03-05», а не правку всего абзаца. «Вернуть» после этого
+// возвращает дату, не трогая текст.
+func (s *Service) toolUpdateDate(
+	ctx context.Context, userID, projectID uuid.UUID, call ai.ToolCall,
+) toolResult {
+	if s.editor == nil {
+		return refusedCall(call, "правка существующих кадров недоступна на этом стенде")
+	}
+	args, err := ParseDateUpdate(call.Arguments, s.limits)
+	if err != nil {
+		return refusedCall(call, err.Error())
+	}
+	event, ok := s.findEvent(ctx, projectID, args.EventID)
+	if !ok {
+		return refusedCall(call, "кадр не найден в этом проекте: возьмите идентификатор из list_events")
+	}
+	current := ""
+	if event.EventDate != nil {
+		current = event.EventDate.Format("2006-01-02")
+	}
+	if current == args.Date {
+		return refusedCall(call, "предлагать нечего: у кадра уже эта дата (или её и так нет)")
+	}
+
+	change, err := s.store.CreateAIChange(ctx, store.AIChange{
+		ProjectID: projectID, UserID: userID,
+		Kind: store.AIChangeUpdateDate, EventID: event.ID, EventTitle: event.Title,
+		OldDate: current, NewDate: args.Date,
+	})
+	if err != nil {
+		return refusedCall(call, "не удалось сохранить предложение: "+err.Error())
+	}
+	s.logger.Info("ai: предложена правка даты кадра",
+		"project", projectID, "user", userID, "event", event.ID,
+		"old", current, "new", args.Date, "change", change.ID)
+
+	return toolResult{
+		call: call,
+		report: Call{Name: call.Name, OK: true,
+			Detail: "предложил дату для кадра «" + event.Title + "»"},
+		payload: map[string]any{
+			"proposal_id": change.ID.String(),
+			"event_id":    event.ID.String(),
+			"old_date":    current,
+			"new_date":    args.Date,
+			"status":      "ждёт подтверждения человеком",
+			"note":        proposalNote(store.AIChangeUpdateDate),
 		},
 		proposal: change,
 	}
