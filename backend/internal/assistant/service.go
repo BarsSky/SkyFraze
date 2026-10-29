@@ -137,6 +137,10 @@ type EventEditor interface {
 	// схлопывается, и «Вернуть» идёт уже по новому.
 	ReplaceSpanChecked(ctx context.Context, actorID, userID, projectID uuid.UUID,
 		eventID, field string, start, end []byte, expect, replacement string) (string, []byte, []byte, error)
+	// SetEventParent — сменить родителя кадра (0.108.0): перенос по дереву. Пустой parentID —
+	// в корень; невозможный перенос возвращает transfer.ErrMoveInvalid с причиной.
+	SetEventParent(ctx context.Context, actorID, userID, projectID uuid.UUID,
+		eventID, parentID string) (string, error)
 	// SetEventDate — поставить или снять дату кадра (0.106.0). Отдельный метод, а не поле в
 	// UpdateEventText: дату меняют отдельным действием, и «Вернуть» отменяет ровно её.
 	SetEventDate(ctx context.Context, actorID, userID, projectID uuid.UUID,

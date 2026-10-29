@@ -192,6 +192,14 @@ export interface AIProposal {
   /** Дата (kind=update_date): «было» и «станет» в формате YYYY-MM-DD; пусто — даты нет. */
   oldDate: string
   newDate: string
+  /**
+   * Место (kind=move_event): прежняя и новая родительская глава. Пустой id и заголовок значит
+   * «верхний уровень дерева» — это позиция, а не «неизвестно».
+   */
+  oldParentId: string
+  newParentId: string
+  oldParentTitle: string
+  newParentTitle: string
 }
 
 /** Карточка мира, которую предлагает завести агент (0.77.0). */
@@ -1117,6 +1125,10 @@ export function parseProposal(raw: unknown): AIProposal | null {
     oldSpan: asText(record?.old_span),
     oldDate: asText(record?.old_date),
     newDate: asText(record?.new_date),
+    oldParentId: asText(record?.old_parent_id),
+    newParentId: asText(record?.new_parent_id),
+    oldParentTitle: asText(record?.old_parent_title),
+    newParentTitle: asText(record?.new_parent_title),
     newSpan: asText(record?.new_span),
   }
 }

@@ -246,9 +246,9 @@ func TestToolDefsAreWellFormed(t *testing.T) {
 	defs := ToolDefs(Capabilities{Text: true, Images: true}, true, true, true, nil, nil)
 	// 12 = чтение дерева и кадра, карточки мира (list_entities и read_entity), предложение карточек
 	// (propose_entities), обсуждение кадров, создание главы и под-события, предложение правки кадра,
-	// правка даты, правка фрагмента по замечанию, удаление, иллюстрация.
-	if len(defs) != 13 {
-		t.Fatalf("инструментов %d, ожидалось 13", len(defs))
+	// правка даты, перенос по дереву, правка фрагмента по замечанию, удаление, иллюстрация.
+	if len(defs) != 14 {
+		t.Fatalf("инструментов %d, ожидалось 14", len(defs))
 	}
 	seen := map[string]bool{}
 	for _, def := range defs {

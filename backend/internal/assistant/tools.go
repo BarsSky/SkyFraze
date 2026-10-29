@@ -44,7 +44,9 @@ const (
 	ToolUpdateText    = "update_event_text"
 	ToolDeleteEvent   = "delete_event"
 	// ToolUpdateDate — поставить или снять дату кадра (0.106.0).
-	ToolUpdateDate    = "update_event_date"
+	ToolUpdateDate = "update_event_date"
+	// ToolMoveEvent — перенести кадр к другому родителю (0.108.0).
+	ToolMoveEvent     = "move_event"
 	ToolGenerateImage = "generate_image"
 	// Обсуждение и правка фрагмента по замечанию (0.62.0).
 	ToolReadComments        = "read_comments"
@@ -257,6 +259,24 @@ func ToolDefs(caps Capabilities, editing, world, worldWrite bool, entityKinds []
 					"required": []string{"id", "date"},
 				},
 			},
+			// Перенос по дереву (0.108.0). Отдельный инструмент: место кадра — не текст и не
+			// дата, и «Вернуть» здесь возвращает прежнюю главу.
+			ai.ToolDef{
+				Name: ToolMoveEvent,
+				Description: "Предложить перенести кадр в другую главу или на верхний уровень дерева. " +
+					"Передай идентификатор кадра (из list_events) и идентификатор нового родителя из дерева; " +
+					"пустой parent_id — верхний уровень. Под-события переезжают вместе с кадром. " +
+					"Перенос применяет человек — ты только предлагаешь.",
+				Parameters: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"id":        map[string]any{"type": "string", "description": "Идентификатор кадра из list_events"},
+						"parent_id": map[string]any{"type": "string", "description": "Идентификатор новой родительской главы или пустая строка для верхнего уровня"},
+						"reason":    map[string]any{"type": "string", "description": "Коротко, зачем перенос: это увидит человек перед подтверждением"},
+					},
+					"required": []string{"id", "parent_id"},
+				},
+			},
 			// Обсуждение кадров и правка по замечанию к фрагменту. Оба инструмента
 			// предлагаются только вместе с правкой: читать обсуждение, чтобы ничего не мочь
 			// исправить, — бесполезная подсказка модели.
@@ -425,6 +445,48 @@ func ParseDateUpdate(args map[string]any, limits Limits) (DateArgs, error) {
 		}
 	}
 	out.Date = date
+	out.Reason = argString(args, "reason")
+	if len([]rune(out.Reason)) > limits.MaxReasonChars {
+		out.Reason = string([]rune(out.Reason)[:limits.MaxReasonChars])
+	}
+	return out, nil
+}
+
+// MoveArgs — аргументы предложения «перенести кадр».
+type MoveArgs struct {
+	EventID uuid.UUID
+	// ParentID — пустая строка значит «на верхний уровень» (это осознанное действие, а не
+	// отсутствие аргумента: без parent_id инструмент не вызывается).
+	ParentID string
+	Reason   string
+}
+
+// ParseMove разбирает аргументы move_event.
+func ParseMove(args map[string]any, limits Limits) (MoveArgs, error) {
+	var out MoveArgs
+	rawID := argString(args, "id")
+	if rawID == "" {
+		return out, errors.New("не задан id — скажи, какой кадр переносить (возьми из list_events)")
+	}
+	eventID, err := uuid.Parse(rawID)
+	if err != nil {
+		return out, errors.New("id не похож на идентификатор — возьми его из list_events")
+	}
+	out.EventID = eventID
+	raw, ok := args["parent_id"]
+	if !ok || raw == nil {
+		return out, errors.New("не задан parent_id: куда переносить (id главы) или пустая строка для верхнего уровня")
+	}
+	parentID := strings.TrimSpace(argString(args, "parent_id"))
+	if parentID != "" {
+		if _, err := uuid.Parse(parentID); err != nil {
+			return out, errors.New("parent_id не похож на идентификатор — возьми его из дерева проекта")
+		}
+	}
+	if parentID == rawID {
+		return out, errors.New("кадр не может быть родителем самому себе")
+	}
+	out.ParentID = parentID
 	out.Reason = argString(args, "reason")
 	if len([]rune(out.Reason)) > limits.MaxReasonChars {
 		out.Reason = string([]rune(out.Reason)[:limits.MaxReasonChars])

@@ -180,6 +180,10 @@ var schemaSteps = []struct{ probe, file string }{
 	                  WHERE table_schema='public' AND table_name='ai_changes'
 	                    AND column_name='old_date')`,
 		"0043_ai_date_changes.up.sql"},
+	{`SELECT EXISTS (SELECT 1 FROM information_schema.columns
+	                  WHERE table_schema='public' AND table_name='ai_changes'
+	                    AND column_name='old_parent_id')`,
+		"0044_ai_move_changes.up.sql"},
 }
 
 // Setup открывает отдельную БД для пакета (suffix), применяет миграции и

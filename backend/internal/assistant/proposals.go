@@ -50,6 +50,12 @@ type Proposal struct {
 	CommentID *uuid.UUID `json:"comment_id,omitempty"`
 	OldSpan   string     `json:"old_span"`
 	NewSpan   string     `json:"new_span"`
+	// Место (kind=move_event, 0.108.0): прежняя и новая родительская глава. Пустые id и
+	// заголовки значит «верхний уровень дерева».
+	OldParentID    *uuid.UUID `json:"old_parent_id,omitempty"`
+	NewParentID    *uuid.UUID `json:"new_parent_id,omitempty"`
+	OldParentTitle string     `json:"old_parent_title"`
+	NewParentTitle string     `json:"new_parent_title"`
 	// Дата (kind=update_date, 0.106.0): «было» и «станет» в формате YYYY-MM-DD; пусто — даты
 	// нет. Отдельные поля, а не OldTitle: «Вернуть прежний текст» не должен трогать дату.
 	OldDate string `json:"old_date"`
@@ -78,6 +84,8 @@ func ProposalDTO(c store.AIChange) Proposal {
 		OldTitle: c.OldTitle, OldBody: c.OldBody, NewTitle: c.NewTitle, NewBody: c.NewBody,
 		CommentID: c.CommentID, OldSpan: c.OldSpan, NewSpan: c.NewSpan,
 		OldDate: c.OldDate, NewDate: c.NewDate,
+		OldParentID: c.OldParentID, NewParentID: c.NewParentID,
+		OldParentTitle: c.OldParentTitle, NewParentTitle: c.NewParentTitle,
 	}
 }
 
@@ -237,6 +245,30 @@ func (s *Service) applyProposal(
 		}
 		warning, err := s.editor.SetEventDate(ctx, actorID, userID, projectID,
 			change.EventID.String(), date)
+		if err != nil {
+			return nil, "", editErrorText(err)
+		}
+		return change, warning, nil
+	}
+
+	// Перенос по дереву (kind=move_event, 0.108.0): сверяется РОДИТЕЛЬ, а не текст. Кадр мог
+	// уехать в другую главу после предложения — тогда применять старое нельзя, иначе затрём
+	// чужую перестановку.
+	if change.Kind == store.AIChangeMoveEvent {
+		expect, parent := change.OldParentID, change.NewParentID
+		if revert {
+			expect, parent = change.NewParentID, change.OldParentID
+		}
+		if err := s.requireParentUnchanged(ctx, projectID, change.EventID, expect); err != nil {
+			_ = s.store.SetAIChangeStatus(ctx, change.ID, from, store.AIChangeSuperseded)
+			return nil, "", err
+		}
+		parentID := ""
+		if parent != nil {
+			parentID = parent.String()
+		}
+		warning, err := s.editor.SetEventParent(ctx, actorID, userID, projectID,
+			change.EventID.String(), parentID)
 		if err != nil {
 			return nil, "", editErrorText(err)
 		}
@@ -416,6 +448,29 @@ func (s *Service) requireDateUnchanged(
 	return ErrProposalStale
 }
 
+// requireParentUnchanged проверяет, что кадр всё ещё в той главе, о которой договорились.
+//
+// Сверка по проекции, как у текста и даты: если человек сам переставил кадр после предложения,
+// применять старое нельзя. nil значит «верхний уровень» — это тоже позиция, а не «неизвестно».
+func (s *Service) requireParentUnchanged(
+	ctx context.Context, projectID, eventID uuid.UUID, want *uuid.UUID,
+) error {
+	rows, err := s.store.ListEvents(ctx, projectID)
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		if row.ID != eventID {
+			continue
+		}
+		if !sameOptionalID(row.ParentID, want) {
+			return ErrProposalStale
+		}
+		return nil
+	}
+	return ErrProposalStale
+}
+
 // editErrorText переводит отказы пути правки в текст для человека.
 func editErrorText(err error) error {
 	switch {
@@ -423,6 +478,10 @@ func editErrorText(err error) error {
 		return errors.New("кадр не найден: возможно, его уже удалили")
 	case errors.Is(err, transfer.ErrEventExists):
 		return errors.New("кадр с таким идентификатором уже есть в проекте: возвращать нечего")
+	case errors.Is(err, transfer.ErrMoveInvalid):
+		// Причина уже в тексте ошибки («в собственное под-событие», «превысит глубину»):
+		// человеку нужно её видеть, а не «перенос не удался».
+		return err
 	case errors.Is(err, transfer.ErrEventHasChildren):
 		return errors.New("у кадра есть под-события: сначала решите, что с ними (удалять главу вместе с детьми нельзя)")
 	case errors.Is(err, transfer.ErrMarkdownBusy):
@@ -439,6 +498,11 @@ func editErrorText(err error) error {
 // Модели важно понимать разницу: она НЕ изменила проект, и повторять вызов нельзя.
 // Иначе она честно решит, что «не получилось», и предложит то же самое ещё три раза.
 func proposalNote(kind string) string {
+	if kind == store.AIChangeMoveEvent {
+		return "предложение переноса сохранено и ждёт подтверждения человеком; кадр пока НЕ " +
+			"перенесён, и повторять вызов не нужно — скажи человеку, что он может подтвердить " +
+			"перенос в окне помощника"
+	}
 	if kind == store.AIChangeUpdateDate {
 		return "предложение даты сохранено и ждёт подтверждения человеком; дата пока НЕ изменена " +
 			"и повторять вызов не нужно — скажи человеку, что он может применить правку в окне помощника"
@@ -459,6 +523,8 @@ func proposalTitle(kind, eventTitle string) string {
 		what = "удалить"
 	case store.AIChangeUpdateDate:
 		what = "перенести"
+	case store.AIChangeMoveEvent:
+		what = "переместить"
 	case store.AIChangeUpdateSpan:
 		what = "поправить фрагмент в"
 	}

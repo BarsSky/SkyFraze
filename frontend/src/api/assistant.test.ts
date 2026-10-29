@@ -181,6 +181,11 @@ describe('предложения правок', () => {
       // Дата (0.106.0): у правки текста её нет — пустые строки, а не undefined.
       oldDate: '',
       newDate: '',
+      // Место (0.108.0): у правки текста тоже пустое.
+      oldParentId: '',
+      newParentId: '',
+      oldParentTitle: '',
+      newParentTitle: '',
     })
     // Вид по умолчанию — перезапись: удаление опаснее, и «по умолчанию» им быть не должно.
     expect(turn.proposals![1].kind).toBe('update_text')

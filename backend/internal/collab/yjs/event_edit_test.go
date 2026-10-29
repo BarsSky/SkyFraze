@@ -267,3 +267,81 @@ func TestDocSetEventDate(t *testing.T) {
 		t.Errorf("чужой кадр: found=%v err=%v", found, err)
 	}
 }
+
+// TestDocSetEventParent — перенос кадра по дереву: меняется родитель, порядок не трогается.
+//
+// Почему именно так, а не «переставить в массиве». Проверка зафиксировала ограничение ygo:
+// переставленная карта читается, но записи в неё после Delete+Insert теряются. Поэтому перенос
+// меняет только `parent_id`; место в дереве следует из порядка документа, а «Вернуть на прежнее
+// место» — это возврат прежнего родителя (порядок не менялся вовсе). Тест стережёт именно это:
+// порядок остаётся прежним, родитель меняется, дети едут вместе с кадром.
+func TestDocSetEventParent(t *testing.T) {
+	chapter1, chapter2, child, grandchild := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
+	doc := yjs.NewDoc()
+	if err := doc.InsertEvents(0, []yjs.EventSeed{
+		{ID: chapter1, Title: "Глава 1"},
+		{ID: child, ParentID: chapter1, Title: "Под-событие"},
+		{ID: grandchild, ParentID: child, Title: "Под-шаг"},
+		{ID: chapter2, Title: "Глава 2"},
+	}); err != nil {
+		t.Fatalf("документ: %v", err)
+	}
+	order := func() []string {
+		out := make([]string, 0, 4)
+		for _, event := range doc.Events() {
+			out = append(out, event.ID)
+		}
+		return out
+	}
+	before := order()
+
+	found, err := doc.SetEventParent(child, chapter2)
+	if err != nil || !found {
+		t.Fatalf("перенос: found=%v err=%v", found, err)
+	}
+	moved, ok := doc.EventByID(child)
+	if !ok || moved.ParentID != chapter2 {
+		t.Fatalf("родитель после переноса: %+v", moved)
+	}
+	// Порядок в документе не менялся: место в дереве следует из него.
+	after := order()
+	for i := range before {
+		if after[i] != before[i] {
+			t.Fatalf("порядок после переноса: %v, ожидался %v", after, before)
+		}
+	}
+	// Ребёнок переехал вместе с кадром: он ссылается на него по идентификатору.
+	if step, _ := doc.EventByID(grandchild); step.ParentID != child {
+		t.Errorf("родитель под-шага после переноса: %q", step.ParentID)
+	}
+	// Карта остаётся ЖИВОЙ: после переноса в кадр всё ещё можно писать (иначе «Вернуть» и
+	// правка текста молча не работали бы — именно это и выяснилось на перестановке).
+	body := "текст после переноса"
+	if _, err := doc.SetEventText(child, nil, &body); err != nil {
+		t.Fatalf("правка текста после переноса: %v", err)
+	}
+	if event, _ := doc.EventByID(child); event.Body != body {
+		t.Errorf("текст после переноса: %q", event.Body)
+	}
+
+	// Возврат: прежний родитель, порядок тот же, что и до переноса.
+	if found, err := doc.SetEventParent(child, chapter1); err != nil || !found {
+		t.Fatalf("возврат: found=%v err=%v", found, err)
+	}
+	if event, _ := doc.EventByID(child); event.ParentID != chapter1 {
+		t.Errorf("родитель после возврата: %q", event.ParentID)
+	}
+	// В корень — это удаление parent_id, а не пустая строка.
+	if found, err := doc.SetEventParent(child, ""); err != nil || !found {
+		t.Fatalf("перенос в корень: found=%v err=%v", found, err)
+	}
+	if event, _ := doc.EventByID(child); event.ParentID != "" {
+		t.Errorf("родитель в корне: %q", event.ParentID)
+	}
+	if _, err := doc.SetEventParent(child, child); err == nil {
+		t.Error("ожидался отказ «кадр не может быть родителем самому себе»")
+	}
+	if found, err := doc.SetEventParent(uuid.NewString(), chapter1); found || err != nil {
+		t.Errorf("неизвестный кадр: found=%v err=%v", found, err)
+	}
+}

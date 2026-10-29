@@ -187,6 +187,42 @@ func (d *Doc) DeleteEvent(eventID string) (*RemovedEvent, error) {
 	return &removed, nil
 }
 
+// SetEventParent меняет родителя кадра — перенос по дереву.
+//
+// Почему только `parent_id`, без перестановки в массиве. Документ — плоская
+// последовательность (`events`), а дерево строится из неё по `parent_id`
+// (`events.NormalizeTree`): место в массиве и есть порядок в дереве. Переставлять элемент
+// (Delete + Insert) оказалось нельзя: ygo показывает переставленную карту, но записи в неё
+// после перестановки молча теряются — проверено тестом (`TestDocSetEventParent`), и это
+// означало бы «кадр виден, а править его больше нельзя». Поэтому перенос меняет только
+// родителя: кадр сохраняет свой индекс, а среди новых соседей встаёт по порядку документа.
+// Возврат на прежнее место — просто вернуть прежнего родителя, порядок при этом не менялся
+// вовсе.
+//
+// Дети переезжают вместе с кадром сами: они ссылаются на него по идентификатору, а не на
+// место в массиве. Проверки цикла («нельзя в собственного потомка») живут в сервисе — документ
+// иерархии не знает.
+func (d *Doc) SetEventParent(eventID, parentID string) (bool, error) {
+	if strings.TrimSpace(eventID) == "" {
+		return false, errors.New("нужен идентификатор кадра")
+	}
+	if parentID == eventID {
+		return false, errors.New("кадр не может быть родителем самому себе")
+	}
+	target, ok := d.eventMap(eventID)
+	if !ok {
+		return false, nil
+	}
+	txn := d.inner.WriteTxn()
+	defer txn.Commit()
+	if parentID == "" {
+		target.Delete(txn, "parent_id")
+	} else {
+		target.Set(txn, "parent_id", parentID)
+	}
+	return true, nil
+}
+
 // eventMap находит карту кадра в корневом массиве.
 func (d *Doc) eventMap(eventID string) (*ygo.Map, bool) {
 	events := ygo.NewArray(d.inner, EventsRoot)

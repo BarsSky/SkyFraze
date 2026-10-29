@@ -104,3 +104,56 @@ SkyFraze). Если распространяете образ — приложи
 * Правя файл стороннего пакета, помечайте файл как изменённый (требование Apache-2.0 §4(b)).
 * Меняя лицензию самого SkyFraze, помните: без подписанного CLA у внешних авторов смена
   лицензии требует их согласия — поэтому решения по PR принимаются с учётом этого.
+
+## Полные тексты лицензий
+
+Сводка выше отвечает на вопрос «под какой лицензией», этот раздел — на вопрос «что именно
+приложить». Полные тексты сторонних лицензий лежат в каталоге [`licenses/`](licenses/README.md).
+
+| Файл в `licenses/` | Что покрывает | Объём |
+|---|---|---|
+| `EPL-2.0.txt` | `elkjs@0.9.3` (транзитивно внутри `mermaid`; чанк `frontend/dist/assets/elk-*.js`) | 14 198 Б, 277 строк |
+| `LGPL-3.0.txt` | `libheif-tools` в образе backend (`apk add libheif-tools`, утилита `heif-convert`) | 7 652 Б, 165 строк |
+| `go-modules.txt` | 28 Go-модулей из build-list бэкенда: полный текст лицензии каждого модуля и строки copyright | 86 765 Б, 1 452 строки |
+| `npm-packages.txt` | 11 прямых зависимостей фронтенда (`dependencies`) плюс `elkjs` | 16 792 Б, 283 строки |
+
+Почему так:
+
+* **Apache-2.0 отдельным файлом не дублируется** — полный текст это корневой `LICENSE`, он
+  едет с продуктом в любом варианте поставки. Файл `node_modules/dompurify/LICENSE` байт-в-байт
+  совпадает с ним (SHA-256 `CFC7749B96F63BD31C3C42B5C471BF756814053E847C10F3EB003417BC523D30`),
+  поэтому в `npm-packages.txt` на месте текста dompurify стоит ссылка на корневой `LICENSE` и
+  явно сказано, что проект использует альтернативу Apache-2.0, а не MPL-2.0.
+* **EPL-2.0** скачан дословно с <https://www.eclipse.org/org/documents/epl-2.0/EPL-2.0.txt>;
+  заголовок файла — «Eclipse Public License - v 2.0», он же в `frontend/node_modules/elkjs/LICENSE.md`
+  (`elkjs` версии 0.9.3, лицензия в пакете указана как `EPL-2.0`). Исходник `elkjs`:
+  <https://github.com/kieler/elkjs>, тэг `v0.9.3`; код модуля не изменён.
+* **LGPL-3.0** скачан дословно с <https://www.gnu.org/licenses/lgpl-3.0.txt>. LGPL-3.0
+  включает условия GPL-3.0 **по ссылке** (в тексте: «This version of the GNU Lesser General
+  Public License incorporates the terms and conditions of version 3 of the GNU General Public
+  License, supplemented by the additional permissions listed below»), поэтому текст GPL-3.0
+  нужен для полноты, но в репозитории не лежит — он доступен по адресу
+  <https://www.gnu.org/licenses/gpl-3.0.txt>; это же указано в `licenses/README.md`. К
+  продукту GPL-3.0 относится только через LGPL-3.0 и только для пакета `libheif-tools`,
+  который ставится пакетным менеджером образа без изменения.
+* **`go-modules.txt` и `npm-packages.txt` не написаны вручную**: это конкатенация реальных
+  файлов `LICENSE*` (`COPYING`, `LICENCE*`, плюс `NOTICE`, если он есть) из каталога каждого
+  модуля кеша Go и из `frontend/node_modules/<пакет>/`, с блоком-заголовком
+  `# модуль@версия — лицензия — имя файла` перед каждым текстом. Строки copyright сохранены
+  целиком — ровно этого требуют MIT и BSD. Для 20 записей build-list (тестовые и
+  графовые зависимости вроде `stretchr/objx`, `gopkg.in/yaml.v3`, `modernc.org/sqlite`,
+  `golang.org/x/net`) файла лицензии на диске нет — они перечислены в конце `go-modules.txt`
+  в разделе «нет текста в каталоге модуля», текст для них не выдуман.
+
+### Что приложить при раздаче
+
+| Что распространяете | Что приложить |
+|---|---|
+| исходники (git / архив) | `LICENSE`, `NOTICE`, `THIRD-PARTY-NOTICES.md`, весь каталог `licenses/` |
+| бинарь бэкенда | `LICENSE`, `NOTICE`, `THIRD-PARTY-NOTICES.md`, `licenses/go-modules.txt` (обязательства MIT/BSD/Apache: сохранить copyright и текст) |
+| сборка фронтенда (`frontend/dist`, образ nginx) | `LICENSE`, `NOTICE`, `THIRD-PARTY-NOTICES.md`, `licenses/EPL-2.0.txt` (для `elkjs`), `licenses/npm-packages.txt` |
+| Docker-образ backend | как бинарь бэкенда плюс `licenses/LGPL-3.0.txt` (для `libheif-tools`) и указание, где взять GPL-3.0 |
+| всё вместе (source + бинарь + образы) | весь каталог `licenses/` целиком — он для этого и собран |
+
+Если меняется состав зависимостей, эти файлы пересобираются (как именно — в
+`licenses/README.md`); устаревшая сводка хуже отсутствующей, потому что выглядит проверенной.

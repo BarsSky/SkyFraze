@@ -42,6 +42,12 @@ const (
 	// отдельным действием («перенеси этот кадр на 3 марта»), и «Вернуть» должно отменять
 	// ровно дату, а не текст вместе с ней.
 	AIChangeUpdateDate = "update_date"
+	// AIChangeMoveEvent — перенести кадр к другому родителю (0.108.0).
+	//
+	// Место в дереве — не текст и не дата: проверять «изменилось ли» надо по родителю, а
+	// «Вернуть» возвращает прежнего родителя. Своё значение kind, потому что у этого вида
+	// предложения другие поля и другие проверки.
+	AIChangeMoveEvent = "move_event"
 	// AIChangeSuperseded — кадр изменился (или удалён) до подтверждения: применять
 	// старое предложение нельзя, иначе оно затрёт чужие правки.
 	AIChangeSuperseded = "superseded"
@@ -82,6 +88,14 @@ type AIChange struct {
 	// OldSpan: «фрагмент не изменился» — то же правило, что у правки кадра, но уровнем ниже.
 	OldSpan string `db:"old_span" json:"old_span"`
 	NewSpan string `db:"new_span" json:"new_span"`
+	// OldParentID/NewParentID — перенос по дереву (kind=move_event, миграция 0044). nil —
+	// корень: глава верхнего уровня. Заголовки родителей хранятся рядом, потому что интерфейс
+	// показывает «место: Глава 1 → Глава 2», а переименование главы не должно переписывать
+	// историю предложения.
+	OldParentID    *uuid.UUID `db:"old_parent_id" json:"old_parent_id,omitempty"`
+	NewParentID    *uuid.UUID `db:"new_parent_id" json:"new_parent_id,omitempty"`
+	OldParentTitle string     `db:"old_parent_title" json:"old_parent_title"`
+	NewParentTitle string     `db:"new_parent_title" json:"new_parent_title"`
 	// OldDate/NewDate — дата кадра «было» и «станет» в формате YYYY-MM-DD (kind=update_date,
 	// миграция 0043). Пустая строка — «даты нет»: это и осознанная очистка, и исходное
 	// состояние кадра без даты.
@@ -91,7 +105,8 @@ type AIChange struct {
 
 const aiChangeColumns = `id, project_id, conversation_id, user_id, kind, event_id, event_title,
 	old_title, old_body, new_title, new_body, status, created_at, applied_at, frame,
-	comment_id, anchor_start, anchor_end, old_span, new_span, old_date, new_date`
+	comment_id, anchor_start, anchor_end, old_span, new_span, old_date, new_date,
+	old_parent_id, new_parent_id, old_parent_title, new_parent_title`
 
 // CreateAIChange сохраняет предложение.
 func (s *Store) CreateAIChange(ctx context.Context, c AIChange) (*AIChange, error) {
@@ -99,13 +114,16 @@ func (s *Store) CreateAIChange(ctx context.Context, c AIChange) (*AIChange, erro
 		`INSERT INTO ai_changes (project_id, conversation_id, user_id, kind, event_id, event_title,
 		                         old_title, old_body, new_title, new_body, status,
 		                         comment_id, anchor_start, anchor_end, old_span, new_span,
-		                         old_date, new_date)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+		                         old_date, new_date,
+		                         old_parent_id, new_parent_id, old_parent_title, new_parent_title)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
+		         $19, $20, $21, $22)
 		 RETURNING `+aiChangeColumns,
 		c.ProjectID, c.ConversationID, c.UserID, c.Kind, c.EventID, c.EventTitle,
 		c.OldTitle, c.OldBody, c.NewTitle, c.NewBody, AIChangePending,
 		c.CommentID, c.AnchorStart, c.AnchorEnd, c.OldSpan, c.NewSpan,
-		c.OldDate, c.NewDate)
+		c.OldDate, c.NewDate,
+		c.OldParentID, c.NewParentID, c.OldParentTitle, c.NewParentTitle)
 }
 
 // AIChangeByID читает предложение проекта.

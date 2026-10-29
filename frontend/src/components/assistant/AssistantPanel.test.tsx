@@ -770,6 +770,10 @@ describe('AssistantPanel', () => {
       oldSpan: '',
       oldDate: '',
       newDate: '',
+      oldParentId: '',
+      newParentId: '',
+      oldParentTitle: '',
+      newParentTitle: '',
       newSpan: '',
     }
     mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
@@ -805,6 +809,10 @@ describe('AssistantPanel', () => {
       oldSpan: 'текст главы',
       oldDate: '',
       newDate: '',
+      oldParentId: '',
+      newParentId: '',
+      oldParentTitle: '',
+      newParentTitle: '',
       newSpan: 'логика восстановлена',
     }
     mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
@@ -839,6 +847,10 @@ describe('AssistantPanel', () => {
       newSpan: '',
       oldDate: '',
       newDate: '2026-03-05',
+      oldParentId: '',
+      newParentId: '',
+      oldParentTitle: '',
+      newParentTitle: '',
     }
     mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
     mocks.proposals.mockResolvedValue([dateProposal])
@@ -859,6 +871,45 @@ describe('AssistantPanel', () => {
     expect(screen.getByRole('button', { name: 'Вернуть прежнюю дату' })).toBeTruthy()
   })
 
+  it('перенос кадра показывается «куда» и возвращается в прежнюю главу', async () => {
+    const moveProposal: AIProposal = {
+      id: 'mp1',
+      kind: 'move_event',
+      status: 'pending',
+      eventId: 'e1',
+      eventTitle: 'Под-событие',
+      oldTitle: '',
+      oldBody: '',
+      newTitle: '',
+      newBody: '',
+      oldSpan: '',
+      newSpan: '',
+      oldDate: '',
+      newDate: '',
+      oldParentId: 'ch1',
+      newParentId: '',
+      oldParentTitle: 'Глава 1',
+      newParentTitle: '',
+    }
+    mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
+    mocks.proposals.mockResolvedValue([moveProposal])
+    mocks.applyProposal.mockResolvedValue({
+      proposal: { ...moveProposal, status: 'applied' },
+      warning: '',
+    })
+    renderPanel()
+
+    // В подписи — КУДА переносим: «переместить» без адреса человек подтверждал бы вслепую.
+    expect(await screen.findByText(/Переместить кадр «Под-событие» в верхний уровень/)).toBeTruthy()
+    expect(screen.getByText(/место: Глава 1 → верхний уровень/)).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Применить' }))
+    await waitFor(() => expect(mocks.applyProposal).toHaveBeenCalledWith('p1', 'mp1'))
+    expect(await screen.findByText(/Кадр «Под-событие» перемещён в верхний уровень/)).toBeTruthy()
+    // Возврат говорит про главу: текст и дата этой правкой не менялись.
+    expect(screen.getByRole('button', { name: 'Вернуть в прежнюю главу' })).toBeTruthy()
+  })
+
   it('применённую перезапись можно вернуть прежним текстом', async () => {
     const update: AIProposal = {
       id: 'p1',
@@ -873,6 +924,10 @@ describe('AssistantPanel', () => {
       oldSpan: '',
       oldDate: '',
       newDate: '',
+      oldParentId: '',
+      newParentId: '',
+      oldParentTitle: '',
+      newParentTitle: '',
       newSpan: '',
     }
     mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
@@ -903,6 +958,10 @@ describe('AssistantPanel', () => {
   oldSpan: '',
   oldDate: '',
   newDate: '',
+  oldParentId: '',
+  newParentId: '',
+  oldParentTitle: '',
+  newParentTitle: '',
   newSpan: '',
     }
     const applied: AIProposal = { ...removal, status: 'applied' }
@@ -936,6 +995,10 @@ describe('AssistantPanel', () => {
   oldSpan: '',
   oldDate: '',
   newDate: '',
+  oldParentId: '',
+  newParentId: '',
+  oldParentTitle: '',
+  newParentTitle: '',
   newSpan: '',
     }
     mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
@@ -963,6 +1026,10 @@ describe('AssistantPanel', () => {
       oldSpan: '',
       oldDate: '',
       newDate: '',
+      oldParentId: '',
+      newParentId: '',
+      oldParentTitle: '',
+      newParentTitle: '',
       newSpan: '',
     }
     mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
@@ -997,6 +1064,10 @@ describe('AssistantPanel', () => {
       oldSpan: '',
       oldDate: '',
       newDate: '',
+      oldParentId: '',
+      newParentId: '',
+      oldParentTitle: '',
+      newParentTitle: '',
       newSpan: '',
     }
     mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })

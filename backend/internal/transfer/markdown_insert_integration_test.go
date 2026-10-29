@@ -276,6 +276,9 @@ type stubLive struct {
 	// Правка даты: что ушло в «комнату».
 	dateEvent string
 	dateValue string
+	// Перенос по дереву: что ушло в «комнату».
+	moveEvent  string
+	moveParent string
 }
 
 // SetEventTextLive — заглушка правки текста (см. LiveDoc).
@@ -288,6 +291,15 @@ func (s *stubLive) SetEventTextLive(
 		return yjs.EditOutcome{Handled: true}, nil
 	}
 	return yjs.EditOutcome{Handled: true, Found: true, Warning: s.editWarn}, nil
+}
+
+// SetEventParentLive — заглушка переноса по дереву (см. LiveDoc).
+func (s *stubLive) SetEventParentLive(
+	_ context.Context, _ uuid.UUID, _ uuid.UUID, eventID, parentID string,
+) (yjs.EditOutcome, error) {
+	s.calls++
+	s.moveEvent, s.moveParent = eventID, parentID
+	return yjs.EditOutcome{Handled: true, Found: true}, nil
 }
 
 // SetEventDateLive — заглушка правки даты (см. LiveDoc).

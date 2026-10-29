@@ -53,6 +53,12 @@ function firstEventID(systemText) {
   return match ? match[0] : null
 }
 
+/** Первый UUID из произвольной строки (вопрос человека, результат инструмента). */
+function firstUUID(text) {
+  const match = typeof text === 'string' ? text.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i) : null
+  return match ? match[0] : null
+}
+
 /**
  * Идентификатор замечания из результата `read_comments`.
  *
@@ -124,6 +130,12 @@ const server = createServer((req, res) => {
       const wantsDelete =
         typeof lastUser?.content === 'string' &&
         lastUser.content.toLowerCase().includes('удали')
+      // Перенос по дереву (0.108.0): «перенеси» — предложение move_event. Верхний уровень
+      // (пустой parent_id) выбран специально: он не зависит от того, какие ещё кадры есть в
+      // проекте, поэтому сценарий не придётся переписывать при изменении дерева.
+      const wantsMove =
+        typeof lastUser?.content === 'string' &&
+        lastUser.content.toLowerCase().includes('перенеси')
       // Дата кадра (0.106.0): отдельная ветка, чтобы сценарий «поставь 5 марта» проверял именно
       // update_event_date, а не «правку текста», и человек видел предложение только даты.
       const wantsDate =
@@ -138,14 +150,40 @@ const server = createServer((req, res) => {
         typeof lastUser?.content === 'string' &&
         lastUser.content.toLowerCase().includes('фрагмент')
       const systemText = messages.find((message) => message.role === 'system')?.content ?? ''
+      // Если человек назвал кадр идентификатором прямо в вопросе — берём его: в дереве сложного
+      // проекта «первый кадр» не тот, о котором говорят (глава, а не под-событие).
+      const explicitUserID =
+        typeof lastUser?.content === 'string'
+          ? firstUUID(lastUser.content)
+          : null
       const eventID =
-        wantsUpdate || wantsDelete || wantsFragment || wantsDate ? firstEventID(systemText) : null
+        wantsUpdate || wantsDelete || wantsFragment || wantsDate || wantsMove
+          ? explicitUserID ?? firstEventID(systemText)
+          : null
       // Результаты инструментов В ЭТОМ ХОДЕ: по их числу решается, какой шаг следующий.
       const toolMessages = messages.slice(lastUserIndex + 1).filter((m) => m.role === 'tool')
       const commentID = wantsFragment ? firstCommentID(toolMessages) : null
       const answer = hasImage
         ? { content: 'Вижу картинку: на ней маяк.', toolCalls: [] }
-        : wantsDate
+        : wantsMove
+          ? toolDone || !eventID
+            ? { content: 'Предлагаю перенести кадр на верхний уровень — подтвердите.', toolCalls: [] }
+            : {
+                content: '',
+                toolCalls: [
+                  {
+                    function: {
+                      name: 'move_event',
+                      arguments: {
+                        id: eventID,
+                        parent_id: '',
+                        reason: 'проверка e2e: перенос по подтверждению',
+                      },
+                    },
+                  },
+                ],
+              }
+          : wantsDate
           ? toolDone || !eventID
             ? { content: 'Предлагаю поставить кадру дату — подтвердите в окне помощника.', toolCalls: [] }
             : {

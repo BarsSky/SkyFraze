@@ -1433,7 +1433,9 @@ export function AssistantPanel({
                             ? 'Вернуть прежний фрагмент'
                             : proposal.kind === 'update_date'
                               ? 'Вернуть прежнюю дату'
-                              : 'Вернуть прежний текст'}
+                              : proposal.kind === 'move_event'
+                                ? 'Вернуть в прежнюю главу'
+                                : 'Вернуть прежний текст'}
                       </button>
                     </span>
                   </li>
@@ -1628,6 +1630,13 @@ function proposalTitle(proposal: AIProposal, stage: 'pending' | 'applied'): stri
       ? `Поменять дату кадра «${title}»`
       : `Дата кадра «${title}» изменена`
   }
+  if (proposal.kind === 'move_event') {
+    // Куда переносим — в подписи: «переместить» без адреса человек подтверждал бы вслепую.
+    const to = proposal.newParentTitle === '' ? 'верхний уровень' : `«${proposal.newParentTitle}»`
+    return stage === 'pending'
+      ? `Переместить кадр «${title}» в ${to}`
+      : `Кадр «${title}» перемещён в ${to}`
+  }
   return stage === 'pending' ? `Переписать кадр «${title}»` : `Переписан кадр «${title}»`
 }
 
@@ -1638,8 +1647,24 @@ function proposalTitle(proposal: AIProposal, stage: 'pending' | 'applied'): stri
  * сравнение целиком — полный текст кадра он посмотрит в редакторе до или после.
  */function diffSummary(proposal: AIProposal): string {
   const parts: string[] = []
+  if (proposal.kind === 'move_event') {
+    // Место в дереве — не текст: показываем прежнюю и новую главу, а «верхний уровень» —
+    // словами, иначе пустое «было» читалось бы как «данных нет».
+    const from = proposal.oldParentTitle === '' ? 'верхний уровень' : proposal.oldParentTitle
+    const to = proposal.newParentTitle === '' ? 'верхний уровень' : proposal.newParentTitle
+    parts.push(`место: ${from} → ${to}`)
+    return parts.join('; ')
+  }
   if (proposal.newTitle !== '' && proposal.newTitle !== proposal.oldTitle) {
     parts.push(`заголовок: «${proposal.oldTitle}» → «${proposal.newTitle}»`)
+  }
+  if (proposal.kind === 'move_event') {
+    // Место в дереве — не текст: показываем прежнюю и новую главу, а «верхний уровень» —
+    // словами, иначе пустое «было» читалось бы как «данных нет».
+    const before = proposal.oldParentTitle === '' ? 'верхний уровень' : proposal.oldParentTitle
+    const after = proposal.newParentTitle === '' ? 'верхний уровень' : proposal.newParentTitle
+    parts.push(`место: ${before} → ${after}`)
+    return parts.join('; ')
   }
   if (proposal.kind === 'update_date') {
     // Дата — не текст: человеку нужно увидеть ровно «было → станет», а «без изменений» здесь

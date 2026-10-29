@@ -87,6 +87,8 @@ func (s *Service) execute(
 		return s.toolUpdateText(ctx, userID, projectID, call)
 	case ToolUpdateDate:
 		return s.toolUpdateDate(ctx, userID, projectID, call)
+	case ToolMoveEvent:
+		return s.toolMoveEvent(ctx, userID, projectID, call)
 	case ToolDeleteEvent:
 		return s.toolDeleteEvent(ctx, userID, projectID, call)
 	case ToolReadComments:
@@ -336,6 +338,87 @@ func (s *Service) toolUpdateDate(
 		},
 		proposal: change,
 	}
+}
+
+// toolMoveEvent предлагает перенести кадр к другому родителю (0.108.0).
+//
+// Почему отдельное предложение. Место в дереве — не текст и не дата: ошибка здесь ломает
+// структуру книги, поэтому человек видит «место: Глава 1 → Глава 2» и подтверждает отдельной
+// кнопкой, а «Вернуть» возвращает прежнюю главу. Дети переезжают вместе с кадром, и это
+// сказано в описании инструмента: модель не должна считать, что переносит одну строку.
+func (s *Service) toolMoveEvent(
+	ctx context.Context, userID, projectID uuid.UUID, call ai.ToolCall,
+) toolResult {
+	if s.editor == nil {
+		return refusedCall(call, "перестановка кадров недоступна на этом стенде")
+	}
+	args, err := ParseMove(call.Arguments, s.limits)
+	if err != nil {
+		return refusedCall(call, err.Error())
+	}
+	event, ok := s.findEvent(ctx, projectID, args.EventID)
+	if !ok {
+		return refusedCall(call, "кадр не найден в этом проекте: возьмите идентификатор из list_events")
+	}
+	var newParent *uuid.UUID
+	if args.ParentID != "" {
+		parsed, parseErr := uuid.Parse(args.ParentID)
+		if parseErr != nil {
+			return refusedCall(call, "parent_id не похож на идентификатор — возьмите его из дерева проекта")
+		}
+		newParent = &parsed
+	}
+	newTitle := ""
+	if newParent != nil {
+		parent, ok := s.findEvent(ctx, projectID, *newParent)
+		if !ok {
+			return refusedCall(call, "новой родительской главы нет в проекте: возьмите идентификатор из list_events")
+		}
+		newTitle = parent.Title
+	}
+	if sameOptionalID(event.ParentID, newParent) {
+		return refusedCall(call, "предлагать нечего: кадр уже в этой главе")
+	}
+	oldTitle := ""
+	if event.ParentID != nil {
+		if parent, ok := s.findEvent(ctx, projectID, *event.ParentID); ok {
+			oldTitle = parent.Title
+		}
+	}
+	change, err := s.store.CreateAIChange(ctx, store.AIChange{
+		ProjectID: projectID, UserID: userID,
+		Kind: store.AIChangeMoveEvent, EventID: event.ID, EventTitle: event.Title,
+		OldParentID: event.ParentID, NewParentID: newParent,
+		OldParentTitle: oldTitle, NewParentTitle: newTitle,
+	})
+	if err != nil {
+		return refusedCall(call, "не удалось сохранить предложение: "+err.Error())
+	}
+	s.logger.Info("ai: предложен перенос кадра",
+		"project", projectID, "user", userID, "event", event.ID, "change", change.ID)
+
+	return toolResult{
+		call: call,
+		report: Call{Name: call.Name, OK: true,
+			Detail: "предложил перенести кадр «" + event.Title + "»"},
+		payload: map[string]any{
+			"proposal_id": change.ID.String(),
+			"event_id":    event.ID.String(),
+			"old_parent":  oldTitle,
+			"new_parent":  newTitle,
+			"status":      "ждёт подтверждения человеком",
+			"note":        proposalNote(store.AIChangeMoveEvent),
+		},
+		proposal: change,
+	}
+}
+
+// sameOptionalID — совпадают ли два необязательных идентификатора (nil = корень).
+func sameOptionalID(a, b *uuid.UUID) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
 }
 
 // toolDeleteEvent предлагает удалить кадр.

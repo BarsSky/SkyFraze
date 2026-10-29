@@ -376,6 +376,18 @@ func (h *Hub) SetEventDateLive(
 	})
 }
 
+// SetEventParentLive меняет родителя кадра в живом документе (перенос по дереву).
+//
+// Пустой parentID — перенос в корень (глава верхнего уровня). Циклы и глубину проверяет
+// сервис: документ иерархии не знает.
+func (h *Hub) SetEventParentLive(
+	ctx context.Context, projectID, by uuid.UUID, eventID, parentID string,
+) (yjs.EditOutcome, error) {
+	return h.editLive(ctx, projectID, by, "event moved", func(doc *yjs.Doc) (bool, error) {
+		return doc.SetEventParent(eventID, parentID)
+	})
+}
+
 // DeleteEventLive удаляет кадр из живого документа.
 //
 // Возвращает снимок удалённого кадра: он уходит в сторону вызывающего, чтобы удаление

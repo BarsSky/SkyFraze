@@ -21,7 +21,9 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/skyfraze/backend/internal/collab/yjs"
+	"github.com/skyfraze/backend/internal/events"
 	"github.com/skyfraze/backend/internal/projects"
+	"github.com/skyfraze/backend/internal/store"
 )
 
 // serverDocument собирает документ проекта для правки без живой комнаты.
@@ -250,6 +252,144 @@ func (s *Service) SetEventDate(
 	return "", nil
 }
 
+// SetEventParent переносит кадр к другому родителю (или в корень, если parentID пуст).
+//
+// Проверки — те же, что у обычного переноса в дереве (`events.MoveEvent`), и живут здесь,
+// потому что это свойства ДЕРЕВА, а не документа: нельзя сделать кадр родителем самому себе,
+// нельзя уехать в собственного потомка, нельзя превысить глубину. Документ (`yjs.SetEventParent`)
+// умеет только сменить одного родителя на другого.
+//
+// Дети уезжают вместе с кадром: они ссылаются на него по идентификатору. Порядок среди новых
+// соседей — по порядку документа; переставлять элемент нельзя (переставленная карта в ygo
+// перестаёт принимать записи — проверено в `yjs/event_edit_test.go`).
+func (s *Service) SetEventParent(
+	ctx context.Context, actorID, userID, projectID uuid.UUID, eventID, parentID string,
+) (string, error) {
+	if err := s.proj.RequireEditor(ctx, userID, projectID); err != nil {
+		if errors.Is(err, projects.ErrForbidden) {
+			return "", ErrForbidden
+		}
+		return "", err
+	}
+	eventUUID, err := uuid.Parse(eventID)
+	if err != nil {
+		return "", ErrEventNotFound
+	}
+	rows, err := s.store.ListEvents(ctx, projectID)
+	if err != nil {
+		return "", err
+	}
+	target := findRow(rows, eventUUID)
+	if target == nil {
+		return "", ErrEventNotFound
+	}
+	var parent *uuid.UUID
+	if strings.TrimSpace(parentID) != "" {
+		parsed, parseErr := uuid.Parse(parentID)
+		if parseErr != nil {
+			return "", ErrEventNotFound
+		}
+		if parsed == eventUUID {
+			return "", fmt.Errorf("%w: кадр не может быть родителем самому себе", ErrMoveInvalid)
+		}
+		parent = &parsed
+		if findRow(rows, parsed) == nil {
+			return "", ErrEventNotFound
+		}
+	}
+	if parent != nil && inSubtree(rows, eventUUID, *parent) {
+		return "", fmt.Errorf("%w: нельзя перенести кадр в собственное под-событие", ErrMoveInvalid)
+	}
+	// Глубина: под-дерево переезжает целиком, и его низ не должен оказаться глубже предела.
+	depthByID := make(map[uuid.UUID]int, len(rows))
+	for _, row := range rows {
+		depthByID[row.ID] = int(row.Depth)
+	}
+	newDepth := 0
+	if parent != nil {
+		newDepth = depthByID[*parent] + 1
+	}
+	delta := newDepth - int(target.Depth)
+	maxDepth := int(target.Depth)
+	for id, depth := range depthByID {
+		if !inSubtree(rows, eventUUID, id) && id != eventUUID {
+			continue
+		}
+		if depth > maxDepth {
+			maxDepth = depth
+		}
+	}
+	if maxDepth+delta > events.MaxDepth {
+		return "", fmt.Errorf("%w: перенос превысит максимальную глубину %d", ErrMoveInvalid, events.MaxDepth)
+	}
+
+	if s.live != nil {
+		outcome, err := s.live.SetEventParentLive(ctx, projectID, actorID, eventID, parentID)
+		if err != nil {
+			return "", err
+		}
+		switch {
+		case outcome.RoomLoading:
+			return "", ErrMarkdownBusy
+		case outcome.Handled && !outcome.Found:
+			return "", ErrEventNotFound
+		case outcome.Handled:
+			return outcome.Warning, nil
+		}
+	}
+
+	doc, err := s.serverDocument(ctx, projectID)
+	if err != nil {
+		return "", err
+	}
+	found, err := doc.SetEventParent(eventID, parentID)
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		return "", ErrEventNotFound
+	}
+	if _, err := s.store.SaveProjectEventStateServer(ctx, projectID, actorID, doc.EncodeState()); err != nil {
+		return "", err
+	}
+	if err := s.projectDocument(ctx, projectID, actorID, doc); err != nil {
+		return fmt.Sprintf("кадр перенесён, но таблица событий не перестроена (%v) — "+
+			"она обновится при следующем сохранении", err), nil
+	}
+	return "", nil
+}
+
+// findRow — строка кадра по идентификатору (nil — нет такого).
+func findRow(rows []store.Event, id uuid.UUID) *store.Event {
+	for i := range rows {
+		if rows[i].ID == id {
+			return &rows[i]
+		}
+	}
+	return nil
+}
+
+// inSubtree — находится ли `id` в под-дереве `root` (или совпадает с ним).
+func inSubtree(rows []store.Event, root, id uuid.UUID) bool {
+	if root == id {
+		return true
+	}
+	parent := make(map[uuid.UUID]*uuid.UUID, len(rows))
+	for i := range rows {
+		parent[rows[i].ID] = rows[i].ParentID
+	}
+	for current := id; ; {
+		next, ok := parent[current]
+		if !ok || next == nil {
+			return false
+		}
+		if *next == root {
+			return true
+		}
+		current = *next
+	}
+}
+
 // ReviveEvent возвращает удалённый кадр на прежнее место — отмена удаления.
 //
 // Обратная операция к DeleteEvent, и по той же причине живёт здесь: возврат кадра — это
@@ -323,6 +463,11 @@ const orphanWarning = "кадр вернулся главой верхнего �
 
 // ErrEventHasChildren — у кадра есть под-события: удалять вместе с ними нельзя.
 var ErrEventHasChildren = errors.New("у кадра есть под-события")
+
+// ErrMoveInvalid — перенос кадра невозможен по правилам дерева: в собственного потомка, в
+// себя, или за предел глубины. Отдельная ошибка, чтобы человеку сказать причину словами, а не
+// «не удалось» (текст причины — после двоеточия в %w-обёртке).
+var ErrMoveInvalid = errors.New("перенос невозможен")
 
 // ReplaceSpanChecked заменяет фрагмент текста кадра, сверив его с ожидаемым.
 //

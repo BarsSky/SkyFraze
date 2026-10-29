@@ -450,6 +450,8 @@ SkyFraze/
 ├── LICENSE                       Apache-2.0: что можно делать с кодом (см. README)
 ├── NOTICE                        уведомления об авторстве, которые едут с продуктом
 ├── THIRD-PARTY-NOTICES.md        лицензии сторонних компонентов и что приложить при раздаче
+├── licenses/                     полные тексты сторонних лицензий: EPL-2.0, LGPL-3.0,
+│                                 сводки по Go-модулям и npm-пакетам (см. THIRD-PARTY-NOTICES.md)
 ├── docker-compose.prod.yml       конфигурация для сервера (см. «Развёртывание на сервере»)
 ├── docker-compose.yml            postgres + backend + frontend (локальная разработка)
 ├── .github/workflows/            ci.yml (5 jobs: backend, frontend, storage-s3, e2e, build) и nightly.yml (аудит + флейки)
