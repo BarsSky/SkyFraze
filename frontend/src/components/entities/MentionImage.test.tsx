@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MentionImage } from './MentionImage'
+import { setLang } from '../../store/lang'
 
 /**
  * Картинка у упоминания (0.93.0).
@@ -21,6 +22,10 @@ vi.mock('../../api/assets', () => ({
 vi.mock('../../api/assetObject', () => ({
   useAssetObjectUrl: (id?: string | null) => (id ? `blob:${id}` : null),
 }))
+
+beforeEach(() => {
+  setLang('ru')
+})
 
 afterEach(() => {
   cleanup()
@@ -80,5 +85,26 @@ describe('MentionImage', () => {
     render(<MentionImage {...base} canEdit={false} />)
     expect(screen.getByText('Картинка не привязана.')).toBeTruthy()
     expect(screen.queryByRole('button')).toBeNull()
+  })
+
+  /**
+   * 0.122.0: подписи картинки — из словаря. Альтернативный текст тоже: его читает скринридер,
+   * и на английском интерфейсе он не должен оставаться русским. Имя карточки и кадра — данные.
+   */
+  it('на английском подписи и альтернативный текст переведены', async () => {
+    setLang('en')
+    render(<MentionImage {...base} assetId="a3" />)
+    expect(screen.getByAltText('Анна in the frame "Пролог"')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'replace the image' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'detach' })).toBeTruthy()
+
+    // Без названия кадра — английская подстановка, а не пустые кавычки.
+    cleanup()
+    render(<MentionImage {...base} assetId="a3" eventTitle="" />)
+    expect(screen.getByAltText('Анна in the frame "untitled"')).toBeTruthy()
+
+    cleanup()
+    render(<MentionImage {...base} canEdit={false} />)
+    expect(screen.getByText('No image attached.')).toBeTruthy()
   })
 })

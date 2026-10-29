@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { tStatic, useT } from '../../i18n'
 import { listEventRows } from '../../api/events'
 import {
   buildEventTree,
@@ -75,6 +76,7 @@ interface RelationsRow {
 }
 
 export function RelationsPanel({ projectId, canEdit, onOpenFrame }: Props) {
+  const t = useT()
   const { entities, links, types, loaded, reload } = useProjectEntities(projectId)
   const [rows, setRows] = useState<RelationsRow[]>([])
   const [eventsLoaded, setEventsLoaded] = useState(false)
@@ -257,17 +259,17 @@ export function RelationsPanel({ projectId, canEdit, onOpenFrame }: Props) {
       <header className="relations__head">
         <div className="relations__titles">
           <h2 className="relations__title" id="relations-title">
-            Связи
+          {t('rel.title')}
           </h2>
           <p className="muted relations__hint">
-            Карточки персонажей, мест и тем: алиасы, упоминания в тексте, хронология, матрица и
-            граф связей. Текст проекта — в «Редакторах», здесь — то, что вокруг него.
+          {t('rel.hint')}
+
           </p>
         </div>
         <p className="muted relations__stats" data-relations-stats>
           {loaded
-            ? `карточек: ${entities.length} · связей: ${links.length} · кадров: ${framesCount} · глав: ${chapters}`
-            : 'читаю карточки…'}
+? t('rel.stats', { cards: entities.length, links: links.length, frames: framesCount, chapters })
+: t('rel.loadingCards')}
         </p>
       </header>
 
@@ -278,8 +280,8 @@ export function RelationsPanel({ projectId, canEdit, onOpenFrame }: Props) {
       ) : (
         <p className="muted relations__empty" data-relations-empty>
           {eventsLoaded && loaded
-            ? 'Карточек пока нет. Заведите первую ниже — по её имени и алиасам найдутся упоминания в тексте.'
-            : 'Загружаю карточки…'}
+? t('rel.empty')
+: t('rel.loading')}
         </p>
       )}
 
@@ -330,7 +332,7 @@ export function numberRows(flat: Array<EventLike & { title: string; body?: strin
       id: node.item.id,
       parentId,
       number,
-      title: node.item.title || 'Без названия',
+title: node.item.title || tStatic('rel.untitled'),
       body: node.item.body ?? '',
       date: dateFromServer(node.item.event_date ?? null),
       order: out.length,

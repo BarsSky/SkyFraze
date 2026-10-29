@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { pluralWord, useT } from '../../i18n'
+import { useLang, type Lang } from '../../store/lang'
 import type { EntityLink, ProjectEntity } from '../../api/entities'
 import { connectionsOf } from '../../api/entities'
 import { typeTitle, type EntityType } from '../../api/entityTypes'
@@ -70,6 +72,8 @@ function useReducedMotion(): boolean {
 }
 
 export function EntityGraph({ entities, links, tall = false, types = [], projectId }: Props) {
+  const t = useT()
+  const [lang] = useLang()
   /** Откуда пришли: стек последних центров, «назад» снимает верхний. */
   const [history, setHistory] = useState<string[]>([])
   const [centerId, setCenterId] = useState<string | null>(null)
@@ -340,7 +344,7 @@ export function EntityGraph({ entities, links, tall = false, types = [], project
     const group = groups.find((item) => item.kind === kind) ?? null
     const out: Array<{ label: string; onClick: (() => void) | null }> = [
       {
-        label: 'Мир',
+label: t('graph.world'),
         onClick: () => {
           setLevel('world')
           setGroupKind(null)
@@ -491,7 +495,7 @@ export function EntityGraph({ entities, links, tall = false, types = [], project
   if (entities.length === 0) {
     return (
       <p className="muted ent__hint" data-entity-graph-empty>
-        Граф появится, когда будут карточки: связи между ними — это и есть рёбра.
+      {t('graph.empty')}
       </p>
     )
   }
@@ -527,7 +531,7 @@ export function EntityGraph({ entities, links, tall = false, types = [], project
           crumbs={
             active
               ? [
-                  { label: 'Мир', onClick: () => setGroupKind(null) },
+              { label: t('graph.world'), onClick: () => setGroupKind(null) },
                   { label: active.title, onClick: null },
                 ]
               : null
@@ -545,13 +549,24 @@ export function EntityGraph({ entities, links, tall = false, types = [], project
                   persist({ level: 'world', groupKind: group.kind })
                 }}
                 data-entity-graph-group={group.kind}
-                aria-label={`Группа «${group.title}»: карточек ${group.cards.length}`}
+                aria-label={t('graph.groupAria', {
+                  title: group.title,
+                  cards: withUnit(lang, 'ent.unit.card', group.cards.length),
+                })}
               >
                 <span className="egraph__group-name">{group.title}</span>
                 <span className="egraph__group-count">{group.cards.length}</span>
                 <span className="muted egraph__group-meta">
-                  {group.links === 0 ? 'связей нет' : `связей ${group.links}`}
-                  {group.isolated > 0 ? ` · ${group.isolated} вне связей` : ''}
+                  {group.links === 0
+                    ? t('graph.linksNone')
+                    : t('graph.linksCount', {
+                        links: withUnit(lang, 'ent.unit.link', group.links),
+                      })}
+                  {group.isolated > 0
+                    ? t('graph.isolatedCount', {
+                        cards: withUnit(lang, 'ent.unit.card', group.isolated),
+                      })
+                    : ''}
                 </span>
               </button>
             ))}
@@ -559,13 +574,13 @@ export function EntityGraph({ entities, links, tall = false, types = [], project
         ) : (
           <div className="egraph__group-cards" data-entity-graph-group-cards={active.kind}>
             <div className="egraph__group-nav">
-              <button type="button" className="secondary" onClick={() => step(-1)} aria-label="Предыдущая группа" data-entity-graph-group-prev>
+              <button type="button" className="secondary" onClick={() => step(-1)} aria-label={t('graph.prevGroup')} data-entity-graph-group-prev>
                 ←
               </button>
               <span className="muted">
-                {index + 1} из {groups.length}
+              {t('graph.groupIndex', { index: index + 1, total: groups.length })}
               </span>
-              <button type="button" className="secondary" onClick={() => step(1)} aria-label="Следующая группа" data-entity-graph-group-next>
+              <button type="button" className="secondary" onClick={() => step(1)} aria-label={t('graph.nextGroup')} data-entity-graph-group-next>
                 →
               </button>
             </div>
@@ -617,7 +632,7 @@ export function EntityGraph({ entities, links, tall = false, types = [], project
               {clusters.isolated.length > 0 && (
                 <li className="egraph__cluster" data-entity-graph-cluster="isolated">
                   <span className="egraph__cluster-head" data-entity-graph-cluster-isolated>
-                    <span className="egraph__cluster-name">вне связей</span>
+<span className="egraph__cluster-name">{t('graph.outsideLinks')}</span>
                     <span className="muted">{clusters.isolated.length}</span>
                   </span>
                   <ul className="egraph__cluster-list">
@@ -636,7 +651,7 @@ export function EntityGraph({ entities, links, tall = false, types = [], project
                           data-entity-graph-group-card={card.id}
                         >
                           <span className="egraph__row-name">{card.name}</span>
-                          <span className="muted">связей нет</span>
+<span className="muted">{t('graph.linksNone')}</span>
                         </button>
                       </li>
                     ))}
@@ -646,7 +661,7 @@ export function EntityGraph({ entities, links, tall = false, types = [], project
             </ul>
             {active.cards.length === 0 && (
               <p className="muted">
-                В этой группе пока нет карточек.
+              {t('graph.emptyGroup')}
               </p>
             )}
           </div>
@@ -690,18 +705,18 @@ export function EntityGraph({ entities, links, tall = false, types = [], project
               type="button"
               className="secondary"
               onClick={() => setWindowStart((start) => (start - 1 + all.length) % all.length)}
-              aria-label="Предыдущие связи"
+              aria-label={t('graph.prevLinks')}
             >
               ↑
             </button>
             <span className="muted">
-              {layout.windowStart + 1}–{layout.windowStart + Math.min(RAIL_WINDOW, all.length)} из {all.length}
+            {t('graph.railRange', { from: layout.windowStart + 1, to: layout.windowStart + Math.min(RAIL_WINDOW, all.length), total: all.length })}
             </span>
             <button
               type="button"
               className="secondary"
               onClick={() => setWindowStart((start) => (start + 1) % all.length)}
-              aria-label="Следующие связи"
+              aria-label={t('graph.nextLinks')}
             >
               ↓
             </button>
@@ -709,7 +724,7 @@ export function EntityGraph({ entities, links, tall = false, types = [], project
         )}
         {neighbors.length === 0 && (
           <p className="muted" data-entity-graph-lonely>
-            У карточки пока нет связей. Их задают в карточке — «связана с».
+          {t('graph.noLinksHint')}
           </p>
         )}
       </div>
@@ -794,7 +809,7 @@ export function EntityGraph({ entities, links, tall = false, types = [], project
           style={{ left: layout.center.x, top: layout.center.y }}
           data-entity-graph-center
           aria-expanded={expanded === center.id}
-          title={`${center.name} — ${expanded === center.id ? 'свернуть' : 'открыть'} карточку`}
+          title={expanded === center.id ? t('graph.centerCollapse', { name: center.name }) : t('graph.centerOpen', { name: center.name })}
           onClick={() => select(center.id)}
         >
           {center.name}
@@ -809,7 +824,7 @@ export function EntityGraph({ entities, links, tall = false, types = [], project
             onClick={() => select(positioned.node.id)}
             aria-expanded={expanded === positioned.node.id}
             data-entity-graph-node={positioned.node.id}
-            title={`${positioned.node.name} — открыть карточку и перейти в центр`}
+            title={t('graph.nodeTitle', { name: positioned.node.name })}
           >
             {positioned.node.name}
           </button>
@@ -843,7 +858,7 @@ export function EntityGraph({ entities, links, tall = false, types = [], project
       </div>
       {neighbors.length === 0 && (
         <p className="muted" data-entity-graph-lonely>
-          У карточки пока нет связей. Их задают в карточке — «связана с».
+          {t('graph.noLinksHint')}
         </p>
       )}
       {/* Карточки вне графа (0.81.0). Эго-граф показывает только соседей центра, поэтому
@@ -852,7 +867,7 @@ export function EntityGraph({ entities, links, tall = false, types = [], project
           становятся центром: карточка не «пропадает», даже пока у неё нет ни одной связи. */}
       {isolated.length > 0 && (
         <div className="egraph__isolated" data-entity-graph-isolated>
-          <span className="muted">вне связей: {isolated.length}</span>
+<span className="muted">{t('graph.isolatedLine', { count: isolated.length })}</span>
           <ul className="egraph__isolated-list">
             {isolated.slice(0, 12).map((entity) => (
               <li key={entity.id}>
@@ -860,14 +875,14 @@ export function EntityGraph({ entities, links, tall = false, types = [], project
                   type="button"
                   className="egraph__isolated-chip"
                   onClick={() => select(entity.id)}
-                  title={`${entity.name} — сделать центром графа`}
+                  title={t('graph.makeCenter', { name: entity.name })}
                   data-entity-graph-isolated-item
                 >
                   {entity.name}
                 </button>
               </li>
             ))}
-            {isolated.length > 12 && <li className="muted">и ещё {isolated.length - 12}</li>}
+{isolated.length > 12 && <li className="muted">{t('graph.isolatedMore', { count: isolated.length - 12 })}</li>}
           </ul>
         </div>
       )}
@@ -879,7 +894,7 @@ export function EntityGraph({ entities, links, tall = false, types = [], project
         <div className="egraph__levels" data-entity-graph-levels>
           {neighborhood.levels.slice(1).map((levelData) => (
             <div key={levelData.level} className="egraph__level" data-entity-graph-level={levelData.level}>
-              <span className="muted egraph__level-title">уровень {levelData.level}</span>
+<span className="muted egraph__level-title">{t('graph.level', { level: levelData.level })}</span>
               {levelData.nodes.map((node) => (
                 <button
                   key={node.id}
@@ -901,7 +916,7 @@ export function EntityGraph({ entities, links, tall = false, types = [], project
               disabled={!neighborhood.truncated}
               data-entity-graph-deeper
             >
-              ещё уровень
+            {t('graph.moreLevel')}
             </button>
             {depth > 1 && (
               <button
@@ -910,11 +925,11 @@ export function EntityGraph({ entities, links, tall = false, types = [], project
                 onClick={() => setDepth(1)}
                 data-entity-graph-flatter
               >
-                свернуть
+              {t('graph.collapse')}
               </button>
             )}
             <span className="muted">
-              {neighborhood.total === 0 ? 'связей нет' : `в окрестности ${neighborhood.total}`}
+{neighborhood.total === 0 ? t('graph.neighborhoodNone') : t('graph.neighborhood', { count: neighborhood.total })}
             </span>
           </div>
         </div>
@@ -954,6 +969,7 @@ function NodeCard({
   width: number
   onClose: () => void
 }) {
+  const t = useT()
   const connections = connectionsOf(card.id, links, entities)
   const shown = connections.slice(0, MAX_CARD_LINKS)
   const cardWidth = Math.max(220, Math.min(CARD_WIDTH, width - 16))
@@ -961,7 +977,7 @@ function NodeCard({
     <div
       className="egraph__card egraph__card--center"
       role="dialog"
-      aria-label={`Карточка ${card.name}`}
+      aria-label={t('graph.cardAria', { name: card.name })}
       data-entity-graph-card
       style={{ width: cardWidth }}
     >
@@ -972,20 +988,21 @@ function NodeCard({
           type="button"
           className="secondary egraph__card-close"
           onClick={onClose}
-          aria-label="Закрыть карточку"
+          aria-label={t('graph.closeCard')}
           data-entity-graph-card-close
         >
           ×
         </button>
       </div>
       <p className="egraph__card-aliases" data-entity-graph-card-aliases>
-        {card.aliases.length > 0 ? `также: ${card.aliases.join(', ')}` : 'алиасов нет'}
+{card.aliases.length > 0 ? t('graph.aliases', { list: card.aliases.join(', ') }) : t('graph.noAliases')}
       </p>
       {card.description !== '' && <p className="egraph__card-desc">{card.description}</p>}
       <p className="muted egraph__card-sub">
         {connections.length === 0
-          ? 'связей нет'
-          : `связей: ${connections.length}${connections.length > shown.length ? ` (показаны ${shown.length})` : ''}`}
+? t('graph.linksNone')
+: t('graph.linksTotal', { count: connections.length }) +
+(connections.length > shown.length ? t('graph.linksShownSuffix', { count: shown.length }) : '')}
       </p>
       {shown.length > 0 && (
         <ul className="egraph__card-links" data-entity-graph-card-links>
@@ -1048,14 +1065,15 @@ function GraphHeader({
    */
   crumbs?: Array<{ label: string; onClick: (() => void) | null }> | null
 }) {
+  const t = useT()
   const first = matches[0]
   return (
     <div className="egraph__head">
       <input
         value={query}
         onChange={(e) => setQuery(e.target.value)}
-        placeholder="Найти карточку…"
-        aria-label="Поиск по карточкам в графе"
+        placeholder={t('graph.searchPlaceholder')}
+        aria-label={t('graph.searchAria')}
         className="ed-filter"
         data-entity-graph-search
         onKeyDown={(e) => {
@@ -1067,11 +1085,11 @@ function GraphHeader({
       />
       {onBack && (
         <button type="button" className="secondary" onClick={onBack} data-entity-graph-back>
-          назад
+        {t('graph.back')}
         </button>
       )}
       {crumbs !== null && crumbs.length > 0 && (
-        <nav className="egraph__crumbs" aria-label="Где я в графе" data-entity-graph-crumbs>
+        <nav className="egraph__crumbs" aria-label={t('graph.crumbsAria')} data-entity-graph-crumbs>
           {crumbs.map((crumb, index) => (
             <span key={crumb.label} className="egraph__crumb">
               {index > 0 && <span className="muted" aria-hidden="true"> / </span>}
@@ -1113,10 +1131,10 @@ function GraphHeader({
                   {match.source === 'name'
                     ? ''
                     : match.source === 'alias'
-                      ? `алиас «${match.matched}»`
+? t('graph.matchAlias', { value: match.matched })
                       : match.source === 'kind'
-                        ? `вид «${match.matched}»`
-                        : `связь «${match.matched}»`}
+? t('graph.matchKind', { value: match.matched })
+: t('graph.matchLink', { value: match.matched })}
                 </span>
               </button>
             </li>
@@ -1125,6 +1143,17 @@ function GraphHeader({
       )}
     </div>
   )
+}
+
+/**
+ * «2 карточки» / «2 cards» (0.122.0): число и слово в нужной форме языка.
+ *
+ * Зачем не в шаблоне: словарь подставляет значения как есть и не умеет склонять. Отдать «1 links»
+ * в английском — ошибка, которую видно на первом же скриншоте, а держать отдельный ключ на каждую
+ * форму значило бы дублировать склонение в разметке.
+ */
+function withUnit(lang: Lang, prefix: string, count: number): string {
+  return `${count} ${pluralWord(lang, prefix, count)}`
 }
 
 /** Подсветка совпавшего куска в подсказке: три части текста, средняя — `<mark>`. */

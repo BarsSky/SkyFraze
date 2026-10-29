@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { listAssets, type Asset } from '../../api/assets'
 import { useAssetObjectUrl } from '../../api/assetObject'
+import { useT } from '../../i18n'
 
 /**
  * Картинка у упоминания карточки в кадре (0.93.0, docs/entity-links.md §3.4.1).
@@ -42,6 +43,7 @@ export function MentionImage({
   onSet,
   onClear,
 }: Props) {
+  const t = useT()
   const [pickerOpen, setPickerOpen] = useState(false)
   const [images, setImages] = useState<Asset[] | null>(null)
   const [choice, setChoice] = useState('')
@@ -65,9 +67,9 @@ export function MentionImage({
       setImages(list.filter((asset) => asset.mime.startsWith('image/')))
     } catch {
       setImages([])
-      setNote('Не удалось прочитать файлы проекта.')
+      setNote(t('mi.errRead'))
     }
-  }, [images, projectId])
+  }, [images, projectId, t])
 
   const attach = useCallback(() => {
     if (!choice) return
@@ -91,29 +93,30 @@ export function MentionImage({
             <img
               className="ent__mention-image-img"
               src={preview}
-              alt={`${entityName} в кадре «${eventTitle || 'без названия'}»`}
+              alt={t('mi.alt', {
+                name: entityName,
+                frame: eventTitle !== '' ? eventTitle : t('mi.frameUntitled'),
+              })}
               data-mention-image-preview
             />
           ) : (
-            <span className="muted ent__mention-image-loading">загружаю картинку…</span>
+            <span className="muted ent__mention-image-loading">{t('mi.loading')}</span>
           )}
         </figure>
       ) : (
         <p className="muted ent__mention-image-empty">
-          {canEdit
-            ? 'Картинки ещё нет: можно привязать вложение проекта — как это выглядит.'
-            : 'Картинка не привязана.'}
+          {canEdit ? t('mi.emptyEditable') : t('mi.empty')}
         </p>
       )}
 
       {canEdit && !pickerOpen && (
         <div className="ent__mention-image-actions">
           <button type="button" className="secondary" onClick={() => void openPicker()} data-mention-image-pick>
-            {assetId ? 'заменить картинку' : 'прикрепить картинку'}
+            {assetId ? t('mi.replace') : t('mi.attachImage')}
           </button>
           {assetId && (
             <button type="button" className="secondary" onClick={detach} data-mention-image-clear>
-              отвязать
+              {t('mi.detach')}
             </button>
           )}
         </div>
@@ -122,30 +125,28 @@ export function MentionImage({
       {canEdit && pickerOpen && (
         <div className="ent__mention-image-picker" data-mention-image-picker>
           {images === null ? (
-            <span className="muted">читаю файлы проекта…</span>
+            <span className="muted">{t('mi.readingFiles')}</span>
           ) : images.length === 0 ? (
-            <span className="muted">
-              В проекте нет картинок. Загрузите файл в «Редакторах» или в списке файлов проекта.
-            </span>
+            <span className="muted">{t('mi.noImages')}</span>
           ) : (
             <>
               <select
-                aria-label="Картинка для упоминания"
+                aria-label={t('mi.title')}
                 value={choice}
                 onChange={(event) => setChoice(event.target.value)}
               >
-                <option value="">выберите картинку…</option>
+                <option value="">{t('mi.choose')}</option>
                 {images.map((asset) => (
                   <option key={asset.id} value={asset.id}>{asset.filename}</option>
                 ))}
               </select>
               <button type="button" onClick={attach} disabled={!choice} data-mention-image-attach>
-                прикрепить
+                {t('mi.attach')}
               </button>
             </>
           )}
           <button type="button" className="secondary" onClick={() => setPickerOpen(false)}>
-            отмена
+            {t('mi.cancel')}
           </button>
         </div>
       )}

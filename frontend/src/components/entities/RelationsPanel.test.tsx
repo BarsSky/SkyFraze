@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { RelationsPanel, numberRows } from './RelationsPanel'
+import { setLang } from '../../store/lang'
 import type { FlatEventNode } from '../../api/events'
 import { OPEN_FRAME_EVENT } from '../../lib/openFrame'
 
@@ -54,6 +55,7 @@ const card = (over: Record<string, unknown> = {}) => ({
 })
 
 beforeEach(() => {
+  setLang('ru')
   mocks.rows.mockReset().mockResolvedValue([
     eventRow({ id: 'f1', title: 'Пролог', body: 'Аня стоит на пороге.' }),
     eventRow({ id: 'f2', parent_id: 'f1', title: 'Сцена', body: 'Аня уходит.', event_date: null }),
@@ -84,10 +86,14 @@ describe('RelationsPanel', () => {
     const { container } = render(<RelationsPanel projectId="p1" canEdit />)
     await screen.findByText(/кадров: 2/)
     expect(container.querySelector('[data-relations]')).toBeTruthy()
-    expect(container.querySelector('[data-entity-graph]')).toBeTruthy()
+    // Ждём, а не проверяем сразу: под параллельной нагрузкой полного прогона граф успевает
+    // исчезнуть на один тик — раздел перезагружает карточки по событию «карточки изменились»
+    // (0.122.0: падение в общем прогоне, в одиночном — зелено). Причина до конца не доказана,
+    // поэтому проверка ждёт устойчивого состояния, а не первого совпадения.
+    await waitFor(() => expect(container.querySelector('[data-entity-graph]')).toBeTruthy())
     expect(container.querySelector('[data-entities]')).toBeTruthy()
     // Матрица появляется, когда есть и главы, и упоминания.
-    expect(container.querySelector('[data-entity-matrix]')).toBeTruthy()
+    await waitFor(() => expect(container.querySelector('[data-entity-matrix]')).toBeTruthy())
   })
 
   it('без карточек объясняет, с чего начать', async () => {
@@ -105,6 +111,18 @@ describe('RelationsPanel', () => {
     render(<RelationsPanel projectId="p1" canEdit={false} />)
     await screen.findByText(/кадров: 2/)
     expect(screen.queryByRole('button', { name: /Добавить/ })).toBeNull()
+  })
+
+  /**
+   * 0.122.0: заголовок, пояснение и статистика раздела — из словаря. До этого английский
+   * интерфейс оставлял «Связи» и «карточек: 2 · связей: 0 …» русскими.
+   */
+  it('на английском заголовок и статистика переведены', async () => {
+    setLang('en')
+    render(<RelationsPanel projectId="p1" canEdit />)
+    expect(await screen.findByText(/cards: 2 · links: 0 · frames: 2 · chapters: 1/)).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Relations' })).toBeTruthy()
+    expect(screen.getByText(/Character, place and theme cards/)).toBeTruthy()
   })
 
   it('переход из хронологии просит редактор открыть кадр событием', async () => {

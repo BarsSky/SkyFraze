@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { EntityGraph, shortLabel } from './EntityGraph'
+import { setLang } from '../../store/lang'
 
 /**
  * Подписи рёбер с холста. Ищем их в SVG, а не `getByText`: с 0.84.0 те же слова есть ещё и в
@@ -14,6 +15,7 @@ function edgeLabels(root: ParentNode): string[] {
 }
 
 afterEach(() => {
+  setLang('ru')
   cleanup()
   vi.restoreAllMocks()
 })
@@ -275,7 +277,9 @@ describe('EntityGraph — мир, группы и поиск по меткам (
     // У группы видно число карточек и связей.
     expect(groups[0].textContent).toContain('Земля'.length ? '1' : '1')
     // Связи считаются по карточкам группы: у Ани две, у Бориса одна — итого три.
-    expect(groups[1].textContent).toContain('связей 3')
+    // Форма слова — по числу (0.122.0): «3 связи», а не «связей 3»: в английском «1 links» — ошибка,
+    // поэтому число и слово собираются вместе, а язык выбирает форму.
+    expect(groups[1].textContent).toContain('3 связи')
   })
 
   it('вход в группу показывает подгруппы по подписям связей (0.101.0)', async () => {
@@ -400,5 +404,44 @@ describe('EntityGraph — мир, группы и поиск по меткам (
       ).toBe('character'),
     )
     localStorage.clear()
+  })
+
+  /**
+   * 0.122.0: подписи графа — из словаря. До этого английский интерфейс оставлял «Мир», «связей
+   * нет», «вне связей», «назад» и подсказки карточки русскими: вкладка «Связи» переводилась
+   * наполовину (заголовки разделов — да, сам граф — нет).
+   *
+   * Имена карточек и подписи связей остаются как есть: это данные проекта, а не интерфейс.
+   */
+  it('на английском подписи уровня «мир» переведены', async () => {
+    setLang('en')
+    render(<EntityGraph entities={[anna, earth, bob]} links={links} types={types} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'World' }))
+    // Плитка группы: подпись для скринридера — английская, имена карточек — нет.
+    const place = document.querySelector('[data-entity-graph-group="place"]') as HTMLElement
+    expect(place).toBeTruthy()
+    expect(place.getAttribute('aria-label')).toBe('Group "Место": 1 card')
+    // Счётчик связей у плитки — тоже интерфейс.
+    expect(place.textContent).toContain('1 link')
+    fireEvent.click(place)
+    expect(screen.getByRole('button', { name: 'Previous group' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Next group' })).toBeTruthy()
+    expect(screen.getByPlaceholderText('Find a card…')).toBeTruthy()
+    // Крошки «где я» и номер группы.
+    expect(screen.getByLabelText('Where I am in the graph')).toBeTruthy()
+    expect(screen.getByText('1 of 2')).toBeTruthy()
+  })
+
+  it('на английском карточка узла и «назад» говорят по-английски', async () => {
+    setLang('en')
+    render(<EntityGraph entities={[anna, earth, bob]} links={links} types={types} />)
+    // Раскрытая карточка: заголовок окна, алиасы и счётчик связей.
+    fireEvent.click(await screen.findByRole('button', { name: 'Аня' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Card Аня' })
+    expect(dialog.textContent).toContain('also: Анна')
+    expect(dialog.textContent).toContain('links: 2')
+    fireEvent.click(screen.getByRole('button', { name: 'Земля' }))
+    // «назад» — интерфейс, поэтому по-английски.
+    expect(await screen.findByRole('button', { name: 'back' })).toBeTruthy()
   })
 })

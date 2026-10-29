@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { EntityProposals, countLabel, describeResult } from './EntityProposals'
+import { EntityProposals, describeResult } from './EntityProposals'
+import { setLang } from '../../store/lang'
 import type { AIEntityProposal } from '../../api/assistant'
 
 /**
@@ -43,6 +44,7 @@ const proposal = (over: Partial<AIEntityProposal> = {}): AIEntityProposal => ({
 })
 
 beforeEach(() => {
+  setLang('ru')
   mocks.list.mockReset().mockResolvedValue([])
   mocks.apply.mockReset()
   mocks.discard.mockReset().mockResolvedValue(undefined)
@@ -176,13 +178,24 @@ describe('describeResult', () => {
   it('пустой итог говорит словами, а не пустой строкой', () => {
     expect(describeResult(empty)).toMatch(/ничего не изменилось/)
   })
+
+  it('на английском отчёт переведён', () => {
+    const en = { ...empty, created: ['Анна'], linksCreated: ['a'] }
+    expect(describeResult(en, 'en')).toBe('added: Анна · links: 1')
+    expect(describeResult(en, 'ru')).toBe('добавлено: Анна · связей: 1')
+  })
 })
 
-describe('countLabel', () => {
-  it('склоняет по-русски', () => {
-    expect(countLabel(1, 'карточка', 'карточки', 'карточек')).toBe('1 карточка')
-    expect(countLabel(3, 'карточка', 'карточки', 'карточек')).toBe('3 карточки')
-    expect(countLabel(11, 'карточка', 'карточки', 'карточек')).toBe('11 карточек')
-    expect(countLabel(21, 'карточка', 'карточки', 'карточек')).toBe('21 карточка')
+describe('EntityProposals — язык', () => {
+  it('на английском переводит подписи и склоняет по числам', async () => {
+    setLang('en')
+    mocks.list.mockResolvedValue([proposal()])
+    render(<EntityProposals projectId="proj" />)
+
+    expect(await screen.findByText('The assistant suggests cards')).toBeTruthy()
+    expect(screen.getByText(/· 2 cards/)).toBeTruthy()
+    expect(screen.getByText(/· 1 link/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Add cards' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Not now' })).toBeTruthy()
   })
 })

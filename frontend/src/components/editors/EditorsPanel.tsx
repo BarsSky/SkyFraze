@@ -1617,7 +1617,7 @@ setNotice(t('ed.moved', { label: row.title }))
             onClick={openRelations}
             data-ed-entities-jump
           >
-{t('ed.relations')}
+          {t('ed.relations')}
 </button>
         </div>
         <div className="ed-panel__meta">
@@ -1664,7 +1664,7 @@ setNotice(t('ed.moved', { label: row.title }))
                 onClick={() => setEntityFilter(null)}
                 data-ed-entity-filter-clear
               >
-{t('ed.reset')}
+              {t('ed.reset')}
 </button>
             )}
           </label>
@@ -1686,7 +1686,7 @@ setNotice(t('ed.moved', { label: row.title }))
                   onChange={onPickChunkFolder}
                   {...DIRECTORY_PICK}
                 />
-{t('ed.importFolder')}
+                {t('ed.importFolder')}
 </label>
               <label className={`ed-import__pick${importBusy ? ' is-busy' : ''}`}>
                 <input
@@ -1706,10 +1706,10 @@ setNotice(t('ed.moved', { label: row.title }))
                 className="ed-import__chunk"
                 data-ed-chunk
                 onPointerDown={onChunkPointerDown}
-title={t('ed.importHint')}
+                title={t('ed.importHint')}
               >
                 <span aria-hidden="true">⠿</span> {chunk.label} — {chunk.events}{' '}
-{pluralWord(lang, 'ed.unit.event', chunk.events)}
+                {pluralWord(lang, 'ed.unit.event', chunk.events)}
                 {chunk.files > 0 && (
                   <>
                     {' '}
@@ -1739,7 +1739,7 @@ title={t('ed.importHint')}
                 </select>
               </label>
               <button type="button" onClick={insertChunkByMode} disabled={importBusy}>
-{t('ed.insert')}
+              {t('ed.insert')}
 </button>
               <button
                 type="button"
@@ -1747,7 +1747,7 @@ title={t('ed.importHint')}
                 onClick={() => setChunk(null)}
                 disabled={importBusy}
               >
-{t('ed.cancel')}
+              {t('ed.cancel')}
 </button>
             </>
           )}
@@ -1813,8 +1813,8 @@ title={t('ed.importHint')}
                 }}
                 onPointerDown={(e) => onRowPointerDown(e, row)}
                 onKeyDown={(e) => onRowKeyDown(e, row)}
-title={t('ed.rowTooltip', { number: row.number, title: row.title })}
-aria-label={t('ed.rowAria', { number: row.number, title: row.title })}
+                title={t('ed.rowTooltip', { number: row.number, title: row.title })}
+                aria-label={t('ed.rowAria', { number: row.number, title: row.title })}
               >
                 <span className="ed-row__grip" aria-hidden="true">⠿</span>
                 <span className="ed-row__mark">{row.isChapter ? '#' : '└'}</span>
@@ -1836,8 +1836,8 @@ aria-label={t('ed.rowAria', { number: row.number, title: row.title })}
                         key={peer.clientId}
                         className="ed-row__peer"
                         data-peer-editing={peer.name}
-title={t('ed.peerEditing', { name: peer.name })}
-aria-label={t('ed.peerEditing', { name: peer.name })}
+                        title={t('ed.peerEditing', { name: peer.name })}
+                        aria-label={t('ed.peerEditing', { name: peer.name })}
                         style={{ backgroundColor: peer.color }}
                       >
                         {peer.initials}

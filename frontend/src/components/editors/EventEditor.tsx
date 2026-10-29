@@ -237,7 +237,7 @@ export function EventEditor({
             onChange?.()
             onTyping?.()
           }}
-placeholder={t('ee.titlePlaceholder')}
+          placeholder={t('ee.titlePlaceholder')}
         />
       </label>
 
@@ -245,7 +245,7 @@ placeholder={t('ee.titlePlaceholder')}
           должен переводить фокус в textarea. */}
       <div className="ed-field">
         <span className="ed-field__label">
-{t('ee.textLabel')} <span className="ed-field__hint">{t('ee.textHint')}</span>
+        {t('ee.textLabel')} <span className="ed-field__hint">{t('ee.textHint')}</span>
         </span>
         <textarea
           ref={bodyRef}
@@ -262,7 +262,7 @@ placeholder={t('ee.titlePlaceholder')}
             onTyping?.()
           }}
           rows={7}
-placeholder={t('ee.bodyPlaceholder')}
+          placeholder={t('ee.bodyPlaceholder')}
         />
         <div className="ed-md__actions">
           {onFragmentSelected && selection && (
@@ -270,14 +270,14 @@ placeholder={t('ee.bodyPlaceholder')}
               type="button"
               className="secondary"
               data-select-fragment
-title={t('ee.fragmentNoteTitle')}
+              title={t('ee.fragmentNoteTitle')}
               onClick={selectFragment}
             >
-{t('ee.fragmentNote')}
+            {t('ee.fragmentNote')}
             </button>
           )}
           <button type="button" className="secondary" onClick={() => setMdOpen(true)}>
-{t('ee.openMarkdown')}
+          {t('ee.openMarkdown')}
           </button>
           {/* Разметка DOCX (0.94.1). Панель маркеров живёт в окне Markdown, и её было не найти:
               человек искал «Разметка DOCX» в самом редакторе и не видел её вовсе. Теперь есть
@@ -285,14 +285,14 @@ title={t('ee.fragmentNoteTitle')}
           <button
             type="button"
             className="secondary"
-title={t('ee.docxTitle')}
+            title={t('ee.docxTitle')}
             onClick={() => {
               setOpenDocxPanel(true)
               setMdOpen(true)
             }}
             data-docx-panel-open
           >
-{t('ee.docx')}
+          {t('ee.docx')}
           </button>
           {looksLikeMarkdown(body) && (
 <span className="muted">{t('ee.docxRecognized')}</span>
@@ -361,7 +361,7 @@ title={t('ee.docxTitle')}
                 <button
                   type="button"
                   className="ed-assets__preview"
-title={t('ee.openFull')}
+                  title={t('ee.openFull')}
                   onClick={() => setViewer(attachedImages.findIndex((a) => a.id === asset.id))}
                 >
                   <img src={assetUrls[asset.id]} alt={asset.filename} loading="lazy" />
@@ -373,7 +373,7 @@ title={t('ee.openFull')}
               <button
                 type="button"
                 className="ed-assets__detach"
-title={t('ee.detach')}
+                title={t('ee.detach')}
                 onClick={() => onDetach(asset.id)}
               >
                 ×
@@ -397,7 +397,7 @@ title={t('ee.detach')}
                 e.target.value = ''
               }}
             />
-{t('ee.uploadFiles')}
+            {t('ee.uploadFiles')}
           </label>
           {unattached.length > 0 && (
             <select

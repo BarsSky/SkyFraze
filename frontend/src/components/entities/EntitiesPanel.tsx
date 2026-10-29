@@ -544,20 +544,20 @@ setNote({ kind: 'error', text: await explain(e, t('ent.note.deleteFailed')) })
       }}
     >
       <summary className="ent__summary">
-{t('ent.title')}
+      {t('ent.title')}
         <span className="muted ent__count" data-entities-count>
 {loaded ? t('ent.count', { count: entities.length }) : t('ent.loading')}
         </span>
       </summary>
 
       <p className="muted ent__hint">
-{t('ent.hint')}
+      {t('ent.hint')}
 
       </p>
 
       {entities.length === 0 && loaded && (
         <p className="muted" data-entities-empty>
-{t('ent.empty')}
+        {t('ent.empty')}
         </p>
       )}
 
@@ -578,7 +578,7 @@ setNote({ kind: 'error', text: await explain(e, t('ent.note.deleteFailed')) })
         >
           <div className="ent__create-head">
             <h3 className="ent__create-title" id="ent-create-title">
-{t('ent.createTitle')}
+            {t('ent.createTitle')}
             </h3>
 <span className="muted ent__create-hint">{t('ent.createHint')}</span>
           </div>
@@ -586,7 +586,7 @@ setNote({ kind: 'error', text: await explain(e, t('ent.note.deleteFailed')) })
             <select
               value={kind}
               onChange={(e) => setKind(e.target.value)}
-aria-label={t('ent.kindAria')}
+              aria-label={t('ent.kindAria')}
               ref={kindSelectRef}
               data-entity-kind-select
             >
@@ -601,8 +601,8 @@ aria-label={t('ent.kindAria')}
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
-placeholder={t('ent.namePlaceholder')}
-aria-label={t('ent.nameAria')}
+              placeholder={t('ent.namePlaceholder')}
+              aria-label={t('ent.nameAria')}
               maxLength={80}
             />
             <input
@@ -611,8 +611,8 @@ aria-label={t('ent.nameAria')}
                 setAliases(e.target.value)
                 setAliasesEdited(true)
               }}
-placeholder={t('ent.aliasesPlaceholder')}
-aria-label={t('ent.aliasesAria')}
+              placeholder={t('ent.aliasesPlaceholder')}
+              aria-label={t('ent.aliasesAria')}
             />
             {/* Описание (0.85.0): пусто у типа без заготовки, предзаполнено у типа с заготовкой.
                 Правка руками отменяет автоподстановку — человек решает сам. */}
@@ -622,8 +622,8 @@ aria-label={t('ent.aliasesAria')}
                 setDescription(e.target.value)
                 setDescriptionEdited(true)
               }}
-placeholder={t('ent.descPlaceholder')}
-aria-label={t('ent.descAria')}
+              placeholder={t('ent.descPlaceholder')}
+              aria-label={t('ent.descAria')}
               rows={2}
               data-entity-desc-input
             />
@@ -646,7 +646,7 @@ aria-label={t('ent.descAria')}
                 aria-haspopup="dialog"
                 data-entity-type-open
               >
-{t('ent.newType')}
+              {t('ent.newType')}
               </button>
             )}
           </div>
@@ -682,22 +682,22 @@ aria-label={t('ent.descAria')}
                   <input
                     value={draftName}
                     onChange={(e) => setDraftName(e.target.value)}
-aria-label={t('ent.nameOfAria', { name: entity.name })}
+                    aria-label={t('ent.nameOfAria', { name: entity.name })}
                     maxLength={80}
                   />
                   <input
                     value={draftAliases}
                     onChange={(e) => setDraftAliases(e.target.value)}
-placeholder={t('ent.aliasesEditPlaceholder')}
-aria-label={t('ent.aliasesOfAria', { name: entity.name })}
+                    placeholder={t('ent.aliasesEditPlaceholder')}
+                    aria-label={t('ent.aliasesOfAria', { name: entity.name })}
                   />
                   {/* Описание правится здесь же (0.85.0): раньше его можно было только
                       прочитать, если оно приехало из импорта или от помощника. */}
                   <textarea
                     value={draftDescription}
                     onChange={(e) => setDraftDescription(e.target.value)}
-placeholder={t('ent.descPlaceholder')}
-aria-label={t('ent.descOfAria', { name: entity.name })}
+                    placeholder={t('ent.descPlaceholder')}
+                    aria-label={t('ent.descOfAria', { name: entity.name })}
                     rows={2}
                     data-entity-desc-edit
                   />
@@ -707,10 +707,10 @@ aria-label={t('ent.descOfAria', { name: entity.name })}
                     disabled={busy || draftName.trim() === ''}
                     data-entity-save
                   >
-{t('ent.save')}
+                  {t('ent.save')}
                   </button>
                   <button type="button" className="secondary" onClick={() => setEditing(null)}>
-{t('ent.cancel')}
+                  {t('ent.cancel')}
                   </button>
                 </div>
               ) : (
@@ -755,7 +755,7 @@ aria-label={t('ent.descOfAria', { name: entity.name })}
                         }}
                         aria-haspopup="menu"
                         aria-expanded={menuFor === entity.id}
-aria-label={t('ent.actionsAria', { name: entity.name })}
+                        aria-label={t('ent.actionsAria', { name: entity.name })}
                         data-entity-menu
                       >
                         <span aria-hidden="true">⋮</span>
@@ -764,7 +764,7 @@ aria-label={t('ent.actionsAria', { name: entity.name })}
                         <span
                           className={menuUp ? 'ent__menu is-up' : 'ent__menu'}
                           role="menu"
-aria-label={t('ent.menuAria', { name: entity.name })}
+                          aria-label={t('ent.menuAria', { name: entity.name })}
                           data-entity-menu-list={entity.id}
                           ref={menuEl}
                           onKeyDown={(event) => {
@@ -799,7 +799,7 @@ aria-label={t('ent.menuAria', { name: entity.name })}
                                 )
                                 setMenuFor(null)
                               }}
-aria-label={t('ent.whereAria', { name: entity.name })}
+                              aria-label={t('ent.whereAria', { name: entity.name })}
                               data-entity-chronology
                             >
 {chronology === entity.id ? t('ent.whereHide') : t('ent.where')}
@@ -817,10 +817,10 @@ aria-label={t('ent.whereAria', { name: entity.name })}
                               setNote(null)
                               setMenuFor(null)
                             }}
-aria-label={t('ent.editAria', { name: entity.name })}
+                            aria-label={t('ent.editAria', { name: entity.name })}
                             data-entity-edit
                           >
-{t('ent.edit')}
+                          {t('ent.edit')}
                           </button>
                           {/* «Связать» — только если есть с чем: одна карточка связей не имеет. */}
                           {entities.length > 1 && (
@@ -835,7 +835,7 @@ aria-label={t('ent.editAria', { name: entity.name })}
                                 setNote(null)
                                 setMenuFor(null)
                               }}
-aria-label={t('ent.linkAria', { name: entity.name })}
+                              aria-label={t('ent.linkAria', { name: entity.name })}
                               data-entity-link-add
                             >
 {linking === entity.id ? t('ent.linkCancel') : t('ent.link')}
@@ -849,10 +849,10 @@ aria-label={t('ent.linkAria', { name: entity.name })}
                               setPendingDelete(entity.id)
                               setMenuFor(null)
                             }}
-aria-label={t('ent.deleteAria', { name: entity.name })}
+                            aria-label={t('ent.deleteAria', { name: entity.name })}
                             data-entity-delete
                           >
-{t('ent.delete')}
+                          {t('ent.delete')}
                           </button>
                         </span>
                       )}
@@ -871,14 +871,14 @@ aria-label={t('ent.deleteAria', { name: entity.name })}
                         disabled={busy}
                         data-entity-delete-confirm
                       >
-{t('ent.delete')}
+                      {t('ent.delete')}
                       </button>
                       <button
                         type="button"
                         className="secondary"
                         onClick={() => setPendingDelete(null)}
                       >
-{t('ent.keep')}
+                      {t('ent.keep')}
                       </button>
                     </span>
                   )}
@@ -891,7 +891,7 @@ aria-label={t('ent.deleteAria', { name: entity.name })}
                   <select
                     value={linkTarget}
                     onChange={(e) => setLinkTarget(e.target.value)}
-aria-label={t('ent.linkTargetAria', { name: entity.name })}
+                    aria-label={t('ent.linkTargetAria', { name: entity.name })}
                     data-entity-link-target
                   >
 <option value="">{t('ent.linkTargetAny')}</option>
@@ -906,8 +906,8 @@ aria-label={t('ent.linkTargetAria', { name: entity.name })}
                   <input
                     value={linkLabel}
                     onChange={(e) => setLinkLabel(e.target.value)}
-placeholder={t('ent.linkLabelPlaceholder')}
-aria-label={t('ent.linkLabelAria', { name: entity.name })}
+                    placeholder={t('ent.linkLabelPlaceholder')}
+                    aria-label={t('ent.linkLabelAria', { name: entity.name })}
                     maxLength={40}
                     data-entity-link-label
                   />
@@ -935,7 +935,7 @@ aria-label={t('ent.linkLabelAria', { name: entity.name })}
                           const mention = frame.mentions[0]
                           if (mention) onOpenFrame?.(frame.frameId, mention, canEdit ? 'editors' : 'project')
                         }}
-title={t('ent.frameOpenTitle', { quote: frame.mentions[0]?.quote ?? '' })}
+                        title={t('ent.frameOpenTitle', { quote: frame.mentions[0]?.quote ?? '' })}
                         data-entity-frame={frame.frameId}
                       >
                         <span className="ent__frame-number">{frame.number || '—'}</span>
@@ -1000,7 +1000,7 @@ title={t('ent.frameOpenTitle', { quote: frame.mentions[0]?.quote ?? '' })}
                                 ? 'ent__matrix-link is-expanded'
                                 : 'ent__matrix-link'
                             }
-title={t('ent.matrixCellTitle', { name: row.entity.name })}
+                            title={t('ent.matrixCellTitle', { name: row.entity.name })}
                             aria-expanded={
                               mentionCard !== null &&
                               mentionCard.entityId === row.entity.id &&
@@ -1043,10 +1043,7 @@ title={t('ent.matrixCellTitle', { name: row.entity.name })}
               </tbody>
             </table>
           </div>
-          <p className="muted ent__note">
-            Число — упоминания в главе. «·» — не встречается: так и видно, кто ни разу не был в
-            одной сцене с другими.
-          </p>
+          <p className="muted ent__note">{t('ent.matrixNote')}</p>
           {/* Клетка раскрывается карточкой прямо в разделе (0.90.0): раньше карточка всплывала
               рядом с клеткой и читалась как подсказка, а на телефоне уезжала за край. */}
           {mentionCard !== null && (
@@ -1105,10 +1102,10 @@ title={t('ent.matrixCellTitle', { name: row.entity.name })}
               data-entity-type-form
             >
               <h3 className="ent-modal__title" id="ent-type-title">
-{t('ent.typeTitle')}
+              {t('ent.typeTitle')}
               </h3>
               <p className="muted ent-modal__hint">
-{t('ent.typeHint')}
+              {t('ent.typeHint')}
 
               </p>
               <label className="ent-modal__field">
@@ -1116,8 +1113,8 @@ title={t('ent.matrixCellTitle', { name: row.entity.name })}
                 <input
                   value={typeDraft}
                   onChange={(e) => setTypeDraft(e.target.value)}
-placeholder={t('ent.typeNamePlaceholder')}
-aria-label={t('ent.typeNameAria')}
+                  placeholder={t('ent.typeNamePlaceholder')}
+                  aria-label={t('ent.typeNameAria')}
                   maxLength={40}
                   autoFocus
                 />
@@ -1127,8 +1124,8 @@ aria-label={t('ent.typeNameAria')}
                 <input
                   value={typeTemplateAliases}
                   onChange={(e) => setTypeTemplateAliases(e.target.value)}
-placeholder={t('ent.typeAliasesPlaceholder')}
-aria-label={t('ent.typeAliasesAria')}
+                  placeholder={t('ent.typeAliasesPlaceholder')}
+                  aria-label={t('ent.typeAliasesAria')}
                   data-entity-type-aliases
                 />
               </label>
@@ -1137,8 +1134,8 @@ aria-label={t('ent.typeAliasesAria')}
                 <textarea
                   value={typeTemplateDesc}
                   onChange={(e) => setTypeTemplateDesc(e.target.value)}
-placeholder={t('ent.typeDescPlaceholder')}
-aria-label={t('ent.typeDescAria')}
+                  placeholder={t('ent.typeDescPlaceholder')}
+                  aria-label={t('ent.typeDescAria')}
                   rows={2}
                   maxLength={2000}
                   data-entity-type-template
@@ -1154,7 +1151,7 @@ aria-label={t('ent.typeDescAria')}
 {busy ? t('ent.typeCreating') : t('ent.typeCreate')}
                 </button>
                 <button type="button" className="secondary" onClick={closeTypeDraft}>
-{t('ent.cancel')}
+                {t('ent.cancel')}
                 </button>
               </div>
             </div>
@@ -1227,7 +1224,7 @@ function MentionCard({
     <div
       className="ent__mention-card"
       role="region"
-aria-label={t('ent.mentionAria', { name: card.entityName, chapter: card.chapterNumber })}
+      aria-label={t('ent.mentionAria', { name: card.entityName, chapter: card.chapterNumber })}
       data-mention-card
     >
       <div className="ent__mention-head">
@@ -1237,14 +1234,14 @@ aria-label={t('ent.mentionAria', { name: card.entityName, chapter: card.chapterN
           type="button"
           className="secondary ent__mention-close"
           onClick={onClose}
-aria-label={t('ent.mentionCloseAria')}
+          aria-label={t('ent.mentionCloseAria')}
           data-mention-close
         >
           ×
         </button>
       </div>
       <p className="muted ent__mention-sub">
-        глава {card.chapterNumber} «{card.chapterTitle}» · упоминаний:{' '}
+        {t('ent.mentionHead', { chapter: card.chapterNumber, title: card.chapterTitle })}{' '}
         <span data-mention-count>{card.cell.count}</span>
       </p>
       {frames.length > 0 && (
@@ -1288,7 +1285,7 @@ aria-label={t('ent.mentionCloseAria')}
       <div className="ent__mention-actions">
         {canEdit && (
           <button type="button" onClick={() => onOpen('editors')} data-mention-to-editors>
-{t('ent.mentionEdit')}
+          {t('ent.mentionEdit')}
           </button>
         )}
         <button
@@ -1297,7 +1294,7 @@ aria-label={t('ent.mentionCloseAria')}
           onClick={() => onOpen('project')}
           data-mention-to-project
         >
-{t('ent.mentionProject')}
+        {t('ent.mentionProject')}
         </button>
       </div>
     </div>
@@ -1338,7 +1335,7 @@ function LinkList({
   return (
     <span className="ent__links" data-entity-links>
       <span className="ent__links-title">
-{t('ent.linksTitle', { count: total })}
+      {t('ent.linksTitle', { count: total })}
       </span>
       {visible.map((connection) => (
         <span key={connection.link.id} className="ent__link" data-entity-link={connection.link.id}>
@@ -1351,8 +1348,8 @@ function LinkList({
               type="button"
               className="ent__link-remove"
               onClick={() => onRemove(connection.link.id)}
-aria-label={t('ent.linkRemoveAria', { name: connection.other.name })}
-title={t('ent.linkRemoveTitle')}
+              aria-label={t('ent.linkRemoveAria', { name: connection.other.name })}
+              title={t('ent.linkRemoveTitle')}
             >
               ×
             </button>
@@ -1374,7 +1371,7 @@ title={t('ent.linkRemoveTitle')}
           спрятано. Одна строка приглушённым — чтобы свёрнутый список не выглядел полным. */}
       {hidden > 0 && (
         <span className="muted ent__links-more-hint" data-entity-links-hidden>
-{t('ent.linksHidden', { count: hidden })}
+        {t('ent.linksHidden', { count: hidden })}
         </span>
       )}
     </span>

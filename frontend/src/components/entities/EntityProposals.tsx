@@ -9,6 +9,8 @@ import {
 } from '../../api/assistant'
 import { serverErrorMessage } from '../../api/client'
 import { kindLabel } from '../../api/entities'
+import { pluralWord, translate, useT } from '../../i18n'
+import { useLang, type Lang } from '../../store/lang'
 
 /**
  * Предложения карточек мира от помощника (0.77.0).
@@ -45,6 +47,8 @@ interface AppliedSummary {
 }
 
 export function EntityProposals({ projectId, refreshKey = 0 }: Props) {
+  const t = useT()
+  const [lang] = useLang()
   const [proposals, setProposals] = useState<AIEntityProposal[]>([])
   const [busy, setBusy] = useState<string | null>(null)
   const [note, setNote] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null)
@@ -80,13 +84,13 @@ export function EntityProposals({ projectId, refreshKey = 0 }: Props) {
       } catch (e) {
         setNote({
           kind: 'error',
-          text: (await serverErrorMessage(e)) ?? 'Не удалось добавить карточки.',
+          text: (await serverErrorMessage(e)) ?? t('prop.errApply'),
         })
       } finally {
         setBusy(null)
       }
     },
-    [projectId],
+    [projectId, t],
   )
 
   const discard = useCallback(
@@ -96,17 +100,17 @@ export function EntityProposals({ projectId, refreshKey = 0 }: Props) {
       try {
         await discardAIEntityProposal(projectId, proposal.id)
         setProposals((list) => list.filter((item) => item.id !== proposal.id))
-        setNote({ kind: 'ok', text: 'Предложение отклонено — в проекте ничего не изменилось.' })
+        setNote({ kind: 'ok', text: t('prop.discarded') })
       } catch (e) {
         setNote({
           kind: 'error',
-          text: (await serverErrorMessage(e)) ?? 'Не удалось отклонить предложение.',
+          text: (await serverErrorMessage(e)) ?? t('prop.errDiscard'),
         })
       } finally {
         setBusy(null)
       }
     },
-    [projectId],
+    [projectId, t],
   )
 
   if (proposals.length === 0 && applied.length === 0 && note === null) return null
@@ -120,12 +124,15 @@ export function EntityProposals({ projectId, refreshKey = 0 }: Props) {
           data-entity-proposal={proposal.id}
         >
           <p className="ent-proposals__title">
-            Помощник предлагает карточки
-            <span className="muted"> · {countLabel(proposal.cards.length, 'карточка', 'карточки', 'карточек')}</span>
+            {t('prop.title')}
+            <span className="muted">
+              {' '}
+              · {proposal.cards.length} {pluralWord(lang, 'ent.unit.card', proposal.cards.length)}
+            </span>
             {proposal.links.length > 0 && (
               <span className="muted">
                 {' '}
-                · {countLabel(proposal.links.length, 'связь', 'связи', 'связей')}
+                · {proposal.links.length} {pluralWord(lang, 'ent.unit.link', proposal.links.length)}
               </span>
             )}
           </p>
@@ -160,7 +167,7 @@ export function EntityProposals({ projectId, refreshKey = 0 }: Props) {
               disabled={busy !== null}
               data-entity-proposal-apply
             >
-              {busy === proposal.id ? 'Добавляю…' : 'Добавить карточки'}
+              {busy === proposal.id ? t('prop.applying') : t('prop.apply')}
             </button>
             <button
               type="button"
@@ -169,14 +176,14 @@ export function EntityProposals({ projectId, refreshKey = 0 }: Props) {
               disabled={busy !== null}
               data-entity-proposal-discard
             >
-              Не надо
+              {t('prop.discard')}
             </button>
           </div>
         </div>
       ))}
       {applied.map((item) => (
         <div key={item.proposalId} className="ent-proposals__applied" data-entity-proposal-done>
-          {describeResult(item.result)}
+          {describeResult(item.result, lang)}
         </div>
       ))}
       {note !== null && (
@@ -197,40 +204,36 @@ export function EntityProposals({ projectId, refreshKey = 0 }: Props) {
  *
  * Именно списком имён, а не «2 карточки»: человек подтверждал конкретные карточки, и увидеть
  * надо их названия — по числу нельзя понять, та ли это «Анна».
+ *
+ * Язык — параметром (0.122.0), а по умолчанию русский: функция зовётся и вне компонента, и
+ * держать её на текущем языке значило бы, что переключение языка не перерисует старый отчёт.
  */
-export function describeResult(result: AIEntityProposalResult): string {
+export function describeResult(result: AIEntityProposalResult, lang: Lang = 'ru'): string {
   const parts: string[] = []
-  if (result.created.length > 0) parts.push(`добавлено: ${result.created.join(', ')}`)
-  if (result.existing.length > 0) parts.push(`уже было: ${result.existing.join(', ')}`)
-  if (result.linksCreated.length > 0) parts.push(`связей: ${result.linksCreated.length}`)
+  if (result.created.length > 0) {
+    parts.push(translate(lang, 'prop.res.created', { list: result.created.join(', ') }))
+  }
+  if (result.existing.length > 0) {
+    parts.push(translate(lang, 'prop.res.existing', { list: result.existing.join(', ') }))
+  }
+  if (result.linksCreated.length > 0) {
+    parts.push(translate(lang, 'prop.res.links', { count: result.linksCreated.length }))
+  }
   if (result.failed.length > 0) {
     parts.push(
-      `не вышло: ${result.failed.map((item) => `${item.name} (${item.reason})`).join('; ')}`,
+      translate(lang, 'prop.res.failed', {
+        list: result.failed.map((item) => `${item.name} (${item.reason})`).join('; '),
+      }),
     )
   }
   if (result.linksSkipped.length > 0) {
     parts.push(
-      `связи пропущены: ${result.linksSkipped
-        .map((item) => `${item.name} (${item.reason})`)
-        .join('; ')}`,
+      translate(lang, 'prop.res.skipped', {
+        list: result.linksSkipped.map((item) => `${item.name} (${item.reason})`).join('; '),
+      }),
     )
   }
-  if (parts.length === 0) return 'В проекте ничего не изменилось: создавать было нечего.'
+  if (parts.length === 0) return translate(lang, 'prop.res.nothing')
   return parts.join(' · ')
 }
 
-/** Склонение по-русски: «1 карточка», «2 карточки», «5 карточек». */
-export function countLabel(count: number, one: string, few: string, many: string): string {
-  const tail = count % 100
-  if (tail >= 11 && tail <= 14) return `${count} ${many}`
-  switch (count % 10) {
-    case 1:
-      return `${count} ${one}`
-    case 2:
-    case 3:
-    case 4:
-      return `${count} ${few}`
-    default:
-      return `${count} ${many}`
-  }
-}

@@ -106,7 +106,7 @@ export function ProjectFiles({
               e.target.value = ''
             }}
           />
-{t('pf.upload')}
+          {t('pf.upload')}
         </label>
       </div>
 
@@ -154,7 +154,7 @@ export function ProjectFiles({
 ? t('pf.detachFirst')
 : t('pf.deleteTitle')
                 }
-aria-label={t('pf.deleteAria', { name: asset.filename })}
+                aria-label={t('pf.deleteAria', { name: asset.filename })}
                 onClick={() => onDelete(asset)}
               >
                 {busy ? '…' : '×'}
@@ -168,7 +168,7 @@ aria-label={t('pf.deleteAria', { name: asset.filename })}
                     </span>
                     <select
                       value={choosen}
-aria-label={t('pf.frameFor', { name: asset.filename })}
+                      aria-label={t('pf.frameFor', { name: asset.filename })}
                       onChange={(e) => setChoosen(e.target.value)}
                     >
 <option value="">{t('pf.chooseFrame')}</option>
@@ -193,7 +193,7 @@ aria-label={t('pf.frameFor', { name: asset.filename })}
 {inUse ? t('pf.moveButton') : t('pf.attachButton')}
                   </button>
                   <button type="button" className="secondary" onClick={() => setMoving(null)}>
-{t('pf.cancel')}
+                  {t('pf.cancel')}
                   </button>
                 </div>
               )}
