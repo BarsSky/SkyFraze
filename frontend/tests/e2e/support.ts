@@ -95,20 +95,25 @@ export async function signIn(page: Page, email: string = E2E_ADMIN_EMAIL): Promi
   await page.goto('/register')
   const heading = await page.locator('h1').innerText()
 
-  if (/Первый администратор/.test(heading)) {
+  // Заголовок проверяем на обоих языках (0.116.0): интерфейс может быть переключён до входа, и
+  // «First administrator» — такой же признак пустой инсталляции, как «Первый администратор».
+  if (/Первый администратор|First administrator/i.test(heading)) {
     await register(page, email)
     return true
   }
-  if (/Регистрация/.test(heading)) {
+  if (/Регистрация|Sign up|Registration/i.test(heading)) {
     // Режим open: заводим свой адрес, чтобы не зависеть от чужих данных на стенде.
     await register(page, `e2e+${Date.now()}@example.com`)
     return true
   }
 
   await page.goto('/login')
-  await page.getByPlaceholder('email').fill(email)
-  await page.getByPlaceholder('пароль').fill(PASSWORD)
-  await page.getByRole('button', { name: /Войти/ }).click()
+  // Селекторы по типу поля, а не по подписи (0.116.0): подпись зависит от языка интерфейса, и
+  // сценарий с переключённым английским падал на «нет поля «пароль»». Тип поля от языка не
+  // зависит, поэтому вход работает при любом выбранном языке — это и нужно проверять.
+  await page.locator('input[type="email"]').fill(email)
+  await page.locator('input[type="password"]').fill(PASSWORD)
+  await page.locator('button[type="submit"]').click()
   const ok = await page
     .waitForURL(/\/projects$/, { timeout: 10_000 })
     .then(() => true)
@@ -156,9 +161,10 @@ export async function gateAssistant(panel: Locator, scenario: string): Promise<v
 }
 
 async function register(page: Page, email: string): Promise<void> {
-  await page.getByPlaceholder('имя').fill('E2E User')
-  await page.getByPlaceholder('email').fill(email)
-  await page.getByPlaceholder('пароль (мин. 8)').fill(PASSWORD)
-  await page.getByRole('button', { name: 'Создать' }).click()
+  // По типам полей, а не по подписям: подписи зависят от языка интерфейса (0.116.0).
+  await page.locator('input[type="text"], input:not([type])').first().fill('E2E User')
+  await page.locator('input[type="email"]').fill(email)
+  await page.locator('input[type="password"]').fill(PASSWORD)
+  await page.locator('button[type="submit"]').click()
   await expect(page).toHaveURL(/\/projects$/)
 }

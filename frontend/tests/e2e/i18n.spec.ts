@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { signIn } from './support'
 
 /**
  * Язык интерфейса (0.115.0) — фаза 1: шапка, «О проекте», вход и регистрация.
@@ -51,4 +52,11 @@ test('язык переключается EN ↔ RU, выбор пережива
   await expect(page.getByRole('navigation').getByText('Feed')).toBeVisible()
   // Меню закрылось само после выбора.
   await expect(page.getByRole('menu')).toHaveCount(0)
+
+  // 7. Список проектов (фаза 2.1): заголовок, кнопка создания и пустое состояние — на английском.
+  expect(await signIn(page)).toBe(true)
+  await page.goto('/projects')
+  await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByRole('button', { name: '+ New project' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Import a project' })).toBeVisible()
 })

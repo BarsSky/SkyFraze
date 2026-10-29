@@ -1,4 +1,6 @@
 import { formatBytes, formatDaysLeft } from '../../lib/format'
+import { useT } from '../../i18n'
+import { useLang } from '../../store/lang'
 import type { TrashedProject } from '../../api/projects'
 
 /**
@@ -31,17 +33,19 @@ export function TrashPanel({
   onPurge: (p: TrashedProject) => void
   onExport: (p: TrashedProject) => void
 }) {
+  const t = useT()
+  const [lang] = useLang()
   return (
     <div className="card trash-panel" data-project-trash>
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
-        <h3 style={{ margin: 0 }}>Корзина</h3>
+        <h3 style={{ margin: 0 }}>{t('trash.title')}</h3>
         <span className="muted" data-trash-retention>
-          Удалённое хранится {formatDaysLeft(retentionDays)} и не видно другим
+           {t('trash.retention', { days: formatDaysLeft(retentionDays, lang) })}
         </span>
       </div>
       {items.length === 0 ? (
         <p className="muted" style={{ marginBottom: 0 }} data-trash-empty>
-          Пусто. Удалённые проекты появятся здесь и будут доступны для возврата.
+          {t('trash.empty')}
         </p>
       ) : (
         <div className="trash-panel__list">
@@ -51,10 +55,10 @@ export function TrashPanel({
                 <b className="trash-panel__title">{p.title}</b>
                 <p className="muted" style={{ margin: 0 }} data-trash-days-left={p.days_left}>
                   {p.days_left > 0
-                    ? `вернуть можно ещё ${formatDaysLeft(p.days_left)}`
-                    : 'срок восстановления истёк — проект удалится при следующей уборке'}
+                    ? t('trash.restoreLeft', { days: formatDaysLeft(p.days_left, lang) })
+                    : t('trash.expired')}
                   {typeof p.asset_bytes === 'number' && p.asset_bytes > 0 && (
-                    <> · файлы: {formatBytes(p.asset_bytes)}</>
+                    <>{t('trash.files', { size: formatBytes(p.asset_bytes, lang) })}</>
                   )}
                 </p>
               </div>
@@ -62,28 +66,28 @@ export function TrashPanel({
                 <button
                   type="button"
                   disabled={busyId === p.id}
-                  title="Вернуть проект со всем текстом, файлами и историей"
+                  title={t('trash.restoreTitle')}
                   onClick={() => onRestore(p)}
                 >
-                  Вернуть
+                  {t('trash.restore')}
                 </button>
                 <button
                   type="button"
                   className="secondary"
                   disabled={busyId === p.id}
-                  title="Скачать архив проекта, чтобы сохранить его перед окончательным удалением"
+                  title={t('trash.exportTitle')}
                   onClick={() => onExport(p)}
                 >
-                  Скачать архив
+                  {t('trash.export')}
                 </button>
                 <button
                   type="button"
                   className="secondary danger-text"
                   disabled={busyId === p.id}
-                  title="Удалить проект окончательно: файлы и история исчезнут"
+                  title={t('trash.purgeTitle')}
                   onClick={() => onPurge(p)}
                 >
-                  Удалить навсегда
+                  {t('trash.purge')}
                 </button>
               </div>
             </div>

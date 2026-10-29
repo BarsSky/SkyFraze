@@ -1,5 +1,7 @@
 import type { Project } from '../api/projects'
 import { formatBytes } from './format'
+import { translate } from '../i18n'
+import type { Lang } from '../store/lang'
 
 /**
  * Подпись веса проекта для списка проектов.
@@ -18,7 +20,10 @@ export interface ProjectWeight {
   tight: boolean
 }
 
-export function projectWeight(project: Pick<Project, 'asset_bytes' | 'quota_bytes'>): ProjectWeight | null {
+export function projectWeight(
+  project: Pick<Project, 'asset_bytes' | 'quota_bytes'>,
+  lang: Lang = 'ru',
+): ProjectWeight | null {
   const used = project.asset_bytes ?? 0
   const limit = project.quota_bytes ?? 0
   // Пустой проект не подписываем: «файлы: 0 Б из 10.0 МБ» на каждой карточке — шум,
@@ -26,10 +31,10 @@ export function projectWeight(project: Pick<Project, 'asset_bytes' | 'quota_byte
   if (used <= 0) return null
   if (limit > 0) {
     return {
-      text: `файлы: ${formatBytes(used)} из ${formatBytes(limit)}`,
+      text: translate(lang, 'weight.of', { used: formatBytes(used, lang), limit: formatBytes(limit, lang) }),
       tight: used / limit >= 0.8,
     }
   }
   // Предела нет — показываем только вес.
-  return { text: `файлы: ${formatBytes(used)}`, tight: false }
+  return { text: translate(lang, 'weight.used', { used: formatBytes(used, lang) }), tight: false }
 }

@@ -23,11 +23,15 @@ import { ImportFolderModal } from '../components/ImportFolderModal'
 import { TrashPanel } from '../components/projects/TrashPanel'
 import { DocxTemplateSwitch } from '../components/projects/DocxTemplateSwitch'
 import { projectWeight } from '../lib/projectWeight'
+import { useT } from '../i18n'
+import { useLang } from '../store/lang'
 import { copyText } from '../lib/clipboard'
 import { useAuthStore } from '../store/auth'
 import { projectsWithUnseen } from '../api/comments'
 
 export function ProjectsPage() {
+  const t = useT()
+  const [lang] = useLang()
   const [list, setList] = useState<Project[]>([])
   const [error, setError] = useState<unknown>(null)
   const [openNew, setOpenNew] = useState(false)
@@ -136,7 +140,7 @@ export function ProjectsPage() {
         setTemplate(null)
         setTemplateName('')
         setOpenNew(false)
-        setNote(`«${created.project.title}» создан по шаблону: ${created.report.message}`)
+        setNote(t('projects.noteTemplateCreated', { title: created.project.title, report: created.report.message }))
         await load()
         return
       }
@@ -156,12 +160,12 @@ export function ProjectsPage() {
    * не виден ни команде, ни в публичной ленте — это видно и сказано.
    */
   async function onDelete(p: Project) {
-    if (!confirm(`Удалить «${p.title}»?\n\nПроект уедет в корзину: он пропадёт из списка и станет недоступен соавторам, но вернуть его можно будет 30 дней.`)) return
+    if (!confirm(t('projects.confirmDelete', { title: p.title }))) return
     try {
       await deleteProject(p.id)
       setList((cur) => cur.filter((item) => item.id !== p.id))
       refreshTrash()
-      setNote(`«${p.title}» в корзине — вернуть можно 30 дней`)
+      setNote(t('projects.noteTrashed', { title: p.title }))
     } catch (e) {
       setError(e)
     }
@@ -175,7 +179,7 @@ export function ProjectsPage() {
       await restoreProject(p.id)
       load()
       refreshTrash()
-      setNote(`«${p.title}» вернулась в список проектов`)
+      setNote(t('projects.noteRestored', { title: p.title }))
     } catch (e) {
       setError(e)
     } finally {
@@ -188,13 +192,13 @@ export function ProjectsPage() {
    * списке проектов, которое нельзя отменить ничем, кроме ночной копии.
    */
   async function onPurge(p: TrashedProject) {
-    if (!confirm(`Удалить «${p.title}» навсегда?\n\nТекст, файлы и история версий будут удалены. Вернуть их будет нечем.`)) return
+    if (!confirm(t('projects.confirmPurge', { title: p.title }))) return
     setTrashBusyId(p.id)
     setError(null)
     try {
       await purgeProject(p.id)
       refreshTrash()
-      setNote(`«${p.title}» удалена окончательно`)
+      setNote(t('projects.notePurged', { title: p.title }))
     } catch (e) {
       setError(e)
     } finally {
@@ -212,7 +216,7 @@ export function ProjectsPage() {
     setError(null)
     try {
       const name = await exportProject(p.id, p.title)
-      setNote(`Архив «${name}» скачан — проект остался в корзине`)
+      setNote(t('projects.noteTrashExported', { name }))
     } catch (e) {
       setError(e)
     } finally {
@@ -226,7 +230,7 @@ export function ProjectsPage() {
     setError(null)
     try {
       const name = await exportProject(p.id, p.title)
-      setNote(`Архив «${name}» скачан — загрузите его на другом стенде кнопкой «Импорт проекта»`)
+      setNote(t('projects.noteExported', { name }))
     } catch (e) {
       setError(e)
     } finally {
@@ -246,8 +250,8 @@ export function ProjectsPage() {
       const name = await exportStoryMarkdown(p.id, { assets, projectTitle: p.title })
       setNote(
         assets
-          ? `Скачан «${name}»: текст, главы по файлам и картинки — папка для чтения и правок`
-          : `Скачан «${name}» — вся история одной лентой`,
+          ? t('projects.noteMdFolder', { name })
+          : t('projects.noteMdFeed', { name }),
       )
     } catch (e) {
       setError(e)
@@ -267,8 +271,8 @@ export function ProjectsPage() {
       const name = await exportStoryBook(p.id, format, p.title)
       setNote(
         format === 'epub'
-          ? `Скачан «${name}» — книга для читалки: главы, оглавление и иллюстрации`
-          : `Скачан «${name}» — документ для правки в Word или LibreOffice`,
+          ? t('projects.noteEpub', { name })
+          : t('projects.noteDocx', { name }),
       )
     } catch (e) {
       setError(e)
@@ -290,8 +294,8 @@ export function ProjectsPage() {
       const res = await importProject(file)
       setList((cur) => [res.project, ...cur])
       setNote(
-        `Проект «${res.project.title}» перенесён: событий ${res.events}, вложений ${res.assets}` +
-          (res.state ? ', фон кадров и тексты сохранены' : ''),
+        t('projects.noteImported', { title: res.project.title, events: res.events, assets: res.assets }) +
+          (res.state ? t('projects.noteImportedState') : ''),
       )
     } catch (e) {
       const status = (e as { response?: Response })?.response?.status
@@ -301,9 +305,9 @@ export function ProjectsPage() {
           ?.clone()
           .json()
           .catch(() => null)
-        setError(new Error((body as { error?: string } | null)?.error ?? 'Этот архив уже импортирован'))
+        setError(new Error((body as { error?: string } | null)?.error ?? t('projects.errAlreadyImported')))
       } else if (status === 400 || status === 413) {
-        setError(new Error('Файл не похож на архив SkyFraze или слишком большой'))
+        setError(new Error(t('projects.errBadArchive')))
       } else {
         setError(e)
       }
@@ -321,12 +325,12 @@ export function ProjectsPage() {
       setList((cur) => cur.map((item) => (item.id === p.id ? updated : item)))
       setNote(
         updated.is_public
-          ? `«${updated.title}» опубликована — ссылка /s/${updated.public_slug}`
-          : `«${updated.title}» снята с публикации`,
+          ? t('projects.notePublished', { title: updated.title, slug: updated.public_slug ?? '' })
+          : t('projects.noteUnpublished', { title: updated.title }),
       )
     } catch (e) {
       const status = (e as { response?: Response })?.response?.status
-      setError(status === 403 ? new Error('Публиковать может только владелец проекта') : e)
+      setError(status === 403 ? new Error(t('projects.errPublishOwner')) : e)
     } finally {
       setBusyId(null)
     }
@@ -345,20 +349,20 @@ export function ProjectsPage() {
   return (
     <div style={{ maxWidth: 760, margin: '0 auto' }}>
       <div className="row" style={{ justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
-        <h2>Проекты</h2>
+        <h2>{t('projects.title')}</h2>
         <div className="row" style={{ flexWrap: 'wrap', gap: 8 }}>
           {/* Импорт папки: md-файлы (или zip той же формы) → новый проект с предпросмотром */}
           <button
             type="button"
             className="secondary"
-            title="Загрузить папку с md-файлами (или zip из выгрузки «.md + картинки») и создать из неё новый проект"
+            title={t('projects.importFolderTitle')}
             onClick={() => setOpenImportFolder(true)}
           >
-            Импорт папки
+            {t('projects.importFolder')}
           </button>
           {/* Перенос проекта: скачать архив здесь — загрузить на другом стенде */}
-          <label className="secondary pub-import" title="Загрузить архив .skyfraze.zip, чтобы перенести проект с другого стенда">
-            {importing ? 'Импорт…' : 'Импорт проекта'}
+          <label className="secondary pub-import" title={t('projects.importTitle')}>
+            {importing ? t('projects.importing') : t('projects.import')}
             <input
               type="file"
               accept=".zip,application/zip"
@@ -370,7 +374,7 @@ export function ProjectsPage() {
               }}
             />
           </label>
-          <button onClick={() => setOpenNew((v) => !v)}>{openNew ? 'Отмена' : '+ Новый проект'}</button>
+          <button onClick={() => setOpenNew((v) => !v)}>{openNew ? t('projects.cancel') : t('projects.newToggle')}</button>
           {/* Корзина: пока в ней что-то есть, кнопка говорит числом — иначе удалённый
               проект «исчезает» бесследно, и человек не находит способ его вернуть. */}
           <button
@@ -378,20 +382,20 @@ export function ProjectsPage() {
             className="secondary"
             aria-expanded={openTrash}
             data-trash-toggle
-            title="Удалённые проекты: вернуть или удалить окончательно"
+            title={t('projects.trashTitle')}
             onClick={() => setOpenTrash((v) => !v)}
           >
-            {openTrash ? 'Скрыть корзину' : trashCount > 0 ? `Корзина · ${trashCount}` : 'Корзина'}
+            {openTrash ? t('projects.trashHide') : trashCount > 0 ? t('projects.trashCount', { count: trashCount }) : t('projects.trash')}
           </button>
         </div>
       </div>
 
       {openNew && (
         <form className="card" onSubmit={onCreate}>
-          <input placeholder="Название" value={title} onChange={(e) => setTitle(e.target.value)} required />
+          <input placeholder={t('projects.name')} value={title} onChange={(e) => setTitle(e.target.value)} required />
           <div style={{ height: 8 }} />
           <textarea
-            placeholder="Описание (опционально)"
+            placeholder={t('projects.desc')}
             value={desc}
             onChange={(e) => setDesc(e.target.value)}
             rows={3}
@@ -400,11 +404,11 @@ export function ProjectsPage() {
           {/* «По образцу» (0.85.0): необязательный файл шаблона. Без файла — обычный новый
               проект; с файлом — сразу с типами карточек, карточками и настройками помощника. */}
           <label className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <span className="muted">по образцу</span>
+            <span className="muted">{t('projects.byTemplate')}</span>
             <input
               type="file"
               accept="application/json,.json"
-              aria-label="Файл шаблона проекта"
+              aria-label={t('projects.templateFileAria')}
               /* Глобальные стили делают input шириной 100% — для выбора файла это лишнее. */
               style={{ width: 'auto', flex: '0 0 auto' }}
               data-new-template-file
@@ -428,41 +432,41 @@ export function ProjectsPage() {
             />
             {template !== null && (
               <button type="button" className="secondary" onClick={() => { setTemplate(null); setTemplateName('') }}>
-                убрать шаблон
+                {t('projects.templateRemove')}
               </button>
             )}
           </label>
           {template !== null && (
             <p className="muted" data-new-template-note style={{ margin: '4px 0 0' }}>
-              {templateName || 'шаблон'}: типов {template.entity_types.length}
-              {template.cards && template.cards.length > 0 ? `, карточек ${template.cards.length}` : ''}
-              {template.ai ? ', настройки помощника' : ''}
+              {t('projects.templateNote', { name: templateName || t('projects.templateName'), types: template.entity_types.length })}
+              {template.cards && template.cards.length > 0 ? t('projects.templateCards', { cards: template.cards.length }) : ''}
+              {template.ai ? t('projects.templateAi') : ''}
             </p>
           )}
           <div style={{ height: 8 }} />
-          <button type="submit">{template !== null ? 'Создать по шаблону' : 'Создать'}</button>
+          <button type="submit">{template !== null ? t('projects.createByTemplate') : t('projects.create')}</button>
         </form>
       )}
 
       {error != null && (
         <ErrorBanner
           error={error}
-          what="Проекты"
+          what={t('projects.errorWhat')}
           onRetry={load}
-          actions={<Link className="banner__link" to="/feed">Публичная лента</Link>}
+          actions={<Link className="banner__link" to="/feed">{t('projects.feedLink')}</Link>}
         />
       )}
       {note && (
         <div className="card pub-note">
           {note}
           <button className="secondary" style={{ marginLeft: 12 }} onClick={() => setNote(null)}>
-            ок
+            {t('projects.noteOk')}
           </button>
         </div>
       )}
 
       <div className="list">
-        {own.length === 0 && <p className="muted">Нет проектов. Создайте первый.</p>}
+        {own.length === 0 && <p className="muted">{t('projects.empty')}</p>}
         {own.map((p) => {
           const isOwner = p.owner_id === userId
           return (
@@ -482,14 +486,14 @@ export function ProjectsPage() {
                   overflowWrap: 'anywhere',
                 }}>
                   <Link to={`/projects/${p.id}`}>{p.title}</Link>
-                  {p.is_public && <span className="pub-badge" title="Видна всем в публичной ленте">в ленте</span>}
+                  {p.is_public && <span className="pub-badge" title={t('projects.inFeedTitle')}>{t('projects.inFeed')}</span>}
                   {(unseen[p.id] ?? 0) > 0 && (
                     <span
                       className="pub-badge pub-badge--new"
                       data-project-unseen={unseen[p.id]}
-                      title={`Новых замечаний в обсуждении: ${unseen[p.id]}`}
+                      title={t('projects.newCommentsTitle', { count: unseen[p.id] })}
                     >
-                      {unseen[p.id]} новых
+                      {t('projects.newComments', { count: unseen[p.id] })}
                     </span>
                   )}
                 </h3>
@@ -503,17 +507,17 @@ export function ProjectsPage() {
                   // токена: две строки остаются, но текст в них читается (0.98.3).
                   overflowWrap: 'anywhere',
                 }}>
-                  {p.description || <em>без описания</em>}
+                  {p.description || <em>{t('projects.noDescription')}</em>}
                 </p>
                 {/* Вес файлов проекта: место видно до открытия, а не когда загрузка
                     уже упёрлась в предел. */}
                 {(() => {
-                  const weight = projectWeight(p)
+                  const weight = projectWeight(p, lang)
                   if (!weight) return null
                   return (
                     <p className={weight.tight ? 'muted proj-weight proj-weight--tight' : 'muted proj-weight'}>
                       {weight.text}
-                      {weight.tight && ' — место заканчивается'}
+                      {weight.tight && t('projects.nearlyFull')}
                     </p>
                   )
                 })()}
@@ -527,15 +531,15 @@ export function ProjectsPage() {
                         void copyText(publicLink(p)).then((done) =>
                           setNote(
                             done
-                              ? 'Ссылка скопирована в буфер обмена'
-                              : `Скопируйте ссылку вручную: ${publicLink(p)}`,
+                              ? t('projects.copied')
+                              : t('projects.copyManual', { link: publicLink(p) }),
                           ),
                         )
                       }}
                     >
-                      скопировать
+                      {t('projects.copy')}
                     </button>
-                    <span className="muted">просмотров: {p.views_count}</span>
+                    <span className="muted">{t('projects.views', { count: p.views_count })}</span>
                   </p>
                 )}
               </div>
@@ -543,10 +547,10 @@ export function ProjectsPage() {
                 <button
                   className="secondary"
                   disabled={busyId === p.id}
-                  title="Скачать архив проекта, чтобы перенести его на другой стенд SkyFraze"
+                  title={t('projects.exportTitle')}
                   onClick={() => void onExport(p)}
                 >
-                  {busyId === p.id ? '…' : 'Экспорт'}
+                  {busyId === p.id ? '…' : t('projects.export')}
                 </button>
                 {/* Две выгрузки в Markdown живут в одном меню: рядом с «Экспорт»
                     три кнопки подряд превращали карточку на телефоне в столбик
@@ -554,7 +558,7 @@ export function ProjectsPage() {
                 <details className="dl-menu">
                   <summary
                     className="dl-menu__toggle"
-                    title="Выгрузить историю в Markdown: одной лентой или zip с главами и картинками"
+                    title={t('projects.mdTitle')}
                   >
                     Markdown
                   </summary>
@@ -568,8 +572,8 @@ export function ProjectsPage() {
                         void onDownloadMarkdown(p, false)
                       }}
                     >
-                      <b>Скачать .md</b>
-                      <span className="muted">вся история одной лентой, ссылки на картинки</span>
+                      <b>{t('projects.mdDownload')}</b>
+                      <span className="muted">{t('projects.mdDownloadHint')}</span>
                     </button>
                     <button
                       type="button"
@@ -580,8 +584,8 @@ export function ProjectsPage() {
                         void onDownloadMarkdown(p, true)
                       }}
                     >
-                      <b>.md + картинки</b>
-                      <span className="muted">zip: story.md, главы по файлам и assets/</span>
+                      <b>{t('projects.mdAssets')}</b>
+                      <span className="muted">{t('projects.mdAssetsHint')}</span>
                     </button>
                   </div>
                 </details>
@@ -602,8 +606,8 @@ export function ProjectsPage() {
                     })
                   }}
                 >
-                  <summary className="dl-menu__toggle" title="Скачать книгу: EPUB для читалки или DOCX для правки">
-                    Книга
+                  <summary className="dl-menu__toggle" title={t('projects.bookTitle')}>
+                    {t('projects.book')}
                   </summary>
                   <div className="dl-menu__panel">
                     <button
@@ -615,8 +619,8 @@ export function ProjectsPage() {
                         void onDownloadBook(p, 'epub')
                       }}
                     >
-                      <b>Скачать .epub</b>
-                      <span className="muted">книга с оглавлением и иллюстрациями — для читалки</span>
+                      <b>{t('projects.epub')}</b>
+                      <span className="muted">{t('projects.epubHint')}</span>
                     </button>
                     {/* Каким оформлением соберётся .docx — видно ЗДЕСЬ, до нажатия: за выбором
                         оформления раньше нужно было уходить в настройки проекта. */}
@@ -638,8 +642,8 @@ export function ProjectsPage() {
                         void onDownloadBook(p, 'docx')
                       }}
                     >
-                      <b>Скачать .docx</b>
-                      <span className="muted">документ Word — для правки и редактора</span>
+                      <b>{t('projects.docx')}</b>
+                      <span className="muted">{t('projects.docxHint')}</span>
                     </button>
                   </div>
                 </details>
@@ -647,14 +651,14 @@ export function ProjectsPage() {
                   <button
                     className={p.is_public ? 'secondary' : undefined}
                     disabled={busyId === p.id}
-                    title={p.is_public ? 'Скрыть историю из ленты' : 'Показать историю всем в ленте'}
+                    title={p.is_public ? t('projects.unpublishTitle') : t('projects.publishTitle')}
                     onClick={() => void onPublish(p)}
                   >
-                    {busyId === p.id ? '…' : p.is_public ? 'Снять с публикации' : 'Опубликовать'}
+                    {busyId === p.id ? '…' : p.is_public ? t('projects.unpublish') : t('projects.publish')}
                   </button>
                 )}
-                <Link to={`/projects/${p.id}/settings`}><button className="secondary">Участники</button></Link>
-                <button className="secondary" onClick={() => void onDelete(p)}>Удалить</button>
+                <Link to={`/projects/${p.id}/settings`}><button className="secondary">{t('projects.members')}</button></Link>
+                <button className="secondary" onClick={() => void onDelete(p)}>{t('projects.delete')}</button>
               </div>
             </div>
           )
@@ -681,9 +685,9 @@ export function ProjectsPage() {
           ни публикации, ни участников, ни удаления; только «открыть». */}
       {shared.length > 0 && (
         <div className="projects__shared" data-shared-projects>
-          <h3 style={{ marginBottom: 4 }}>Проекты соавторов</h3>
+          <h3 style={{ marginBottom: 4 }}>{t('projects.sharedTitle')}</h3>
           <p className="muted" style={{ marginTop: 0 }}>
-            Эти проекты открыли вам как соавтору — читать можно целиком, править нельзя.
+            {t('projects.sharedHint')}
           </p>
           <div className="list">
             {shared.map((p) => (
@@ -692,11 +696,11 @@ export function ProjectsPage() {
                   {/* Те же две строки с переносом, что и у своих проектов (0.98.3). */}
                   <h3 style={{ margin: 0, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflowWrap: 'anywhere' }}>
                     <Link to={`/projects/${p.id}`}>{p.title}</Link>
-                    <span className="pub-badge" title="Доступ только на чтение">только чтение</span>
+                    <span className="pub-badge" title={t('projects.readOnlyTitle')}>{t('projects.readOnly')}</span>
                   </h3>
-                  <p className="muted" style={{ margin: 0 }}>{p.description || <em>без описания</em>}</p>
+                  <p className="muted" style={{ margin: 0 }}>{p.description || <em>{t('projects.noDescription')}</em>}</p>
                 </div>
-                <Link to={`/projects/${p.id}`}><button className="secondary">Открыть</button></Link>
+                <Link to={`/projects/${p.id}`}><button className="secondary">{t('projects.open')}</button></Link>
               </div>
             ))}
           </div>
