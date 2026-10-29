@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useT } from '../../i18n'
 import { createPortal } from 'react-dom'
 import {
   addEntityLink,
@@ -121,6 +122,7 @@ export function EntitiesPanel({
   onSetMentionImage,
   onClearMentionImage,
 }: Props) {
+  const t = useT()
   // Вид новой карточки — первый тип проекта (у стартовых это «Персонаж»). Состояние хранит КЛЮЧ
   // типа: человек мог переименовать «Персонаж» в «Героя», и ключ остаётся `character`.
   const [kind, setKind] = useState<string>('character')
@@ -542,20 +544,20 @@ export function EntitiesPanel({
       }}
     >
       <summary className="ent__summary">
-        Связи проекта
+{t('ent.title')}
         <span className="muted ent__count" data-entities-count>
-          {loaded ? `карточек: ${entities.length}` : 'загружаю…'}
+{loaded ? t('ent.count', { count: entities.length }) : t('ent.loading')}
         </span>
       </summary>
 
       <p className="muted ent__hint">
-        Персонажи, места и темы проекта с алиасами («Анна», «Аня», «Анны») — по ним кадры
-        связываются между собой. Связи из упоминаний в тексте появятся следом.
+{t('ent.hint')}
+
       </p>
 
       {entities.length === 0 && loaded && (
         <p className="muted" data-entities-empty>
-          Карточек пока нет. Начните с главного героя и места, где всё происходит.
+{t('ent.empty')}
         </p>
       )}
 
@@ -576,15 +578,15 @@ export function EntitiesPanel({
         >
           <div className="ent__create-head">
             <h3 className="ent__create-title" id="ent-create-title">
-              Новая карточка
+{t('ent.createTitle')}
             </h3>
-            <span className="muted ent__create-hint">вид задаёт алиасы и описание по заготовке</span>
+<span className="muted ent__create-hint">{t('ent.createHint')}</span>
           </div>
           <div className="ent__form">
             <select
               value={kind}
               onChange={(e) => setKind(e.target.value)}
-              aria-label="Вид карточки"
+aria-label={t('ent.kindAria')}
               ref={kindSelectRef}
               data-entity-kind-select
             >
@@ -599,8 +601,8 @@ export function EntitiesPanel({
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="имя: Анна"
-              aria-label="Имя карточки"
+placeholder={t('ent.namePlaceholder')}
+aria-label={t('ent.nameAria')}
               maxLength={80}
             />
             <input
@@ -609,8 +611,8 @@ export function EntitiesPanel({
                 setAliases(e.target.value)
                 setAliasesEdited(true)
               }}
-              placeholder="алиасы: Аня, Анны"
-              aria-label="Алиасы карточки"
+placeholder={t('ent.aliasesPlaceholder')}
+aria-label={t('ent.aliasesAria')}
             />
             {/* Описание (0.85.0): пусто у типа без заготовки, предзаполнено у типа с заготовкой.
                 Правка руками отменяет автоподстановку — человек решает сам. */}
@@ -620,8 +622,8 @@ export function EntitiesPanel({
                 setDescription(e.target.value)
                 setDescriptionEdited(true)
               }}
-              placeholder="описание: кто это, чем важен"
-              aria-label="Описание карточки"
+placeholder={t('ent.descPlaceholder')}
+aria-label={t('ent.descAria')}
               rows={2}
               data-entity-desc-input
             />
@@ -631,7 +633,7 @@ export function EntitiesPanel({
               disabled={busy || name.trim() === ''}
               data-entity-add
             >
-              {busy ? 'Сохраняю…' : 'Добавить'}
+{busy ? t('ent.adding') : t('ent.add')}
             </button>
             {/* Отдельная кнопка, а не пункт «+ новый тип…» внутри списка видов (0.111.0): пункт в
                 выпадающем списке — это действие, спрятанное среди значений, и по отчёту «не сразу
@@ -644,7 +646,7 @@ export function EntitiesPanel({
                 aria-haspopup="dialog"
                 data-entity-type-open
               >
-                + новый тип карточки
+{t('ent.newType')}
               </button>
             )}
           </div>
@@ -680,22 +682,22 @@ export function EntitiesPanel({
                   <input
                     value={draftName}
                     onChange={(e) => setDraftName(e.target.value)}
-                    aria-label={`Имя карточки ${entity.name}`}
+aria-label={t('ent.nameOfAria', { name: entity.name })}
                     maxLength={80}
                   />
                   <input
                     value={draftAliases}
                     onChange={(e) => setDraftAliases(e.target.value)}
-                    placeholder="алиасы через запятую"
-                    aria-label={`Алиасы карточки ${entity.name}`}
+placeholder={t('ent.aliasesEditPlaceholder')}
+aria-label={t('ent.aliasesOfAria', { name: entity.name })}
                   />
                   {/* Описание правится здесь же (0.85.0): раньше его можно было только
                       прочитать, если оно приехало из импорта или от помощника. */}
                   <textarea
                     value={draftDescription}
                     onChange={(e) => setDraftDescription(e.target.value)}
-                    placeholder="описание: кто это, чем важен"
-                    aria-label={`Описание карточки ${entity.name}`}
+placeholder={t('ent.descPlaceholder')}
+aria-label={t('ent.descOfAria', { name: entity.name })}
                     rows={2}
                     data-entity-desc-edit
                   />
@@ -705,10 +707,10 @@ export function EntitiesPanel({
                     disabled={busy || draftName.trim() === ''}
                     data-entity-save
                   >
-                    Сохранить
+{t('ent.save')}
                   </button>
                   <button type="button" className="secondary" onClick={() => setEditing(null)}>
-                    Отмена
+{t('ent.cancel')}
                   </button>
                 </div>
               ) : (
@@ -753,7 +755,7 @@ export function EntitiesPanel({
                         }}
                         aria-haspopup="menu"
                         aria-expanded={menuFor === entity.id}
-                        aria-label={`Действия с карточкой ${entity.name}`}
+aria-label={t('ent.actionsAria', { name: entity.name })}
                         data-entity-menu
                       >
                         <span aria-hidden="true">⋮</span>
@@ -762,7 +764,7 @@ export function EntitiesPanel({
                         <span
                           className={menuUp ? 'ent__menu is-up' : 'ent__menu'}
                           role="menu"
-                          aria-label={`Меню карточки ${entity.name}`}
+aria-label={t('ent.menuAria', { name: entity.name })}
                           data-entity-menu-list={entity.id}
                           ref={menuEl}
                           onKeyDown={(event) => {
@@ -797,10 +799,10 @@ export function EntitiesPanel({
                                 )
                                 setMenuFor(null)
                               }}
-                              aria-label={`Где встречается ${entity.name}`}
+aria-label={t('ent.whereAria', { name: entity.name })}
                               data-entity-chronology
                             >
-                              {chronology === entity.id ? 'Скрыть кадры' : 'Где встречается'}
+{chronology === entity.id ? t('ent.whereHide') : t('ent.where')}
                             </button>
                           )}
                           <button
@@ -815,10 +817,10 @@ export function EntitiesPanel({
                               setNote(null)
                               setMenuFor(null)
                             }}
-                            aria-label={`Изменить карточку ${entity.name}`}
+aria-label={t('ent.editAria', { name: entity.name })}
                             data-entity-edit
                           >
-                            Изменить
+{t('ent.edit')}
                           </button>
                           {/* «Связать» — только если есть с чем: одна карточка связей не имеет. */}
                           {entities.length > 1 && (
@@ -833,10 +835,10 @@ export function EntitiesPanel({
                                 setNote(null)
                                 setMenuFor(null)
                               }}
-                              aria-label={`Связать карточку ${entity.name}`}
+aria-label={t('ent.linkAria', { name: entity.name })}
                               data-entity-link-add
                             >
-                              {linking === entity.id ? 'Не связывать' : 'Связать'}
+{linking === entity.id ? t('ent.linkCancel') : t('ent.link')}
                             </button>
                           )}
                           <button
@@ -847,10 +849,10 @@ export function EntitiesPanel({
                               setPendingDelete(entity.id)
                               setMenuFor(null)
                             }}
-                            aria-label={`Удалить карточку ${entity.name}`}
+aria-label={t('ent.deleteAria', { name: entity.name })}
                             data-entity-delete
                           >
-                            Удалить
+{t('ent.delete')}
                           </button>
                         </span>
                       )}
@@ -861,7 +863,7 @@ export function EntitiesPanel({
                       ответили, даже если меню уже закрыто. */}
                   {canEdit && pendingDelete === entity.id && (
                     <span className="ent__confirm" data-entity-delete-confirm-row>
-                      <span className="muted">Удалить карточку «{entity.name}»?</span>
+<span className="muted">{t('ent.deleteConfirm', { name: entity.name })}</span>
                       <button
                         type="button"
                         className="secondary ed-danger"
@@ -869,14 +871,14 @@ export function EntitiesPanel({
                         disabled={busy}
                         data-entity-delete-confirm
                       >
-                        Удалить
+{t('ent.delete')}
                       </button>
                       <button
                         type="button"
                         className="secondary"
                         onClick={() => setPendingDelete(null)}
                       >
-                        Оставить
+{t('ent.keep')}
                       </button>
                     </span>
                   )}
@@ -889,10 +891,10 @@ export function EntitiesPanel({
                   <select
                     value={linkTarget}
                     onChange={(e) => setLinkTarget(e.target.value)}
-                    aria-label={`С какой карточкой связать ${entity.name}`}
+aria-label={t('ent.linkTargetAria', { name: entity.name })}
                     data-entity-link-target
                   >
-                    <option value="">карточка…</option>
+<option value="">{t('ent.linkTargetAny')}</option>
                     {entities
                       .filter((other) => other.id !== entity.id)
                       .map((other) => (
@@ -904,8 +906,8 @@ export function EntitiesPanel({
                   <input
                     value={linkLabel}
                     onChange={(e) => setLinkLabel(e.target.value)}
-                    placeholder="подпись: живёт на"
-                    aria-label={`Подпись связи от ${entity.name}`}
+placeholder={t('ent.linkLabelPlaceholder')}
+aria-label={t('ent.linkLabelAria', { name: entity.name })}
                     maxLength={40}
                     data-entity-link-label
                   />
@@ -915,7 +917,7 @@ export function EntitiesPanel({
                     disabled={busy || linkTarget === '' || linkLabel.trim() === ''}
                     data-entity-link-save
                   >
-                    {busy ? 'Связываю…' : 'Связать'}
+{busy ? t('ent.linking') : t('ent.link')}
                   </button>
                 </span>
               )}
@@ -937,7 +939,7 @@ export function EntitiesPanel({
                         data-entity-frame={frame.frameId}
                       >
                         <span className="ent__frame-number">{frame.number || '—'}</span>
-                        <span className="ent__frame-title">{frame.title || 'без названия'}</span>
+<span className="ent__frame-title">{frame.title || t('ent.frameUntitled')}</span>
                         {frame.date !== '' && <span className="muted ent__frame-date">{frame.date}</span>}
                       </button>
                     </li>
@@ -1103,40 +1105,40 @@ export function EntitiesPanel({
               data-entity-type-form
             >
               <h3 className="ent-modal__title" id="ent-type-title">
-                Новый тип карточки
+{t('ent.typeTitle')}
               </h3>
               <p className="muted ent-modal__hint">
-                Тип появится в списке видов. Заготовка подставится в алиасы и описание новой карточки
-                этого типа; <code>{'{{name}}'}</code> заменится на имя.
+{t('ent.typeHint')}
+
               </p>
               <label className="ent-modal__field">
-                <span>Название</span>
+<span>{t('ent.typeNameLabel')}</span>
                 <input
                   value={typeDraft}
                   onChange={(e) => setTypeDraft(e.target.value)}
-                  placeholder="Фракция"
-                  aria-label="Название нового типа"
+placeholder={t('ent.typeNamePlaceholder')}
+aria-label={t('ent.typeNameAria')}
                   maxLength={40}
                   autoFocus
                 />
               </label>
               <label className="ent-modal__field">
-                <span>Алиасы заготовки</span>
+<span>{t('ent.typeAliasesLabel')}</span>
                 <input
                   value={typeTemplateAliases}
                   onChange={(e) => setTypeTemplateAliases(e.target.value)}
-                  placeholder="фракция, союз"
-                  aria-label="Алиасы заготовки типа"
+placeholder={t('ent.typeAliasesPlaceholder')}
+aria-label={t('ent.typeAliasesAria')}
                   data-entity-type-aliases
                 />
               </label>
               <label className="ent-modal__field">
-                <span>Заготовка описания</span>
+<span>{t('ent.typeDescLabel')}</span>
                 <textarea
                   value={typeTemplateDesc}
                   onChange={(e) => setTypeTemplateDesc(e.target.value)}
-                  placeholder="{{name}} — союз городов…"
-                  aria-label="Заготовка описания карточки типа"
+placeholder={t('ent.typeDescPlaceholder')}
+aria-label={t('ent.typeDescAria')}
                   rows={2}
                   maxLength={2000}
                   data-entity-type-template
@@ -1149,10 +1151,10 @@ export function EntitiesPanel({
                   disabled={busy || typeDraft.trim() === ''}
                   data-entity-type-add
                 >
-                  {busy ? 'Создаю…' : 'Создать тип'}
+{busy ? t('ent.typeCreating') : t('ent.typeCreate')}
                 </button>
                 <button type="button" className="secondary" onClick={closeTypeDraft}>
-                  Отмена
+{t('ent.cancel')}
                 </button>
               </div>
             </div>
@@ -1209,6 +1211,7 @@ function MentionCard({
   onOpen: (place: 'editors' | 'project') => void
   onClose: () => void
 }) {
+  const t = useT()
   const frames = card.cell.frames ?? []
   const selected = frames.find((frame) => frame.id === card.frameId) ?? frames[0]
 
@@ -1255,7 +1258,7 @@ function MentionCard({
                 aria-pressed={frame.id === selected?.id}
                 data-mention-frame={frame.id}
               >
-                <span className="ent__mention-frame-title">{frame.title || 'без названия'}</span>
+<span className="ent__mention-frame-title">{frame.title || t('ent.frameUntitled')}</span>
                 {frame.mentions > 1 && <span className="muted">×{frame.mentions}</span>}
               </button>
             </li>
