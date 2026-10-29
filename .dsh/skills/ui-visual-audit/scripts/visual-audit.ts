@@ -405,6 +405,23 @@ async function shot(page: Page, name: string): Promise<string> {
   return name
 }
 
+/**
+ * Вкладка «Редакторы».
+ *
+ * С 0.83.0 разделы проекта — сменяемые вкладки, и форма кадра (`.ed-form`) смонтирована только на
+ * «Редакторах». Функциональная часть аудита создавала первую главу и сразу искала поле заголовка:
+ * на вкладке «Проект» его нет, и проверка падала по таймауту (`page.fill: Timeout`, ночной прогон
+ * 0.103.x). Вкладки появляются после первой главы — поэтому ждём их, а не кликаем вслепую, и
+ * ничего не делаем, если вкладок нет вовсе (читатель, пустой проект).
+ */
+async function ensureEditorsTab(page: Page): Promise<void> {
+  const tab = page.locator('[data-project-tab="editors"]')
+  await tab.waitFor({ state: 'visible', timeout: 20_000 }).catch(() => undefined)
+  if ((await tab.count()) === 0) return
+  await tab.click()
+  await page.waitForTimeout(500)
+}
+
 /** Выбирает в редакторе событие, чей кадр сейчас показан на стадии. */
 async function selectEditorRowForFrame(page: Page): Promise<boolean> {
   const title = (await page.evaluate(
@@ -959,6 +976,8 @@ async function functional(browser: Browser, errors: string[]) {
   // 2. Иерархия: глава → под-событие → внук
   await page.click('button:has-text("+ Добавить первую главу")')
   await page.waitForTimeout(700)
+  // Первая глава открывает вкладки — форма кадра живёт на «Редакторах».
+  await ensureEditorsTab(page)
   await page.fill('.ed-form input[placeholder="Заголовок события"]', 'Глава аудита')
   await page.fill('.ed-form textarea', 'Описание главы для проверки вместимости текста и кадра.')
   await page.waitForTimeout(300)

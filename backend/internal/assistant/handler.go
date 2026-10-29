@@ -481,6 +481,11 @@ func (h *Handler) fail(w http.ResponseWriter, op string, err error) {
 		writeErr(w, http.StatusConflict, err.Error())
 	case errors.Is(err, ErrForbidden):
 		writeErr(w, http.StatusForbidden, err.Error())
+	// «Предложение устарело» — конфликт состояния, а не ошибка запроса: между предложением и
+	// подтверждением человек (или коллега) изменил этот же текст. Документ `docs/ai-assistant.md`
+	// это и обещает — `409` с объяснением; до 0.104.0 ошибка попадала в общий `400`.
+	case errors.Is(err, ErrProposalStale):
+		writeErr(w, http.StatusConflict, err.Error())
 	case errors.Is(err, ErrModelRequired):
 		writeErr(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, ai.ErrNoKey):

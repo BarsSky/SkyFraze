@@ -53,6 +53,22 @@ function firstEventID(systemText) {
   return match ? match[0] : null
 }
 
+/**
+ * Идентификатор замечания из результата `read_comments`.
+ *
+ * Сервер отвечает и структурой (`comments[].comment_id`), и человекочитаемыми строками
+ * `#<uuid> Автор: текст` — заглушка разбирает uuid из этих строк: так она не зависит от того,
+ * в каком виде провайдер получает результат инструмента (текст, а не JSON).
+ */
+function firstCommentID(toolMessages) {
+  for (const message of toolMessages) {
+    const text = typeof message?.content === 'string' ? message.content : ''
+    const match = text.match(/"comment_id"\s*:\s*"([0-9a-f-]{36})"/i) ?? text.match(/#([0-9a-f-]{36})/i)
+    if (match) return match[1]
+  }
+  return null
+}
+
 const server = createServer((req, res) => {
   const send = (body) => {
     res.writeHead(200, { 'Content-Type': 'application/json' })
@@ -108,11 +124,57 @@ const server = createServer((req, res) => {
       const wantsDelete =
         typeof lastUser?.content === 'string' &&
         lastUser.content.toLowerCase().includes('удали')
+      // Правка по замечанию к фрагменту (docs/fragment-comments.md §6). Здесь нужен настоящий
+      // двухшаговый обмен, как у живой модели: сначала `read_comments` — иначе идентификатора
+      // замечания неоткуда взять, — и только потом `propose_fragment_edit`. Заглушка делает то
+      // же, что модель в бою: берёт id кадра из системного сообщения (дерево проекта), а id
+      // замечания — из результата своего же чтения.
+      const wantsFragment =
+        typeof lastUser?.content === 'string' &&
+        lastUser.content.toLowerCase().includes('фрагмент')
       const systemText = messages.find((message) => message.role === 'system')?.content ?? ''
-      const eventID = wantsUpdate || wantsDelete ? firstEventID(systemText) : null
+      const eventID = wantsUpdate || wantsDelete || wantsFragment ? firstEventID(systemText) : null
+      // Результаты инструментов В ЭТОМ ХОДЕ: по их числу решается, какой шаг следующий.
+      const toolMessages = messages.slice(lastUserIndex + 1).filter((m) => m.role === 'tool')
+      const commentID = wantsFragment ? firstCommentID(toolMessages) : null
       const answer = hasImage
         ? { content: 'Вижу картинку: на ней маяк.', toolCalls: [] }
-        : wantsDelete
+        : wantsFragment
+          ? !eventID
+            ? { content: 'Не нашёл кадр, о котором речь.', toolCalls: [] }
+            : toolMessages.length === 0
+              ? {
+                  content: '',
+                  toolCalls: [
+                    {
+                      function: {
+                        name: 'read_comments',
+                        arguments: { id: eventID },
+                      },
+                    },
+                  ],
+                }
+              : toolMessages.length === 1 && commentID
+                ? {
+                    content: '',
+                    toolCalls: [
+                      {
+                        function: {
+                          name: 'propose_fragment_edit',
+                          arguments: {
+                            comment_id: commentID,
+                            replacement: 'Заменённый фрагмент текста.',
+                            reason: 'проверка e2e: правка по замечанию к фрагменту',
+                          },
+                        },
+                      },
+                    ],
+                  }
+                : {
+                    content: 'Предлагаю заменить фрагмент — примените правку, если согласны.',
+                    toolCalls: [],
+                  }
+          : wantsDelete
           ? toolDone || !eventID
             ? { content: 'Предлагаю удалить кадр — подтвердите, если согласны.', toolCalls: [] }
             : {
