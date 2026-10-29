@@ -406,23 +406,42 @@ async function shot(page: Page, name: string): Promise<string> {
 }
 
 /**
- * Вкладка «Редакторы».
+ * Вкладка раздела проекта.
  *
- * С 0.83.0 разделы проекта — сменяемые вкладки, и форма кадра (`.ed-form`) смонтирована только на
- * «Редакторах». Функциональная часть аудита создавала первую главу и сразу искала поле заголовка:
- * на вкладке «Проект» его нет, и проверка падала по таймауту (`page.fill: Timeout`, ночной прогон
- * 0.103.x). Вкладки появляются после первой главы — поэтому ждём их, а не кликаем вслепую, и
- * ничего не делаем, если вкладок нет вовсе (читатель, пустой проект).
+ * С 0.83.0 «Проект» (сцена), «Редакторы», «Связи» и «Версии» — сменяемые вкладки: в один момент
+ * времени в DOM есть только одна. Раньше аудит писал их как один длинный экран и падал там, где
+ * нужного блока уже не было (`page.fill: Timeout`, затем `Cannot read properties of null`). Поэтому
+ * в функциональной части перед каждым блоком явно выбирается нужная вкладка.
  */
-async function ensureEditorsTab(page: Page): Promise<void> {
-  const tab = page.locator('[data-project-tab="editors"]')
-  await tab.waitFor({ state: 'visible', timeout: 20_000 }).catch(() => undefined)
-  if ((await tab.count()) === 0) return
-  await tab.click()
+async function showTab(page: Page, tab: 'project' | 'editors' | 'relations' | 'versions'): Promise<void> {
+  const button = page.locator(`[data-project-tab="${tab}"]`)
+  await button.waitFor({ state: 'visible', timeout: 20_000 }).catch(() => undefined)
+  if ((await button.count()) === 0) return
+  await button.click()
   await page.waitForTimeout(500)
 }
 
-/** Выбирает в редакторе событие, чей кадр сейчас показан на стадии. */
+async function ensureEditorsTab(page: Page): Promise<void> {
+  await showTab(page, 'editors')
+}
+
+/** Первая строка дерева кадров на вкладке «Редакторы». */
+async function selectFirstEditorRow(page: Page): Promise<boolean> {
+  const row = page.locator('.ed-row').first()
+  if ((await row.count()) === 0) return false
+  await row.click()
+  await page.waitForTimeout(400)
+  return true
+}
+
+/**
+ * Выбор строки дерева по кадру, который показан на стадии.
+ *
+ * После 0.83.0 это уже не работает как один жест: стадия живёт на вкладке «Проект», дерево — на
+ * «Редакторах». Функциональная часть перешла на `selectFirstEditorRow` (первая строка — та же
+ * глава, что и кадр `01`), а помощник остаётся для случаев, когда обе панели действительно видны
+ * одновременно — например на широком экране со сценой поверх вкладок (проверяется в `diag-*.ts`).
+ */
 async function selectEditorRowForFrame(page: Page): Promise<boolean> {
   const title = (await page.evaluate(
     `(() => (document.querySelector('.sf-copy__title') || {}).textContent || '')()`,
@@ -990,6 +1009,8 @@ async function functional(browser: Browser, errors: string[]) {
   await page.fill('.ed-form input[placeholder="Заголовок события"]', 'Внук аудита')
   await page.waitForTimeout(400)
 
+  // Дальше проверяется СЦЕНА — она живёт на вкладке «Проект», а только что заполняли «Редакторы».
+  await showTab(page, 'project')
   await page.evaluate(() => {
     const main = document.querySelector('.layout main')
     if (main) main.scrollTop = 0
@@ -1027,7 +1048,9 @@ async function functional(browser: Browser, errors: string[]) {
 
   // 4. Загрузка файла: малый и 2.5 МБ (файл прикрепляем к событию показанного кадра)
   await gotoFrame(page, 1)
-  await selectEditorRowForFrame(page)
+  // Файлы прикрепляются в форме кадра — это вкладка «Редакторы».
+  await showTab(page, 'editors')
+  await selectFirstEditorRow(page)
 
   const small = path.join(OUT, 'upload-small.png')
   const big = path.join(OUT, 'upload-big.png')
@@ -1062,70 +1085,82 @@ async function functional(browser: Browser, errors: string[]) {
     }
   }
 
-  // 5. Галерея + просмотр
-  await gotoFrame(page, 1)
-  const gallery = (await page.evaluate(`(() => {
-    const imgs = Array.from(document.querySelectorAll('.sf-copy__shot img'))
-    return { count: imgs.length, loaded: imgs.filter((i) => i.complete && i.naturalWidth > 0).length }
-  })()`)) as { count: number; loaded: number }
-  if (gallery.count === 0 || gallery.loaded === 0) {
-    add({ severity: 'error', area: 'functional', screen: 'timeline', viewport: V, check: 'галерея кадра', detail: `картинок ${gallery.count}, загружено ${gallery.loaded}`, where: 'assetObject.ts / CopyPanel' })
-  } else {
-    pass('timeline', V, `галерея: ${gallery.loaded}/${gallery.count} картинок`)
-    // Просмотр — отдельный слой поверх сайта со свайпом и стрелками, а не
-    // вложенное окно внутри прокручиваемой панели кадра.
-    await page.locator('.sf-copy__shot').first().click()
-    await page.waitForSelector('.sf-viewer', { timeout: 5000 }).catch(() => undefined)
-    const viewer = (await page.evaluate(`(() => {
-      const v = document.querySelector('.sf-viewer')
-      if (!v) return null
-      const img = v.querySelector('.sf-viewer__img')
-      const hit = document.elementFromPoint(Math.round(window.innerWidth / 2), Math.round(window.innerHeight / 2))
-      return {
-        index: Number(v.getAttribute('data-viewer-index')),
-        total: Number(v.getAttribute('data-viewer-total')),
-        counter: (v.querySelector('.sf-viewer__count')?.textContent || '').trim(),
-        imgLoaded: img ? img.complete && img.naturalWidth > 0 : false,
-        topLayer: !!(hit && hit.closest && hit.closest('.sf-viewer')),
-        navs: v.querySelectorAll('.sf-viewer__nav').length,
+  // 5. Картинки события — ОТДЕЛЬНЫЕ кадры трека (docs/features.md: «01·1, 01·2 и только потом
+  // под-событие»). Раньше здесь искалась галерея `.sf-copy__shot` под текстом; в нынешней сборке
+  // картинки идут кадрами, и старая проверка находила 0 и на исправной сборке (ночной прогон
+  // 0.104.0). Считаем кадры-картинки и полноэкранный просмотр — по первому из них.
+  await showTab(page, 'project')
+  await gotoFrame(page, 0)
+  let photoFrames = 0
+  let viewerOk = false
+  for (let i = 0; i < 8; i++) {
+    const frameKind = (await page.evaluate(
+      `(() => (document.querySelector('.sf-root') || {}).getAttribute?.('data-frame-kind') || '')()`,
+    )) as string
+    if (frameKind === 'image') {
+      photoFrames += 1
+      if (!viewerOk) {
+        // Просмотр — слой поверх сайта. Открывается он с МИНИАТЮРЫ в панели кадра
+        // (`.sf-copy__shot`): сам снимок на сцене лежит под слоем трека, и клик по нему
+        // перехватывает прокрутка (так и было в прогоне 0.104.0).
+        const shot = page.locator('.sf-copy__shot').first()
+        if ((await shot.count()) > 0) {
+          await shot.click()
+          await page.waitForSelector('.sf-viewer', { timeout: 5000 }).catch(() => undefined)
+          const viewer = (await page.evaluate(`(() => {
+            const v = document.querySelector('.sf-viewer')
+            if (!v) return null
+            const hit = document.elementFromPoint(Math.round(window.innerWidth / 2), Math.round(window.innerHeight / 2))
+            return {
+              total: Number(v.getAttribute('data-viewer-total')),
+              navs: v.querySelectorAll('.sf-viewer__nav').length,
+              topLayer: !!(hit && hit.closest && hit.closest('.sf-viewer')),
+            }
+          })()`)) as { total: number; navs: number; topLayer: boolean } | null
+          await page.keyboard.press('Escape')
+          await page.waitForTimeout(300)
+          const closed = !(await page.evaluate(`!!document.querySelector('.sf-viewer')`)) as boolean
+          viewerOk = !!viewer && viewer.topLayer && viewer.navs === 2 && closed
+          if (!viewerOk) {
+            add({
+              severity: 'error', area: 'functional', screen: 'timeline', viewport: V,
+              check: 'полноэкранный просмотр картинок',
+              detail: `открыт=${!!viewer}, поверх сайта=${viewer?.topLayer}, стрелок=${viewer?.navs}, закрылся по Esc=${closed}`,
+              where: 'components/ImageViewer.tsx / CopyPanel',
+            })
+          } else {
+            pass('timeline', V, 'просмотр картинок открывается поверх и закрывается по Esc')
+          }
+        }
       }
-    })()`)) as Record<string, unknown> | null
-    let flip = true
-    if (viewer && Number(viewer.total) > 1) {
-      await page.keyboard.press('ArrowRight')
-      await page.waitForTimeout(300)
-      flip = (await page.evaluate(`Number(document.querySelector('.sf-viewer')?.getAttribute('data-viewer-index'))`)) === 1
     }
-    await page.keyboard.press('Escape')
-    await page.waitForTimeout(300)
-    const closed = !(await page.evaluate(`!!document.querySelector('.sf-viewer')`)) as boolean
-    const viewerOk =
-      !!viewer &&
-      viewer.topLayer === true &&
-      viewer.navs === 2 &&
-      viewer.imgLoaded === true &&
-      Number(viewer.total) === gallery.count &&
-      flip &&
-      closed
-    if (!viewerOk) {
-      add({
-        severity: 'error', area: 'functional', screen: 'timeline', viewport: V,
-        check: 'полноэкранный просмотр картинок',
-        detail: `открыт=${!!viewer}, поверх сайта=${viewer?.topLayer}, стрелок=${viewer?.navs}, картинка загружена=${viewer?.imgLoaded}, листание=${flip}, закрылся по Esc=${closed}`,
-        where: 'components/ImageViewer.tsx / CopyPanel',
-      })
-    } else {
-      pass('timeline', V, `просмотр картинок: ${viewer?.counter}, листание, Esc`)
-    }
+    const next = page.locator('.sf-copy__nav .sf-btn--primary')
+    if (await next.isDisabled().catch(() => true)) break
+    await next.click()
+    await settleFrame(page)
+  }
+  if (photoFrames === 0) {
+    add({
+      severity: 'error', area: 'functional', screen: 'timeline', viewport: V,
+      check: 'кадры-картинки', detail: 'после загрузки двух файлов в треке нет ни одного кадра-картинки',
+      where: 'timelineModel (кадры вложений)',
+    })
+  } else {
+    pass('timeline', V, `кадров-картинок в треке: ${photoFrames}`)
   }
 
-  // 6. Фон кадра: тон (событию показанного кадра)
-  await selectEditorRowForFrame(page)
+  // 6. Фон кадра «тон» — по прежнему проверяется, но через СЦЕНУ: применяем тон в редакторе и
+  // смотрим, появился ли слой тона у активной сцены.
+  await showTab(page, 'editors')
+  await selectFirstEditorRow(page)
   await page.click('.ed-bg .ed-chip:has-text("тон")')
   await page.waitForTimeout(300)
   await page.locator('.ed-tone').nth(2).click()
   await page.waitForTimeout(500)
-  await gotoFrame(page, 1)
+  await showTab(page, 'project')
+  // Кадр 0 — сама глава: после загрузки двух файлов картинки стали отдельными кадрами (01·1, 01·2),
+  // и «кадр 1» — уже снимок, у которого тона нет. Тон ставится главе, поэтому смотрим её.
+  await gotoFrame(page, 0)
   const tone = (await page.evaluate(`!!document.querySelector('.sf-scene[data-active="true"] .sf-scene__tone')`)) as boolean
   if (!tone) {
     add({ severity: 'error', area: 'functional', screen: 'timeline', viewport: V, check: 'фон кадра «тон»', detail: 'тон не применён к кадру', where: 'BackgroundPicker / SceneFrame' })
@@ -1133,10 +1168,15 @@ async function functional(browser: Browser, errors: string[]) {
     pass('timeline', V, 'фон кадра «тон»')
   }
 
-  // 7. Сохранение после перезагрузки
+  // 7. Сохранение после перезагрузки: строки дерева живут на «Редакторах», сцена — на «Проекте».
   await page.reload()
+  // Вкладка запоминается в проекте: после перезагрузки человек может оказаться на «Редакторах»,
+  // и `.sf-root` тогда нет вовсе. Поэтому сначала явно открываем «Проект», потом ждём сцену.
+  await page.locator('[data-project-tabs]').waitFor({ timeout: 10_000 }).catch(() => undefined)
+  await showTab(page, 'project')
   await page.waitForSelector('.sf-root', { timeout: 25000 })
   await page.waitForTimeout(2200)
+  await showTab(page, 'editors')
   const persisted = (await page.evaluate(`(() => {
     const rows = Array.from(document.querySelectorAll('.ed-row'))
     return { rows: rows.length, hasChapter: rows.some((r) => (r.textContent || '').includes('Глава аудита')) }
@@ -1229,8 +1269,13 @@ async function functional(browser: Browser, errors: string[]) {
   const peerPage = await peer.newPage()
   await login(peerPage)
   await peerPage.goto(`${BASE}/projects/${projectId}`)
+  await peerPage.locator('[data-project-tabs]').waitFor({ timeout: 10_000 }).catch(() => undefined)
+  await showTab(peerPage, 'project')
   await peerPage.waitForSelector('.sf-root', { timeout: 25000 })
   await peerPage.waitForTimeout(2200)
+  // Правим заголовок в форме кадра: она на «Редакторах» (а вторая вкладка смотрит сцену).
+  await showTab(page, 'editors')
+  await selectFirstEditorRow(page)
   await page.evaluate(() => {
     document.querySelector('[data-editor-panel]')?.scrollIntoView({ behavior: 'instant', block: 'start' })
   })
@@ -1637,7 +1682,23 @@ async function main() {
   }
   if (!ONLY_SCREENS) {
     console.log('--- функциональная часть ---')
-    await functional(browser, consoleErrors)
+    // Падение внутри матрицы — это находка, а не «аудит сломался»: иначе одна устаревшая строка
+    // в сценарии гасит весь отчёт (`exit 2`, ни отчёта, ни скриншотов). Так было в 0.103.x:
+    // функциональная часть падала на первой же проверке, а экранная — уже отработавшая —
+    // никуда не попадала.
+    try {
+      await functional(browser, consoleErrors)
+    } catch (e) {
+      add({
+        severity: 'error',
+        area: 'functional',
+        screen: 'functional',
+        viewport: 'desktop',
+        check: 'функциональная матрица прервалась',
+        detail: e instanceof Error ? e.message : String(e),
+        where: '.dsh/skills/ui-visual-audit/scripts/visual-audit.ts — functional()',
+      })
+    }
   }
   await browser.close()
   const errorsFound = report(consoleErrors)

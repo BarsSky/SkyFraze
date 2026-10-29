@@ -121,10 +121,14 @@ test('правка фрагмента по замечанию: предложе�
   await expect(page.locator('.ed-form textarea').first()).toHaveValue(before, { timeout: 45_000 })
 })
 
-test('человек правил фрагмент — предложение не применяется и говорит об этом', async ({ page }) => {
+test('человек правил фрагмент — предложение не применяется и говорит об этом', async ({
+  page,
+  context,
+}) => {
   test.skip(!(await signIn(page)), 'учётной записи e2e нет и регистрация закрыта')
   await projectWithFrame(page)
 
+  const projectId = page.url().split('/').pop() as string
   const before = (await page.locator('.ed-form textarea').first().inputValue()).trim()
   const quote = await commentOnFragment(page, 'Замечание к абзацу, который сейчас поправят.')
   expect(quote.length).toBeGreaterThan(0)
@@ -133,15 +137,28 @@ test('человек правил фрагмент — предложение н
   const proposals = page.locator('[data-assistant-proposals]')
   await expect(proposals).toBeVisible({ timeout: 90_000 })
 
-  // Человек правит САМ фрагмент, пока предложение ждёт подтверждения: именно этот случай
-  // проверка «фрагмент не изменился» и должна поймать.
-  const body = page.locator('.ed-form textarea').first()
-  await body.click()
-  await page.keyboard.press('Control+Home')
-  for (let i = 0; i < 2; i += 1) await page.keyboard.press('ArrowRight')
-  await page.keyboard.type('Я')
-  const edited = await body.inputValue()
+  // Правку делает ВТОРАЯ ВКЛАДКА, а не та же.
+  //
+  // Почему не «напечатать здесь и сразу нажать Применить»: документ синхронизируется по сокету,
+  // и между нажатием клавиши и HTTP-запросом «применить» в CI случается гонка — сервер ещё не
+  // видел правку, сверка `old_span` проходила, и предложение применялось (этот сценарий так и
+  // упал в CI, хотя локально проходил). Здесь мы ждём детерминированный признак: правку увидела
+  // ПЕРВАЯ вкладка — значит обновление уже прошло через комнату, то есть сервер его знает.
+  const peer = await context.newPage()
+  await peer.goto(`/projects/${projectId}`)
+  await openEditorsTab(peer)
+  await peer.locator('.ed-row').first().click()
+  const peerBody = peer.locator('.ed-form textarea').first()
+  await expect(peerBody).toHaveValue(before, { timeout: 45_000 })
+  await peerBody.click()
+  await peer.keyboard.press('Control+Home')
+  for (let i = 0; i < 2; i += 1) await peer.keyboard.press('ArrowRight')
+  await peer.keyboard.type('Я')
+  const edited = await peerBody.inputValue()
   expect(edited).not.toBe(before)
+
+  const body = page.locator('.ed-form textarea').first()
+  await expect(body).toHaveValue(edited, { timeout: 45_000 })
 
   await proposals.getByRole('button', { name: 'Применить' }).click()
   // Отказ словами, а не тихое «применилось куда-то»: человек должен увидеть причину.
@@ -151,4 +168,5 @@ test('человек правил фрагмент — предложение н
   // Проект не тронут: правка человека на месте, предложенная замена не появилась.
   await expect(body).toHaveValue(edited)
   expect(await body.inputValue()).not.toContain('Заменённый фрагмент текста.')
+  await peer.close()
 })
