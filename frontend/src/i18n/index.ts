@@ -1,6 +1,7 @@
 import { getLang, useLang, type Lang } from '../store/lang'
 import { en } from './en'
 import { ru } from './ru'
+import { pluralForm } from './plural'
 
 /**
  * Перевод интерфейса (0.115.0).
@@ -47,6 +48,15 @@ export function useT(): TFunction {
   return (key: Key, vars?: Vars) => translate(lang, key, vars)
 }
 
+/**
+ * Слово в нужной форме числа (0.119.0): `pluralWord(lang, 'ed.unit.event', 3)` → «события».
+ *
+ * Зачем рядом с `translate`: слова с формами лежат в словаре (`ed.unit.event.one/few/many`), и
+ * собирать имя ключа в компонентах значило бы повторять `${prefix}.${form}` в десятке мест.
+ */
+export function pluralWord(lang: Lang, prefix: string, n: number): string {
+  return translate(lang, `${prefix}.${pluralForm(lang, n)}` as Key)
+}
 /** Перевод вне компонента (обработчики, не-React код): по текущему языку. */
 export function tStatic(key: Key, vars?: Vars): string {
   return translate(getLang(), key, vars)

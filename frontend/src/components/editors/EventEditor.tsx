@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useT } from '../../i18n'
 import type { Asset } from '../../api/assets'
 import type { YMap } from '../../collab/yprovider'
 import { applyLocalEdit, ensureText, setText, textString, type TextField } from '../../collab/text'
@@ -124,6 +125,7 @@ export function EventEditor({
   focusRange,
   docxStyles,
 }: Props) {
+  const t = useT()
   /**
    * Записать правку поля.
    *
@@ -224,7 +226,7 @@ export function EventEditor({
   return (
     <div className="ed-form" data-editor-section>
       <label className="ed-field">
-        <span className="ed-field__label">Заголовок</span>
+<span className="ed-field__label">{t('ee.titleLabel')}</span>
         <input
           ref={titleRef}
           value={title}
@@ -235,7 +237,7 @@ export function EventEditor({
             onChange?.()
             onTyping?.()
           }}
-          placeholder="Заголовок события"
+placeholder={t('ee.titlePlaceholder')}
         />
       </label>
 
@@ -243,7 +245,7 @@ export function EventEditor({
           должен переводить фокус в textarea. */}
       <div className="ed-field">
         <span className="ed-field__label">
-          Текст <span className="ed-field__hint">Markdown: таблицы, формулы, диаграммы</span>
+{t('ee.textLabel')} <span className="ed-field__hint">{t('ee.textHint')}</span>
         </span>
         <textarea
           ref={bodyRef}
@@ -260,7 +262,7 @@ export function EventEditor({
             onTyping?.()
           }}
           rows={7}
-          placeholder={'Описание события. Разметка: **жирный**, - список, | таблица |, $формула$'}
+placeholder={t('ee.bodyPlaceholder')}
         />
         <div className="ed-md__actions">
           {onFragmentSelected && selection && (
@@ -268,14 +270,14 @@ export function EventEditor({
               type="button"
               className="secondary"
               data-select-fragment
-              title="Поставить замечание к выделенному фрагменту текста"
+title={t('ee.fragmentNoteTitle')}
               onClick={selectFragment}
             >
-              Замечание к фрагменту
+{t('ee.fragmentNote')}
             </button>
           )}
           <button type="button" className="secondary" onClick={() => setMdOpen(true)}>
-            Открыть редактор Markdown
+{t('ee.openMarkdown')}
           </button>
           {/* Разметка DOCX (0.94.1). Панель маркеров живёт в окне Markdown, и её было не найти:
               человек искал «Разметка DOCX» в самом редакторе и не видел её вовсе. Теперь есть
@@ -283,17 +285,17 @@ export function EventEditor({
           <button
             type="button"
             className="secondary"
-            title="Маркеры для DOCX: разрыв страницы, оглавление, стиль шаблона"
+title={t('ee.docxTitle')}
             onClick={() => {
               setOpenDocxPanel(true)
               setMdOpen(true)
             }}
             data-docx-panel-open
           >
-            Разметка DOCX
+{t('ee.docx')}
           </button>
           {looksLikeMarkdown(body) && (
-            <span className="muted">разметка распознана — предпросмотр под полем</span>
+<span className="muted">{t('ee.docxRecognized')}</span>
           )}
         </div>
         {looksLikeMarkdown(body) && (
@@ -324,7 +326,7 @@ export function EventEditor({
       )}
 
       <label className="ed-field ed-field--short">
-        <span className="ed-field__label">Дата (для мета-чипа в кадре)</span>
+<span className="ed-field__label">{t('ee.dateLabel')}</span>
         <input
           type="date"
           value={eventDate}
@@ -340,7 +342,7 @@ export function EventEditor({
       </label>
 
       <div className="ed-field">
-        <span className="ed-field__label">Фон кадра</span>
+<span className="ed-field__label">{t('ee.bgLabel')}</span>
         <BackgroundPicker
           value={background}
           images={images}
@@ -351,7 +353,7 @@ export function EventEditor({
       </div>
 
       <div className="ed-field">
-        <span className="ed-field__label">Вложения ({attached.length})</span>
+<span className="ed-field__label">{t('ee.assetsLabel', { count: attached.length })}</span>
         <div className="ed-assets">
           {attached.map((asset) => (
             <div key={asset.id} className="ed-assets__item">
@@ -359,26 +361,26 @@ export function EventEditor({
                 <button
                   type="button"
                   className="ed-assets__preview"
-                  title="Открыть в полный размер"
+title={t('ee.openFull')}
                   onClick={() => setViewer(attachedImages.findIndex((a) => a.id === asset.id))}
                 >
                   <img src={assetUrls[asset.id]} alt={asset.filename} loading="lazy" />
                 </button>
               ) : (
-                <span className="ed-assets__file">файл</span>
+<span className="ed-assets__file">{t('ee.file')}</span>
               )}
               <span className="ed-assets__name" title={asset.filename}>{asset.filename}</span>
               <button
                 type="button"
                 className="ed-assets__detach"
-                title="Открепить от события"
+title={t('ee.detach')}
                 onClick={() => onDetach(asset.id)}
               >
                 ×
               </button>
             </div>
           ))}
-          {attached.length === 0 && <p className="muted">Пока ничего не прикреплено.</p>}
+{attached.length === 0 && <p className="muted">{t('ee.noAssets')}</p>}
         </div>
 
         <div className="ed-assets__actions">
@@ -395,7 +397,7 @@ export function EventEditor({
                 e.target.value = ''
               }}
             />
-            + загрузить файлы
+{t('ee.uploadFiles')}
           </label>
           {unattached.length > 0 && (
             <select
@@ -405,7 +407,7 @@ export function EventEditor({
                 if (e.target.value) onAttach(e.target.value)
               }}
             >
-              <option value="">прикрепить из загруженных…</option>
+<option value="">{t('ee.attachExisting')}</option>
               {unattached.map((asset) => (
                 <option key={asset.id} value={asset.id}>{asset.filename}</option>
               ))}

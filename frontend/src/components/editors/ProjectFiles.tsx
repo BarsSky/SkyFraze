@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { tStatic, useT, type Key } from '../../i18n'
 import type { Asset, AssetUsage } from '../../api/assets'
 import { formatBytes } from '../../lib/format'
 import { attachmentLabel, type TransferFrame } from '../../lib/assetTransfer'
@@ -52,8 +53,9 @@ export function usageLabel(usage: AssetUsage | null, assets: Asset[]): string {
     const total = assets.reduce((sum, asset) => sum + asset.size, 0)
     return formatBytes(total)
   }
-  if (usage.limit <= 0) return `${usage.used_text} — без предела`
-  return `${usage.used_text} из ${usage.limit_text}`
+  // `usageLabel` — модульная функция (её зовут и тесты): берём текущий язык через tStatic.
+  if (usage.limit <= 0) return tStatic('pf.noLimit', { used: usage.used_text })
+  return tStatic('pf.of', { used: usage.used_text, limit: usage.limit_text })
 }
 
 /** Куда файл можно перенести: кадры, у которых его ещё нет. */
@@ -72,6 +74,7 @@ export function ProjectFiles({
   onUploadFiles,
   onMove,
 }: ProjectFilesProps) {
+  const t = useT()
   // Больше 80% — говорим прямо: иначе отказ при следующей загрузке выглядит
   // необъяснимым («вроде бы ничего не менял»).
   const tight = usageShare(usage) >= 0.8
@@ -85,12 +88,12 @@ export function ProjectFiles({
   }, [assets, moving])
 
   return (
-    <section className="ed-files" aria-label="Файлы проекта">
+<section className="ed-files" aria-label={t('pf.sectionAria')}>
       <div className="ed-files__head">
-        <span className="ed-field__label">Файлы проекта ({assets.length})</span>
+<span className="ed-field__label">{t('pf.title', { count: assets.length })}</span>
         <span className={tight ? 'ed-files__usage ed-files__usage--tight' : 'ed-files__usage'}>
           {usageLabel(usage, assets)}
-          {tight && ' — место заканчивается'}
+{tight && t('pf.nearlyFull')}
         </span>
         <label className="ed-upload ed-files__upload">
           <input
@@ -103,7 +106,7 @@ export function ProjectFiles({
               e.target.value = ''
             }}
           />
-            + файлы
+{t('pf.upload')}
         </label>
       </div>
 
@@ -129,10 +132,10 @@ export function ProjectFiles({
                 disabled={busy || targets.length === 0}
                 title={
                   targets.length === 0
-                    ? 'В проекте некуда переносить: кадров, где этого файла ещё нет, нет'
+? t('pf.noTargets')
                     : inUse
-                      ? 'Перенести файл в другой кадр'
-                      : 'Прикрепить файл к кадру'
+? t('pf.moveTitle')
+: t('pf.attachTitle')
                 }
                 aria-expanded={open}
                 onClick={() => {
@@ -140,7 +143,7 @@ export function ProjectFiles({
                   setMoving(open ? null : asset.id)
                 }}
               >
-                {inUse ? 'перенести' : 'прикрепить'}
+{inUse ? t('pf.move') : t('pf.attach')}
               </button>
               <button
                 type="button"
@@ -148,10 +151,10 @@ export function ProjectFiles({
                 disabled={inUse || busy}
                 title={
                   inUse
-                    ? 'Файл прикреплён к кадрам — сначала открепите его в кадре'
-                    : 'Удалить файл из проекта'
+? t('pf.detachFirst')
+: t('pf.deleteTitle')
                 }
-                aria-label={`Удалить ${asset.filename}`}
+aria-label={t('pf.deleteAria', { name: asset.filename })}
                 onClick={() => onDelete(asset)}
               >
                 {busy ? '…' : '×'}
@@ -161,14 +164,14 @@ export function ProjectFiles({
                 <div className="ed-files__move">
                   <label className="ed-field">
                     <span className="ed-field__label">
-                      {inUse ? 'Перенести в кадр' : 'Прикрепить к кадру'}
+{inUse ? t('pf.moveToFrame') : t('pf.attachToFrame')}
                     </span>
                     <select
                       value={choosen}
-                      aria-label={`Кадр для ${asset.filename}`}
+aria-label={t('pf.frameFor', { name: asset.filename })}
                       onChange={(e) => setChoosen(e.target.value)}
                     >
-                      <option value="">выберите кадр…</option>
+<option value="">{t('pf.chooseFrame')}</option>
                       {targets.map((frame) => (
                         <option key={frame.id} value={frame.id}>
                           {frame.label}
@@ -187,17 +190,17 @@ export function ProjectFiles({
                       setMoving(null)
                     }}
                   >
-                    {inUse ? 'Перенести' : 'Прикрепить'}
+{inUse ? t('pf.moveButton') : t('pf.attachButton')}
                   </button>
                   <button type="button" className="secondary" onClick={() => setMoving(null)}>
-                    Отмена
+{t('pf.cancel')}
                   </button>
                 </div>
               )}
             </div>
           )
         })}
-        {assets.length === 0 && <p className="muted">В проекте пока нет файлов.</p>}
+{assets.length === 0 && <p className="muted">{t('pf.empty')}</p>}
       </div>
       {note && (
         <p className="ed-panel__note ed-panel__note--upload" role="status">

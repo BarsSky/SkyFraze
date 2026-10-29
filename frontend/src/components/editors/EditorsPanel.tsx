@@ -37,8 +37,8 @@ import {
 } from '../../api/storyFiles'
 import { DIRECTORY_PICK } from '../../lib/directoryPick'
 import { formatBytes, plural } from '../../lib/format'
-import { useT } from '../../i18n'
-import { useLang } from '../../store/lang'
+import { pluralWord, tStatic, useT, type Key } from '../../i18n'
+import { getLang, useLang } from '../../store/lang'
 import { importWeight } from '../../lib/importWeight'
 import { runUploads, uploadSummary, type UploadOutcome } from '../../lib/uploadQueue'
 import {
@@ -173,8 +173,13 @@ const MAX_UPLOAD_BYTES = 50 * 1024 * 1024
  */
 export function uploadNoteFor(file: File, asset: Asset): string {
   const renamed = asset.mime === 'image/webp' && !/\.webp$/i.test(file.name)
-  if (!renamed) return `Загружено: ${asset.filename}`
-  return `Загружено: ${asset.filename} — пережато из ${formatBytes(file.size)} в ${formatBytes(asset.size)}`
+const lang = getLang()
+if (!renamed) return tStatic('ed.uploadDone', { name: asset.filename })
+return tStatic('ed.uploadRecompressed', {
+name: asset.filename,
+from: formatBytes(file.size, lang),
+to: formatBytes(asset.size, lang),
+})
 }
 
 /**
@@ -185,7 +190,7 @@ export function uploadNoteFor(file: File, asset: Asset): string {
  * значит заставить человека гадать, что именно не так.
  */
 export async function uploadErrorNote(e: unknown): Promise<string> {
-  return (await serverErrorMessage(e)) ?? 'Не удалось загрузить файл: сервер отклонил запрос.'
+return (await serverErrorMessage(e)) ?? tStatic('ed.uploadFailed')
 }
 
 /**
@@ -228,7 +233,7 @@ export function transferFrames(list: YMap[]): TransferFrame[] {
       map?.get('bg_kind') === 'asset' ? ((map.get('bg_asset') as string | undefined) ?? null) : null
     out.push({
       id: node.item.id,
-      label: `${number} ${node.item.title || 'Без названия'}`.trim(),
+label: `${number} ${node.item.title || tStatic('ed.untitled')}`.trim(),
       assetIds: assets,
       backgroundAssetId: background,
     })
@@ -258,29 +263,29 @@ const AUTOSCROLL_EDGE_PX = 44
 const AUTOSCROLL_MAX_PX = 14
 
 /** Почему сюда нельзя — человеческий текст для подсказки под деревом. */
-const REJECT_TEXT: Record<MoveReject, string> = {
-  'unknown-source': 'перетаскиваемое событие не найдено',
-  'unknown-target': 'цель переноса не найдена',
-  self: 'событие нельзя вложить в само себя',
-  cycle: 'нельзя вложить событие в собственное поддерево',
-  depth: `глубже ${DEFAULT_MAX_DEPTH} уровней дерево не поддерживает`,
+const REJECT_TEXT: Record<MoveReject, Key> = {
+'unknown-source': 'ed.reject.unknownSource',
+'unknown-target': 'ed.reject.unknownTarget',
+self: 'ed.reject.self',
+cycle: 'ed.reject.cycle',
+depth: 'ed.reject.depth',
 }
 
 /** Что означает разрешённая цель — текст для строки-подсказки. */
-const DROP_TEXT: Record<DropPlace, string> = {
-  before: 'вставить перед строкой',
-  after: 'вставить после строки',
-  inside: 'вложить внутрь',
+const DROP_TEXT: Record<DropPlace, Key> = {
+before: 'ed.drop.before',
+after: 'ed.drop.after',
+inside: 'ed.drop.inside',
 }
 
 /** Куда положить кусок, если место выбирают не перетаскиванием, а списком. */
 type ChunkMode = 'end' | 'before' | 'after' | 'inside'
 
-const CHUNK_MODE_TEXT: Record<ChunkMode, string> = {
-  end: 'в конец проекта',
-  before: 'перед выбранным событием',
-  after: 'после выбранного события',
-  inside: 'внутрь выбранного события',
+const CHUNK_MODE_TEXT: Record<ChunkMode, Key> = {
+end: 'ed.placeEnd',
+before: 'ed.placeBefore',
+after: 'ed.placeAfter',
+inside: 'ed.placeInside',
 }
 
 /**
@@ -622,7 +627,7 @@ once — чтобы повторный
         parentId,
         number,
         depth: node.depth,
-        title: node.item.title || 'Без названия',
+title: node.item.title || tStatic('ed.untitled'),
         body: bodies.get(node.item.id) ?? '',
         childCount: node.children.length,
         isChapter: node.depth === 0,
@@ -904,7 +909,7 @@ once — чтобы повторный
     try {
       const preview: MarkdownImportPreview = await previewMarkdownImport(source)
       if (preview.events.length === 0) {
-        setNotice('В выбранных файлах не нашлось событий — вставлять нечего')
+setNotice(t('ed.noticeNoEvents'))
         return
       }
       setChunk({
@@ -918,15 +923,19 @@ once — чтобы повторный
       })
       setChunkMode('end')
       setNotice(
-        `Кусок разобран: ${preview.events.length} ${plural(preview.events.length, 'событие', 'события', 'событий')}` +
-          (preview.stats.attachments > 0
-            ? ` и ${preview.stats.attachments} ${plural(preview.stats.attachments, 'вложение', 'вложения', 'вложений')}`
-            : '') +
-          ' — перетащите его на дерево',
+t('ed.noticeChunk', {
+events: `${preview.events.length} ${pluralWord(lang, 'ed.unit.event', preview.events.length)}`,
+}) +
+(preview.stats.attachments > 0
+? t('ed.noticeChunkAttachments', {
+attachments: `${preview.stats.attachments} ${pluralWord(lang, 'ed.unit.attachment', preview.stats.attachments)}`,
+})
+: '') +
+t('ed.noticeChunkDrag'),
       )
     } catch (e) {
       const message = await readImportErrorMessage(e)
-      setNotice(message ?? 'Не удалось разобрать файлы — сервер отклонил запрос')
+setNotice(message ?? t('ed.noticeChunkFailed'))
     } finally {
       setImportBusy(false)
     }
@@ -938,15 +947,15 @@ once — чтобы повторный
     e.target.value = ''
     if (files.length === 0) return
     const root = files[0].webkitRelativePath.split('/')[0]
-    const count = `${files.length} ${plural(files.length, 'файл', 'файла', 'файлов')}`
-    void loadChunk(files, root && root !== files[0].name ? `папка «${root}», ${count}` : count)
+const count = `${files.length} ${pluralWord(lang, 'ed.unit.file', files.length)}`
+void loadChunk(files, root && root !== files[0].name ? t('ed.folderLabel', { name: root, count }) : count)
   }
 
   function onPickChunkZip(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     e.target.value = ''
     if (!file) return
-    void loadChunk({ archive: file }, `архив «${file.name}»`)
+void loadChunk({ archive: file }, t('ed.archiveLabel', { name: file.name }))
   }
 
   /**
@@ -963,7 +972,7 @@ once — чтобы повторный
         targetId: row.id,
         place,
         allowed: false,
-        reason: `в куске ${(chunk?.maxDepth ?? 0) + 1} уровень(ей), а глубже ${DEFAULT_MAX_DEPTH} дерево не поддерживает`,
+reason: t('ed.tooDeepMap', { depth: (chunk?.maxDepth ?? 0) + 1, max: DEFAULT_MAX_DEPTH }),
       }
     }
     return { targetId: row.id, place, allowed: true, reason: null }
@@ -995,13 +1004,13 @@ once — чтобы повторный
       // отстали) — не ошибка: повторять импорт нельзя, он бы задвоил кусок.
       const warning = result.warnings[0]
       setNotice(
-        warning
-          ? `Вставлено событий: ${result.events}. ${warning}`
-          : `Вставлено событий: ${result.events}`,
+warning
+? t('ed.inserted', { count: result.events }) + `. ${warning}`
+: t('ed.inserted', { count: result.events }),
       )
     } catch (e) {
       const message = await readImportErrorMessage(e)
-      setNotice(message ?? 'Вставить не удалось — сервер отклонил запрос')
+setNotice(message ?? t('ed.insertFailed'))
     } finally {
       setImportBusy(false)
     }
@@ -1016,12 +1025,12 @@ once — чтобы повторный
     }
     const row = rows.find((item) => item.id === selectedId)
     if (!row) {
-      setNotice('Сначала выберите событие в списке')
+setNotice(t('ed.selectFirst'))
       return
     }
     const hint = chunkHint(row, chunkMode)
     if (!hint.allowed) {
-      setNotice(`Сюда нельзя: ${hint.reason}`)
+setNotice(t('ed.cannotHere', { reason: hint.reason ?? '' }))
       return
     }
     void insertChunk(chunkPlace(hint))
@@ -1040,7 +1049,7 @@ once — чтобы повторный
 
   function createChapter() {
     if (!events) return
-    const map = yAddEvent(events, 'Новая глава', '')
+const map = yAddEvent(events, t('ed.newChapter'), '')
     setSelectedId(map.get('id') as string)
     setFilter('')
     onChanged()
@@ -1049,7 +1058,7 @@ once — чтобы повторный
   function createChild() {
     if (!events || !selectedId) return
     // Под-событие создаётся у выбранного события (главы или другого под-события).
-    const map = yAddEvent(events, 'Новое подсобытие', '', { parentId: selectedId })
+const map = yAddEvent(events, t('ed.newChild'), '', { parentId: selectedId })
     setSelectedId(map.get('id') as string)
     onChanged()
   }
@@ -1058,10 +1067,10 @@ once — чтобы повторный
     if (!events || !selectedMap || !selectedId) return
     const arr = events.toArray() as YMap[]
     const descendants = countDescendants(arr, selectedId)
-    const title = titleString(selectedMap) || '(без названия)'
+const title = titleString(selectedMap) || t('ed.noTitle')
     const warn = descendants > 0
-      ? `Удалить «${title}» вместе с ${descendants} вложенным(и) событием(ями)?`
-      : `Удалить «${title}»?`
+? t('ed.confirmDeleteMany', { title, count: descendants })
+: t('ed.confirmDeleteOne', { title })
     if (!window.confirm(warn)) return
     yDeleteEvent(events, selectedId)
     const nextRow = rows.find((r) => r.id !== selectedId)
@@ -1086,9 +1095,9 @@ once — чтобы повторный
       const outcomes = await runUploads(files, (f) => onUpload(f), {
         maxBytes: MAX_UPLOAD_BYTES,
         onProgress: (done, total) => {
-          if (total > 1 && done < total) setFilesNote(`Загружаю ${done + 1} из ${total}…`)
+if (total > 1 && done < total) setFilesNote(t('ed.uploading', { done: done + 1, total }))
         },
-        describeError: (e) => uploadErrorNote(e),
+describeError: (e) => uploadErrorNote(e),
       })
 
       let first = true
@@ -1115,9 +1124,9 @@ once — чтобы повторный
       const outcomes = await runUploads(files, (f) => onUpload(f), {
         maxBytes: MAX_UPLOAD_BYTES,
         onProgress: (done, total) => {
-          if (total > 1 && done < total) setFilesNote(`Загружаю ${done + 1} из ${total}…`)
+if (total > 1 && done < total) setFilesNote(t('ed.uploading', { done: done + 1, total }))
         },
-        describeError: (e) => uploadErrorNote(e),
+describeError: (e) => uploadErrorNote(e),
       })
       setFilesNote(outcomeNote(files, outcomes))
       setVersion((v) => v + 1)
@@ -1211,7 +1220,9 @@ once — чтобы повторный
       targetId,
       place,
       allowed: check.ok,
-      reason: check.ok ? null : REJECT_TEXT[check.reason],
+      // Причина переводится ЗДЕСЬ (0.119.0): `DropHint.reason` — готовый текст для человека.
+      // Пока в нём лежал ключ словаря, подсказка показывала «ed.reject.cycle» — это и поймал тест.
+      reason: check.ok ? null : t(REJECT_TEXT[check.reason], { max: DEFAULT_MAX_DEPTH }),
     }
   }
 
@@ -1360,7 +1371,7 @@ once — чтобы повторный
       if (!hint.allowed) {
         // Отказ не должен исчезать вместе с подсветкой: иначе кусок «просто не
         // вставился» без объяснения.
-        setNotice(`Сюда нельзя: ${hint.reason ?? 'непонятная цель сброса'}`)
+setNotice(t('ed.cannotHere', { reason: hint.reason ?? t('ed.unknownDropTarget') }))
         return
       }
       void insertChunk(chunkPlace(hint))
@@ -1371,10 +1382,10 @@ once — чтобы повторный
 
     if (yMoveSubtree(events, gesture.id, hint.targetId, hint.place)) {
       setSelectedId(gesture.id) // после переноса событие остаётся выбранным
-      setNotice(`«${gesture.label}» перенесено`)
+setNotice(t('ed.moved', { label: gesture.label }))
       onChanged()
     } else {
-      setNotice('Перенести не удалось: дерево изменилось')
+setNotice(t('ed.moveFailedTreeChanged'))
     }
   }
 
@@ -1495,7 +1506,7 @@ once — чтобы повторный
     gesture = {
       kind: 'chunk',
       id: '',
-      label: `кусок: ${chunk.events} ${plural(chunk.events, 'событие', 'события', 'событий')}`,
+label: t('ed.chunkLabel', { count: `${chunk.events} ${pluralWord(lang, 'ed.unit.event', chunk.events)}` }),
       pointerId: event.pointerId,
       startX: event.clientX,
       startY: event.clientY,
@@ -1526,32 +1537,32 @@ once — чтобы повторный
 
     if (dir === 'up') {
       const prev = siblings[at - 1]
-      if (!prev) return setNotice('Выше соседей нет — переносить некуда')
+if (!prev) return setNotice(t('ed.noPrevSibling'))
       targetId = prev.id
       place = 'before'
     } else if (dir === 'down') {
       const next = siblings[at + 1]
-      if (!next) return setNotice('Ниже соседей нет — переносить некуда')
+if (!next) return setNotice(t('ed.noNextSibling'))
       targetId = next.id
       place = 'after'
     } else if (dir === 'in') {
       const prev = siblings[at - 1]
-      if (!prev) return setNotice('Вложить не во что: выше нет соседа')
+if (!prev) return setNotice(t('ed.noPrevToNest'))
       targetId = prev.id
       place = 'inside'
     } else {
-      if (row.parentId === null) return setNotice('Это уже верхний уровень')
+if (row.parentId === null) return setNotice(t('ed.alreadyTop'))
       targetId = row.parentId
       place = 'after'
     }
 
     const items = rowsRef.current.map((item) => ({ id: item.id, parentId: item.parentId }))
     const check = checkMove(items, row.id, targetId, place)
-    if (!check.ok) return setNotice(`Нельзя: ${REJECT_TEXT[check.reason]}`)
-    if (!yMoveSubtree(events, row.id, targetId, place)) return setNotice('Перенести не удалось')
+if (!check.ok) return setNotice(t('ed.cannotDo', { reason: t(REJECT_TEXT[check.reason], { max: DEFAULT_MAX_DEPTH }) }))
+if (!yMoveSubtree(events, row.id, targetId, place)) return setNotice(t('ed.moveFailed'))
 
     setSelectedId(row.id)
-    setNotice(`«${row.title}» перенесено`)
+setNotice(t('ed.moved', { label: row.title }))
     onChanged()
   }
 
@@ -1579,16 +1590,16 @@ once — чтобы повторный
   const hint = drag?.hint ?? null
   const hintText = drag
     ? !hint
-      ? drag.kind === 'chunk'
-        ? 'Отпустите над строкой дерева, чтобы вставить кусок'
-        : 'Отпустите над строкой списка, чтобы перенести'
-      : hint.allowed
-        ? hint.targetId === null
-          ? drag.kind === 'chunk'
-            ? 'Отпустите: в конец проекта'
-            : 'Отпустите: в конец верхнего уровня'
-          : `Отпустите: ${DROP_TEXT[hint.place]}`
-        : `Сюда нельзя: ${hint.reason}`
+? drag.kind === 'chunk'
+? t('ed.dropOnRowChunk')
+: t('ed.dropOnRowMove')
+: hint.allowed
+? hint.targetId === null
+? drag.kind === 'chunk'
+? t('ed.dropEndProject')
+: t('ed.dropEndTop')
+: t('ed.dropPlace', { place: t(DROP_TEXT[hint.place]) })
+: t('ed.dropCannot', { reason: hint.reason ?? '' })
     : notice
 
   return (
@@ -1597,8 +1608,8 @@ once — чтобы повторный
         <h3 className="ed-panel__title">{t('ed.title')}</h3>
         <div className="ed-toolbar">
           <button type="button" onClick={createChapter}>{t('ed.addChapter')}</button>
-          <button type="button" className="secondary" onClick={createChild} disabled={!selectedId}>+ подсобытие</button>
-          <button type="button" className="secondary ed-danger" onClick={removeSelected} disabled={!selectedId}>удалить</button>
+<button type="button" className="secondary" onClick={createChild} disabled={!selectedId}>{t('ed.addChild')}</button>
+<button type="button" className="secondary ed-danger" onClick={removeSelected} disabled={!selectedId}>{t('ed.delete')}</button>
           {/* Вход в связи: блок карточек выше панели, и без кнопки его не находят */}
           <button
             type="button"
@@ -1606,8 +1617,8 @@ once — чтобы повторный
             onClick={openRelations}
             data-ed-entities-jump
           >
-            связи проекта
-          </button>
+{t('ed.relations')}
+</button>
         </div>
         <div className="ed-panel__meta">
           <input
@@ -1620,10 +1631,10 @@ once — чтобы повторный
           />
           <span className="muted ed-panel__count">
             {entityFilter !== null
-              ? `кадров с карточкой: ${visibleRows.length}`
+? t('ed.countWithCard', { count: visibleRows.length })
               : isSearchQuery(filter)
-                ? `найдено ${visibleRows.length} из ${rows.length}`
-                : `событий: ${rows.length}`}
+? t('ed.countFound', { found: visibleRows.length, total: rows.length })
+: t('ed.countAll', { count: rows.length })}
           </span>
         </div>
 
@@ -1653,8 +1664,8 @@ once — чтобы повторный
                 onClick={() => setEntityFilter(null)}
                 data-ed-entity-filter-clear
               >
-                Сбросить
-              </button>
+{t('ed.reset')}
+</button>
             )}
           </label>
         )}
@@ -1675,8 +1686,8 @@ once — чтобы повторный
                   onChange={onPickChunkFolder}
                   {...DIRECTORY_PICK}
                 />
-                папка
-              </label>
+{t('ed.importFolder')}
+</label>
               <label className={`ed-import__pick${importBusy ? ' is-busy' : ''}`}>
                 <input
                   type="file"
@@ -1686,7 +1697,7 @@ once — чтобы повторный
                 />
                 zip
               </label>
-              {importBusy && <span className="muted" role="status">Разбираю файлы…</span>}
+              {              importBusy && <span className="muted" role="status">{t('ed.importParsing')}</span>}
             </>
           ) : (
             <>
@@ -1695,14 +1706,14 @@ once — чтобы повторный
                 className="ed-import__chunk"
                 data-ed-chunk
                 onPointerDown={onChunkPointerDown}
-                title="Перетащите на строку дерева: левая часть строки — между событиями, правая — внутрь"
+title={t('ed.importHint')}
               >
                 <span aria-hidden="true">⠿</span> {chunk.label} — {chunk.events}{' '}
-                {plural(chunk.events, 'событие', 'события', 'событий')}
+{pluralWord(lang, 'ed.unit.event', chunk.events)}
                 {chunk.files > 0 && (
                   <>
                     {' '}
-                    + {chunk.files} {plural(chunk.files, 'файл', 'файла', 'файлов')}
++ {chunk.files} {pluralWord(lang, 'ed.unit.file', chunk.files)}
                   </>
                 )}
               </button>
@@ -1728,16 +1739,16 @@ once — чтобы повторный
                 </select>
               </label>
               <button type="button" onClick={insertChunkByMode} disabled={importBusy}>
-                вставить
-              </button>
+{t('ed.insert')}
+</button>
               <button
                 type="button"
                 className="secondary"
                 onClick={() => setChunk(null)}
                 disabled={importBusy}
               >
-                отмена
-              </button>
+{t('ed.cancel')}
+</button>
             </>
           )}
         </div>
@@ -1802,8 +1813,8 @@ once — чтобы повторный
                 }}
                 onPointerDown={(e) => onRowPointerDown(e, row)}
                 onKeyDown={(e) => onRowKeyDown(e, row)}
-                title={`${row.number} ${row.title} — тяните мышью или пальцем; Alt+↑/↓ порядок среди соседей, Alt+→ вложить, Alt+← на уровень выше`}
-                aria-label={`${row.number} ${row.title}. Перетаскивание мышью или пальцем. Alt со стрелками: вверх/вниз — порядок среди соседей, вправо — вложить в предыдущего соседа, влево — поднять на уровень.`}
+title={t('ed.rowTooltip', { number: row.number, title: row.title })}
+aria-label={t('ed.rowAria', { number: row.number, title: row.title })}
               >
                 <span className="ed-row__grip" aria-hidden="true">⠿</span>
                 <span className="ed-row__mark">{row.isChapter ? '#' : '└'}</span>
@@ -1825,8 +1836,8 @@ once — чтобы повторный
                         key={peer.clientId}
                         className="ed-row__peer"
                         data-peer-editing={peer.name}
-                        title={`${peer.name} правит это событие`}
-                        aria-label={`${peer.name} правит это событие`}
+title={t('ed.peerEditing', { name: peer.name })}
+aria-label={t('ed.peerEditing', { name: peer.name })}
                         style={{ backgroundColor: peer.color }}
                       >
                         {peer.initials}
@@ -1840,7 +1851,7 @@ once — чтобы повторный
                     {/* Короткая подпись для узкого экрана: полная формулировка
                         живёт только в collab/awareness.ts, какой вариант виден —
                         решает CSS (см. styles/editors.css). */}
-                    <span className="ed-row__typing-short" aria-hidden="true">печатает…</span>
+<span className="ed-row__typing-short" aria-hidden="true">{t('ed.typing')}</span>
                   </span>
                 )}
                 {row.childCount > 0 && <span className="ed-row__badge">{row.childCount}</span>}
@@ -1857,13 +1868,13 @@ once — чтобы повторный
                     data-comment-unseen={unseenCounts[row.id] ?? 0}
                     title={
                       (unseenCounts[row.id] ?? 0) > 0
-                        ? `Комментариев: ${commentCounts[row.id]}, новых: ${unseenCounts[row.id]}`
-                        : `Комментариев: ${commentCounts[row.id]}`
+? t('ed.commentsTitleNew', { count: commentCounts[row.id], new: unseenCounts[row.id] })
+: t('ed.commentsTitle', { count: commentCounts[row.id] })
                     }
                     aria-label={
                       (unseenCounts[row.id] ?? 0) > 0
-                        ? `Комментариев: ${commentCounts[row.id]}, новых: ${unseenCounts[row.id]}`
-                        : `Комментариев: ${commentCounts[row.id]}`
+? t('ed.commentsTitleNew', { count: commentCounts[row.id], new: unseenCounts[row.id] })
+: t('ed.commentsTitle', { count: commentCounts[row.id] })
                     }
                   >
                     {commentCounts[row.id]}
@@ -1880,7 +1891,7 @@ once — чтобы повторный
             <>
               <div className="ed-editor__head">
                 <strong className="ed-editor__path">
-                  {selectedRow?.isChapter ? 'Глава' : 'Подсобытие'} · {selectedRow?.title ?? ''}
+{selectedRow?.isChapter ? t('ed.chapter') : t('ed.subEvent')} · {selectedRow?.title ?? ''}
                 </strong>
               </div>
               <EventEditor
