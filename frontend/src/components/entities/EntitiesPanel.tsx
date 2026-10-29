@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useT } from '../../i18n'
+import { pluralWord, tStatic, useT } from '../../i18n'
+import { getLang } from '../../store/lang'
 import { createPortal } from 'react-dom'
 import {
   addEntityLink,
@@ -381,9 +382,9 @@ export function EntitiesPanel({
       }
       await onCreateType(title, cardTemplate)
       closeTypeDraft()
-      setNote({ kind: 'ok', text: `Тип «${title}» создан.` })
+setNote({ kind: 'ok', text: t('ent.note.typeCreated', { title }) })
     } catch (e) {
-      setNote({ kind: 'error', text: await explain(e, 'Не удалось создать тип.') })
+setNote({ kind: 'error', text: await explain(e, t('ent.note.typeFailed')) })
     } finally {
       setBusy(false)
     }
@@ -398,7 +399,7 @@ export function EntitiesPanel({
         await deleteEntityLink(projectId, linkId)
         reload()
       } catch (e) {
-        setNote({ kind: 'error', text: await explain(e, 'Не удалось убрать связь.') })
+setNote({ kind: 'error', text: await explain(e, t('ent.note.linkRemoved')) })
       }
     },
     [projectId, reload],
@@ -419,10 +420,10 @@ export function EntitiesPanel({
         setLinking(null)
         setLinkTarget('')
         setLinkLabel('')
-        setNote({ kind: 'ok', text: 'Связь добавлена.' })
+setNote({ kind: 'ok', text: t('ent.note.linkAdded') })
         reload()
       } catch (e) {
-        setNote({ kind: 'error', text: await explain(e, 'Не удалось связать карточки.') })
+setNote({ kind: 'error', text: await explain(e, t('ent.note.linkFailed')) })
       } finally {
         setBusy(false)
       }
@@ -445,10 +446,10 @@ export function EntitiesPanel({
       setDescription('')
       setDescriptionEdited(false)
       setAliasesEdited(false)
-      setNote({ kind: 'ok', text: `Карточка «${created.name}» создана.` })
+setNote({ kind: 'ok', text: t('ent.note.created', { name: created.name }) })
       reload()
     } catch (e) {
-      setNote({ kind: 'error', text: await explain(e, 'Не удалось создать карточку.') })
+setNote({ kind: 'error', text: await explain(e, t('ent.note.createFailed')) })
     } finally {
       setBusy(false)
     }
@@ -494,19 +495,18 @@ export function EntitiesPanel({
         })
         setEditing(null)
         if (keptOldName !== null) {
-          const times = plural(keptOldName.count, 'раз', 'раза', 'раз')
+          // Локальный `plural` возвращал число вместе со словом — здесь так же: «12 раз».
+          const times = `${keptOldName.count} ${pluralWord(getLang(), 'entity.times', keptOldName.count)}`
           setNote({
             kind: 'ok',
-            text:
-              `Изменения сохранены. Прежнее имя «${keptOldName.name}» оставлено в алиасах: ` +
-              `в тексте оно встречается ${times}, и без него эти связи потерялись бы.`,
+            text: t('ent.note.savedKeptAlias', { name: keptOldName.name, times }),
           })
         } else {
-          setNote({ kind: 'ok', text: 'Изменения сохранены.' })
+          setNote({ kind: 'ok', text: t('ent.note.saved') })
         }
         reload()
       } catch (e) {
-        setNote({ kind: 'error', text: await explain(e, 'Не удалось сохранить.') })
+setNote({ kind: 'error', text: await explain(e, t('ent.note.saveFailed')) })
       } finally {
         setBusy(false)
       }
@@ -521,10 +521,10 @@ export function EntitiesPanel({
       try {
         await deleteEntity(projectId, id)
         setPendingDelete(null)
-        setNote({ kind: 'ok', text: 'Карточка удалена.' })
+setNote({ kind: 'ok', text: t('ent.note.deleted') })
         reload()
       } catch (e) {
-        setNote({ kind: 'error', text: await explain(e, 'Не удалось удалить.') })
+setNote({ kind: 'error', text: await explain(e, t('ent.note.deleteFailed')) })
       } finally {
         setBusy(false)
       }
@@ -935,7 +935,7 @@ aria-label={t('ent.linkLabelAria', { name: entity.name })}
                           const mention = frame.mentions[0]
                           if (mention) onOpenFrame?.(frame.frameId, mention, canEdit ? 'editors' : 'project')
                         }}
-                        title={`Открыть кадр и показать «${frame.mentions[0]?.quote ?? ''}»`}
+title={t('ent.frameOpenTitle', { quote: frame.mentions[0]?.quote ?? '' })}
                         data-entity-frame={frame.frameId}
                       >
                         <span className="ent__frame-number">{frame.number || '—'}</span>
@@ -965,18 +965,18 @@ aria-label={t('ent.linkLabelAria', { name: entity.name })}
           «Точка» у нуля вместо пустоты: пустая клетка читается как «не загрузилось». */}
       {matrix !== undefined && matrix.chapters.length > 0 && matrix.rows.length > 0 && (
         <details className="ent__matrix" data-entity-matrix open={matrixOpen}>
-          <summary className="ent__matrix-summary">Матрица: персонажи × главы</summary>
+<summary className="ent__matrix-summary">{t('ent.matrixTitle')}</summary>
           <div className="ent__matrix-scroll">
             <table className="ent__matrix-table">
               <thead>
                 <tr>
-                  <th scope="col">Карточка</th>
+<th scope="col">{t('ent.matrixCard')}</th>
                   {matrix.chapters.map((chapter) => (
                     <th key={chapter.id} scope="col" title={chapter.title}>
                       {chapter.number || chapter.title}
                     </th>
                   ))}
-                  <th scope="col">всего</th>
+<th scope="col">{t('ent.matrixTotal')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -1000,7 +1000,7 @@ aria-label={t('ent.linkLabelAria', { name: entity.name })}
                                 ? 'ent__matrix-link is-expanded'
                                 : 'ent__matrix-link'
                             }
-                            title={`Где встречается «${row.entity.name}» в главе`}
+title={t('ent.matrixCellTitle', { name: row.entity.name })}
                             aria-expanded={
                               mentionCard !== null &&
                               mentionCard.entityId === row.entity.id &&
@@ -1227,7 +1227,7 @@ function MentionCard({
     <div
       className="ent__mention-card"
       role="region"
-      aria-label={`Упоминания «${card.entityName}» в главе ${card.chapterNumber}`}
+aria-label={t('ent.mentionAria', { name: card.entityName, chapter: card.chapterNumber })}
       data-mention-card
     >
       <div className="ent__mention-head">
@@ -1237,7 +1237,7 @@ function MentionCard({
           type="button"
           className="secondary ent__mention-close"
           onClick={onClose}
-          aria-label="Закрыть карточку упоминания"
+aria-label={t('ent.mentionCloseAria')}
           data-mention-close
         >
           ×
@@ -1288,7 +1288,7 @@ function MentionCard({
       <div className="ent__mention-actions">
         {canEdit && (
           <button type="button" onClick={() => onOpen('editors')} data-mention-to-editors>
-            К редактированию
+{t('ent.mentionEdit')}
           </button>
         )}
         <button
@@ -1297,7 +1297,7 @@ function MentionCard({
           onClick={() => onOpen('project')}
           data-mention-to-project
         >
-          К проекту
+{t('ent.mentionProject')}
         </button>
       </div>
     </div>
@@ -1330,6 +1330,7 @@ function LinkList({
   canEdit: boolean
   onRemove: (linkId: string) => void
 }) {
+  const t = useT()
   const [expanded, setExpanded] = useState(false)
   const total = connections.length
   const visible = expanded ? connections : connections.slice(0, LINKS_PREVIEW)
@@ -1337,7 +1338,7 @@ function LinkList({
   return (
     <span className="ent__links" data-entity-links>
       <span className="ent__links-title">
-        Связи · {total}
+{t('ent.linksTitle', { count: total })}
       </span>
       {visible.map((connection) => (
         <span key={connection.link.id} className="ent__link" data-entity-link={connection.link.id}>
@@ -1350,8 +1351,8 @@ function LinkList({
               type="button"
               className="ent__link-remove"
               onClick={() => onRemove(connection.link.id)}
-              aria-label={`Убрать связь с ${connection.other.name}`}
-              title="Убрать связь"
+aria-label={t('ent.linkRemoveAria', { name: connection.other.name })}
+title={t('ent.linkRemoveTitle')}
             >
               ×
             </button>
@@ -1366,14 +1367,14 @@ function LinkList({
           onClick={() => setExpanded((current) => !current)}
           data-entity-links-toggle
         >
-          {expanded ? 'Свернуть связи' : `Показать все ${total}`}
+{expanded ? t('ent.linksCollapse') : t('ent.linksExpand', { count: total })}
         </button>
       )}
       {/* Подпись того, что скрыто: «Показать все 20» говорит, сколько всего, но не сколько
           спрятано. Одна строка приглушённым — чтобы свёрнутый список не выглядел полным. */}
       {hidden > 0 && (
         <span className="muted ent__links-more-hint" data-entity-links-hidden>
-          скрыто ещё {hidden}
+{t('ent.linksHidden', { count: hidden })}
         </span>
       )}
     </span>
@@ -1395,9 +1396,10 @@ export function splitAliases(raw: string): string[] {
  * должен это видеть, а не догадываться.
  */
 export function describeUsage(usage: { frames: number; mentions: number }): string {
-  if (usage.frames === 0) return 'пока не упоминается'
-  const frames = plural(usage.frames, 'кадр', 'кадра', 'кадров')
-  const mentions = plural(usage.mentions, 'упоминание', 'упоминания', 'упоминаний')
+  if (usage.frames === 0) return tStatic('ent.usageNone')
+  // Число и слово вместе: подпись читается как «2 кадра · 3 упоминания» (так её и проверяют тесты).
+  const frames = `${usage.frames} ${pluralWord(getLang(), 'ent.unit.frame', usage.frames)}`
+  const mentions = `${usage.mentions} ${pluralWord(getLang(), 'ent.unit.mention', usage.mentions)}`
   return `${frames} · ${mentions}`
 }
 

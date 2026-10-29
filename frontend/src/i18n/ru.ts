@@ -509,7 +509,9 @@ export const ru = {
   'ent.note.savedKeptAlias': 'Изменения сохранены. Прежнее имя «{name}» оставлено в алиасах: в тексте оно встречается {times}, и без него эти связи потерялись бы.',
   'ent.note.saved': 'Изменения сохранены.',
   'ent.note.saveFailed': 'Не удалось сохранить.',
-  'ent.note.deleted': 'Карточка удалена.',
+  'entity.times.one': 'раз',
+  'entity.times.few': 'раза',
+  'entity.times.many': 'раз',  'ent.note.deleted': 'Карточка удалена.',
   'ent.note.deleteFailed': 'Не удалось удалить.',
   // ── форматирование чисел (lib/format) ───────────────────────────────────────────────────
   'weight.of': 'файлы: {used} из {limit}',
