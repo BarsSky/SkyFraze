@@ -37,6 +37,8 @@ import {
 } from '../../api/storyFiles'
 import { DIRECTORY_PICK } from '../../lib/directoryPick'
 import { formatBytes, plural } from '../../lib/format'
+import { useT } from '../../i18n'
+import { useLang } from '../../store/lang'
 import { importWeight } from '../../lib/importWeight'
 import { runUploads, uploadSummary, type UploadOutcome } from '../../lib/uploadQueue'
 import {
@@ -403,6 +405,8 @@ export function EditorsPanel({
   presence, onEditing, assetUsage, onDeleteAsset, assetNote, assetBusyId, onOpenRelations,
   openRequest, onOpenRequestHandled,
 }: Props) {
+  const t = useT()
+  const [lang] = useLang()
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [filter, setFilter] = useState('')
   /**
@@ -1590,9 +1594,9 @@ once — чтобы повторный
   return (
     <section className="ed-panel" data-editor-panel>
       <div className="ed-panel__head">
-        <h3 className="ed-panel__title">Редакторы</h3>
+        <h3 className="ed-panel__title">{t('ed.title')}</h3>
         <div className="ed-toolbar">
-          <button type="button" onClick={createChapter}>+ глава</button>
+          <button type="button" onClick={createChapter}>{t('ed.addChapter')}</button>
           <button type="button" className="secondary" onClick={createChild} disabled={!selectedId}>+ подсобытие</button>
           <button type="button" className="secondary ed-danger" onClick={removeSelected} disabled={!selectedId}>удалить</button>
           {/* Вход в связи: блок карточек выше панели, и без кнопки его не находят */}
@@ -1609,8 +1613,8 @@ once — чтобы повторный
           <input
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            placeholder="Поиск по названию и тексту…"
-            aria-label="Поиск по проекту"
+            placeholder={t('ed.search')}
+            aria-label={t('ed.searchAria')}
             className="ed-filter"
             data-ed-search
           />
@@ -1628,14 +1632,14 @@ once — чтобы повторный
             доступна фильтру. */}
         {entities.length > 0 && (
           <label className="ed-entity-filter">
-            <span className="muted">Только с карточкой:</span>
+            <span className="muted">{t('ed.onlyWithCard')}</span>
             <select
               value={entityFilter ?? ''}
               onChange={(e) => setEntityFilter(e.target.value === '' ? null : e.target.value)}
-              aria-label="Фильтр по карточке мира"
+              aria-label={t('ed.cardFilterAria')}
               data-ed-entity-filter
             >
-              <option value="">все кадры</option>
+              <option value="">{t('ed.allFrames')}</option>
               {entities.map((entity) => (
                 <option key={entity.id} value={entity.id}>
                   {entity.name}
@@ -1662,7 +1666,7 @@ once — чтобы повторный
             <>
               {/* Импорт «в место»: файлы разбирает сервер и ничего не пишет —
                   кусок встанет в проект только после того, как ему выберут место. */}
-              <span className="muted ed-import__label">Импорт куска md:</span>
+              <span className="muted ed-import__label">{t('ed.importLabel')}</span>
               <label className={`ed-import__pick${importBusy ? ' is-busy' : ''}`}>
                 <input
                   type="file"
@@ -1712,11 +1716,11 @@ once — чтобы повторный
               {/* Место можно выбрать и списком: перетаскивание на тач-устройствах
                   конкурирует с прокруткой, а с клавиатуры его не сделать вовсе. */}
               <label className="ed-import__mode">
-                <span className="muted">место:</span>
+                <span className="muted">{t('ed.place')}</span>
                 <select
                   value={chunkMode}
                   onChange={(e) => setChunkMode(e.target.value as ChunkMode)}
-                  aria-label="Место вставки куска"
+                  aria-label={t('ed.placeAria')}
                 >
                   {(Object.keys(CHUNK_MODE_TEXT) as ChunkMode[]).map((mode) => (
                     <option key={mode} value={mode}>{CHUNK_MODE_TEXT[mode]}</option>
@@ -1763,7 +1767,7 @@ once — чтобы повторный
       <div className="ed-panel__grid">
         <nav
           className={drag ? 'ed-nav ed-nav--dragging' : 'ed-nav'}
-          aria-label="Список событий"
+          aria-label={t('ed.eventsListAria')}
           ref={navRef}
         >
           {visibleRows.map((row) => {
@@ -1868,7 +1872,7 @@ once — чтобы повторный
               </button>
             )
           })}
-          {visibleRows.length === 0 && <p className="muted">Ничего не найдено.</p>}
+          {visibleRows.length === 0 && <p className="muted">{t('ed.nothingFound')}</p>}
         </nav>
 
         <div className="ed-editor">
@@ -1899,7 +1903,7 @@ once — чтобы повторный
                 docxStyles={docxStyles}
               />
               <p className="muted ed-editor__hint">
-                Изменения сохраняются автоматически; дерево синхронизируется с сервером.
+                {t('ed.autosave')}
               </p>
               {/* Упоминания карточек мира в этом кадре (0.68.0): кто здесь назван. Клик ведёт
                   к самому месту в тексте, поэтому список — не «сводка», а навигация. */}
@@ -1932,7 +1936,7 @@ once — чтобы повторный
               )}
             </>
           ) : (
-            <p className="muted">Выберите событие слева или создайте новую главу.</p>
+            <p className="muted">{t('ed.selectPrompt')}</p>
           )}
         </div>
       </div>
