@@ -9,9 +9,10 @@ name: nightly
 #      намеренно: аудит — это браузер + живой backend + данные (десять минут), а падение
 #      вёрстки не должно останавливать срочный фикс бэкенда.
 #   2. **Охота за флейками.** В `ci.yml` у unit и e2e ровно один прогон и `retries: 0`. Один
-#      флейк — красный CI, но какой именно тест нестабилен, из одного падения не видно. Здесь
-#      unit гоняется трижды, а e2e — с `--repeat-each=2`: случайность становится видимой по
-#      имени теста в логе, и её можно чинить, а не перезапускать сборку.
+#      флейк — красный CI, но какой именно тест нестабилен, из одного падения не видно. Здесь unit
+#      гоняется трижды, а e2e — двумя полными прогонами на РАЗНЫХ чистых базах. Повторять на той
+#      же базе нельзя: `install` проверяет первую регистрацию, а ключ доступа выдаёт коды
+#      восстановления только при привязке первого ключа (поймано первым же ночным прогоном).
 #
 # Оба прогона не блокируют push: падение ночью — повод открыть задачу, а не остановить работу.
 # Запустить руками (например, перед релизом с правками вёрстки) — через `workflow_dispatch`.
@@ -231,6 +232,7 @@ jobs:
           cd backend
           go build -o /tmp/skyfraze-server ./cmd/server
           nohup /tmp/skyfraze-server > /tmp/skyfraze-backend.log 2>&1 &
+          echo $! > /tmp/skyfraze-server.pid
           for i in $(seq 1 60); do
             if curl -fsS http://127.0.0.1:8181/health > /dev/null; then
               echo "backend готов"; exit 0
@@ -238,17 +240,44 @@ jobs:
             sleep 1
           done
           echo "backend не поднялся:"; cat /tmp/skyfraze-backend.log; exit 1
-      # `install` нельзя повторять: он проверяет ПЕРВУЮ регистрацию на пустой базе, а второй
-      # прогон честно упадёт на «инсталляция не пустая». Поэтому сценарий чистой установки идёт
-      # один раз (он же заводит администратора для остальных), а повторяются сценарии chromium.
-      - name: e2e — установка один раз, остальные дважды
+      - name: прогон 1 (база skyfraze_e2e)
+        run: cd frontend && CI=1 npx playwright test
+      # Второй прогон — на ЧИСТОЙ базе и с перезапущенным backend, а не `--repeat-each`.
+      #
+      # Почему: повторять сценарии на той же базе нельзя принципиально, и это выяснилось на первом
+      # же ночном прогоне. `install.spec.ts` проверяет ПЕРВУЮ регистрацию на пустой инсталляции, а
+      # `zz-passkeys.spec.ts` — коды восстановления, которые показываются один раз, при привязке
+      # первого ключа. Второй прогон на той же базе падал бы не по делу (так и вышло: 46 из 47
+      # сценариев прошли, «упал» именно повтор необратимого сценария).
+      - name: база для второго прогона
         run: |
-          cd frontend
-          CI=1 npx playwright test --project=install
-          CI=1 npx playwright test --project=chromium --repeat-each=2
+          # Backend держит соединения, поэтому сначала гасим его, потом создаём базу.
+          kill "$(cat /tmp/skyfraze-server.pid)" 2>/dev/null || true
+          for i in $(seq 1 30); do
+            if ! curl -fsS http://127.0.0.1:8181/health > /dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          # `psql` на раннере может отсутствовать — берём клиент из того же образа, что и сервис.
+          docker run --rm --network host -e PGPASSWORD=skyfraze_dev postgres:16-alpine \
+            psql -h 127.0.0.1 -U skyfraze -d postgres -c "create database skyfraze_e2e_b"
+      - name: backend на второй базе
+        run: |
+          cd backend
+          nohup env DATABASE_URL="postgres://skyfraze:skyfraze_dev@localhost:5432/skyfraze_e2e_b?sslmode=disable" \
+            /tmp/skyfraze-server > /tmp/skyfraze-backend2.log 2>&1 &
+          echo $! > /tmp/skyfraze-server.pid
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8181/health > /dev/null; then
+              echo "backend на второй базе готов"; exit 0
+            fi
+            sleep 1
+          done
+          echo "backend 2 не поднялся:"; cat /tmp/skyfraze-backend2.log; exit 1
+      - name: прогон 2 (база skyfraze_e2e_b)
+        run: cd frontend && CI=1 npx playwright test
       - name: логи при падении
         if: failure()
-        run: cat /tmp/skyfraze-backend.log /tmp/stub-ollama.log
+        run: cat /tmp/skyfraze-backend.log /tmp/skyfraze-backend2.log /tmp/stub-ollama.log 2>/dev/null || true
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
