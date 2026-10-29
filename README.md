@@ -136,7 +136,9 @@ SkyFraze/
 ## Документация
 
 С чего начать: **`docs/run.md`** — запуск и эксплуатация, **`docs/features.md`** — всё, что умеет
-платформа, **`docs/architecture.md`** — модель данных и инварианты.
+платформа, **`docs/architecture.md`** — модель данных и инварианты. Английские версии
+пользовательских документов — [docs/run.en.md](docs/run.en.md) и
+[docs/features.en.md](docs/features.en.md).
 
 | Документ | О чём |
 |---|---|

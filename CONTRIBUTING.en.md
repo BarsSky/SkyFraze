@@ -30,12 +30,12 @@ Project provenance and how authorship is verified — [PROVENANCE.md](PROVENANCE
 ## Before opening a pull request
 
 1. **Start the stack** — `docker compose up --build -d` (quick start in [README.en.md](README.en.md)),
-   or the no-Docker dev mode described in [docs/run.md](docs/run.md) (Russian).
+   or the no-Docker dev mode described in [docs/run.en.md](docs/run.en.md).
 2. **Run the checks:**
    ```bash
    cd backend  && go vet ./... && go test ./...
    cd frontend && npm run lint && npm test
-   cd frontend && npm run e2e          # requires an EMPTY database, see docs/run.md
+   cd frontend && npm run e2e          # requires an EMPTY database, see docs/run.en.md
    ```
 3. **Describe the change in `CHANGELOG.md`** — Keep a Changelog format, version in the heading.
 4. **Never add secrets** — no `.env`, no keys, no tokens. Deployment files are in `.gitignore`.
@@ -57,7 +57,7 @@ One change per commit; this project does not squash unrelated work into one.
 
 `backend/` is Go (chi, pgx, Yjs relay), `frontend/` is React + TypeScript + Vite, `docs/` holds
 decision records: what was asked, why it was done this way, what was verified (mostly Russian).
-The full tree is in [docs/run.md](docs/run.md), data model and invariants in
+The full tree is in [docs/run.en.md](docs/run.en.md), data model and invariants in
 [docs/architecture.md](docs/architecture.md).
 
 Style: read the neighbouring code — indentation, quotes and naming come from the file you are

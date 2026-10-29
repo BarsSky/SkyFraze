@@ -24,8 +24,8 @@ a staged timeline, and the finished story can be published publicly — with a f
 
 ## Features
 
-The essentials; the full list, one item per feature, is in **[docs/features.md](docs/features.md)**
-(Russian).
+The essentials; the full list, one item per feature, is in
+**[docs/features.en.md](docs/features.en.md)**.
 
 - **Staged timeline**: a fixed stage where scrolling switches frames; a chapter, then its sub-events
   one at a time (numbering 01.1, 01.1.1); event images are frames of their own.
@@ -82,9 +82,9 @@ curl http://localhost/api/health   # {"status":"ok"}
 UI — http://localhost, Postgres — `localhost:5432` (`skyfraze` / `skyfraze_dev`). Stop with
 `docker compose down` (adding `-v` also drops the data — that is data loss).
 
-**Next — `docs/run.md`** (Russian): running without Docker (dev mode), registration mode and the
-first administrator, server deployment and updates from GitHub, moving a project between stands, all
-environment variables, tests and live diagnostics, interface audit, storage and backups. The full
+**Next — [docs/run.en.md](docs/run.en.md):** running without Docker (dev mode), registration mode and
+the first administrator, server deployment and updates from GitHub, moving a project between stands,
+all environment variables, tests and live diagnostics, interface audit, storage and backups. The full
 repository tree is there as well.
 
 ## Your own team, your own instance
@@ -137,19 +137,19 @@ SkyFraze/
 ```
 
 The full tree — with `backend/internal` packages, `frontend/src/components` directories and every
-`docs/` file — is in `docs/run.md`, section "Repository structure" (Russian).
+`docs/` file — is in [docs/run.en.md](docs/run.en.md), section "Repository structure".
 
 ## Documentation
 
-The design and operations documents are written in Russian (the project's working language); English
-versions of the user-facing ones (`docs/run.md`, `docs/features.md`) are planned. Start with
-**`docs/run.md`** — running and operations, **`docs/features.md`** — everything the platform does,
-**`docs/architecture.md`** — data model and invariants.
+The user-facing documents exist in both languages: **[docs/run.en.md](docs/run.en.md)** (running,
+deployment, operations) and **[docs/features.en.md](docs/features.en.md)** (the full feature list).
+The design notes under `docs/` are written in Russian, the project's working language; the table
+below lists those originals.
 
 | Document | About |
 |---|---|
-| `docs/run.md` | running, deployment, updates, environment variables, tests, storage |
-| `docs/features.md` | the full feature list with links to the design notes |
+| `docs/run.md`, [run.en.md](docs/run.en.md) | running, deployment, updates, environment variables, tests, storage |
+| `docs/features.md`, [features.en.md](docs/features.en.md) | the full feature list with links to the design notes |
 | `docs/architecture.md` | data model, invariants, common defect analysis |
 | `docs/diagnostics.md` | catalogue of live checks and diagnostic scripts |
 | `docs/entity-links.md` | world cards: mentions, links, matrix, risks |
