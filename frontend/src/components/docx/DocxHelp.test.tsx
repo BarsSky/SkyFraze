@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { DocxHelp } from './DocxHelp'
+import { setLang } from '../../store/lang'
 
 /**
  * Справка «Как сделать шаблон» (0.94.0).
@@ -19,6 +20,7 @@ vi.mock('../../api/docxTemplates', () => ({
 }))
 
 afterEach(() => {
+  setLang('ru')
   cleanup()
   vi.clearAllMocks()
 })
@@ -70,5 +72,28 @@ describe('DocxHelp', () => {
     render(<DocxHelp projectId="p1" onClose={() => {}} />)
     fireEvent.click(screen.getByRole('button', { name: 'Скачать пример .docx' }))
     await waitFor(() => expect(screen.getByText(/Не удалось скачать пример/)).toBeTruthy())
+  })
+
+  /**
+   * 0.124.0: вся справка — из словаря. Имена стилей Word (Title, Heading1–4, Quote, Code, Date,
+   * ListParagraph) и текст маркеров не переводятся: это токены, которые человек набирает в
+   * документе. Русские названия стилей в скобках на английском пустые — англоязычный Word
+   * называет их иначе, и подсказка «(«Заголовок»)» там только путала бы.
+   */
+  it('на английском справка переведена, а имена стилей и маркеры — нет', () => {
+    setLang('en')
+    render(<DocxHelp projectId="p1" onClose={() => {}} />)
+    expect(screen.getByRole('dialog', { name: 'DOCX template help' })).toBeTruthy()
+    expect(screen.getByText('How to make a DOCX styling template')).toBeTruthy()
+    expect(screen.getByText('What is taken from the text')).toBeTruthy()
+    expect(screen.getByText('Chapters and sub-events')).toBeTruthy()
+    expect(screen.getByText('Frame images')).toBeTruthy()
+    expect(screen.getByText('What the template does not do')).toBeTruthy()
+    expect(screen.getByText(/does not update the table of contents by itself/)).toBeTruthy()
+    // Стили и маркеры — протокол, не подписи интерфейса.
+    expect(screen.getByText(/Heading1–Heading4/)).toBeTruthy()
+    expect(screen.getByText('<!-- sf:pagebreak -->')).toBeTruthy()
+    // Русских названий стилей в скобках на английском нет.
+    expect(screen.queryByText(/«Заголовок»/)).toBeNull()
   })
 })

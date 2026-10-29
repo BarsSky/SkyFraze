@@ -33,4 +33,20 @@ describe('mappingRows — карта стилей для человека', () =
     expect(rows[0]).toEqual({ key: 'footnote', label: 'footnote', style: 'FootnoteText' })
     expect(DOX_MAPPING_LABELS.heading2).toBe('под-события')
   })
+
+  /**
+   * 0.124.0: подписи берутся из словаря, язык — второй аргумент (по умолчанию русский, поэтому
+   * две проверки выше не тронуты). Неизвестный ключ по-прежнему показывается как есть: сервер
+   * может прислать новый вид, и потерять его в таблице хуже, чем показать техническое имя.
+   */
+  it('на английском подписи карты стилей переведены', () => {
+    const rows = mappingRows(report({ mapping: { heading1: 'Heading1', body: 'Normal' } }), 'en')
+    expect(rows).toEqual([
+      { key: 'heading1', label: 'chapters', style: 'Heading1' },
+      { key: 'body', label: 'ordinary text', style: 'Normal' },
+    ])
+    expect(mappingRows(report({ mapping: { footnote: 'FootnoteText' } }), 'en')[0].label).toBe(
+      'footnote',
+    )
+  })
 })

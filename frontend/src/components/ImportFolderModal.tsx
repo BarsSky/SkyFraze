@@ -8,7 +8,8 @@ import {
   type MarkdownImportSource,
 } from '../api/storyFiles'
 import { ErrorBanner } from './ErrorBanner'
-import { plural } from '../lib/format'
+import { localeOf, pluralWord, tStatic, useT } from '../i18n'
+import { useLang } from '../store/lang'
 import { importWeight } from '../lib/importWeight'
 import { DIRECTORY_PICK } from '../lib/directoryPick'
 
@@ -39,6 +40,8 @@ interface Failure {
  * проект при этом не создаётся.
  */
 export function ImportFolderModal({ onClose, onCreated }: Props) {
+  const t = useT()
+  const [lang] = useLang()
   const [selection, setSelection] = useState<MarkdownImportSource | null>(null)
   /** Что именно выбрал человек: окно должно называть папку или архив словами. */
   const [selectionLabel, setSelectionLabel] = useState('')
@@ -98,15 +101,18 @@ export function ImportFolderModal({ onClose, onCreated }: Props) {
     e.target.value = ''
     if (files.length === 0) return
     const root = files[0].webkitRelativePath.split('/')[0]
-    const count = `${files.length} ${plural(files.length, 'файл', 'файла', 'файлов')}`
-    void runPreview(files, root && root !== files[0].name ? `папка «${root}», ${count}` : count)
+    const count = `${files.length} ${pluralWord(lang, 'ed.unit.file', files.length)}`
+    void runPreview(
+      files,
+      root && root !== files[0].name ? t('imp.folderLabel', { root, count }) : count,
+    )
   }
 
   function onPickZip(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     e.target.value = ''
     if (!file) return
-    void runPreview({ archive: file }, `архив «${file.name}»`)
+    void runPreview({ archive: file }, t('imp.archiveLabel', { name: file.name }))
   }
 
   async function onConfirm() {
@@ -115,7 +121,7 @@ export function ImportFolderModal({ onClose, onCreated }: Props) {
     setFailure(null)
     try {
       const result = await importMarkdownFolder(selection, title)
-      if (!result.projectId) throw new Error('Сервер не сообщил, какой проект создан')
+      if (!result.projectId) throw new Error(t('imp.noProjectId'))
       onCreated(result.projectId)
     } catch (e) {
       setFailure(await describeImportFailure(e, () => void onConfirm()))
@@ -128,15 +134,15 @@ export function ImportFolderModal({ onClose, onCreated }: Props) {
   const nothingToCreate = preview !== null && preview.events.length === 0
   // Импорт создаёт НОВЫЙ проект, поэтому занятого места нет: сравниваем вес набора
   // только с пределом (его присылает сервер вместе с предпросмотром).
-  const weight = preview ? importWeight(preview.stats, preview.quotaBytes) : null
+  const weight = preview ? importWeight(preview.stats, preview.quotaBytes, 0, lang) : null
 
   return createPortal(
-    <div className="sf-import" role="dialog" aria-modal="true" aria-label="Импорт папки с Markdown">
+    <div className="sf-import" role="dialog" aria-modal="true" aria-label={t('imp.dialogAria')}>
       <div className="sf-import__window">
         <div className="sf-import__head">
           <div className="sf-import__titles">
-            <strong>Импорт папки</strong>
-            <span className="muted">md-файлы или zip → новый проект</span>
+            <strong>{t('imp.title')}</strong>
+            <span className="muted">{t('imp.subtitle')}</span>
           </div>
           <button
             ref={closeRef}
@@ -144,9 +150,9 @@ export function ImportFolderModal({ onClose, onCreated }: Props) {
             className="secondary"
             onClick={onClose}
             disabled={creating}
-            aria-label="Закрыть импорт"
+            aria-label={t('imp.closeAria')}
           >
-            закрыть ✕
+            {t('imp.close')}
           </button>
         </div>
 
@@ -155,13 +161,10 @@ export function ImportFolderModal({ onClose, onCreated }: Props) {
             {/* Правило разбора — первой строкой: от него зависит, что станет
                 главой, и сюрпризов тут быть не должно. */}
             <p className="sf-import__hint sf-import__rule">
-              Папка — это проект, подкаталоги — главы. Имя файла — номер и заголовок события.
+              {t('imp.hint1')}
             </p>
             <p className="muted sf-import__hint">
-              Сервер сначала разбирает файлы и ничего не записывает: проект появится
-              только после «Создать проект». Картинки и другие файлы, на которые
-              ссылаются тексты событий, прикладываются к своим событиям — скачивать
-              их по ссылкам из интернета не нужно.
+              {t('imp.hint2')}
             </p>
           </div>
 
@@ -174,8 +177,8 @@ export function ImportFolderModal({ onClose, onCreated }: Props) {
                 onChange={onPickFolder}
                 {...DIRECTORY_PICK}
               />
-              <b>Выбрать папку</b>
-              <span className="muted">папка проекта с md-файлами</span>
+              <b>{t('imp.pickFolder')}</b>
+              <span className="muted">{t('imp.pickFolderHint')}</span>
             </label>
             <label className={`sf-import__way${busy ? ' is-busy' : ''}`}>
               <input
@@ -184,13 +187,13 @@ export function ImportFolderModal({ onClose, onCreated }: Props) {
                 disabled={busy !== null}
                 onChange={onPickZip}
               />
-              <b>Выбрать zip</b>
-              <span className="muted">тот же архив, что даёт «.md + картинки»</span>
+              <b>{t('imp.pickZip')}</b>
+              <span className="muted">{t('imp.pickZipHint')}</span>
             </label>
           </div>
 
           {busy === 'preview' && (
-            <p className="muted sf-import__status" role="status">Разбираю файлы…</p>
+            <p className="muted sf-import__status" role="status">{t('imp.parsing')}</p>
           )}
 
           {failure && (
@@ -200,7 +203,7 @@ export function ImportFolderModal({ onClose, onCreated }: Props) {
               onRetry={failure.retry}
               actions={
                 <button type="button" className="secondary" onClick={() => setFailure(null)}>
-                  Понятно
+                  {t('imp.gotIt')}
                 </button>
               }
             />
@@ -208,13 +211,13 @@ export function ImportFolderModal({ onClose, onCreated }: Props) {
 
           {preview && (
             <>
-              <p className="muted sf-import__chosen">Выбрано: {selectionLabel}</p>
+              <p className="muted sf-import__chosen">{t('imp.chosen', { label: selectionLabel })}</p>
 
               <label className="sf-import__title">
-                Название проекта
+                {t('imp.projectName')}
                 <input
                   value={title}
-                  placeholder={preview.projectTitle || 'Возьмём из файлов'}
+                  placeholder={preview.projectTitle || t('imp.projectNamePlaceholder')}
                   onChange={(e) => setTitle(e.target.value)}
                 />
               </label>
@@ -222,24 +225,24 @@ export function ImportFolderModal({ onClose, onCreated }: Props) {
               {stats && (
                 <div className="sf-import__stats" data-import-stats>
                   <span className="sf-import__stat">
-                    <b>{stats.files}</b> {plural(stats.files, 'файл', 'файла', 'файлов')}
+                    <b>{stats.files}</b> {pluralWord(lang, 'ed.unit.file', stats.files)}
                   </span>
                   <span className="sf-import__stat">
-                    <b>{stats.events}</b> {plural(stats.events, 'событие', 'события', 'событий')}
+                    <b>{stats.events}</b> {pluralWord(lang, 'ed.unit.event', stats.events)}
                   </span>
                   <span className="sf-import__stat">
-                    <b>{stats.chars.toLocaleString('ru-RU')}</b>{' '}
-                    {plural(stats.chars, 'знак', 'знака', 'знаков')}
+                    <b>{stats.chars.toLocaleString(localeOf(lang))}</b>{' '}
+                    {pluralWord(lang, 'ver.unit.char', stats.chars)}
                   </span>
                   <span className="sf-import__stat">
                     <b>{stats.imageLinks}</b>{' '}
-                    {plural(stats.imageLinks, 'ссылка на картинку', 'ссылки на картинки', 'ссылок на картинки')}
+                    {pluralWord(lang, 'imp.unit.imageLink', stats.imageLinks)}
                   </span>
                   {/* Вложения — не «сколько нашлось картинок», а сколько файлов
                       станут вложениями проекта: это то, что человек увидит в кадре. */}
                   <span className="sf-import__stat">
                     <b>{stats.attachments}</b>{' '}
-                    {plural(stats.attachments, 'вложение', 'вложения', 'вложений')}
+                    {pluralWord(lang, 'ed.unit.attachment', stats.attachments)}
                   </span>
                   {/* Вес вложений: импорт подчиняется пределу проекта, и узнать об
                       этом лучше здесь, а не из отказа при создании. */}
@@ -255,7 +258,7 @@ export function ImportFolderModal({ onClose, onCreated }: Props) {
 
               {preview.warnings.length > 0 && (
                 <div className="sf-import__warnings" role="note">
-                  <b>Что сервер заметил</b>
+                  <b>{t('imp.noticed')}</b>
                   <ul className="sf-import__warning-list">
                     {preview.warnings.map((warning, index) => (
                       <li key={`${warning}-${index}`} className="sf-import__warning">{warning}</li>
@@ -266,13 +269,13 @@ export function ImportFolderModal({ onClose, onCreated }: Props) {
 
               <div className="sf-import__section">
                 <div className="sf-import__section-head">
-                  <b>Дерево событий</b>
-                  <span className="muted">отступ слева — вложенность</span>
+                  <b>{t('imp.tree')}</b>
+                  <span className="muted">{t('imp.treeHint')}</span>
                 </div>
                 {nothingToCreate ? (
                   <p className="muted sf-import__empty">
-                    В выбранных файлах не нашлось ни одного события — создавать нечего.
-                    Проверьте, что имена начинаются с номера (`01-Пролог.md`).
+                    {t('imp.noEvents')}
+                    {t('imp.noEventsHint')}
                   </p>
                 ) : (
                   // Список с внутренней прокруткой: в папке бывает под тысячу файлов,
@@ -286,9 +289,9 @@ export function ImportFolderModal({ onClose, onCreated }: Props) {
                       >
                         <span className="sf-import__number">{event.number || '—'}</span>
                         <span className="sf-import__node-title">
-                          {event.title || <em>без заголовка</em>}
+                          {event.title || <em>{t('imp.untitledEvent')}</em>}
                         </span>
-                        <span className="muted sf-import__chars">{event.chars} зн.</span>
+                        <span className="muted sf-import__chars">{t('imp.charsShort', { count: event.chars })}</span>
                         {event.warnings.length > 0 && (
                           <span className="sf-import__node-note">⚠ {event.warnings.join('; ')}</span>
                         )}
@@ -303,18 +306,18 @@ export function ImportFolderModal({ onClose, onCreated }: Props) {
 
         <div className="sf-import__foot">
           <span className="muted sf-import__foot-note">
-            Создаётся новый проект — существующие не меняются
+            {t('imp.newProjectNote')}
           </span>
           <div className="row" style={{ gap: 8 }}>
             <button type="button" className="secondary" onClick={onClose} disabled={creating}>
-              Отмена
+              {t('imp.cancel')}
             </button>
             <button
               type="button"
               disabled={!preview || nothingToCreate || busy !== null}
               onClick={() => void onConfirm()}
             >
-              {busy === 'create' ? 'Создаю…' : 'Создать проект'}
+              {busy === 'create' ? t('imp.creating') : t('imp.create')}
             </button>
           </div>
         </div>

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { DocxTemplateSwitch } from './DocxTemplateSwitch'
+import { setLang } from '../../store/lang'
 
 /**
  * Переключатель оформления DOCX в меню «Книга» (0.93.1).
@@ -32,6 +33,7 @@ const template = (id: string, name: string, active: boolean) => ({
 })
 
 afterEach(() => {
+  setLang('ru')
   cleanup()
   vi.clearAllMocks()
 })
@@ -80,5 +82,19 @@ describe('DocxTemplateSwitch', () => {
     listDocxTemplates.mockRejectedValue(new Error('403'))
     render(<DocxTemplateSwitch projectId="p1" canEdit />)
     await waitFor(() => expect(screen.getByText(/Шаблон оформления не загружен/)).toBeTruthy())
+  })
+
+  /** 0.124.0: подпись и подсказка переключателя — из словаря. Имена шаблонов — данные. */
+  it('на английском подписи переключателя переведены', async () => {
+    setLang('en')
+    listDocxTemplates.mockResolvedValue([template('t1', 'рукопись', true), template('t2', 'самиздат', false)])
+    render(<DocxTemplateSwitch projectId="p1" canEdit />)
+    const select = (await screen.findByLabelText('Styling')) as HTMLSelectElement
+    await waitFor(() => expect(select.options.length).toBe(2))
+    expect(select.getAttribute('title')).toBe('Which template the .docx is built with')
+    expect(Array.from(select.options).map((option) => option.textContent)).toEqual([
+      'рукопись',
+      'самиздат',
+    ])
   })
 })

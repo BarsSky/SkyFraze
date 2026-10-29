@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import type { MarkdownImportPreview } from '../api/storyFiles'
 import { ImportFolderModal } from './ImportFolderModal'
+import { setLang } from '../store/lang'
 
 /**
  * Окно импорта папки: выбор папки, предпросмотр и запрет «Создать» на пустом
@@ -65,6 +66,7 @@ function inputs(): HTMLInputElement[] {
 
 describe('ImportFolderModal', () => {
   beforeEach(() => {
+    setLang('ru')
     mocks.preview.mockReset()
     mocks.create.mockReset()
     mocks.errorText.mockReset()
@@ -167,5 +169,33 @@ describe('ImportFolderModal', () => {
     expect(await screen.findByText('слишком много файлов: больше 2000')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Создать проект' })).toBeDisabled()
     expect(mocks.create).not.toHaveBeenCalled()
+  })
+
+  /**
+   * 0.124.0: подписи окна — из словаря, включая склонения («1 вложение» → «1 attachment») и
+   * «1200 зн.». Что прислал сервер — названия событий, предупреждения — остаётся как есть.
+   */
+  it('на английском подписи окна и счётчики переведены', async () => {
+    setLang('en')
+    mocks.preview.mockResolvedValue(preview)
+    show()
+
+    expect(screen.getByText('Folder import')).toBeInTheDocument()
+    fireEvent.change(inputs()[1], { target: { files: [new File(['PK'], 'story.zip')] } })
+
+    expect(await screen.findByText('Event tree')).toBeInTheDocument()
+    expect(screen.getByLabelText('Project name')).toHaveValue('Планета')
+    const stats = document.querySelector('[data-import-stats]')?.textContent ?? ''
+    expect(stats).toContain('2 files')
+    expect(stats).toContain('2 events')
+    // Число в формате локали (1,200) и слово в форме языка.
+    expect(stats).toContain('1,200 chars')
+    expect(stats).toContain('2 image links')
+    expect(stats).toContain('1 attachment')
+    expect(stats).toContain('attachments: 1 · 2.0 MB')
+    expect(screen.getByRole('button', { name: 'Create the project' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument()
+    // Данные сервера не переводим.
+    expect(screen.getByText('Пролог')).toBeInTheDocument()
   })
 })

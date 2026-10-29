@@ -1,6 +1,8 @@
 import { http } from './client'
 import { parseFilename } from './transfer'
 import { saveBlob } from '../lib/download'
+import { tStatic, translate, type Key } from '../i18n'
+import type { Lang } from '../store/lang'
 
 /**
  * Шаблоны оформления DOCX (0.91.0, docs/docx-template.md).
@@ -76,7 +78,7 @@ export async function uploadDocxTemplate(
     .post(`projects/${projectId}/docx-templates`, { body: form, timeout: 120_000 })
     .json<{ template?: unknown }>()
   const template = readTemplate(raw?.template)
-  if (template === null) throw new Error('сервер не вернул шаблон')
+  if (template === null) throw new Error(tStatic('tpl.errNoTemplate'))
   return template
 }
 
@@ -111,7 +113,12 @@ export async function downloadDocxSample(projectId: string): Promise<string> {
   return name
 }
 
-/** Подписи карты стилей для интерфейса: «что в проекте». */
+/**
+ * Подписи карты стилей для интерфейса: «что в проекте».
+ *
+ * Оставлены как русский эталон и запасной вариант: `mappingRows` берёт подпись из словаря
+ * (0.124.0), а сюда смотрит, только если сервер прислал ключ, которого мы ещё не знаем.
+ */
 export const DOX_MAPPING_LABELS: Record<string, string> = {
   title: 'название проекта',
   heading1: 'главы',
@@ -125,10 +132,16 @@ export const DOX_MAPPING_LABELS: Record<string, string> = {
   list: 'списки',
 }
 
-export function mappingRows(report: DocxReport): Array<{ key: string; label: string; style: string }> {
+/** Ключи словаря для тех же подписей: `tpl.map.<key>`. */
+const MAPPING_KEYS = new Set(Object.keys(DOX_MAPPING_LABELS))
+
+export function mappingRows(
+  report: DocxReport,
+  lang: Lang = 'ru',
+): Array<{ key: string; label: string; style: string }> {
   return Object.entries(report.mapping ?? {}).map(([key, style]) => ({
     key,
-    label: DOX_MAPPING_LABELS[key] ?? key,
+    label: MAPPING_KEYS.has(key) ? translate(lang, `tpl.map.${key}` as Key) : key,
     style,
   }))
 }

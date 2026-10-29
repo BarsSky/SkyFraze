@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { activateDocxTemplate, listDocxTemplates, type DocxTemplate } from '../../api/docxTemplates'
+import { tStatic, useT } from '../../i18n'
 
 /**
  * Компактный переключатель оформления DOCX в меню «Книга» (0.93.1).
@@ -23,6 +24,7 @@ interface Props {
 }
 
 export function DocxTemplateSwitch({ projectId, canEdit }: Props) {
+  const t = useT()
   const [templates, setTemplates] = useState<DocxTemplate[] | null>(null)
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState<string | null>(null)
@@ -52,7 +54,7 @@ export function DocxTemplateSwitch({ projectId, canEdit }: Props) {
         const list = await activateDocxTemplate(projectId, id)
         setTemplates(list)
       } catch {
-        setNote('Не удалось переключить оформление.')
+        setNote(tStatic('tpl.switchFailed'))
       } finally {
         setBusy(false)
       }
@@ -64,7 +66,7 @@ export function DocxTemplateSwitch({ projectId, canEdit }: Props) {
   if (templates.length === 0) {
     return (
       <p className="dl-menu__note muted" data-docx-switch-empty>
-        Шаблон оформления не загружен — скачается встроенное оформление.
+        {t('tpl.switchNone')}
       </p>
     )
   }
@@ -72,7 +74,7 @@ export function DocxTemplateSwitch({ projectId, canEdit }: Props) {
   return (
     <div className="dl-menu__note" data-docx-switch>
       <label className="dl-menu__note-label" htmlFor={`docx-template-${projectId}`}>
-        Оформление
+        {t('tpl.switchTitle')}
       </label>
       <select
         id={`docx-template-${projectId}`}
@@ -80,9 +82,7 @@ export function DocxTemplateSwitch({ projectId, canEdit }: Props) {
         value={active.id}
         disabled={!canEdit || busy || templates.length === 1}
         title={
-          canEdit
-            ? 'Каким шаблоном соберётся .docx'
-            : 'Оформление меняет редактор проекта'
+          canEdit ? t('tpl.switchHint') : t('tpl.switchReadonly')
         }
         onChange={(event) => void activate(event.target.value)}
         data-docx-switch-select

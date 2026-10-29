@@ -28,6 +28,9 @@ import {
 } from '../api/docxTemplates'
 import { useAuthStore } from '../store/auth'
 import { ErrorBanner } from '../components/ErrorBanner'
+import { formatBytes } from '../lib/format'
+import { useT, translate } from '../i18n'
+import { useLang, type Lang } from '../store/lang'
 import { DocxHelp } from '../components/docx/DocxHelp'
 import { craftsOf } from '../lib/crafts'
 
@@ -40,6 +43,8 @@ import { craftsOf } from '../lib/crafts'
  * добавить человека, не выходя со страницы проекта.
  */
 export function ProjectSettingsPage() {
+  const t = useT()
+  const [lang] = useLang()
   const params = useParams()
   const projectId = params.id ?? ''
   const me = useAuthStore((s) => s.user)
@@ -99,7 +104,7 @@ export function ProjectSettingsPage() {
     setBusy(userId)
     try {
       await addMember(projectId, userId, roles[userId] ?? 'editor')
-      setNote(`${name} добавлен в проект`)
+      setNote(t('set.memberAdded', { name }))
       await load()
     } catch (e) {
       setErr(e)
@@ -112,7 +117,7 @@ export function ProjectSettingsPage() {
     setBusy(userId)
     try {
       await removeMember(projectId, userId)
-      setNote(`${name} больше не участник проекта`)
+      setNote(t('set.memberRemoved', { name }))
       await load()
     } catch (e) {
       setErr(e)
@@ -137,24 +142,28 @@ export function ProjectSettingsPage() {
   return (
     <div style={{ maxWidth: 860, margin: '0 auto' }}>
       <div className="row" style={{ justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
-        <h2>{project?.title ?? 'Настройки проекта'}</h2>
+        <h2>{project?.title ?? t('set.title')}</h2>
         <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-          <Link to="/coauthors"><button className="secondary">Соавторы</button></Link>
-          <Link to={`/projects/${projectId}`}><button className="secondary">К таймлайну</button></Link>
+          <Link to="/coauthors"><button className="secondary">{t('set.coauthors')}</button></Link>
+          <Link to={`/projects/${projectId}`}>
+            <button className="secondary">{t('set.toTimeline')}</button>
+          </Link>
         </div>
       </div>
 
-      {err != null && <ErrorBanner error={err} what="Настройки проекта" onRetry={() => void load()} />}
+      {err != null && <ErrorBanner error={err} what={t('set.title')} onRetry={() => void load()} />}
       {note && (
         <div className="card pub-note">
           {note}
-          <button className="secondary" type="button" onClick={() => setNote(null)}>ок</button>
+          <button className="secondary" type="button" onClick={() => setNote(null)}>
+            {t('set.ok')}
+          </button>
         </div>
       )}
 
       <div className="card">
-        <h3 style={{ marginTop: 0 }}>Участники</h3>
-        {members.length === 0 && <p className="muted">Нет участников</p>}
+        <h3 style={{ marginTop: 0 }}>{t('set.members')}</h3>
+        {members.length === 0 && <p className="muted">{t('set.membersEmpty')}</p>}
         <div className="list">
           {members.map((m) => (
             <div key={m.user_id} className="row" style={{ justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
@@ -164,7 +173,7 @@ export function ProjectSettingsPage() {
                 <span className="muted"> {m.email}</span>
               </div>
               <div className="row" style={{ gap: 8, alignItems: 'center' }}>
-                <span className="muted">{roleLabel(m.role)}</span>
+                <span className="muted">{roleLabel(m.role, lang)}</span>
                 {isOwner && m.role !== 'owner' && (
                   <button
                     type="button"
@@ -172,7 +181,7 @@ export function ProjectSettingsPage() {
                     disabled={busy === m.user_id}
                     onClick={() => void onRemove(m.user_id, m.display_name ?? m.user_id)}
                   >
-                    убрать
+                    {t('set.remove')}
                   </button>
                 )}
               </div>
@@ -183,15 +192,14 @@ export function ProjectSettingsPage() {
 
       {isOwner && (
         <div className="card" data-coauthor-picker>
-          <h3 style={{ marginTop: 0 }}>Добавить соавтора</h3>
+          <h3 style={{ marginTop: 0 }}>{t('set.addCoauthor')}</h3>
           <p className="muted" style={{ marginTop: 0 }}>
-            Люди из вашего круга — специализации подсказывают, кому что поручить.
-            Кого нет в списке, найдите по нику ниже или позовите в соавторы на странице «Соавторы».
+            {t('set.addCoauthorHint')}
           </p>
           {coauthors.length === 0 && (
             <p className="muted">
-              Соавторов пока нет.{' '}
-              <Link to="/coauthors">Найти людей по нику →</Link>
+              {t('set.coauthorsEmpty')}{' '}
+              <Link to="/coauthors">{t('set.findPeopleLink')}</Link>
             </p>
           )}
           <div className="list">
@@ -204,7 +212,7 @@ export function ProjectSettingsPage() {
                     <strong>{link.other_display_name}</strong>
                     <span className="coauthors__nick"> @{link.other_username}</span>
                     <div className="coauthors__crafts">
-                      {crafts.length === 0 && <span className="muted">специализации не указаны</span>}
+                      {crafts.length === 0 && <span className="muted">{t('set.craftsEmpty')}</span>}
                       {crafts.map((craft) => (
                         <span key={craft} className="craft-chip">{craft}</span>
                       ))}
@@ -213,7 +221,9 @@ export function ProjectSettingsPage() {
                   <div className="row" style={{ gap: 8, alignItems: 'center' }}>
                     {member ? (
                       <>
-                        <span className="muted">в проекте: {roleLabel(member.role)}</span>
+                        <span className="muted">
+                          {t('set.inProjectRole', { role: roleLabel(member.role, lang) })}
+                        </span>
                         {member.role !== 'owner' && (
                           <button
                             type="button"
@@ -221,7 +231,7 @@ export function ProjectSettingsPage() {
                             disabled={busy === link.other_id}
                             onClick={() => void onRemove(link.other_id, link.other_display_name)}
                           >
-                            убрать
+                            {t('set.remove')}
                           </button>
                         )}
                       </>
@@ -229,7 +239,7 @@ export function ProjectSettingsPage() {
                       <>
                         <select
                           value={roles[link.other_id] ?? 'editor'}
-                          aria-label={`Роль для ${link.other_display_name}`}
+                          aria-label={t('set.roleAria', { name: link.other_display_name })}
                           onChange={(e) =>
                             setRoles((prev) => ({ ...prev, [link.other_id]: e.target.value as 'editor' | 'viewer' }))
                           }
@@ -238,15 +248,15 @@ export function ProjectSettingsPage() {
                             borderRadius: 6, padding: '8px 10px', minWidth: 130,
                           }}
                         >
-                          <option value="editor">редактор</option>
-                          <option value="viewer">наблюдатель</option>
+                          <option value="editor">{t('set.roleEditor')}</option>
+                          <option value="viewer">{t('set.roleViewer')}</option>
                         </select>
                         <button
                           type="button"
                           disabled={busy === link.other_id}
                           onClick={() => void onAdd(link.other_id, link.other_display_name)}
                         >
-                          {busy === link.other_id ? '…' : 'Добавить в проект'}
+                          {busy === link.other_id ? '…' : t('set.addToProject')}
                         </button>
                       </>
                     )}
@@ -257,12 +267,12 @@ export function ProjectSettingsPage() {
           </div>
 
           <div style={{ marginTop: 18 }}>
-            <h4 style={{ marginBottom: 6 }}>Найти по нику</h4>
+            <h4 style={{ marginBottom: 6 }}>{t('set.findByNick')}</h4>
             <div className="coauthors__search">
               <input
                 value={query}
-                placeholder="@nick или имя"
-                aria-label="Поиск людей по нику"
+                placeholder={t('set.nickPlaceholder')}
+                aria-label={t('set.nickAria')}
                 onChange={(e) => {
                   setQuery(e.target.value)
                   void runSearch(e.target.value)
@@ -271,7 +281,7 @@ export function ProjectSettingsPage() {
             </div>
             {found !== null && (
               <div className="coauthors__results" data-picker-results>
-                {found.length === 0 && <p className="muted">Никого не найдено.</p>}
+                {found.length === 0 && <p className="muted">{t('set.nobodyFound')}</p>}
                 {found.map((person) => (
                   <div key={person.id} className="coauthors__row">
                     <div className="coauthors__who">
@@ -279,12 +289,12 @@ export function ProjectSettingsPage() {
                       <span className="coauthors__nick">@{person.username}</span>
                     </div>
                     {memberIds.has(person.id) ? (
-                      <span className="muted">уже в проекте</span>
+                      <span className="muted">{t('set.alreadyIn')}</span>
                     ) : person.id === me?.id ? (
-                      <span className="muted">это вы</span>
+                      <span className="muted">{t('set.thatIsYou')}</span>
                     ) : (
                       <button type="button" disabled={busy === person.id} onClick={() => void onAdd(person.id, person.display_name)}>
-                        Добавить в проект
+                        {t('set.addToProject')}
                       </button>
                     )}
                   </div>
@@ -297,10 +307,9 @@ export function ProjectSettingsPage() {
 
       {isOwner && (
         <div className="card">
-          <h3 style={{ marginTop: 0 }}>Пригласить по email</h3>
+          <h3 style={{ marginTop: 0 }}>{t('set.inviteEmail')}</h3>
           <p className="muted" style={{ marginTop: 0 }}>
-            Для тех, кого нет в круге соавторов: приглашение придёт ссылкой, и человек
-            войдёт по ней сам.
+            {t('set.inviteHint')}
           </p>
           <form onSubmit={onInvite} className="row" style={{ alignItems: 'flex-end', flexWrap: 'wrap', gap: 12 }}>
             <div style={{ flex: '1 1 220px', minWidth: 200 }}>
@@ -314,7 +323,9 @@ export function ProjectSettingsPage() {
               />
             </div>
             <div>
-              <label className="muted" style={{ display: 'block', marginBottom: 4 }}>Роль</label>
+              <label className="muted" style={{ display: 'block', marginBottom: 4 }}>
+                {t('set.role')}
+              </label>
               <select
                 value={role}
                 onChange={(e) => setRole(e.target.value as 'editor' | 'viewer')}
@@ -324,15 +335,15 @@ export function ProjectSettingsPage() {
                   minWidth: 130,
                 }}
               >
-                <option value="editor">редактор</option>
-                <option value="viewer">наблюдатель</option>
+                <option value="editor">{t('set.roleEditor')}</option>
+                <option value="viewer">{t('set.roleViewer')}</option>
               </select>
             </div>
-            <button type="submit">Отправить</button>
+            <button type="submit">{t('set.send')}</button>
           </form>
           {lastInvite && (
             <div className="card" style={{ marginTop: 12 }}>
-              <p>Скопируйте и поделитесь этой ссылкой (одноразовая, {lastInvite.expires_at.slice(0, 10)}):</p>
+              <p>{t('set.inviteReady', { date: lastInvite.expires_at.slice(0, 10) })}</p>
               <code style={{ wordBreak: 'break-all', display: 'block', padding: 8, background: 'var(--bg)' }}>
                 {window.location.origin}/invitations/{lastInvite.token}
               </code>
@@ -357,6 +368,8 @@ export function ProjectSettingsPage() {
  * подставлять другой стиль нельзя.
  */
 function DocxTemplateCard({ projectId, onErr }: { projectId: string; onErr: (err: unknown) => void }) {
+  const t = useT()
+  const [lang] = useLang()
   const [templates, setTemplates] = useState<DocxTemplate[]>([])
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState<string | null>(null)
@@ -374,7 +387,7 @@ function DocxTemplateCard({ projectId, onErr }: { projectId: string; onErr: (err
     setNote(null)
     try {
       const name = await downloadDocxSample(projectId)
-      setNote(`Скачан пример «${name}» — откройте в Word и поменяйте оформление`)
+      setNote(t('set.docxSampleReady', { name }))
     } catch (e) {
       onErr(e)
     } finally {
@@ -401,8 +414,9 @@ function DocxTemplateCard({ projectId, onErr }: { projectId: string; onErr: (err
     try {
       const entry = await uploadDocxTemplate(projectId, file, name)
       setNote(
-        `Шаблон «${entry.name}» загружен` +
-          (entry.report.warnings?.length ? `, замечаний: ${entry.report.warnings.length}` : ''),
+        entry.report.warnings?.length
+          ? t('set.docxUploadedWarn', { name: entry.name, count: entry.report.warnings.length })
+          : t('set.docxUploaded', { name: entry.name }),
       )
       setFile(null)
       setName('')
@@ -420,7 +434,7 @@ function DocxTemplateCard({ projectId, onErr }: { projectId: string; onErr: (err
     try {
       const list = await activateDocxTemplate(projectId, id)
       setTemplates(list)
-      setNote('Активный шаблон переключён: DOCX будет собираться в нём')
+      setNote(t('set.docxActivated'))
     } catch (e) {
       onErr(e)
     } finally {
@@ -434,7 +448,7 @@ function DocxTemplateCard({ projectId, onErr }: { projectId: string; onErr: (err
     try {
       const list = await deleteDocxTemplate(projectId, id)
       setTemplates(list)
-      setNote(`Шаблон «${label}» удалён`)
+      setNote(t('set.docxDeleted', { name: label }))
     } catch (e) {
       onErr(e)
     } finally {
@@ -444,11 +458,11 @@ function DocxTemplateCard({ projectId, onErr }: { projectId: string; onErr: (err
 
   return (
     <div className="card" data-docx-templates>
-      <h3 style={{ marginTop: 0 }}>Оформление DOCX</h3>
+      <h3 style={{ marginTop: 0 }}>{t('set.docxTitle')}</h3>
       <p className="muted" style={{ marginTop: 0 }}>
-        Загрузите свой файл <b>.docx</b> — с титулом, колонтитулами, полями и стилями заголовков, — и
-        скачивание проекта соберётся в нём. В шаблоне нужен отдельный абзац <code>{'{{content}}'}</code>:
-        на его место встанет текст проекта. Без шаблона DOCX собирается встроенным оформлением.
+        {t('set.docxHint1')} <b>.docx</b> {t('set.docxHint2')}{' '}
+        <code>{'{{content}}'}</code>
+        {t('set.docxHint3')}
       </p>
       {/* Справка и пример (0.94.0): до этого «как сделать шаблон» нигде не было видно — человек
           видел только поле загрузки и не знал ни про плейсхолдер, ни про имена стилей. */}
@@ -459,7 +473,7 @@ function DocxTemplateCard({ projectId, onErr }: { projectId: string; onErr: (err
           onClick={() => setHelpOpen(true)}
           data-docx-help-open
         >
-          Как сделать шаблон
+          {t('set.docxHowTo')}
         </button>
         <button
           type="button"
@@ -468,20 +482,20 @@ function DocxTemplateCard({ projectId, onErr }: { projectId: string; onErr: (err
           onClick={() => void downloadSample()}
           data-docx-sample
         >
-          {sampleBusy ? 'Готовлю…' : 'Скачать пример .docx'}
+          {sampleBusy ? t('set.docxPreparing') : t('set.docxDownloadSample')}
         </button>
       </div>
       {helpOpen && <DocxHelp projectId={projectId} onClose={() => setHelpOpen(false)} />}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
         <div style={{ flex: '1 1 200px', minWidth: 160 }}>
           <label className="muted" style={{ display: 'block', marginBottom: 4 }}>
-            Название шаблона
+            {t('set.docxName')}
           </label>
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="рукопись, самиздат…"
-            aria-label="Название шаблона DOCX"
+            placeholder={t('set.docxNamePlaceholder')}
+            aria-label={t('set.docxNameAria')}
             data-docx-template-name
             maxLength={40}
           />
@@ -490,7 +504,7 @@ function DocxTemplateCard({ projectId, onErr }: { projectId: string; onErr: (err
           <input
             type="file"
             accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            aria-label="Файл шаблона DOCX"
+            aria-label={t('set.docxFileAria')}
             style={{ width: 'auto', flex: '0 0 auto' }}
             data-docx-template-file
             onChange={(e) => {
@@ -503,7 +517,7 @@ function DocxTemplateCard({ projectId, onErr }: { projectId: string; onErr: (err
           />
         </label>
         <button type="button" onClick={() => void upload()} disabled={busy || file === null} data-docx-template-upload>
-          {busy ? 'Загружаю…' : 'Загрузить шаблон'}
+          {busy ? t('set.docxUploading') : t('set.docxUpload')}
         </button>
       </div>
       {note && (
@@ -514,7 +528,7 @@ function DocxTemplateCard({ projectId, onErr }: { projectId: string; onErr: (err
 
       {templates.length === 0 ? (
         <p className="muted" data-docx-template-empty>
-          Шаблонов пока нет.
+          {t('set.docxNone')}
         </p>
       ) : (
         <ul className="docx-tpl" data-docx-template-list>
@@ -522,10 +536,10 @@ function DocxTemplateCard({ projectId, onErr }: { projectId: string; onErr: (err
             <li key={item.id} className="docx-tpl__item" data-docx-template={item.id}>
               <div className="docx-tpl__row">
                 <strong className="docx-tpl__name">{item.name}</strong>
-                {item.is_active && <span className="docx-tpl__active" data-docx-template-active>активный</span>}
+                {item.is_active && <span className="docx-tpl__active" data-docx-template-active>{t('set.docxActive')}</span>}
                 <span className="muted docx-tpl__meta">
-                  {item.filename} · {formatBytes(item.size)} · стилей{' '}
-                  {(item.report?.styles ?? item.styles).length}
+                  {item.filename} · {formatBytes(item.size, lang)}{' '}
+                  {t('set.docxStyles', { count: (item.report?.styles ?? item.styles).length })}
                 </span>
               </div>
               <div className="docx-tpl__actions">
@@ -537,7 +551,7 @@ function DocxTemplateCard({ projectId, onErr }: { projectId: string; onErr: (err
                     disabled={busy}
                     data-docx-template-activate
                   >
-                    Сделать активным
+                    {t('set.docxActivate')}
                   </button>
                 )}
                 <button
@@ -547,7 +561,7 @@ function DocxTemplateCard({ projectId, onErr }: { projectId: string; onErr: (err
                   aria-expanded={openReport === item.id}
                   data-docx-template-report-toggle
                 >
-                  {openReport === item.id ? 'Скрыть отчёт' : 'Отчёт'}
+                  {openReport === item.id ? t('set.docxHideReport') : t('set.docxReport')}
                 </button>
                 <button
                   type="button"
@@ -556,27 +570,29 @@ function DocxTemplateCard({ projectId, onErr }: { projectId: string; onErr: (err
                   disabled={busy}
                   data-docx-template-delete
                 >
-                  Удалить
+                  {t('set.docxDelete')}
                 </button>
               </div>
               {openReport === item.id && (
                 <div className="docx-tpl__report" data-docx-template-report>
                   <p className="muted" style={{ margin: 0 }}>
                     {item.report.has_placeholder
-                      ? 'плейсхолдер найден'
-                      : 'плейсхолдера нет — шаблон не применится'}
-                    {item.page.orientation ? ` · страница: ${item.page.orientation}` : ''}
+                      ? t('set.docxPlaceholderOk')
+                      : t('set.docxPlaceholderMissing')}
+                    {item.page.orientation
+                      ? t('set.docxPage', { orientation: item.page.orientation })
+                      : ''}
                   </p>
-                  {mappingRows(item.report).length > 0 && (
+                  {mappingRows(item.report, lang).length > 0 && (
                     <table className="docx-tpl__mapping">
                       <thead>
                         <tr>
-                          <th scope="col">Что в проекте</th>
-                          <th scope="col">Стиль шаблона</th>
+                          <th scope="col">{t('set.docxWhatInProject')}</th>
+                          <th scope="col">{t('set.docxTemplateStyle')}</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {mappingRows(item.report).map((row) => (
+                        {mappingRows(item.report, lang).map((row) => (
                           <tr key={row.key}>
                             <td>{row.label}</td>
                             <td>
@@ -604,13 +620,6 @@ function DocxTemplateCard({ projectId, onErr }: { projectId: string; onErr: (err
   )
 }
 
-/** Размер файла словами: 1.4 МБ, 240 КБ. */
-function formatBytes(size: number): string {
-  if (size >= 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(1)} МБ`
-  if (size >= 1024) return `${Math.round(size / 1024)} КБ`
-  return `${size} Б`
-}
-
 /**
  * Шаблон проекта (0.85.0, docs/entity-types.md §3).
  *
@@ -630,6 +639,8 @@ function ProjectTemplateCard({
   projectTitle: string
   onErr: (err: unknown) => void
 }) {
+  const t = useT()
+  const [lang] = useLang()
   const [projects, setProjects] = useState<Project[]>([])
   const [sourceId, setSourceId] = useState('')
   const [withCards, setWithCards] = useState(true)
@@ -658,8 +669,10 @@ function ProjectTemplateCard({
       link.click()
       URL.revokeObjectURL(url)
       setNote(
-        `Шаблон сохранён: типов ${template.entity_types.length}` +
-          (withCards ? `, карточек ${template.cards?.length ?? 0}` : ', без карточек'),
+        t('set.tplSaved', { types: template.entity_types.length }) +
+          (withCards
+            ? t('set.tplSavedCards', { cards: template.cards?.length ?? 0 })
+            : t('set.tplSavedNoCards')),
       )
     } catch (e) {
       onErr(e)
@@ -691,7 +704,7 @@ function ProjectTemplateCard({
       setReport(await applyProjectTemplate(projectId, template))
     } catch (e) {
       setReport(null)
-      setNote(e instanceof Error ? e.message : 'Не удалось прочитать шаблон.')
+      setNote(e instanceof Error ? e.message : t('set.tplReadFailed'))
     } finally {
       setBusy(false)
     }
@@ -699,12 +712,10 @@ function ProjectTemplateCard({
 
   return (
     <div className="card" data-project-template>
-      <h3 style={{ marginTop: 0 }}>Шаблон проекта</h3>
+      <h3 style={{ marginTop: 0 }}>{t('set.tplTitle')}</h3>
       <p className="muted" style={{ marginTop: 0 }}>
-        Устройство проекта: типы карточек с заготовками, карточки и настройки помощника — роль,
-        указания, режим генерации, стиль. Кадры и текст не переносятся: для них есть архив.
-        Применение — <b>слияние</b>: типы с теми же ключами обновляются, новые добавляются,
-        карточки с занятыми именами пропускаются. Ничего не удаляется.
+        {t('set.tplHint1')} <b>{t('set.tplMerge')}</b>
+        {t('set.tplHint2')}
       </p>
       {/* Строки идут столбиком, а не полосой `.row`: у `.row` `justify-content: space-between`,
           и подпись галочки уезжала к правому краю, а «или файлом» ломалось на два слова. */}
@@ -718,28 +729,28 @@ function ProjectTemplateCard({
           style={{ width: 'auto', flex: '0 0 auto', margin: 0 }}
           data-template-with-cards
         />
-        <span>вместе с карточками (персонажи, места, темы)</span>
+        <span>{t('set.tplWithCards')}</span>
       </label>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: 16 }}>
         <button type="button" className="secondary" onClick={() => void download()} disabled={busy} data-template-download>
-          {busy ? 'Готовлю…' : 'Скачать шаблон'}
+          {busy ? t('set.docxPreparing') : t('set.tplDownload')}
         </button>
         <span className="muted" style={{ fontSize: 12 }}>
-          тот же файл лежит в архиве проекта как template.json
+          {t('set.tplArchived')}
         </span>
       </div>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
         <div style={{ flex: '1 1 240px', minWidth: 200 }}>
           <label className="muted" style={{ display: 'block', marginBottom: 4 }}>
-            Применить шаблон из моего проекта
+            {t('set.tplApplyFromProject')}
           </label>
           <select
             value={sourceId}
             onChange={(e) => setSourceId(e.target.value)}
-            aria-label="Проект-образец"
+            aria-label={t('set.tplSourceAria')}
             data-template-source
           >
-            <option value="">— выберите проект —</option>
+            <option value="">{t('set.tplChoose')}</option>
             {projects.map((item) => (
               <option key={item.id} value={item.id}>
                 {item.title}
@@ -748,14 +759,16 @@ function ProjectTemplateCard({
           </select>
         </div>
         <button type="button" onClick={() => void applyFromProject()} disabled={busy || sourceId === ''} data-template-apply-project>
-          Применить
+          {t('set.tplApply')}
         </button>
         <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-          <span className="muted" style={{ whiteSpace: 'nowrap' }}>или файлом</span>
+          <span className="muted" style={{ whiteSpace: 'nowrap' }}>
+            {t('set.tplOrFile')}
+          </span>
           <input
             type="file"
             accept="application/json,.json"
-            aria-label="Файл шаблона"
+            aria-label={t('set.tplFileAria')}
             style={{ width: 'auto', flex: '0 0 auto' }}
             data-template-file
             onChange={(e) => {
@@ -776,7 +789,7 @@ function ProjectTemplateCard({
           <p style={{ marginTop: 0 }}>{report.message}</p>
           {report.changed === 0 && (
             <p className="muted" style={{ margin: 0 }}>
-              Повторное применение того же шаблона ничего не меняет — это ожидаемо.
+              {t('set.tplRepeat')}
             </p>
           )}
           {[...(report.types_skipped ?? []), ...(report.cards_skipped ?? [])].length > 0 && (
@@ -794,14 +807,19 @@ function ProjectTemplateCard({
   )
 }
 
-/** Роли называем по-русски: owner/editor/viewer в интерфейсе ничего не говорят. */
-function roleLabel(role: TeamMember['role']): string {
+/**
+ * Роли называем словами: owner/editor/viewer в интерфейсе ничего не говорят.
+ *
+ * Язык — параметром (0.124.0), по умолчанию русский: подпись собирается здесь, а не в JSX,
+ * поэтому английский интерфейс передаёт свой язык явно.
+ */
+function roleLabel(role: TeamMember['role'], lang: Lang = 'ru'): string {
   switch (role) {
     case 'owner':
-      return 'владелец'
+      return translate(lang, 'set.roleOwner')
     case 'editor':
-      return 'редактор'
+      return translate(lang, 'set.roleEditor')
     default:
-      return 'наблюдатель — только чтение'
+      return translate(lang, 'set.roleViewerReadonly')
   }
 }

@@ -1,4 +1,5 @@
 import { http } from './client'
+import { tStatic } from '../i18n'
 
 /**
  * Шаблон проекта (0.85.0, docs/entity-types.md §3–4).
@@ -82,7 +83,7 @@ export async function applyProjectTemplate(
     .post(`projects/${projectId}/template`, { json: template })
     .json<{ report?: unknown }>()
   const report = readReport(raw?.report)
-  if (report === null) throw new Error('сервер не вернул отчёт применения шаблона')
+  if (report === null) throw new Error(tStatic('tpl.errNoReport'))
   return report
 }
 
@@ -104,7 +105,7 @@ export async function createProjectFromTemplate(input: {
   const project = raw?.project as Record<string, unknown> | undefined
   const report = readReport(raw?.report)
   if (!project || typeof project.id !== 'string' || report === null) {
-    throw new Error('сервер не вернул проект, созданный по шаблону')
+    throw new Error(tStatic('tpl.errNoProject'))
   }
   return {
     project: { id: project.id, title: typeof project.title === 'string' ? project.title : input.title },
@@ -123,14 +124,14 @@ export function parseTemplate(text: string): ProjectTemplate {
   try {
     raw = JSON.parse(text)
   } catch {
-    throw new Error('файл не похож на JSON — это точно шаблон?')
+    throw new Error(tStatic('tpl.errNotJson'))
   }
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
-    throw new Error('в файле нет шаблона')
+    throw new Error(tStatic('tpl.errNoTemplateInFile'))
   }
   const record = raw as Record<string, unknown>
   if (!Array.isArray(record.entity_types)) {
-    throw new Error('в файле нет списка типов — это не шаблон SkyFraze')
+    throw new Error(tStatic('tpl.errNoTypes'))
   }
   return readTemplate(raw)
 }
@@ -146,7 +147,7 @@ export function templateFileName(title: string): string {
 }
 
 function readTemplate(raw: unknown): ProjectTemplate {
-  if (typeof raw !== 'object' || raw === null) throw new Error('шаблон не разобран')
+  if (typeof raw !== 'object' || raw === null) throw new Error(tStatic('tpl.errUnparsed'))
   const record = raw as Record<string, unknown>
   const rawTypes = Array.isArray(record.entity_types) ? record.entity_types : []
   const rawCards = Array.isArray(record.cards) ? record.cards : []

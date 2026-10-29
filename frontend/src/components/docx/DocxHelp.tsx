@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { downloadDocxSample } from '../../api/docxTemplates'
+import { useT, type Key } from '../../i18n'
 
 /**
  * Справка «Как сделать шаблон оформления DOCX» (0.94.0).
@@ -19,27 +20,28 @@ interface Props {
   onClose: () => void
 }
 
-/** Что берётся из текста кадров при сборке документа. */
-const FROM_TEXT: Array<{ what: string; how: string }> = [
-  { what: 'Главы и под-события', how: 'заголовком по глубине: глава — уровень 1, под-событие — 2, глубже — 3 и 4' },
-  { what: 'Дата кадра', how: 'строкой «12 марта 2026» стилем даты — если дата заполнена' },
-  { what: 'Абзацы', how: 'обычным текстом шаблона: шрифт и отступ берутся из абзаца `{{content}}`' },
-  { what: 'Цитаты (`> …`)', how: 'стилем цитаты' },
-  { what: 'Блоки кода (```)', how: 'стилем кода, моноширинным' },
-  { what: 'Списки (`- `, `1. `)', how: 'абзацами списка; вложенные — с отступом' },
-  { what: 'Таблицы', how: 'строками через ` | `, первая строка — жирная' },
-  { what: 'Картинки кадра', how: 'встроенными объектами, не шире 6 дюймов' },
+/** Что берётся из текста кадров при сборке документа: подписи — ключи словаря. */
+const FROM_TEXT: Array<{ what: Key; how: Key }> = [
+  { what: 'dh.rowChapters', how: 'dh.rowChaptersHow' },
+  { what: 'dh.rowDate', how: 'dh.rowDateHow' },
+  { what: 'dh.rowParagraphs', how: 'dh.rowParagraphsHow' },
+  { what: 'dh.rowQuotes', how: 'dh.rowQuotesHow' },
+  { what: 'dh.rowCode', how: 'dh.rowCodeHow' },
+  { what: 'dh.rowLists', how: 'dh.rowListsHow' },
+  { what: 'dh.rowTables', how: 'dh.rowTablesHow' },
+  { what: 'dh.rowImages', how: 'dh.rowImagesHow' },
 ]
 
 /** Маркеры — строки, которые понимает только DOCX. */
-const MARKERS: Array<{ marker: string; what: string }> = [
-  { marker: '<!-- sf:pagebreak -->', what: 'начать новый лист' },
-  { marker: '<!-- sf:toc -->', what: 'поле оглавления Word (обновится в Word по F9)' },
-  { marker: '<!-- sf:style=Имя -->', what: 'текст ниже — этим стилем шаблона' },
-  { marker: '<!-- sf:begin=Имя --> … <!-- sf:end -->', what: 'кусок целиком этим стилем' },
+const MARKERS: Array<{ marker: string; what: Key }> = [
+  { marker: '<!-- sf:pagebreak -->', what: 'dh.markerPagebreak' },
+  { marker: '<!-- sf:toc -->', what: 'dh.markerToc' },
+  { marker: '<!-- sf:style=Имя -->', what: 'dh.markerStyle' },
+  { marker: '<!-- sf:begin=Имя --> … <!-- sf:end -->', what: 'dh.markerBegin' },
 ]
 
 export function DocxHelp({ projectId, onClose }: Props) {
+  const t = useT()
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState<string | null>(null)
 
@@ -57,36 +59,42 @@ export function DocxHelp({ projectId, onClose }: Props) {
     setNote(null)
     try {
       const name = await downloadDocxSample(projectId)
-      setNote(`Скачан «${name}» — откройте в Word и поменяйте оформление.`)
+      setNote(t('dh.sampleReady', { name }))
     } catch {
-      setNote('Не удалось скачать пример — проверьте права в проекте.')
+      setNote(t('dh.sampleFailed'))
     } finally {
       setBusy(false)
     }
   }
 
   return (
-    <div className="docx-help" role="dialog" aria-modal="true" aria-label="Справка по шаблону DOCX" data-docx-help>
+    <div
+      className="docx-help"
+      role="dialog"
+      aria-modal="true"
+      aria-label={t('dh.aria')}
+      data-docx-help
+    >
       <div className="docx-help__window">
         <header className="docx-help__head">
-          <strong>Как сделать шаблон оформления DOCX</strong>
-          <button type="button" className="secondary" onClick={onClose} aria-label="Закрыть справку">
-            закрыть ✕
+          <strong>{t('dh.title')}</strong>
+          <button type="button" className="secondary" onClick={onClose} aria-label={t('dh.closeAria')}>
+            {t('dh.close')}
           </button>
         </header>
 
         <div className="docx-help__body">
           <section>
-            <h3>1. Скачайте пример и откройте в Word</h3>
+            <h3>{t('dh.step1')}</h3>
             <p>
-              В примере уже есть всё, что нужно: титул, колонтитул, стили и абзац{' '}
-              <code>{'{{content}}'}</code>. Меняйте шрифты, поля, титул и колонтитул — как в обычном
-              документе.
+              {t('dh.step1Hint1')}{' '}
+              <code>{'{{content}}'}</code>
+              {t('dh.step1Hint2')}
             </p>
             {projectId && (
               <p>
                 <button type="button" onClick={() => void download()} disabled={busy} data-docx-help-sample>
-                  {busy ? 'Готовлю…' : 'Скачать пример .docx'}
+                  {busy ? t('dh.preparing') : t('dh.downloadSample')}
                 </button>
               </p>
             )}
@@ -94,50 +102,52 @@ export function DocxHelp({ projectId, onClose }: Props) {
           </section>
 
           <section>
-            <h3>2. Оставьте абзац {'{{content}}'} отдельной строкой</h3>
+            <h3>{t('dh.step2', { placeholder: '{{content}}' })}</h3>
             <p>
-              Именно на его место встанет текст проекта. Без этого абзаца шаблон не принимается:
-              вставлять текст было бы некуда. Если хотите, чтобы обычный текст был вашим шрифтом и с
-              отступом — оформите абзац с <code>{'{{content}}'}</code> так, как нужен текст: его
-              свойства абзаца переносятся на все абзацы книги.
+              {t('dh.step2Hint1')} <code>{'{{content}}'}</code> {t('dh.step2Hint2')}
             </p>
           </section>
 
           <section>
-            <h3>3. Назовите стили так, как их ищет программа</h3>
+            <h3>{t('dh.step3')}</h3>
             <p>
-              Стили можно переименовать и оформить как угодно, главное — имена (или их русские
-              варианты):
+              {t('dh.step3Hint')}
             </p>
             <ul className="docx-help__list">
-              <li><b>Title</b> («Заголовок») — название проекта</li>
-              <li><b>Heading1–Heading4</b> («Заголовок 1»…«Заголовок 4») — главы и под-события</li>
-              <li><b>Quote</b> («Цитата»), <b>Code</b> («Код»), <b>Date</b> («Дата»)</li>
-              <li><b>ListParagraph</b> («Список») — пункты списков</li>
+              <li>
+                <b>Title</b>{t('dh.styleTitleParen')} — {t('dh.styleTitleWhat')}
+              </li>
+              <li>
+                <b>Heading1–Heading4</b>{t('dh.styleHeadingsParen')} — {t('dh.styleHeadingsWhat')}
+              </li>
+              <li>
+                <b>Quote</b>{t('dh.styleQuoteParen')}, <b>Code</b>{t('dh.styleCodeParen')},{' '}
+                <b>Date</b>{t('dh.styleDateParen')}
+              </li>
+              <li>
+                <b>ListParagraph</b>{t('dh.styleListParen')} — {t('dh.styleListWhat')}
+              </li>
             </ul>
             <p>
-              Чего в шаблоне нет, то выгрузится обычным текстом — и это будет написано в отчёте
-              после загрузки, с предупреждением по каждому несовпадению.
+              {t('dh.step3Fallback')}
             </p>
           </section>
 
           <section>
-            <h3>4. Загрузите шаблон в настройках проекта</h3>
+            <h3>{t('dh.step4')}</h3>
             <p>
-              «Оформление DOCX» → выбрать файл и имя («рукопись», «самиздат»). Загружать и
-              переключать шаблон может владелец проекта, читать отчёт — редактор. Активный шаблон
-              применяется при скачивании: «Книга» → «Скачать .docx».
+              {t('dh.step4Hint')}
             </p>
           </section>
 
           <section>
-            <h3>Что берётся из текста</h3>
+            <h3>{t('dh.fromText')}</h3>
             <table className="docx-help__table">
               <tbody>
                 {FROM_TEXT.map((row) => (
                   <tr key={row.what}>
-                    <th scope="row">{row.what}</th>
-                    <td>{row.how}</td>
+                    <th scope="row">{t(row.what)}</th>
+                    <td>{t(row.how)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -145,18 +155,18 @@ export function DocxHelp({ projectId, onClose }: Props) {
           </section>
 
           <section>
-            <h3>Маркеры: то, чего Markdown не умеет</h3>
+            <h3>{t('dh.markers')}</h3>
             <p>
-              Служебные строки в тексте кадра. Их понимает только скачивание в .docx: в показе
-              проекта и в поиске они не видны. Ставятся панелью «Разметка DOCX» в редакторе или
-              вручную — но обязательно отдельной строкой и не внутри блоков кода.
+              {t('dh.markersHint')}
             </p>
             <table className="docx-help__table">
               <tbody>
                 {MARKERS.map((row) => (
                   <tr key={row.marker}>
-                    <th scope="row"><code>{row.marker}</code></th>
-                    <td>{row.what}</td>
+                    <th scope="row">
+                      <code>{row.marker}</code>
+                    </th>
+                    <td>{t(row.what)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -164,12 +174,12 @@ export function DocxHelp({ projectId, onClose }: Props) {
           </section>
 
           <section>
-            <h3>Чего шаблон не делает</h3>
+            <h3>{t('dh.notDoing')}</h3>
             <ul className="docx-help__list">
-              <li>не переносит текст в колонки, надписи и фигуры — они остаются на титуле и в колонтитулах;</li>
-              <li>не встраивает шрифты в файл: Word подставит свой, если у читателя шрифта нет;</li>
-              <li>не обновляет оглавление само — это делает Word при открытии (F9);</li>
-              <li>не переносит правки обратно в проект: правка рукописи в Word в проект не вернётся.</li>
+              <li>{t('dh.notDoing1')}</li>
+              <li>{t('dh.notDoing2')}</li>
+              <li>{t('dh.notDoing3')}</li>
+              <li>{t('dh.notDoing4')}</li>
             </ul>
           </section>
         </div>

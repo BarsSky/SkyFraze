@@ -55,4 +55,21 @@ describe('importWeight', () => {
     const note = importWeight({ attachments: 1, attachmentBytes: mb(0.5) }, mb(10), mb(7.7))
     expect(note?.warning).toContain('место почти закончится')
   })
+
+  /**
+   * 0.124.0: подписи — из словаря, язык параметром (по умолчанию русский, поэтому проверки выше
+   * не тронуты). Единицы веса тоже переводятся: «МБ» → «MB».
+   */
+  it('на английском подписи и единицы веса переведены', () => {
+    const fits = importWeight({ attachments: 3, attachmentBytes: mb(4) }, mb(10), mb(0), 'en')
+    expect(fits?.text).toBe('attachments: 3 · 4.0 MB')
+    expect(fits?.warning).toBeNull()
+
+    const over = importWeight({ attachments: 40, attachmentBytes: mb(24) }, mb(10), mb(0), 'en')
+    expect(over?.warning).toContain('will not fit')
+    expect(over?.warning).toContain('24.0 MB')
+
+    const almost = importWeight({ attachments: 1, attachmentBytes: mb(0.5) }, mb(10), mb(7.7), 'en')
+    expect(almost?.warning).toContain('space will almost run out')
+  })
 })
