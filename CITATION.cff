@@ -1,0 +1,32 @@
+# CITATION.cff — как ссылаться на SkyFraze.
+#
+# GitHub читает этот файл и показывает кнопку «Cite this repository» на странице проекта.
+# Так у проекта появляется машинночитаемая запись об авторстве с датой — в дополнение к
+# публичной истории и релизам (см. PROVENANCE.md).
+cff-version: 1.2.0
+title: SkyFraze
+message: >-
+  Если вы используете SkyFraze в работе, исследовании или методичке, сошлитесь на этот
+  репозиторий. If you use SkyFraze in your work, please cite this repository.
+type: software
+authors:
+  - name: "SkyFraze contributors"
+    website: "https://github.com/BarsSky/SkyFraze"
+repository-code: "https://github.com/BarsSky/SkyFraze"
+url: "https://github.com/BarsSky/SkyFraze"
+license: Apache-2.0
+keywords:
+  - scrollytelling
+  - storytelling
+  - screenwriting
+  - collaboration
+  - crdt
+  - yjs
+  - go
+  - react
+abstract: >-
+  SkyFraze — веб-платформа для совместной разработки сюжетов: проект разбит на главы и
+  под-события, каждое показывается кадром сценического таймлайна, правки синхронизируются по
+  Yjs/CRDT, история проекта публикуется лентой. / SkyFraze is a collaborative story-development
+  platform: a project is split into chapters and sub-events, each shown as a frame of a staged
+  timeline, edits sync over Yjs/CRDT, and the finished story can be published as a public feed.

@@ -1,5 +1,14 @@
 # Полные тексты сторонних лицензий
 
+> **English summary.** Full license texts for the third-party components that ship with SkyFraze:
+> `EPL-2.0.txt` (elkjs, bundled into the client build), `LGPL-3.0.txt` (`libheif-tools` inside the
+> backend image), `go-modules.txt` (every Go module of the build list, with its license text and
+> copyright lines) and `npm-packages.txt` (every frontend dependency plus elkjs). Apache-2.0 is not
+> duplicated here — the full text is the root `LICENSE`, which ships with the product in every
+> delivery form. `LGPL-3.0` incorporates `GPL-3.0` by reference; where to get the GPL-3.0 text is
+> explained below. Ship `LICENSE`, `NOTICE`, `THIRD-PARTY-NOTICES.md` and this directory whenever you
+> distribute the product.
+
 Каталог для того, кто распространяет SkyFraze (исходники, бинарь бэкенда, Docker-образ):
 здесь лежат полные тексты лицензий тех сторонних компонентов, которые попадают в продукт.
 Сводка «что откуда взялось и что приложить при раздаче» — в

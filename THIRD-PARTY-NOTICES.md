@@ -1,5 +1,14 @@
 # Сторонние компоненты и их лицензии
 
+> **English summary.** This file lists every third-party component that ends up in the product
+> (backend binary, client bundle, Docker image) together with its license, and three items that are
+> easy to lose when building an image: `elkjs` (EPL-2.0) in the client bundle, `libheif-tools`
+> (LGPL-3.0) inside the backend image, and development-only packages under Apache-2.0. The tables
+> below are language-neutral; the explanations are in Russian. Project rule: new dependencies are
+> permissive-licensed only (MIT, BSD, Apache-2.0); copyleft in the product runtime requires an
+> explicit decision recorded in `CHANGELOG.md`. When you distribute a build, ship `LICENSE`,
+> `NOTICE`, this file and the full texts from [`licenses/`](licenses/README.md).
+
 Собрано 2026-10-29 лицензионным аудитом (проверялись `backend/go.mod`, `go.sum`,
 `frontend/package.json` и `node_modules`, кеш модулей Go, сабмодули, содержимое `frontend/dist`).
 Пересобирать этот файл стоит при добавлении зависимости, попадающей в продукт.

@@ -1,4 +1,35 @@
-SkyFraze
+SkyFraze™
+Copyright 2026 SkyFraze contributors
+
+This product is licensed under the Apache License, Version 2.0
+(the full text is in the LICENSE file at the repository root).
+
+When you distribute this product — as source code, as a binary or as a Docker
+image — include three files: LICENSE, NOTICE and THIRD-PARTY-NOTICES.md.
+
+Third-party components and their licenses are listed in THIRD-PARTY-NOTICES.md.
+Three of them are easy to lose when building an image, so they are repeated
+here:
+
+  * elkjs (EPL-2.0) is bundled into the client build (mermaid → elkjs). When you
+    serve the frontend, ship the EPL-2.0 text and a way to obtain the elkjs
+    source — links are in THIRD-PARTY-NOTICES.md;
+  * libheif-tools (LGPL-3.0) is installed into the backend image and invoked as a
+    separate process (heif-convert). Ship its license text and keep the package
+    replaceable (it is not compiled into the binary);
+  * @playwright/test and TypeScript (Apache-2.0) are development-only and are not
+    part of the product, but their notices are kept in THIRD-PARTY-NOTICES.md.
+
+The SkyFraze name and logo are not covered by the license (Apache-2.0, section 6):
+they may not be used in the name of your product or fork.
+
+The canonical source of the project, its first publication date and how to verify
+authenticity are described in PROVENANCE.md. Contributing rules are in
+CONTRIBUTING.en.md (English) and CONTRIBUTING.md (Russian).
+
+────────────────────────────────────────────────────────────────────────────
+
+SkyFraze™
 Copyright 2026 SkyFraze contributors
 
 Этот продукт распространяется по лицензии Apache License, Version 2.0
@@ -22,3 +53,7 @@ Docker-образ — приложите три файла: LICENSE, NOTICE и T
 
 Название и логотип SkyFraze лицензией не покрываются (раздел 6 Apache-2.0):
 использовать их в названии своего продукта или форка нельзя.
+
+Канонический источник проекта, дата первой публикации и способ проверить
+подлинность описаны в PROVENANCE.md. Правила для вкладов — в CONTRIBUTING.md
+(русский) и CONTRIBUTING.en.md (английский).
