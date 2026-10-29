@@ -25,9 +25,12 @@ name: nightly
 
 on:
   schedule:
-    # 03:17 UTC — не на круглом часе: в это время очередь GitHub свободнее, а сдвиг в 17 минут
-    # не совпадает с часовыми поясами, в которых кто-то ждёт сборку.
-    - cron: '17 3 * * *'
+    # 01:00 МСК (22:00 UTC предыдущего дня). Раньше стояло 03:17 UTC — 06:17 МСК, то есть к утру
+    # результат уже был не нужен: к этому времени начинается работа, а ночной прогон считался
+    # «вчерашним». Теперь к началу дня есть готовый отчёт, и есть время на правку до следующей
+    # ночи. Минуты ровные намеренно: GitHub всё равно добавляет задержку очереди (обычно до
+    # 15 минут), и сдвиг «на 17 минут» от круглого часа эту задержку не обманывает.
+    - cron: '0 22 * * *'
   workflow_dispatch:
 
 concurrency:
@@ -170,7 +173,7 @@ jobs:
           # экранов пропал бы). Переменную экспортируем в этом же шелле: запись в $GITHUB_ENV
           # подействовала бы только на СЛЕДУЮЩИЙ шаг.
           export ONLY_SCREENS=1
-          npx tsx ../.dsh/skills/ui-visual-audit/scripts/visual-audit.ts | tee /tmp/audit.log
+          npx tsx tests/audit/visual-audit.ts | tee /tmp/audit.log
           grep -E 'ИТОГ' /tmp/audit.log || true
 
       - name: функциональная матрица
@@ -183,7 +186,7 @@ jobs:
           cd frontend
           export ONLY_FUNCTIONAL=1
           export AUDIT_OUT="$GITHUB_WORKSPACE/_audit_out-functional"
-          npx tsx ../.dsh/skills/ui-visual-audit/scripts/visual-audit.ts | tee -a /tmp/audit.log
+          npx tsx tests/audit/visual-audit.ts | tee -a /tmp/audit.log
           grep -E 'ИТОГ' /tmp/audit.log || true
 
       - name: отчёт аудита

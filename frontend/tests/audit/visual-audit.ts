@@ -1,5 +1,5 @@
 /**
- * ui-visual-audit — раннер проверки панели SkyFraze.
+ * visual-audit — раннер проверки панели SkyFraze (`frontend/tests/audit/`).
  *
  * Две части:
  *   1) ВИЗУАЛ: проходит экраны во всех вьюпортах и темах, снимает скриншоты и
@@ -9,8 +9,13 @@
  *      ассеты, темы, роли/приглашения, realtime CRDT) и проверяет результат.
  *
  * Запуск (из каталога frontend):
- *   npx tsx ../.dsh/skills/ui-visual-audit/scripts/visual-audit.ts
+ *   npx tsx tests/audit/visual-audit.ts
  *   ONLY_SCREENS=1 …   ONLY_FUNCTIONAL=1 …
+ *
+ * Раньше файл лежал в каталоге скилла (`.dsh/skills/ui-visual-audit/scripts/`). Скилл — это
+ * инструкция для агента, а раннер гоняют и `nightly.yml`, и человек руками; в каталоге скилла он
+ * был чужеродным телом, назначение которого из пути не следует. Теперь он рядом с
+ * `seed-project.ts` — скриптом, который готовит для него данные (0.110.0).
  *
  * Результат: _audit_out/visual-report.md, _audit_out/visual-report.json, скриншоты.
  * Код выхода 1, если есть findings уровня error.
@@ -22,8 +27,8 @@ import * as path from 'path'
 import { pathToFileURL } from 'url'
 
 /**
- * Playwright живёт в frontend/node_modules, а скрипт — в скилле вне проекта,
- * поэтому подгружаем модуль по абсолютному пути (запускать из каталога frontend).
+ * Playwright живёт в `frontend/node_modules`; скрипт запускают из каталога `frontend`, поэтому
+ * сначала пробуем обычное разрешение, а абсолютные пути остаются запасными (CI, чужой стенд).
  */
 async function loadPlaywright(): Promise<typeof import('playwright')> {
   const candidates = [
@@ -1696,7 +1701,7 @@ async function main() {
         viewport: 'desktop',
         check: 'функциональная матрица прервалась',
         detail: e instanceof Error ? e.message : String(e),
-        where: '.dsh/skills/ui-visual-audit/scripts/visual-audit.ts — functional()',
+        where: 'frontend/tests/audit/visual-audit.ts — functional()',
       })
     }
   }

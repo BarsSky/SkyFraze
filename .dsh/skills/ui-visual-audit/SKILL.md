@@ -32,17 +32,19 @@ whenToUse: >
 1. **Стенд должен быть поднят.** `docker compose up -d` (frontend :80, backend, postgres).
    Если что-то пересобиралось — проверь, что браузер не держит старый бандл:
    `curl -sD - -o NUL http://localhost/index.html | grep -i cache-control` → должен быть `no-store`.
-2. **Запусти раннер** (Playwright уже есть во фронтенде):
+2. **Запусти раннер** (Playwright уже есть во фронтенде). Сам раннер живёт в проекте, рядом с
+   данными для него, — `frontend/tests/audit/visual-audit.ts` (0.110.0; до этого лежал в каталоге
+   этого скилла, что путало: его гоняет и CI, и человек):
 
    ```bash
    cd frontend
-   npx tsx ../.dsh/skills/ui-visual-audit/scripts/visual-audit.ts            # всё
-   ONLY_SCREENS=1 npx tsx ../.dsh/skills/ui-visual-audit/scripts/visual-audit.ts   # только визуал
-   ONLY_FUNCTIONAL=1 npx tsx ../.dsh/skills/ui-visual-audit/scripts/visual-audit.ts # только функции
+   npx tsx tests/audit/visual-audit.ts            # всё
+   ONLY_SCREENS=1 npx tsx tests/audit/visual-audit.ts    # только визуал
+   ONLY_FUNCTIONAL=1 npx tsx tests/audit/visual-audit.ts # только функции
 
    # Обязательный дополнительный прогон: тот же стенд по IP (незащищённый контекст,
    # как на телефоне). Ловит отсутствие crypto.randomUUID / navigator.clipboard.
-   BASE_URL=http://192.168.13.20 npx tsx ../.dsh/skills/ui-visual-audit/scripts/visual-audit.ts
+   BASE_URL=http://192.168.13.20 npx tsx tests/audit/visual-audit.ts
    ```
    Отчёт: `_audit_out/visual-report.md`, `_audit_out/visual-report.json`, скриншоты рядом.
 3. **Читай отчёт сверху вниз** — находки отсортированы по важности:
