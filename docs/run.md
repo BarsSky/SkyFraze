@@ -417,7 +417,7 @@ SkyFraze/
 │   │   ├── collab/               Yjs provider, дерево событий, поиск упоминаний
 │   │   ├── store/                Zustand auth + тема
 │   │   └── api/                  REST + WS клиенты (в т.ч. api/feed.ts)
-│   ├── tests/                    e2e (Playwright) и живые проверки — см. docs/diagnostics.md
+│   ├── tests/                    e2e (Playwright), данные для аудита (audit/) и живые проверки — см. docs/diagnostics.md
 │   ├── nginx.conf                 SPA fallback + /api proxy
 │   ├── Dockerfile                multi-stage Vite build → nginx serve
 │   └── .dockerignore
@@ -449,6 +449,7 @@ SkyFraze/
 ├── deploy/                       скрипты и systemd-юниты механизма обновления и копий
 ├── docker-compose.prod.yml       конфигурация для сервера (см. «Развёртывание на сервере»)
 ├── docker-compose.yml            postgres + backend + frontend (локальная разработка)
+├── .github/workflows/            ci.yml (5 jobs: backend, frontend, storage-s3, e2e, build) и nightly.yml (аудит + флейки)
 ├── .env / .env.example           JWT_SECRET, ADMIN_EMAILS, REGISTRATION_MODE и т.п.
 └── vendor/scroll-world-reference/  локальная копия референса (в репозиторий не входит, /vendor/)
 ```
@@ -541,6 +542,14 @@ cd frontend && npm run e2e
 cd frontend && E2E_BASE_URL=http://localhost:5173 E2E_NO_SERVER=1 npx playwright test
 ```
 
+**Режим регистрации для e2e — `request`, как в CI.** `install.spec.ts` проверяет именно первую
+регистрацию владельца стенда: на пустой базе страница обязана показывать «Первый администратор».
+При `REGISTRATION_MODE=open` там «Регистрация», и сценарий падает — не потому, что что-то
+сломалось, а потому, что проверялось не то. В `.github/workflows/ci.yml` это записано явно
+(`REGISTRATION_MODE: request`), и локальный прогон должен повторять CI. Обратная сторона: база
+для e2e нужна **пустая** — если в ней уже есть люди, `install` честно скажет «инсталляция не
+пустая» и уведёт за собой остальные сценарии.
+
 **Что проверяет e2e и где взять базу для него.** Двадцать четыре сценария: регистрация
 первого администратора, вход, защищённые страницы, загрузка файлов, прокрутка, помощник
 (создание главы и картинка), **правки агента по подтверждению** (предложение → применение
@@ -569,7 +578,7 @@ DATABASE_URL=postgres://skyfraze:skyfraze_dev@localhost:5432/skyfraze_e2e?sslmod
 JWT_SECRET=e2e-secret STORAGE_DIR=/tmp/skyfraze-e2e-storage LISTEN=:8181 \
 CORS_ORIGINS=http://localhost:5173 AI_ENABLED=true AI_OLLAMA_URL=http://127.0.0.1:11490 \
 AUTH_RATE_PER_MINUTE=0 AUTH_LOGIN_PER_EMAIL_PER_MINUTE=0 \
-APP_BASE_URL=http://localhost:5173 \
+APP_BASE_URL=http://localhost:5173 REGISTRATION_MODE=request \
   /tmp/skyfraze-e2e &                       # + заглушка: node frontend/tests/e2e/stub-ollama.mjs
 cd frontend && CI=1 npx playwright test    # CI=1 обязателен, см. ниже
 ```
@@ -638,6 +647,40 @@ ONLY_FUNCTIONAL=1 npx tsx ../.dsh/skills/ui-visual-audit/scripts/visual-audit.ts
 
 Отчёт: `_audit_out/visual-report.md` (+ `.json`) со скриншотами и указанием, какой файл
 править; код выхода 1, если есть ошибки. Тестовые проекты скилл создаёт и удаляет сам.
+
+**Где взять проект для аудита.** Визуальной части нужен существующий проект с содержимым
+(стадия, дерево, «Связи», чат): без него экраны проекта пустые, и проверка «зелёная» ни о чём.
+На dev-стенде это постоянный проект (`AUDIT_PROJECT=<id>`), а в CI его создаёт
+`frontend/tests/audit/seed-project.ts` — HTTP-ручками, без браузера, и печатает готовые
+`AUDIT_EMAIL`, `AUDIT_PASS`, `AUDIT_PROJECT_ID`:
+
+```bash
+cd frontend && npx tsx tests/audit/seed-project.ts | tee /tmp/seed.log
+# дальше — подставить вывод скрипта в окружение аудита
+```
+
+## Ночные проверки (`.github/workflows/nightly.yml`)
+
+Аудит и охота за флейками идут **не в блокирующем `ci.yml`, а по расписанию** (03:17 UTC) и
+вручную через `workflow_dispatch`. Так падение вёрстки не останавливает срочный фикс бэкенда, но
+и не остаётся незамеченным: два прогона в статусе сборки, отчёт артефактом.
+
+**Что гоняется:**
+
+| Job | Что делает | Зачем |
+|---|---|---|
+| `unit-repeat` | `vitest run` три раза | у unit один прогон и нет повторов: один флейк — красный CI, но имя нестабильного теста из одного падения не видно |
+| `audit` | свежий Postgres + backend + заглушка модели + vite, `seed-project.ts`, затем `visual-audit.ts` с `ONLY_SCREENS=1` | визуальные регрессии (обрезанный текст, элемент за краем, перекрытые контролы, контраст, мелкие цели) раньше ловились только руками на dev-стенде |
+| `e2e-repeat` | `--project=install` один раз, затем `--project=chromium --repeat-each=2` | второй прогон каждого сценария: случайность в браузере видна по имени теста |
+
+Полный аудит (экраны + функциональная матрица) — вручную:
+`gh workflow run nightly.yml -f functional=true`.
+
+**Почему свежая база и почему `REGISTRATION_MODE=open` в `audit`.** Скрипт подготовки данных
+регистрирует первую учётку (в пустой базе она становится администратором — иначе экран `/admin`
+открывать нечем), создаёт проект, главу, два кадра, две карточки со связью и сообщение в чате,
+затем публикует проект, чтобы у аудита были и публичные экраны. На dev-стенде (регистрация
+закрыта) скрипт не падает: он сначала пробует войти существующей учёткой `AUDIT_EMAIL`.
 
 ## Хранение на сервере
 

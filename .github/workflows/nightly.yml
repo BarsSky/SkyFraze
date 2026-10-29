@@ -1,0 +1,257 @@
+name: nightly
+
+# Ночные проверки (0.103.0). Зачем отдельный workflow, а не ещё один job в `ci.yml`:
+#
+#   1. **Визуальный аудит.** Он ловит то, чего не видно ни в unit-тестах, ни в e2e: обрезанный
+#      текст, элемент за краем экрана, перекрытые кнопки, нечитаемый контраст, слишком мелкую цель
+#      нажатия. До 0.103.0 аудит запускался только руками на dev-стенде, то есть регрессия
+#      вёрстки могла спокойно доехать до стенда. В блокирующий `ci.yml` его не поставили
+#      намеренно: аудит — это браузер + живой backend + данные (десять минут), а падение
+#      вёрстки не должно останавливать срочный фикс бэкенда.
+#   2. **Охота за флейками.** В `ci.yml` у unit и e2e ровно один прогон и `retries: 0`. Один
+#      флейк — красный CI, но какой именно тест нестабилен, из одного падения не видно. Здесь
+#      unit гоняется трижды, а e2e — с `--repeat-each=2`: случайность становится видимой по
+#      имени теста в логе, и её можно чинить, а не перезапускать сборку.
+#
+# Оба прогона не блокируют push: падение ночью — повод открыть задачу, а не остановить работу.
+# Запустить руками (например, перед релизом с правками вёрстки) — через `workflow_dispatch`.
+
+on:
+  schedule:
+    # 03:17 UTC — не на круглом часе: в это время очередь GitHub свободнее, а сдвиг в 17 минут
+    # не совпадает с часовыми поясами, в которых кто-то ждёт сборку.
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+    inputs:
+      functional:
+        description: 'Полный аудит: ещё и функциональная матрица (создаёт проекты и данные)'
+        type: boolean
+        default: false
+
+concurrency:
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ─── охота за флейками: unit трижды ────────────────────────────────────────────────────────────
+  unit-repeat:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: 'npm', cache-dependency-path: frontend/package-lock.json }
+      - run: cd frontend && npm ci --no-audit --no-fund
+      - name: три прогона unit (флейк виден по имени теста)
+        run: |
+          cd frontend
+          for run in 1 2 3; do
+            echo "── прогон $run из 3"
+            npx vitest run --reporter=dot || {
+              echo "::error::unit упал на прогоне $run — это флейк или регрессия, смотри имя теста выше"
+              exit 1
+            }
+          done
+
+  # ─── визуальный аудит на свежих данных ─────────────────────────────────────────────────────────
+  audit:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: skyfraze
+          POSTGRES_PASSWORD: skyfraze_dev
+          POSTGRES_DB: skyfraze_audit
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U skyfraze -d skyfraze_audit"
+          --health-interval 5s --health-timeout 3s --health-retries 5
+    env:
+      DATABASE_URL: postgres://skyfraze:skyfraze_dev@localhost:5432/skyfraze_audit?sslmode=disable
+      JWT_SECRET: audit-secret
+      STORAGE_DIR: /tmp/skyfraze-audit-storage
+      # Порт совпадает с target прокси в frontend/vite.config.ts.
+      LISTEN: ":8181"
+      CORS_ORIGINS: http://localhost:5173
+      # Стенд аудита регистрирует первого человека сам (`tests/audit/seed-project.ts`), а тот
+      # становится администратором — иначе экран `/admin` открывать нечем.
+      REGISTRATION_MODE: open
+      AI_ENABLED: "true"
+      AI_OLLAMA_URL: http://127.0.0.1:11490
+      APP_BASE_URL: http://localhost:5173
+      BASE_URL: http://localhost:5173
+      API_URL: http://127.0.0.1:8181
+      AUDIT_OUT: ${{ github.workspace }}/_audit_out
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.26', cache-dependency-path: backend/go.sum }
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: 'npm', cache-dependency-path: frontend/package-lock.json }
+      - run: cd frontend && npm ci --no-audit --no-fund
+      - run: cd frontend && npx playwright install --with-deps chromium
+
+      - name: заглушка провайдера модели
+        run: |
+          nohup node frontend/tests/e2e/stub-ollama.mjs > /tmp/stub-ollama.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:11490/api/tags > /dev/null; then
+              echo "заглушка готова"; exit 0
+            fi
+            sleep 1
+          done
+          echo "заглушка не поднялась:"; cat /tmp/stub-ollama.log; exit 1
+
+      - name: backend в фоне
+        run: |
+          mkdir -p "$STORAGE_DIR"
+          cd backend
+          go build -o /tmp/skyfraze-server ./cmd/server
+          nohup /tmp/skyfraze-server > /tmp/skyfraze-backend.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8181/health > /dev/null; then
+              echo "backend готов"; exit 0
+            fi
+            sleep 1
+          done
+          echo "backend не поднялся:"; cat /tmp/skyfraze-backend.log; exit 1
+
+      # Аудит ходит по интерфейсу, значит нужен дев-сервер с прокси /api на :8181 — тот же, что
+      # в e2e. Собранному `vite preview` для этого нужен отдельный `preview.proxy`, и разница
+      # между «проверяли dev-сборку» и «проверяли прод-сборку» здесь не стоит лишней ловушки.
+      - name: фронтенд в фоне
+        run: |
+          cd frontend
+          nohup npx vite --port 5173 --strictPort > /tmp/vite.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:5173/ > /dev/null; then
+              echo "фронтенд готов"; exit 0
+            fi
+            sleep 1
+          done
+          echo "фронтенд не поднялся:"; cat /tmp/vite.log; exit 1
+
+      - name: данные для аудита
+        run: |
+          cd frontend
+          npx tsx tests/audit/seed-project.ts | tee /tmp/seed.log
+          # Переменные для следующих шагов берём из вывода скрипта: проект создаётся заново на
+          # каждой сборке, и вписывать id в workflow значило бы держать его руками.
+          grep -E '^AUDIT_(EMAIL|PASS|PROJECT_ID)=' /tmp/seed.log > /tmp/audit-env
+          test -s /tmp/audit-env
+          cat /tmp/audit-env >> "$GITHUB_ENV"
+
+      - name: визуальный аудит
+        run: |
+          cd frontend
+          # Экраны — всегда: это и есть проверка вёрстки. Функциональная матрица создаёт
+          # собственные проекты и данные, поэтому по умолчанию выключена, а включается вручную.
+          # Переменную экспортируем в этом же шелле: запись в $GITHUB_ENV подействовала бы
+          # только на СЛЕДУЮЩИЙ шаг, и аудит молча пошёл бы полным.
+          if [ "${{ inputs.functional }}" = "true" ]; then
+            echo "режим: экраны + функциональная матрица"
+          else
+            export ONLY_SCREENS=1
+          fi
+          npx tsx ../.dsh/skills/ui-visual-audit/scripts/visual-audit.ts | tee /tmp/audit.log
+          grep -E 'ИТОГ' /tmp/audit.log || true
+
+      - name: отчёт аудита
+        if: always()
+        run: |
+          if [ -f _audit_out/visual-report.md ]; then
+            echo "── шапка отчёта"
+            head -40 _audit_out/visual-report.md
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: audit-report
+          path: |
+            _audit_out/visual-report.md
+            _audit_out/visual-report.json
+          if-no-files-found: warn
+
+      - name: логи при падении
+        if: failure()
+        run: cat /tmp/skyfraze-backend.log /tmp/vite.log /tmp/seed.log 2>/dev/null || true
+
+  # ─── охота за флейками: e2e дважды ────────────────────────────────────────────────────────────
+  e2e-repeat:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: skyfraze
+          POSTGRES_PASSWORD: skyfraze_dev
+          POSTGRES_DB: skyfraze_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U skyfraze -d skyfraze_e2e"
+          --health-interval 5s --health-timeout 3s --health-retries 5
+    env:
+      # Окружение повторяет job `e2e` из ci.yml: те же прокси, та же заглушка модели, тот же
+      # выключенный ограничитель входа. Разница только в `--repeat-each`.
+      DATABASE_URL: postgres://skyfraze:skyfraze_dev@localhost:5432/skyfraze_e2e?sslmode=disable
+      JWT_SECRET: e2e-secret
+      STORAGE_DIR: /tmp/skyfraze-e2e-storage
+      LISTEN: ":8181"
+      CORS_ORIGINS: http://localhost:5173
+      REGISTRATION_MODE: request
+      AI_ENABLED: "true"
+      AI_OLLAMA_URL: http://127.0.0.1:11490
+      AUTH_RATE_PER_MINUTE: "0"
+      AUTH_LOGIN_PER_EMAIL_PER_MINUTE: "0"
+      APP_BASE_URL: http://localhost:5173
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.26', cache-dependency-path: backend/go.sum }
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: 'npm', cache-dependency-path: frontend/package-lock.json }
+      - run: cd frontend && npm ci --no-audit --no-fund
+      - run: cd frontend && npx playwright install --with-deps chromium
+      - name: заглушка провайдера модели
+        run: |
+          nohup node frontend/tests/e2e/stub-ollama.mjs > /tmp/stub-ollama.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:11490/api/tags > /dev/null; then
+              echo "заглушка готова"; exit 0
+            fi
+            sleep 1
+          done
+          echo "заглушка не поднялась:"; cat /tmp/stub-ollama.log; exit 1
+      - name: backend в фоне
+        run: |
+          mkdir -p "$STORAGE_DIR"
+          cd backend
+          go build -o /tmp/skyfraze-server ./cmd/server
+          nohup /tmp/skyfraze-server > /tmp/skyfraze-backend.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8181/health > /dev/null; then
+              echo "backend готов"; exit 0
+            fi
+            sleep 1
+          done
+          echo "backend не поднялся:"; cat /tmp/skyfraze-backend.log; exit 1
+      # `install` нельзя повторять: он проверяет ПЕРВУЮ регистрацию на пустой базе, а второй
+      # прогон честно упадёт на «инсталляция не пустая». Поэтому сценарий чистой установки идёт
+      # один раз (он же заводит администратора для остальных), а повторяются сценарии chromium.
+      - name: e2e — установка один раз, остальные дважды
+        run: |
+          cd frontend
+          CI=1 npx playwright test --project=install
+          CI=1 npx playwright test --project=chromium --repeat-each=2
+      - name: логи при падении
+        if: failure()
+        run: cat /tmp/skyfraze-backend.log /tmp/stub-ollama.log
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-repeat-artifacts
+          path: frontend/test-results
+          if-no-files-found: ignore

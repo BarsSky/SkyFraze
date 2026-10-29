@@ -46,7 +46,8 @@
   каталог **резидентов**, публичная лента с просмотрами и оценками, **корзина** на 30 дней
 - **Администрирование развёртывания**: режим регистрации (по умолчанию — по заявке), заявки в
   `/admin`, ключи доступа (WebAuthn), обновление стенда из GitHub Releases
-- Две темы, телефон и «полная версия» на высоком узком экране, 22 e2e-сценария в CI
+- Две темы, телефон и «полная версия» на высоком узком экране, 24 e2e-сценария в CI,
+  ночной визуальный аудит панели
 
 ## Стек
 
@@ -54,7 +55,7 @@
 |---|---|
 | Backend | Go 1.26+ (multi-stage alpine), chi, pgx, JWT |
 | Database | PostgreSQL 15 |
-| Object storage | Filesystem (Phase 2: MinIO/S3) |
+| Object storage | Filesystem или S3/MinIO за одним интерфейсом (`STORAGE_DRIVER`) |
 | Real-time | Yjs (CRDT) через WebSocket (gorilla/websocket) |
 | Frontend | TypeScript, React 18, Vite, Zustand, ky |
 | Сцена таймлайна | иллюстрации/SVG-ассеты + CSS-переходы (fixed-стадия, без WebGL) |
