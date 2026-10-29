@@ -53,6 +53,23 @@ export async function openEditorsTab(page: Page): Promise<void> {
 }
 
 /**
+ * Раскрыть группу карточек в «Связях проекта» (0.111.0).
+ *
+ * Зачем: с 0.111.0 группы по видам свёрнуты по умолчанию (отчёт «списки по группам лучше сразу
+ * держать свернутыми»), поэтому карточки и их меню лежат внутри закрытого `details` — сценарий,
+ * который кликает по карточке, обязан сначала раскрыть её вид, как это сделал бы человек. Раньше
+ * сценарии этого не делали: группы были раскрыты, и проверка «карточка видна» проходила сама.
+ */
+export async function openEntityGroup(page: Page, kind: string): Promise<void> {
+  const group = page.locator(`[data-entity-group="${kind}"]`)
+  await group.waitFor({ state: 'attached', timeout: 20_000 }).catch(() => undefined)
+  if ((await group.count()) === 0) return
+  if (await group.evaluate((node: HTMLDetailsElement) => node.open)) return
+  await group.locator('summary').first().click()
+  await expect(group).toHaveJSProperty('open', true)
+}
+
+/**
  * Токен текущей сессии для запросов из сценария (0.92.2).
  *
  * `page.request` — это HTTP-клиент Playwright: localStorage страницы он не видит и cookie тоже не

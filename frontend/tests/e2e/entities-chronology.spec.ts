@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { apiHeaders, openEditorsTab, openProjectTab, signIn } from './support'
+import { apiHeaders, openEditorsTab, openEntityGroup, openProjectTab, signIn } from './support'
 
 /**
  * Хронология карточки и перенос проекта архивом (0.97.8).
@@ -58,6 +58,9 @@ test('хронология карточки ведёт в кадр, а посл�
   if (!(await panel.evaluate((node: HTMLDetailsElement) => node.open))) {
     await panel.locator('summary').first().click()
   }
+  // Группы по видам свёрнуты по умолчанию (0.111.0): карточка «Анна» лежит внутри группы
+  // «Персонаж», и до её раскрытия ни строки, ни меню «⋮» на экране нет.
+  await openEntityGroup(page, 'character')
   await expect(page.locator('[data-entity-usage]').first()).toHaveText('1 кадр · 2 упоминания', {
     timeout: 30_000,
   })
@@ -113,6 +116,7 @@ test('хронология карточки ведёт в кадр, а посл�
   }
   // Карточка на месте, и связь с текстом не потерялась: перенос не хранит упоминания, он
   // переносит текст и карточки — совпадение должно остаться.
+  await openEntityGroup(page, 'character')
   await expect(page.locator('.ent__name', { hasText: CARD }).first()).toBeVisible({ timeout: 30_000 })
   const usage = page.locator('[data-entity-usage]').first()
   await expect(usage).toHaveText('1 кадр · 2 упоминания', { timeout: 30_000 })

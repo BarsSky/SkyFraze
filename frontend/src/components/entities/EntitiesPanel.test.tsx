@@ -142,7 +142,7 @@ describe('EntitiesPanel', () => {
     )
   })
 
-  it('группу можно свернуть и развернуть, остальные остаются раскрытыми (0.97.7)', async () => {
+  it('группы свёрнуты по умолчанию, раскрытие одной не трогает соседнюю (0.97.7 → 0.111.0)', async () => {
     panel({
       entities: [
         entity({ id: 'c1', kind: 'character', name: 'Анна' }),
@@ -157,17 +157,68 @@ describe('EntitiesPanel', () => {
     await screen.findByText('Анна')
     const characters = document.querySelector('[data-entity-group="character"]') as HTMLDetailsElement
     const places = document.querySelector('[data-entity-group="place"]') as HTMLDetailsElement
-    expect(characters.open).toBe(true)
-    expect(places.open).toBe(true)
+    // По умолчанию свёрнуты все: до 0.111.0 раскрытые группы занимали весь экран, и форма
+    // создания карточки (тогда она стояла внизу) уезжала за пределы видимого.
+    expect(characters.open).toBe(false)
+    expect(places.open).toBe(false)
     expect(characters.querySelector('.ent__group-count')?.textContent).toBe('2')
 
     fireEvent.click(characters.querySelector('summary') as HTMLElement)
-    expect(characters.open).toBe(false)
-    // Сворачивание одной группы не трогает соседнюю.
-    expect(places.open).toBe(true)
+    expect(characters.open).toBe(true)
+    // Раскрытие одной группы не трогает соседнюю.
+    expect(places.open).toBe(false)
 
     fireEvent.click(characters.querySelector('summary') as HTMLElement)
-    expect(characters.open).toBe(true)
+    expect(characters.open).toBe(false)
+  })
+
+  it('форма создания стоит НАД списком и в своей рамке (0.111.0)', async () => {
+    panel({ entities: [entity({ id: 'c1', kind: 'character', name: 'Анна' })] })
+    await screen.findByText('Анна')
+    const create = document.querySelector('[data-entity-create]') as HTMLElement
+    const group = document.querySelector('[data-entity-group]') as HTMLElement
+    expect(create).toBeTruthy()
+    // Действие — до содержимого: иначе заводить карточку пришлось бы, пролистав весь список.
+    expect(create.compareDocumentPosition(group) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(create.querySelector('.ent__create-title')?.textContent).toBe('Новая карточка')
+    expect(create.querySelector('[data-entity-kind-select]')).toBeTruthy()
+    expect(create.querySelector('[data-entity-add]')).toBeTruthy()
+  })
+
+  it('новый тип заводится во всплывающем окне; Escape закрывает и возвращает фокус (0.111.0)', async () => {
+    panel({
+      entities: [entity({ id: 'c1', kind: 'character', name: 'Анна' })],
+      types: [{ created_at: '2026-10-27T09:00:00Z', key: 'character', title: 'Персонажи', color: '', icon: '', position: 1, is_default: true }],
+      onCreateType: vi.fn(),
+    })
+    await screen.findByText('Анна')
+    fireEvent.click(screen.getByRole('button', { name: '+ новый тип карточки' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog.getAttribute('aria-modal')).toBe('true')
+    // Поля типа — в ОКНЕ, а не в форме карточки: до 0.111.0 они достраивались прямо под ней и
+    // читались как её продолжение (отчёт «возникающие снизу поля сбивают с толку»).
+    expect(dialog.querySelector('[data-entity-type-aliases]')).toBeTruthy()
+    expect(document.querySelector('[data-entity-create] [data-entity-type-aliases]')).toBeNull()
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    // Фокус вернулся туда, откуда окно открыли, — на список видов.
+    expect(document.activeElement).toBe(screen.getByLabelText('Вид карточки'))
+  })
+
+  it('клик мимо окна нового типа закрывает его, клик внутри — нет (0.111.0)', async () => {
+    panel({
+      entities: [entity({ id: 'c1', kind: 'character', name: 'Анна' })],
+      types: [{ created_at: '2026-10-27T09:00:00Z', key: 'character', title: 'Персонажи', color: '', icon: '', position: 1, is_default: true }],
+      onCreateType: vi.fn(),
+    })
+    await screen.findByText('Анна')
+    fireEvent.click(screen.getByRole('button', { name: '+ новый тип карточки' }))
+    const overlay = document.querySelector('[data-entity-type-dialog]') as HTMLElement
+    fireEvent.mouseDown(overlay.querySelector('[data-entity-type-form]') as HTMLElement)
+    expect(screen.queryByRole('dialog')).toBeTruthy()
+    fireEvent.mouseDown(overlay)
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
   })
 
   it('вид, которого нет среди типов проекта, уходит в конец и не теряется (0.97.7)', async () => {
@@ -957,17 +1008,17 @@ describe('EntitiesPanel — свои типы карточек (0.81.0)', () => 
     expect(row?.querySelector('.ent__kind')?.textContent).toBe('Фракция')
   })
 
-  it('«+ новый тип…» раскрывает форму и создаёт тип', async () => {
+  it('окно нового типа создаёт тип и закрывается (0.81.0 → 0.111.0)', async () => {
     const onCreateType = vi.fn().mockResolvedValue(undefined)
     panel({ types, onCreateType })
-    fireEvent.change(await screen.findByLabelText('Вид карточки'), {
-      target: { value: '__new_type__' },
-    })
+    fireEvent.click(await screen.findByRole('button', { name: '+ новый тип карточки' }))
     const input = await screen.findByLabelText('Название нового типа')
     fireEvent.change(input, { target: { value: 'Артефакт' } })
     fireEvent.click(screen.getByRole('button', { name: 'Создать тип' }))
     await waitFor(() => expect(onCreateType).toHaveBeenCalledWith('Артефакт', { description: '', aliases: [] }))
     expect(await screen.findByText(/Тип «Артефакт» создан/)).toBeTruthy()
+    // Окно закрылось само: созданный тип уже в списке видов, второй раз его не заводят.
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
   })
 
   /**
@@ -1021,9 +1072,7 @@ describe('EntitiesPanel — свои типы карточек (0.81.0)', () => 
   it('заготовка типа из формы уходит на сервер вместе с названием', async () => {
     const onCreateType = vi.fn().mockResolvedValue(undefined)
     panel({ types, onCreateType })
-    fireEvent.change(await screen.findByLabelText('Вид карточки'), {
-      target: { value: '__new_type__' },
-    })
+    fireEvent.click(await screen.findByRole('button', { name: '+ новый тип карточки' }))
     fireEvent.change(await screen.findByLabelText('Название нового типа'), {
       target: { value: 'Порт' },
     })

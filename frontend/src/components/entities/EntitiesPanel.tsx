@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   addEntityLink,
   aliasesText,
@@ -39,9 +40,6 @@ import { MIN_ALIAS_LENGTH } from '../../collab/mentions'
  * берём из `typeTitle`, а они для трёх стартовых ключей известны и без сервера.
  */
 const DEFAULT_TYPE_KEYS = ['character', 'place', 'theme']
-
-/** Значение пункта «+ новый тип…» в списке видов. */
-const NEW_TYPE = '__new_type__'
 
 // Panel получает карточки от владельца данных (панель редакторов) и после правок просит
 // перечитать список: карточки нужны ещё и поиску упоминаний в тексте, а два независимых
@@ -287,16 +285,23 @@ export function EntitiesPanel({
   }, [entities, types])
 
   /**
-   * Свёрнутые группы (0.97.7): по умолчанию раскрыты все — так виден весь мир проекта.
+   * Раскрытые группы (0.97.7, по умолчанию СВЁРНУТЫ с 0.111.0).
    *
-   * Состояние НЕ запоминается между заходами, в отличие от самого блока «Связи проекта»: свернуть
-   * группу — движение внутри просмотра («убери пока персонажей»), а не настройка. Запоминание здесь
-   * дало бы карточкам «пропадать»: человек свернул места месяц назад и не понимает, где они.
+   * Почему теперь свёрнуты. До 0.111.0 все группы были раскрыты, и при десятке карточек список
+   * занимал весь экран: форма создания уезжала вниз, а до «Связей проекта» приходилось листать
+   * мимо карточек, которые человек в этот момент не искал. Свёрнутые группы дают обзор: три
+   * строки «Персонаж 3 · Место 5 · Тема 2» вместо тридцати карточек, и раскрывают ту, которая
+   * нужна, одним нажатием.
+   *
+   * Состояние НЕ запоминается между заходами, в отличие от самого блока «Связи проекта»: раскрыть
+   * группу — движение внутри просмотра («покажи персонажей»), а не настройка. Запоминание здесь
+   * дало бы обратное прежней проблеме: человек раскрыл места месяц назад, а теперь не понимает,
+   * почему персонажи свёрнуты.
    */
-  const [closedGroups, setClosedGroups] = useState<string[]>([])
+  const [openedGroups, setOpenedGroups] = useState<string[]>([])
   const toggleGroup = (kind: string, open: boolean) =>
-    setClosedGroups((current) =>
-      open ? current.filter((item) => item !== kind) : current.includes(kind) ? current : [...current, kind],
+    setOpenedGroups((current) =>
+      open ? (current.includes(kind) ? current : [...current, kind]) : current.filter((item) => item !== kind),
     )
 
   /**
@@ -319,12 +324,48 @@ export function EntitiesPanel({
     if (!aliasesEdited) setAliases(prefill.aliases)
   }, [aliasesEdited, descriptionEdited, kind, name, types])
 
+  /** Список видов: в него возвращается фокус после закрытия окна нового типа (0.111.0). */
+  const kindSelectRef = useRef<HTMLSelectElement | null>(null)
+
+  /**
+   * Закрыть окно нового типа (0.111.0): поля очищаются, фокус возвращается на список видов.
+   *
+   * Возврат фокуса — не украшение. Окно модальное: без него после Escape человек оказывался бы в
+   * начале страницы, а не там, где остановился, и на телефоне это ещё и скролл наверх.
+   */
+  const closeTypeDraft = useCallback(() => {
+    setTypeDraftOpen(false)
+    setTypeDraft('')
+    setTypeTemplateDesc('')
+    setTypeTemplateAliases('')
+    kindSelectRef.current?.focus()
+  }, [])
+
+  /**
+   * Escape закрывает окно нового типа. Слушаем документ, а не `onKeyDown` на самом окне: фокус
+   * может стоять на кнопке «Создать тип», и событие всплывало бы мимо обработчика окна.
+   */
+  useEffect(() => {
+    if (!typeDraftOpen) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.stopPropagation()
+      closeTypeDraft()
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [closeTypeDraft, typeDraftOpen])
+
   /**
    * Завести свой тип. Название вводит человек («Фракция»), ключ придумывает сервер.
    *
-   * Почему форма раскрывается в том же списке видов: тип придумывают В МОМЕНТ, когда заводят
-   * карточку, а не в настройках проекта. Отдельный экран «управление типами» заставил бы уйти
-   * с формы и вернуться.
+   * Почему окно открывается из списка видов: тип придумывают В МОМЕНТ, когда заводят карточку, а
+   * не в настройках проекта. Отдельный экран «управление типами» заставил бы уйти с формы и вернуться.
+   *
+   * С 0.111.0 это ВСПЛЫВАЮЩЕЕ ОКНО, а не поля, достраивающиеся под формой. По отчёту «не сразу
+   * понятно, как добавить новый тип, возникающие снизу поля сбивают с толку»: три поля и две
+   * кнопки появлялись внутри формы карточки, сдвигали список и читались как её продолжение —
+   * человек вводил имя карточки в «название типа». Окно отделяет одно действие от другого.
    */
   const createType = useCallback(async () => {
     const title = typeDraft.trim()
@@ -337,17 +378,14 @@ export function EntitiesPanel({
         aliases: splitAliases(typeTemplateAliases),
       }
       await onCreateType(title, cardTemplate)
-      setTypeDraft('')
-      setTypeTemplateDesc('')
-      setTypeTemplateAliases('')
-      setTypeDraftOpen(false)
+      closeTypeDraft()
       setNote({ kind: 'ok', text: `Тип «${title}» создан.` })
     } catch (e) {
       setNote({ kind: 'error', text: await explain(e, 'Не удалось создать тип.') })
     } finally {
       setBusy(false)
     }
-  }, [onCreateType, typeDraft, typeTemplateAliases, typeTemplateDesc])
+  }, [closeTypeDraft, onCreateType, typeDraft, typeTemplateAliases, typeTemplateDesc])
 
   /** Убрать связь. Спрашиваем подтверждение браузером? Нет: связь — не данные человека, а
    *  метка между карточками, и вернуть её — одно действие. */
@@ -521,16 +559,110 @@ export function EntitiesPanel({
         </p>
       )}
 
+      {/* Форма создания — НАД списком и в своей рамке (0.111.0). По отчёту «перенеси выше создание
+          карточки и сделай обрамление с явным выделением»: форма стояла ПОД группами, то есть после
+          тридцати карточек, и завести карточку можно было, только пролистав список, который человек
+          в этот момент не искал. Рамка отделяет действие от содержимого: полоса акцента темы по
+          левому краю, заголовок «Новая карточка» и подсказка про заготовку вида. */}
+      {canEdit && (
+        // `div role="group"`, а не `section`: `section` с доступным именем получает роль `region`,
+        // и рядом с раскрытой карточкой упоминания (тоже `section`) их становилось две — экранный
+        // диктор и тесты переставали понимать, о каком разделе речь.
+        <div
+          className="ent__create"
+          data-entity-create
+          role="group"
+          aria-labelledby="ent-create-title"
+        >
+          <div className="ent__create-head">
+            <h3 className="ent__create-title" id="ent-create-title">
+              Новая карточка
+            </h3>
+            <span className="muted ent__create-hint">вид задаёт алиасы и описание по заготовке</span>
+          </div>
+          <div className="ent__form">
+            <select
+              value={kind}
+              onChange={(e) => setKind(e.target.value)}
+              aria-label="Вид карточки"
+              ref={kindSelectRef}
+              data-entity-kind-select
+            >
+              {(types.length > 0 ? types : DEFAULT_TYPE_KEYS.map((key) => ({ key, title: kindTitle(key) }))).map(
+                (item) => (
+                  <option key={item.key} value={item.key}>
+                    {item.title}
+                  </option>
+                ),
+              )}
+            </select>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="имя: Анна"
+              aria-label="Имя карточки"
+              maxLength={80}
+            />
+            <input
+              value={aliases}
+              onChange={(e) => {
+                setAliases(e.target.value)
+                setAliasesEdited(true)
+              }}
+              placeholder="алиасы: Аня, Анны"
+              aria-label="Алиасы карточки"
+            />
+            {/* Описание (0.85.0): пусто у типа без заготовки, предзаполнено у типа с заготовкой.
+                Правка руками отменяет автоподстановку — человек решает сам. */}
+            <textarea
+              value={description}
+              onChange={(e) => {
+                setDescription(e.target.value)
+                setDescriptionEdited(true)
+              }}
+              placeholder="описание: кто это, чем важен"
+              aria-label="Описание карточки"
+              rows={2}
+              data-entity-desc-input
+            />
+            <button
+              type="button"
+              onClick={() => void add()}
+              disabled={busy || name.trim() === ''}
+              data-entity-add
+            >
+              {busy ? 'Сохраняю…' : 'Добавить'}
+            </button>
+            {/* Отдельная кнопка, а не пункт «+ новый тип…» внутри списка видов (0.111.0): пункт в
+                выпадающем списке — это действие, спрятанное среди значений, и по отчёту «не сразу
+                понятно, как добавить новый тип» именно так и было. */}
+            {onCreateType && (
+              <button
+                type="button"
+                className="secondary ent__create-type"
+                onClick={() => setTypeDraftOpen(true)}
+                aria-haspopup="dialog"
+                data-entity-type-open
+              >
+                + новый тип карточки
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Карточки по видам (0.97.7): «Персонажи · 3», «Места · 5» — каждая группа сворачивается.
-          Внутри группы тот же список, что был раньше: группировка меняет только порядок и рамку,
-          а не строки карточек. */}
+          С 0.111.0 группы СВЁРНУТЫ по умолчанию: список из тридцати карточек занимал экран, и до
+          формы создания (тогда она была внизу) приходилось листать мимо карточек, которые человек
+          не искал. Внутри группы тот же список, что был раньше: группировка меняет только порядок
+          и рамку, а не строки карточек. */}
       {entities.length > 0 &&
         groups.map((group) => (
           <details
             key={group.kind}
             className="ent__group"
             data-entity-group={group.kind}
-            open={!closedGroups.includes(group.kind)}
+            open={openedGroups.includes(group.kind)}
             onToggle={(e) => toggleGroup(group.kind, (e.currentTarget as HTMLDetailsElement).open)}
           >
             <summary className="ent__group-summary">
@@ -818,122 +950,6 @@ export function EntitiesPanel({
           </details>
         ))}
 
-      {canEdit && (
-        <div className="ent__form">
-          <select
-            value={kind}
-            onChange={(e) => {
-              // «+ новый тип…» в списке: открываем форму названия вместо выбора вида.
-              if (e.target.value === NEW_TYPE) {
-                setTypeDraftOpen(true)
-                return
-              }
-              setKind(e.target.value)
-            }}
-            aria-label="Вид карточки"
-            data-entity-kind-select
-          >
-            {(types.length > 0 ? types : DEFAULT_TYPE_KEYS.map((key) => ({ key, title: kindTitle(key) }))).map(
-              (item) => (
-                <option key={item.key} value={item.key}>
-                  {item.title}
-                </option>
-              ),
-            )}
-            {onCreateType && <option value={NEW_TYPE}>+ новый тип…</option>}
-          </select>
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="имя: Анна"
-            aria-label="Имя карточки"
-            maxLength={80}
-          />
-          <input
-            value={aliases}
-            onChange={(e) => {
-              setAliases(e.target.value)
-              setAliasesEdited(true)
-            }}
-            placeholder="алиасы: Аня, Анны"
-            aria-label="Алиасы карточки"
-          />
-          {/* Описание (0.85.0): пусто у типа без заготовки, предзаполнено у типа с заготовкой.
-              Правка руками отменяет автоподстановку — человек решает сам. */}
-          <textarea
-            value={description}
-            onChange={(e) => {
-              setDescription(e.target.value)
-              setDescriptionEdited(true)
-            }}
-            placeholder="описание: кто это, чем важен"
-            aria-label="Описание карточки"
-            rows={2}
-            data-entity-desc-input
-          />
-          <button
-            type="button"
-            onClick={() => void add()}
-            disabled={busy || name.trim() === ''}
-            data-entity-add
-          >
-            {busy ? 'Сохраняю…' : 'Добавить'}
-          </button>
-        </div>
-      )}
-
-      {/* Новый тип карточки (0.81.0 → 0.85.0). Форма в той же строке, где заводят карточку:
-          тип придумывают в этот момент, а не в настройках проекта. Заготовка — то, что потом
-          подставится в форму карточки этого типа (docs/entity-types.md §4). */}
-      {canEdit && onCreateType && typeDraftOpen && (
-        <div className="ent__form ent__form--type" data-entity-type-form>
-          <input
-            value={typeDraft}
-            onChange={(e) => setTypeDraft(e.target.value)}
-            placeholder="название типа: Фракция"
-            aria-label="Название нового типа"
-            maxLength={40}
-            autoFocus
-          />
-          <input
-            value={typeTemplateAliases}
-            onChange={(e) => setTypeTemplateAliases(e.target.value)}
-            placeholder="алиасы заготовки: фракция, союз"
-            aria-label="Алиасы заготовки типа"
-            data-entity-type-aliases
-          />
-          <textarea
-            value={typeTemplateDesc}
-            onChange={(e) => setTypeTemplateDesc(e.target.value)}
-            placeholder="заготовка описания: {{name}} — союз городов…"
-            aria-label="Заготовка описания карточки типа"
-            rows={2}
-            maxLength={2000}
-            data-entity-type-template
-          />
-          <button
-            type="button"
-            onClick={() => void createType()}
-            disabled={busy || typeDraft.trim() === ''}
-            data-entity-type-add
-          >
-            {busy ? 'Создаю…' : 'Создать тип'}
-          </button>
-          <button
-            type="button"
-            className="secondary"
-            onClick={() => {
-              setTypeDraftOpen(false)
-              setTypeDraft('')
-              setTypeTemplateDesc('')
-              setTypeTemplateAliases('')
-            }}
-          >
-            Отмена
-          </button>
-        </div>
-      )}
-
       {note !== null && (
         <p
           className={note.kind === 'error' ? 'ent__note ed-danger' : 'ent__note'}
@@ -1055,6 +1071,94 @@ export function EntitiesPanel({
           )}
         </details>
       )}
+
+      {/* Окно нового типа (0.111.0). `position: fixed` поверх панели, а не поля, достраивающиеся
+          под формой: по отчёту «возникающие снизу поля сбивают с толку» — их читали как продолжение
+          формы карточки и вводили имя карточки в «название типа». Закрывается Escape, кликом мимо и
+          кнопкой «Отмена»; фокус возвращается в список видов (см. `closeTypeDraft`).
+
+          Портал в `document.body` обязателен, как у остальных модальных окон проекта (редактор
+          Markdown, просмотр картинки, перенос проекта): панель редакторов живёт в своём контексте
+          наложения, и окно с `z-index: 95` внутри него оказывалось ПОД плавающей кнопкой помощника
+          (`z-index: 80`) — на телефоне кнопка рисовалась поверх листа с полями. Это ловилось
+          скриншотом 390×844, а не тестами: те проверяют разметку, а не порядок слоёв. */}
+      {canEdit &&
+        onCreateType &&
+        typeDraftOpen &&
+        createPortal(
+          <div
+            className="ent-modal"
+            data-entity-type-dialog
+            onMouseDown={(e) => {
+              // Закрываем только кликом по подложке: клик внутри карточки окна всплывает сюда же,
+              // и без этой проверки окно закрывалось бы при попытке поставить курсор в поле.
+              if (e.target === e.currentTarget) closeTypeDraft()
+            }}
+          >
+            <div
+              className="ent-modal__card"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="ent-type-title"
+              data-entity-type-form
+            >
+              <h3 className="ent-modal__title" id="ent-type-title">
+                Новый тип карточки
+              </h3>
+              <p className="muted ent-modal__hint">
+                Тип появится в списке видов. Заготовка подставится в алиасы и описание новой карточки
+                этого типа; <code>{'{{name}}'}</code> заменится на имя.
+              </p>
+              <label className="ent-modal__field">
+                <span>Название</span>
+                <input
+                  value={typeDraft}
+                  onChange={(e) => setTypeDraft(e.target.value)}
+                  placeholder="Фракция"
+                  aria-label="Название нового типа"
+                  maxLength={40}
+                  autoFocus
+                />
+              </label>
+              <label className="ent-modal__field">
+                <span>Алиасы заготовки</span>
+                <input
+                  value={typeTemplateAliases}
+                  onChange={(e) => setTypeTemplateAliases(e.target.value)}
+                  placeholder="фракция, союз"
+                  aria-label="Алиасы заготовки типа"
+                  data-entity-type-aliases
+                />
+              </label>
+              <label className="ent-modal__field">
+                <span>Заготовка описания</span>
+                <textarea
+                  value={typeTemplateDesc}
+                  onChange={(e) => setTypeTemplateDesc(e.target.value)}
+                  placeholder="{{name}} — союз городов…"
+                  aria-label="Заготовка описания карточки типа"
+                  rows={2}
+                  maxLength={2000}
+                  data-entity-type-template
+                />
+              </label>
+              <div className="ent-modal__actions">
+                <button
+                  type="button"
+                  onClick={() => void createType()}
+                  disabled={busy || typeDraft.trim() === ''}
+                  data-entity-type-add
+                >
+                  {busy ? 'Создаю…' : 'Создать тип'}
+                </button>
+                <button type="button" className="secondary" onClick={closeTypeDraft}>
+                  Отмена
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
     </details>
   )
 }
