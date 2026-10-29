@@ -41,16 +41,21 @@ async function call<T>(path: string, init: RequestInit = {}, token?: string): Pr
   return (await res.json()) as T
 }
 
-/** Вход существующей учёткой аудита. `null` — учётки ещё нет (пустая база CI). */
-async function login(): Promise<string | null> {
+/** Вход конкретной учёткой. `null` — учётки ещё нет (пустая база CI). */
+async function loginAs(email: string): Promise<string | null> {
   const res = await fetch(`${API}/api/auth/login`, {
     method: 'POST',
     headers: headers(),
-    body: JSON.stringify({ email: EMAIL, password: PASSWORD }),
+    body: JSON.stringify({ email, password: PASSWORD }),
   })
   if (!res.ok) return null
   const body = (await res.json()) as { tokens?: { access?: string } }
   return body.tokens?.access ?? null
+}
+
+/** Вход существующей учёткой аудита. `null` — учётки аудита ещё нет. */
+async function login(): Promise<string | null> {
+  return loginAs(EMAIL)
 }
 
 /**
@@ -100,11 +105,48 @@ async function setNick(token: string): Promise<string> {
   return nick
 }
 
+/**
+ * Второй житель для каталога резидентов.
+ *
+ * Каталог исключает самого зрителя (`CatalogUsers`: «себя в списке искать незачем»), поэтому на
+ * свежей базе CI, где есть только наша учётка, список резидентов пуст — и аудит честно считает это
+ * дефектом. Второй человек решает это по существу, а не отключением проверки. На стенде с
+ * закрытой регистрацией создать его нельзя — там люди уже есть, и предупреждения достаточно.
+ */
+async function seedPeer(): Promise<string | null> {
+  const email = 'audit-peer@example.com'
+  const register = await fetch(`${API}/api/auth/register`, {
+    method: 'POST',
+    headers: headers(),
+    body: JSON.stringify({ email, password: PASSWORD, display_name: 'Соавтор аудита' }),
+  })
+  if (!register.ok) {
+    console.warn(`второй житель не создан (регистрация ${register.status}) — каталог может быть пуст`)
+    return null
+  }
+  const peer = await loginAs(email)
+  if (peer === null) return null
+  try {
+    await call('/api/auth/me', {
+      method: 'PATCH',
+      // discoverable по умолчанию включён, но пишем явно: каталог показывает только тех, кто
+      // «показывать меня» не снял.
+      body: JSON.stringify({ display_name: 'Соавтор аудита', username: 'audit-peer', discoverable: true }),
+    }, peer)
+  } catch (e) {
+    console.warn(`профиль второго жителя: ${(e as Error).message}`)
+  }
+  return email
+}
+
 type CreatedEvent = { id: string }
 
 async function main() {
   const token = await authToken()
   const nick = await setNick(token)
+  // Второй житель нужен каталогу резидентов (себя каталог не показывает). В CI это единственный
+  // способ проверить страницу по существу; на закрытом стенде он может не создаться — не беда.
+  const peer = await seedPeer()
 
   const created = await call<{ project?: { id: string }; id?: string }>('/api/projects', {
     method: 'POST',
@@ -113,13 +155,18 @@ async function main() {
   const projectId = created.project?.id ?? created.id
   if (!projectId) throw new ApiError('создание проекта: в ответе нет id')
 
-  // Глава и два кадра: стадии нужен трек, редакторам — строки дерева, хронологии — даты.
-  const chapter = await call<CreatedEvent>(`/api/projects/${projectId}/events`, {
-    method: 'POST',
-    body: JSON.stringify({ title: 'Глава 1 — Начало', body: '' }),
-  }, token)
-
-  const frameBody = [
+  // Глава и два кадра. Не через `POST /events`: эта ручка пишет только таблицу событий, а стадия
+  // и дерево читают документ CRDT — проект с «табличными» событиями выглядит пустым («Таймлайн
+  // пока пуст»), и аудит честно ругался «стадия не открылась». Импорт Markdown идёт тем же путём,
+  // что и помощник (`LiveDoc` + `SetEventTextLive`), поэтому документ и таблица согласованы.
+  const markdown = [
+    '# Аудит интерфейса',
+    'Проект для визуального аудита.',
+    '',
+    '## 01 Начало',
+    '',
+    '### 01.1 Утро на Земле',
+    '',
     'Аня пришла на **Землю** и нашла письмо.',
     '',
     '| Место | Когда |',
@@ -127,26 +174,42 @@ async function main() {
     '| Земля | утро |',
     '',
     '> «Так начинается история», — сказала Аня.',
+    '',
+    '### 01.2 Письмо',
+    '',
+    'Письмо было от Земли. Аня перечитала его дважды.',
+    '',
   ].join('\n')
 
-  await call<CreatedEvent>(`/api/projects/${projectId}/events`, {
+  const form = new FormData()
+  form.append('files', new Blob([markdown], { type: 'text/markdown; charset=utf-8' }), 'audit.md')
+  const imported = await fetch(`${API}/api/projects/${projectId}/import/markdown`, {
     method: 'POST',
-    body: JSON.stringify({
-      parent_id: chapter.id,
-      title: '01.1 Утро на Земле',
-      body: frameBody,
-      event_date: '2026-03-02T09:00:00Z',
-    }),
-  }, token)
+    // Content-Type не ставим: границу multipart подставляет сам fetch, ручной заголовок её ломает.
+    headers: { Authorization: `Bearer ${token}` },
+    body: form,
+  })
+  if (!imported.ok) {
+    throw new ApiError(`импорт Markdown → ${imported.status}: ${(await imported.text()).slice(0, 300)}`)
+  }
 
-  await call<CreatedEvent>(`/api/projects/${projectId}/events`, {
-    method: 'POST',
-    body: JSON.stringify({
-      parent_id: chapter.id,
-      title: '01.2 Письмо',
-      body: 'Письмо было от Земли. Аня перечитала его дважды.',
-    }),
-  }, token)
+  // Проверка, что данные видит ИНТЕРФЕЙС, а не только таблица: документ непустой и в дереве есть
+  // события. Без неё подготовка «проходила», а аудит шёл по пустым экранам — ровно та ложная
+  // зелень, из-за которой этот скрипт и появился.
+  const treeRes = await fetch(`${API}/api/projects/${projectId}/events`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  const tree = (await treeRes.json()) as Array<{ children?: unknown[] }>
+  if (!Array.isArray(tree) || tree.length === 0) {
+    throw new ApiError('после импорта дерево событий пустое — аудиту нечего показывать')
+  }
+  const stateRes = await fetch(`${API}/api/projects/${projectId}/events/state`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  const state = await stateRes.text()
+  if (state.trim().length < 16) {
+    throw new ApiError(`документ проекта пустой (${state.trim().length} байт) — стадия не отрисуется`)
+  }
 
   // Карточки мира и связь: без них пустуют «Связи проекта», граф и матрица.
   const anna = await call<{ entity?: { id: string } }>(`/api/projects/${projectId}/entities`, {
@@ -185,7 +248,10 @@ async function main() {
     console.warn(`публикация не удалась: ${(e as Error).message}`)
   }
 
-  console.log(`проект: ${projectId}, учётка: ${EMAIL} (ник @${nick}), публикация: ${slug ?? 'нет'}`)
+  console.log(
+    `проект: ${projectId}, учётка: ${EMAIL} (ник @${nick}), публикация: ${slug ?? 'нет'}, ` +
+      `второй житель: ${peer ?? 'нет'}`,
+  )
   console.log('AUDIT_EMAIL=' + EMAIL)
   console.log('AUDIT_PASS=' + PASSWORD)
   console.log('AUDIT_PROJECT_ID=' + projectId)
