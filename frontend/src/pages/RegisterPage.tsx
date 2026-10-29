@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { authConfig, register, requestRegistration, type RegistrationMode } from '../api/auth'
+import { useT, type TFunction } from '../i18n'
 
 /**
  * Регистрация зависит от решения администратора инсталляции:
@@ -9,6 +10,7 @@ import { authConfig, register, requestRegistration, type RegistrationMode } from
  * Режим спрашиваем у сервера до отправки формы, иначе человек заполнит не ту форму.
  */
 export function RegisterPage() {
+  const t = useT()
   const [mode, setMode] = useState<RegistrationMode | null>(null)
   const [bootstrap, setBootstrap] = useState(false)
   const [email, setEmail] = useState('')
@@ -46,7 +48,7 @@ export function RegisterPage() {
       await requestRegistration({ email, password, display_name: name, message })
       setSent(true)
     } catch (e: unknown) {
-      setErr(describeError(e))
+      setErr(describeError(e, t))
     } finally {
       setLoading(false)
     }
@@ -55,7 +57,7 @@ export function RegisterPage() {
   if (mode === null) {
     return (
       <div style={{ maxWidth: 360, margin: '80px auto', padding: 24 }}>
-        <p className="muted">Загрузка…</p>
+        <p className="muted">{t('register.loading')}</p>
       </div>
     )
   }
@@ -63,13 +65,12 @@ export function RegisterPage() {
   if (sent) {
     return (
       <div style={{ maxWidth: 420, margin: '80px auto', padding: 24 }}>
-        <h1>Заявка отправлена</h1>
+        <h1>{t('register.sentTitle')}</h1>
         <p className="muted">
-          Администратор рассмотрит заявку для <b>{email}</b>. Войти можно будет тем паролем,
-          который вы указали, — сразу после одобрения.
+          {t('register.sentTextPrefix')} <b>{email}</b>. {t('register.sentTextSuffix')}
         </p>
         <p style={{ marginTop: 16 }}>
-          <Link to="/login">← Ко входу</Link>
+          <Link to="/login">{t('register.toLogin')}</Link>
         </p>
       </div>
     )
@@ -77,24 +78,26 @@ export function RegisterPage() {
 
   return (
     <div style={{ maxWidth: 420, margin: '80px auto', padding: 24 }}>
-      <h1>{direct ? (mode === 'open' ? 'Регистрация' : 'Первый администратор') : 'Заявка на доступ'}</h1>
+      <h1>
+        {direct ? (mode === 'open' ? t('register.titleOpen') : t('register.titleBootstrap')) : t('register.titleRequest')}
+      </h1>
       <p className="muted">
         {mode === 'open'
-          ? 'Регистрация открыта: аккаунт создаётся сразу.'
+          ? t('register.hintOpen')
           : bootstrap
-            ? 'Инсталляция ещё пустая: аккаунт, созданный первым, становится администратором и дальше регистрация идёт по заявке.'
-            : 'Регистрация на этой инсталляции — по заявке. Опишите, зачем нужен доступ: администратор рассмотрит заявку.'}
+            ? t('register.hintBootstrap')
+            : t('register.hintRequest')}
       </p>
       <form onSubmit={onSubmit}>
         <div style={{ marginBottom: 12 }}>
-          <input placeholder="имя" value={name} onChange={(e) => setName(e.target.value)} required minLength={1} />
+          <input placeholder={t('register.name')} value={name} onChange={(e) => setName(e.target.value)} required minLength={1} />
         </div>
         <div style={{ marginBottom: 12 }}>
-          <input placeholder="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+          <input placeholder={t('register.email')} type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
         </div>
         <div style={{ marginBottom: 12 }}>
           <input
-            placeholder="пароль (мин. 8)"
+            placeholder={t('register.password')}
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
@@ -105,7 +108,7 @@ export function RegisterPage() {
         {!direct && (
           <div style={{ marginBottom: 12 }}>
             <textarea
-              placeholder="чем занимаетесь / зачем доступ (необязательно)"
+              placeholder={t('register.message')}
               value={message}
               onChange={(e) => setMessage(e.target.value)}
               rows={3}
@@ -114,24 +117,24 @@ export function RegisterPage() {
         )}
         {err && <div className="error">{err}</div>}
         <button type="submit" disabled={loading}>
-          {loading ? '…' : direct ? 'Создать' : 'Отправить заявку'}
+          {loading ? '…' : direct ? t('register.create') : t('register.send')}
         </button>
       </form>
       <p style={{ marginTop: 16 }} className="muted">
-        Уже есть аккаунт? <Link className="auth-inline-link" to="/login">Войти</Link>
+        {t('register.haveAccount')} <Link className="auth-inline-link" to="/login">{t('register.login')}</Link>
       </p>
       <p className="muted" style={{ marginTop: 8 }}>
-        <Link className="auth-inline-link" to="/feed">Публичные истории</Link> можно смотреть без аккаунта.
+        <Link className="auth-inline-link" to="/feed">{t('register.publicStories')}</Link> {t('register.publicStoriesTail')}
       </p>
     </div>
   )
 }
 
-/** Ошибки API приходят как {error: "..."} — переводим в понятный текст. */
-function describeError(e: unknown): string {
+/** Ошибки API приходят как {error: "..."} — переводим в понятный текст (через словарь, 0.115.0). */
+function describeError(e: unknown, t: TFunction): string {
   const status = (e as { response?: Response })?.response?.status
-  if (status === 409) return 'Этот email уже занят или заявка с ним уже на рассмотрении.'
-  if (status === 403) return 'Регистрация закрыта: доступ выдаётся по заявке.'
-  if (status === 400) return 'Проверьте поля: имя, email и пароль (минимум 8 символов).'
-  return e instanceof Error ? e.message : 'Не удалось отправить заявку'
+  if (status === 409) return t('register.errEmailTaken')
+  if (status === 403) return t('register.errClosed')
+  if (status === 400) return t('register.errInvalid')
+  return e instanceof Error ? e.message : t('register.errFailed')
 }

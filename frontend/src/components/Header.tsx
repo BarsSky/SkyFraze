@@ -2,6 +2,8 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../store/auth'
 import { useTheme } from '../store/theme'
+import { toggleLang, useLang, type Lang } from '../store/lang'
+import { useT, type Key } from '../i18n'
 import { useMediaQuery } from '../lib/useMediaQuery'
 import { BrandMark } from './BrandMark'
 import { NotificationBell } from './NotificationBell'
@@ -22,11 +24,15 @@ import { NotificationBell } from './NotificationBell'
  */
 interface NavLink {
   to: string
-  label: string
+  /**
+   * Ключ подписи, а не подпись (0.115.0): язык интерфейса меняется на лету, и строка в `links`
+   * должна пересчитываться при переключении. Текст берётся из словаря в момент рендера.
+   */
+  labelKey: Key
   className?: string
 }
 
-/** Действие в меню «Ещё» (0.88.0): не раздел, а команда — тема, выход. */
+/** Действие в меню «Ещё» (0.88.0): не раздел, а команда — тема, язык, выход. */
 interface MenuAction {
   label: string
   icon?: string
@@ -51,6 +57,8 @@ export function Header() {
   const nav = useNavigate()
   const { pathname } = useLocation()
   const [theme, setTheme] = useTheme()
+  const [lang, setLang] = useLang()
+  const t = useT()
   const nextTheme = theme === 'dark' ? 'light' : 'dark'
   const compact = useMediaQuery(COMPACT_QUERY)
   const narrow = useMediaQuery(NARROW_QUERY)
@@ -91,19 +99,19 @@ export function Header() {
 
   const links: NavLink[] = [
     // Лента доступна всем: это витрина опубликованных историй, вход не нужен
-    { to: '/feed', label: 'Лента' },
-    { to: '/projects', label: 'Мои проекты', className: 'header-nav__projects' },
-    { to: '/coauthors', label: 'Соавторы' },
+    { to: '/feed', labelKey: 'nav.feed' },
+    { to: '/projects', labelKey: 'nav.projects', className: 'header-nav__projects' },
+    { to: '/coauthors', labelKey: 'nav.coauthors' },
     // Каталог зарегистрированных: кто здесь есть и чем занимается
-    { to: '/people', label: 'Резиденты' },
+    { to: '/people', labelKey: 'nav.people' },
     // Своя учётная запись — отдельной вкладкой (0.99.0): до этого имя, ник, резюме, ключи доступа
     // и журнал входов жили на странице «Соавторы», и «профиля» в навигации не было вовсе.
-    { to: '/profile', label: 'Профиль' },
+    { to: '/profile', labelKey: 'nav.profile' },
   ]
-  if (user?.is_admin) links.push({ to: '/admin', label: 'Админка' })
+  if (user?.is_admin) links.push({ to: '/admin', labelKey: 'nav.admin' })
   // «О проекте» (0.114.0) — последним: лицензия, исходники, документация, приватность. На узком
   // экране уходит в меню «Ещё» вместе с остальными разделами, поэтому в строке шапка не теснее.
-  links.push({ to: '/about', label: 'О проекте' })
+  links.push({ to: '/about', labelKey: 'nav.about' })
 
   // Анонимному видны только витрины: публичная лента и «О проекте» — остальное требует входа.
   const visible = links.filter((link) => link.to === '/feed' || link.to === '/about' || user)
@@ -124,19 +132,22 @@ export function Header() {
   const projectsAt = inMenu.findIndex((link) => link.to === '/projects')
   if (projectsAt > 0) inMenu.unshift(...inMenu.splice(projectsAt, 1))
   /**
-   * Действия, которым на узком экране не хватило места в строке: тема и выход. В меню они
+   * Действия, которым на узком экране не хватило места в строке: тема, язык и выход. В меню они
    * последними — пункты навигации важнее.
    */
   const menuActions: MenuAction[] = narrow
     ? [
         {
-          label: nextTheme === 'light' ? 'Светлая тема' : 'Тёмная тема',
+          label: nextTheme === 'light' ? t('header.themeToLight') : t('header.themeToDark'),
           onSelect: () => setTheme(nextTheme),
           icon: theme === 'dark' ? '☾' : '☀',
         },
+        // Язык подписан сам собой (English / Русский), а не «переключить язык»: человек ищет в
+        // меню знакомое название языка, а не описание действия.
+        { label: langLabel(lang), onSelect: () => setLang(toggleLang()) },
         user
-          ? { label: 'Выйти', onSelect: () => { logout(); nav('/login') } }
-          : { label: 'Войти', onSelect: () => nav('/login') },
+          ? { label: t('header.logout'), onSelect: () => { logout(); nav('/login') } }
+          : { label: t('header.login'), onSelect: () => nav('/login') },
       ]
     : []
 
@@ -147,7 +158,7 @@ export function Header() {
           <BrandMark size={24} />
           <span className="brand__name">SkyFraze</span>
         </Link>
-        <nav className="auth-links" aria-label="Основная навигация">
+        <nav className="auth-links" aria-label={t('nav.aria')}>
           {inline.map((link) => (
             <Link
               key={link.to}
@@ -155,7 +166,7 @@ export function Header() {
               className={link.className}
               aria-current={isActive(link.to) ? 'page' : undefined}
             >
-              {link.label}
+              {t(link.labelKey)}
             </Link>
           ))}
           {inMenu.length > 0 && (
@@ -168,7 +179,7 @@ export function Header() {
           <Link
             to="/profile"
             className="header-user"
-            title={`${user.email} — профиль: имя, ник, ключи доступа и журнал входов`}
+            title={`${user.email} — ${t('header.userTitle')}`}
           >
             {user.display_name}
             {user.username ? ` · @${user.username}` : ''}
@@ -178,29 +189,53 @@ export function Header() {
             человека нет ни проектов, ни обсуждений, а лишний значок в шапке ленты
             выглядел бы поломкой. */}
         {user && <NotificationBell />}
+        {/* Язык интерфейса (0.115.0): подписано тем языком, на который переключит — так это
+            читается без легенды. На совсем узком экране кнопка уезжает в меню «Ещё». */}
+        {!narrow && (
+          <button
+            className="secondary header-lang"
+            onClick={() => setLang(toggleLang())}
+            title={langLabel(lang)}
+            aria-label={t('header.toggleLang')}
+            data-header-lang
+          >
+            {lang === 'ru' ? 'EN' : 'RU'}
+          </button>
+        )}
         {/* На совсем узком экране тема и выход живут в меню «Ещё»: в строке иначе остаётся
             только кнопка меню, и шапка выглядит пустой (0.88.0). */}
         {!narrow && (
           <button
             className="secondary header-theme"
             onClick={() => setTheme(nextTheme)}
-            title={nextTheme === 'light' ? 'Светлая тема (кремово-мятная)' : 'Тёмная тема'}
-            aria-label="Переключить тему"
+            title={nextTheme === 'light' ? t('header.themeToLight') : t('header.themeToDark')}
+            aria-label={t('header.toggleTheme')}
           >
             {theme === 'dark' ? '☾' : '☀'}
-            <span className="header-theme__label">{theme === 'dark' ? ' тёмная' : ' светлая'}</span>
+            <span className="header-theme__label">
+              {' '}
+              {theme === 'dark' ? t('header.themeDark') : t('header.themeLight')}
+            </span>
           </button>
         )}
         {!narrow && (user ? (
           <button className="secondary" onClick={() => { logout(); nav('/login') }}>
-            Выйти
+            {t('header.logout')}
           </button>
         ) : (
-          <Link to="/login"><button className="secondary">Войти</button></Link>
+          <Link to="/login"><button className="secondary">{t('header.login')}</button></Link>
         ))}
       </div>
     </header>
   )
+}
+
+/**
+ * Название языка для переключателя — ВСЕГДА на самом языке (English, Русский), а не перевод
+ * слова «английский». Человек, который не читает текущий интерфейс, всё равно узнаёт свой язык.
+ */
+function langLabel(lang: Lang): string {
+  return lang === 'ru' ? 'English' : 'Русский'
 }
 
 /**
@@ -227,6 +262,7 @@ function HeaderMenu({
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const buttonRef = useRef<HTMLButtonElement | null>(null)
   const { pathname } = useLocation()
+  const t = useT()
 
   const close = useCallback((returnFocus = false) => {
     setOpen(false)
@@ -262,19 +298,19 @@ function HeaderMenu({
         className="secondary header-more__button"
         aria-expanded={open}
         aria-haspopup="menu"
-        aria-label="Ещё разделы"
+        aria-label={t('header.moreAria')}
         onClick={() => setOpen((value) => !value)}
         ref={buttonRef}
         data-header-more
       >
-        Ещё
+        {t('header.more')}
         {/* Уголок рисует CSS, а не символ ▾: на телефоне шрифт подставлял вместо него точку
             (в отчёте 0.98.2 кнопка выглядела как «Ещё ·»), и было не видно, что это раскрывающееся
             меню. Направление задаёт aria-expanded — тот же признак, что читает скринридер. */}
         <span aria-hidden="true" className="header-more__caret" />
       </button>
       {open && (
-        <div className="header-more__menu" role="menu" data-header-menu>
+        <div className="header-more__menu" role="menu" aria-label={t('header.menuAria')} data-header-menu>
           {links.map((link) => (
             <Link
               key={link.to}
@@ -283,7 +319,7 @@ function HeaderMenu({
               aria-current={isActive(link.to) ? 'page' : undefined}
               onClick={() => close()}
             >
-              {link.label}
+              {t(link.labelKey)}
             </Link>
           ))}
           {/* Действия после навигации и отделены линией: тема и выход — не разделы. */}

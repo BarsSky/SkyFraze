@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { Header } from './Header'
 import { useAuthStore } from '../store/auth'
+import { setLang } from '../store/lang'
 
 /**
  * Шапка на узком экране (0.78.0).
@@ -57,6 +58,8 @@ function renderHeader(path = '/projects') {
 
 beforeEach(() => {
   useAuthStore.setState({ user: ADMIN as never })
+  // Язык — модульное состояние: без сброса тест, переключивший язык, «покрасил» бы соседние.
+  setLang('ru')
 })
 
 afterEach(() => {
@@ -144,6 +147,40 @@ describe('Header — навигация на узком экране', () => {
     const menu = await screen.findByRole('menu')
     const about = within(menu).getByRole('menuitem', { name: 'О проекте' })
     expect(about.getAttribute('href')).toBe('/about')
+  })
+
+  /**
+   * Переключатель языка (0.115.0): подписи меняются БЕЗ перезагрузки, и на совсем узком экране
+   * кнопка уезжает в меню «Ещё» — там же, где тема и выход.
+   */
+  it('переключатель EN/RU меняет подписи на месте', async () => {
+    stubViewport(1200)
+    renderHeader()
+    expect(within(screen.getByRole('navigation')).getByText('Мои проекты')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Переключить язык' }))
+    // Английские подписи: навигация, шапка и всё, что переводится в фазе 1.
+    expect(within(screen.getByRole('navigation')).getByText('My projects')).toBeTruthy()
+    expect(screen.queryByText('Мои проекты')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Switch language' }))
+    expect(within(screen.getByRole('navigation')).getByText('Мои проекты')).toBeTruthy()
+  })
+
+  it('на 320 px язык переключается пунктом меню', async () => {
+    stubViewport(320)
+    renderHeader()
+    expect(screen.queryByRole('button', { name: 'Переключить язык' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Ещё разделы' }))
+    const menu = await screen.findByRole('menu')
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'English' }))
+    // Меню закрылось, подписи английские.
+    expect(screen.queryByRole('menu')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'More sections' }))
+    const enMenu = await screen.findByRole('menu')
+    expect(within(enMenu).getByRole('menuitem', { name: 'Residents' })).toBeTruthy()
+    expect(within(enMenu).getByRole('menuitem', { name: 'Русский' })).toBeTruthy()
   })
 
   /**

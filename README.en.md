@@ -54,7 +54,8 @@ The essentials; the full list, one item per feature, is in
   documentation in Russian and English, privacy (no telemetry), third-party components and the
   **build number** from the server; open without signing in.
 - Two themes, phone layout and a "full version" on tall narrow screens, 28 e2e scenarios in CI, a
-  nightly visual audit of the panel and a functional matrix.
+  nightly visual audit of the panel and a functional matrix, and a **Russian/English interface** (a
+  switch in the header; the shell is translated so far — navigation, sign-in, registration, About).
 
 The interface is currently **Russian only**; English UI localisation is a separate planned project.
 Public documents are bilingual.

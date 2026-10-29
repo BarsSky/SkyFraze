@@ -2,6 +2,7 @@ import { FormEvent, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { login, loginTOTP } from '../api/auth'
 import { describePasskeyError, loginWithPasskey, passkeysSupported } from '../api/webauthn'
+import { useT, type TFunction } from '../i18n'
 
 /**
  * Вход.
@@ -19,6 +20,7 @@ interface SecondStep {
 }
 
 export function LoginPage() {
+  const t = useT()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [err, setErr] = useState('')
@@ -56,7 +58,7 @@ export function LoginPage() {
       }
       nav('/projects')
     } catch (e: unknown) {
-      setErr(await describeLoginError(e))
+      setErr(await describeLoginError(e, t))
     } finally {
       setLoading(false)
     }
@@ -71,7 +73,7 @@ export function LoginPage() {
       await loginTOTP(second.challenge, code.trim())
       nav('/projects')
     } catch (e: unknown) {
-      setErr(await describeLoginError(e))
+      setErr(await describeLoginError(e, t))
     } finally {
       setLoading(false)
     }
@@ -97,33 +99,33 @@ export function LoginPage() {
   return (
     <div style={{ maxWidth: 360, margin: '80px auto', padding: 24 }}>
       <h1>SkyFraze</h1>
-      <p className="muted">Войдите в аккаунт</p>
+      <p className="muted">{t('login.subtitle')}</p>
       {second === null ? (
         <form onSubmit={onSubmit}>
           <div style={{ marginBottom: 12 }}>
             <input placeholder="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
           </div>
           <div style={{ marginBottom: 12 }}>
-            <input placeholder="пароль" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+            <input placeholder={t('login.password')} type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
           </div>
           {err && <div className="error">{err}</div>}
-          <button type="submit" disabled={loading}>{loading ? '...' : 'Войти'}</button>
+          <button type="submit" disabled={loading}>{loading ? '...' : t('login.submit')}</button>
         </form>
       ) : (
         <div data-login-2fa>
           <p className="muted" style={{ marginTop: 0 }}>
-            Пароль принят.{' '}
+            {t('login.passwordAccepted')}{' '}
             {canUseKey && canUseCode
-              ? 'Подтвердите вход ключом доступа или кодом из приложения.'
+              ? t('login.confirmBoth')
               : canUseKey
-                ? 'Подтвердите вход ключом доступа.'
-                : 'Введите код из приложения-аутентификатора.'}
+                ? t('login.confirmKey')
+                : t('login.confirmCode')}
           </p>
 
           {canUseKey && (
             <div style={{ marginBottom: 12 }}>
               <button type="button" onClick={() => void onUseKey()} disabled={loading} data-login-passkey>
-                {loading ? '...' : 'Войти ключом доступа'}
+                {loading ? '...' : t('login.passkey')}
               </button>
             </div>
           )}
@@ -133,7 +135,7 @@ export function LoginPage() {
               документации: поля для кода на экране нет, когда TOTP не включён. */}
           {canUseKey && !canUseCode && !useRecovery && (
             <p className="muted" style={{ marginBottom: 12 }}>
-              Нет ключа под рукой?{' '}
+              {t('login.noKey')}{' '}
               <button
                 type="button"
                 className="secondary"
@@ -141,7 +143,7 @@ export function LoginPage() {
                 disabled={loading}
                 data-login-use-recovery
               >
-                Ввести код восстановления
+                {t('login.useRecovery')}
               </button>
             </p>
           )}
@@ -150,7 +152,7 @@ export function LoginPage() {
             <form onSubmit={onSubmitCode}>
               <div style={{ marginBottom: 12 }}>
                 <input
-                  placeholder={canUseCode ? 'код из приложения' : 'код восстановления'}
+                  placeholder={canUseCode ? t('login.codeApp') : t('login.codeRecovery')}
                   value={code}
                   onChange={(e) => setCode(e.target.value)}
                   inputMode={canUseCode ? 'numeric' : 'text'}
@@ -158,17 +160,17 @@ export function LoginPage() {
                   autoFocus={!canUseKey}
                   required
                   aria-label={
-                    canUseCode ? 'Код двухфакторного входа' : 'Код восстановления'
+                    canUseCode ? t('login.codeAppAria') : t('login.codeRecoveryAria')
                   }
                 />
               </div>
-              <button type="submit" disabled={loading}>{loading ? '...' : 'Подтвердить'}</button>
+              <button type="submit" disabled={loading}>{loading ? '...' : t('login.confirm')}</button>
             </form>
           )}
 
           {err && <div className="error">{err}</div>}
           <p className="muted" style={{ marginTop: 12 }}>
-            {canUseCode && <>Нет телефона под рукой? Введите один из кодов восстановления. </>}
+            {canUseCode && <>{t('login.noPhone')} </>}
             <button
               type="button"
               className="secondary"
@@ -181,16 +183,16 @@ export function LoginPage() {
                 setUseRecovery(false)
               }}
             >
-              Назад
+              {t('login.back')}
             </button>
           </p>
         </div>
       )}
       <p style={{ marginTop: 16 }} className="muted auth-links">
-        Нет аккаунта? <Link className="auth-inline-link" to="/register">Регистрация</Link>
+        {t('login.noAccount')} <Link className="auth-inline-link" to="/register">{t('login.register')}</Link>
       </p>
       <p className="muted" style={{ marginTop: 8 }}>
-        <Link className="auth-inline-link" to="/feed">Публичные истории</Link> — без входа
+        <Link className="auth-inline-link" to="/feed">{t('login.publicStories')}</Link> {t('login.publicStoriesNoAuth')}
       </p>
     </div>
   )
@@ -199,18 +201,21 @@ export function LoginPage() {
 /**
  * 403 при входе означает не «нет прав вообще», а состояние заявки: сервер
  * различает «на рассмотрении» и «отклонена», и человеку нужно объяснить, что делать.
+ *
+ * Тексты берутся из словаря через `t` (0.115.0): сообщение об ошибке — такая же подпись
+ * интерфейса, как кнопка, и при переключении языка оно тоже должно меняться.
  */
-async function describeLoginError(e: unknown): Promise<string> {
+async function describeLoginError(e: unknown, t: TFunction): Promise<string> {
   const res = (e as { response?: Response })?.response
   if (res?.status === 403) {
     const body = (await res
       .clone()
       .json()
       .catch(() => null)) as { error?: string } | null
-    if (body?.error?.includes('rejected')) return 'Заявка на доступ отклонена администратором.'
-    return 'Заявка на доступ ещё не одобрена — дождитесь решения администратора.'
+    if (body?.error?.includes('rejected')) return t('login.errRejected')
+    return t('login.errPending')
   }
-  if (res?.status === 401) return 'Неверный email или пароль (или код двухфакторного входа)'
-  if (res?.status === 429) return 'Слишком много попыток — подождите минуту и попробуйте снова.'
-  return e instanceof Error ? e.message : 'login failed'
+  if (res?.status === 401) return t('login.errBadCreds')
+  if (res?.status === 429) return t('login.errTooMany')
+  return e instanceof Error ? e.message : t('login.errFailed')
 }

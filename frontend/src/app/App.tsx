@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { Suspense, lazy, type ReactNode } from 'react'
 import { RequireAuth } from '../components/RequireAuth'
 import { Header } from '../components/Header'
+import { useT } from '../i18n'
 import { useAuthStore } from '../store/auth'
 
 /**
@@ -53,10 +54,11 @@ const AboutPage = lazy(() => import('../pages/AboutPage').then((m) => ({ default
  * как перезагрузка всего приложения.
  */
 function PageFallback() {
+  const t = useT()
   return (
     <div className="page-fallback" data-page-loading role="status" aria-live="polite">
       <span className="page-fallback__bar" aria-hidden="true" />
-      <p className="muted page-fallback__note">Открываю раздел…</p>
+      <p className="muted page-fallback__note">{t('app.loadingSection')}</p>
     </div>
   )
 }
