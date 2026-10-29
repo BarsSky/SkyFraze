@@ -704,6 +704,34 @@ async function visualScreens(browser: Browser, errors: string[], slug: string | 
         })
       }
 
+      // «О проекте» (0.114.0): лицензия, исходники, документация, приватность, версия сборки.
+      // Проверяем не только вид, но и номер сборки: страница без него бесполезна в переписке «у
+      // меня не работает», а её отсутствие выглядит заглушкой.
+      await page.goto(`${BASE}/about`)
+      await page.waitForSelector('[data-about]', { timeout: 20000 }).catch(() => null)
+      await page.waitForTimeout(700)
+      name = `${vp.tag}-${theme}-about`
+      await shot(page, name)
+      applyProbe(await probe(page), 'about', vp.tag, name)
+      const aboutState = (await page.evaluate(`(() => {
+        const version = document.querySelector('[data-about-version]')
+        return {
+          about: !!document.querySelector('[data-about]'),
+          version: version ? (version.textContent || '').trim() : null,
+          links: document.querySelectorAll('[data-about] a[href^="http"]').length,
+          en: !!document.querySelector('[data-about] [lang="en"]'),
+        }
+      })()`)) as { about: boolean; version: string | null; links: number; en: boolean }
+      if (!aboutState.about || !aboutState.version || !aboutState.version.startsWith('Сборка')) {
+        add({
+          severity: 'error', area: 'functional', screen: 'about', viewport: vp.tag,
+          check: '«О проекте» без версии сборки', detail: JSON.stringify(aboutState),
+          where: 'AboutPage / GET /api/health', shot: name,
+        })
+      } else {
+        pass('about', vp.tag, `версия на месте, внешних ссылок: ${aboutState.links}`)
+      }
+
       // резиденты: каталог зарегистрированных со специализациями и резюме.
       // Проверяем не только вид, но и что поиск/фильтр реально сужают список:
       // страница без строк или без реакции на поиск выглядит рабочей, но бесполезна.

@@ -1,0 +1,33 @@
+/* Страница «О проекте» (0.114.0).
+   Заменяет то, что обычно живёт в подвале сайта: что это, лицензия, исходники, документация,
+   приватность, сторонние компоненты, связь. Подвала в интерфейсе нет намеренно — он отнимал бы
+   высоту у стадии и дерева кадров, а ссылки нужны редко. Цвета — токены темы, поэтому обе темы
+   получают свой контраст без отдельных правил. */
+.about { max-width: 1040px; margin: 0 auto; padding: 18px 16px 40px; }
+.about__head { margin-bottom: 16px; }
+.about__title { margin: 0 0 6px; font-size: 22px; }
+.about__lead { margin: 0 0 8px; max-width: 72ch; }
+/* Версия сборки — отдельной строкой и моноширинным шрифтом: это машинное значение, которое
+   человек диктует в переписке («у меня v0.113.0, 095c920»), а не абзац текста. */
+.about__build {
+  margin: 0; font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px; color: var(--fg-muted);
+}
+.about__grid {
+  display: grid; gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+.about__card { display: flex; flex-direction: column; gap: 8px; }
+.about__card h3 { margin: 0; font-size: 14px; }
+.about__card p { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
+.about__links { margin: 0; padding-left: 18px; font-size: 13px; }
+.about__links li { margin: 2px 0; overflow-wrap: anywhere; }
+.about__links a { color: var(--accent); }
+.about__card--en { margin-top: 12px; }
+.about__foot { margin: 18px 0 0; font-size: 12px; }
+/* На телефоне карточки в одну колонку: две по 280 px в 390 px не помещаются и распирали бы
+   страницу вбок (проверяется аудитом на 390 px). */
+@media (max-width: 640px) {
+  .about { padding: 12px 12px 28px; }
+  .about__grid { grid-template-columns: 1fr; }
+}

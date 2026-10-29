@@ -157,6 +157,11 @@ then people and access.
   author cannot rate their own story); feed sorting "newest / by rating / by views"
 - **Deployment administration**: the administrator decides whether new users are let in freely or
   only by request (by request by default) and reviews requests in `/admin`
+- **"About" («О проекте»)** (`/about`) — a page instead of a site footer: what the platform is, the
+  license and copyright notices, source and releases, documentation in Russian and English, privacy
+  (no telemetry, data stays on your server), third-party components, contacts and the **build number
+  from the server** — the thing people quote in "it does not work for me". Open without signing in,
+  reachable from the header (in the "More" («Ещё») menu on a phone)
 
 ## Where to read more
 

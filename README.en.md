@@ -50,6 +50,9 @@ The essentials; the full list, one item per feature, is in
   **residents** catalogue, a public feed with views and ratings, a 30-day **trash**.
 - **Deployment administration**: registration mode (by request by default), requests in `/admin`,
   access keys (WebAuthn), stand updates from GitHub Releases.
+- **"About" («О проекте»)** (`/about`): license and copyright notices, source and releases,
+  documentation in Russian and English, privacy (no telemetry), third-party components and the
+  **build number** from the server; open without signing in.
 - Two themes, phone layout and a "full version" on tall narrow screens, 28 e2e scenarios in CI, a
   nightly visual audit of the panel and a functional matrix.
 
@@ -152,6 +155,7 @@ below lists those originals.
 | `docs/features.md`, [features.en.md](docs/features.en.md) | the full feature list with links to the design notes |
 | `docs/architecture.md` | data model, invariants, common defect analysis |
 | `docs/diagnostics.md` | catalogue of live checks and diagnostic scripts |
+| `docs/ui-localization.md` | interface localisation plan: volume measurement, phases, risks |
 | `docs/entity-links.md` | world cards: mentions, links, matrix, risks |
 | `docs/entity-types.md` | custom card kinds and templates |
 | `docs/entity-graph-navigation.md` | link graph: groups, drill-down, label search (option analysis) |

@@ -20,8 +20,8 @@ import (
 	"github.com/skyfraze/backend/internal/assets"
 	"github.com/skyfraze/backend/internal/assistant"
 	"github.com/skyfraze/backend/internal/auth"
-	"github.com/skyfraze/backend/internal/coauthors"
 	"github.com/skyfraze/backend/internal/chat"
+	"github.com/skyfraze/backend/internal/coauthors"
 	"github.com/skyfraze/backend/internal/collab"
 	"github.com/skyfraze/backend/internal/docxtpl"
 	"github.com/skyfraze/backend/internal/entities"
@@ -384,13 +384,22 @@ func main() {
 	})
 
 	// health
-	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
+	//
+	// Адрес один и тот же в любом окружении (0.114.0). Клиент ходит в `/api/health`: всё API живёт
+	// под `/api`, и vite в dev проксирует ровно этот префикс БЕЗ переписывания пути. В продакшене
+	// `/api/health` разбирал отдельный `location` в nginx и переписывал в `/health` — поэтому
+	// страница «О проекте» показывала версию на стенде и молчала в dev (fetch получал 404 и
+	// честно писал «версия сборки неизвестна»). Теперь оба адреса обслуживает сам сервер, и
+	// перезапись в nginx перестала быть обязательной, хотя и остаётся рабочей.
+	health := func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		// Версия в ответе нужна мониторингу и скрипту обновления: по ней видно,
 		// какая ревизия реально работает, не заходя в админку.
 		payload := fmt.Sprintf(`{"status":"ok","version":%q,"commit":%q}`, version, commit)
 		w.Write([]byte(payload))
-	})
+	}
+	r.Get("/health", health)
+	r.Get("/api/health", health)
 	r.Get("/ready", func(w http.ResponseWriter, r *http.Request) {
 		pctx, pcancel := context.WithTimeout(r.Context(), 2*time.Second)
 		defer pcancel()

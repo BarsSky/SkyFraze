@@ -125,13 +125,25 @@ describe('Header — навигация на узком экране', () => {
     expect(within(menu).getByText('Резиденты')).toBeTruthy()
   })
 
-  it('анонимному видна только лента, меню не нужно', async () => {
+  it('анонимному видны лента и «О проекте» (0.114.0), остальное требует входа', async () => {
     stubViewport(1200)
     useAuthStore.setState({ user: null })
     const view = renderHeader('/feed')
     const nav = view.container.querySelector('nav') as HTMLElement
-    expect(Array.from(nav.querySelectorAll('a')).map((a) => a.textContent)).toEqual(['Лента'])
+    expect(Array.from(nav.querySelectorAll('a')).map((a) => a.textContent)).toEqual([
+      'Лента',
+      'О проекте',
+    ])
     expect(view.container.querySelector('[data-header-more]')).toBeNull()
+  })
+
+  it('«О проекте» есть у вошедшего и на телефоне живёт в меню (0.114.0)', async () => {
+    stubViewport(480)
+    renderHeader()
+    fireEvent.click(screen.getByRole('button', { name: 'Ещё разделы' }))
+    const menu = await screen.findByRole('menu')
+    const about = within(menu).getByRole('menuitem', { name: 'О проекте' })
+    expect(about.getAttribute('href')).toBe('/about')
   })
 
   /**

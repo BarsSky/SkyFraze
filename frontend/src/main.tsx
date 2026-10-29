@@ -13,6 +13,7 @@ import './styles/assistant.css'
 import './styles/versions.css'
 import './styles/trash.css'
 import './styles/notify.css'
+import './styles/about.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

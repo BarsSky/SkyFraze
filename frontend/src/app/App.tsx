@@ -43,6 +43,7 @@ const CoauthorsPage = lazy(() =>
 )
 const PeoplePage = lazy(() => import('../pages/PeoplePage').then((m) => ({ default: m.PeoplePage })))
 const ProfilePage = lazy(() => import('../pages/ProfilePage').then((m) => ({ default: m.ProfilePage })))
+const AboutPage = lazy(() => import('../pages/AboutPage').then((m) => ({ default: m.AboutPage })))
 
 /**
  * Место страницы внутри каркаса: тонкая полоска загрузки вместо пустоты.
@@ -103,6 +104,14 @@ export function App() {
         <Route
           path="/feed"
           element={<PublicLayout><Page><FeedPage /></Page></PublicLayout>}
+        />
+        {/* «О проекте» (0.114.0): лицензия, исходники, документация, приватность — то, что
+            обычно пишут в подвале сайта, но отдельной страницей: подвал отнимал бы высоту у
+            стадии и дерева кадров. Доступна и без входа: витрина проекта читается до регистрации
+            на стенде. */}
+        <Route
+          path="/about"
+          element={<PublicLayout><Page><AboutPage /></Page></PublicLayout>}
         />
         <Route
           path="/s/:slug"

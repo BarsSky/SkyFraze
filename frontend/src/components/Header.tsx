@@ -101,8 +101,12 @@ export function Header() {
     { to: '/profile', label: 'Профиль' },
   ]
   if (user?.is_admin) links.push({ to: '/admin', label: 'Админка' })
+  // «О проекте» (0.114.0) — последним: лицензия, исходники, документация, приватность. На узком
+  // экране уходит в меню «Ещё» вместе с остальными разделами, поэтому в строке шапка не теснее.
+  links.push({ to: '/about', label: 'О проекте' })
 
-  const visible = links.filter((link) => link.to === '/feed' || user)
+  // Анонимному видны только витрины: публичная лента и «О проекте» — остальное требует входа.
+  const visible = links.filter((link) => link.to === '/feed' || link.to === '/about' || user)
   /**
    * Что остаётся в строке на узком экране (0.88.0).
    *
