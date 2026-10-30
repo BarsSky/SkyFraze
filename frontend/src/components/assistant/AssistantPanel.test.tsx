@@ -244,6 +244,42 @@ describe('AssistantPanel', () => {
     expect((screen.getByLabelText('Сообщение помощнику') as HTMLTextAreaElement).disabled).toBe(false)
   })
 
+  /**
+   * Модель приходит двумя шагами (0.140.1).
+   *
+   * Настройка приносит `defaultModel`, а список моделей — сам `ref` модели. Между этими
+   * ответами кнопка «Спросить» была активна, а нажатие молча ничего не отправляло: `ask`
+   * возвращался с ошибкой «выберите модель», вопрос оставался в поле. Человек видел
+   * «спросил — ответа нет», и именно на этом падал e2e `fragment-edit` под нагрузкой.
+   */
+  it('не отправляет вопрос, пока модель ещё не известна, и отправляет, когда она пришла', async () => {
+    mocks.config.mockResolvedValue(LOCAL) // defaultModel пуст: модель даст только список
+    let resolveModels: (value: unknown) => void = () => undefined
+    mocks.models.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveModels = resolve
+        }),
+    )
+    mocks.stream.mockResolvedValue(TURN)
+    renderPanel()
+
+    const input = (await screen.findByLabelText('Сообщение помощнику')) as HTMLTextAreaElement
+    await waitFor(() => expect(input.disabled).toBe(false))
+    fireEvent.change(input, { target: { value: 'Добавь главу «Пролог»' } })
+
+    const ask = screen.getByRole('button', { name: 'Спросить' }) as HTMLButtonElement
+    expect(ask.disabled, 'без модели кнопка молчит, а не теряет вопрос').toBe(true)
+
+    // Модель приехала — кнопка становится рабочей и вопрос действительно уходит.
+    resolveModels([
+      { id: 'qwen2.5:7b', ref: 'ollama:qwen2.5:7b', provider: 'ollama', title: 'qwen2.5:7b', free: true, local: true, tools: true },
+    ])
+    await waitFor(() => expect(ask.disabled).toBe(false))
+    fireEvent.click(ask)
+    await waitFor(() => expect(mocks.stream).toHaveBeenCalled())
+  })
+
   it('показывает ответ модели и отдельный блок «что изменилось» из ответа сервера', async () => {
     mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
     mocks.stream.mockResolvedValue(TURN)

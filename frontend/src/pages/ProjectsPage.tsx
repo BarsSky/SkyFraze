@@ -145,7 +145,11 @@ export function ProjectsPage() {
         return
       }
       const p = await createProject({ title, description: desc })
-      setList((cur) => [p, ...cur])
+      // Через фильтр, а не просто «в начало» (0.140.1): пока шёл запрос на создание, мог
+      // приехать ответ уже начатой загрузки списка — и в нём этот же проект уже есть. Тогда
+      // карточка появлялась ДВАЖДЫ с одинаковым ключом: по ссылке с названием сценарий e2e
+      // получал strict mode violation, а человек видел два одинаковых проекта.
+      setList((cur) => [p, ...cur.filter((item) => item.id !== p.id)])
       setTitle('')
       setDesc('')
       setOpenNew(false)

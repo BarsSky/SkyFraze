@@ -476,6 +476,17 @@ export function useCollab(projectId: string): CollabHandle | null {
      * пустым: ни кадров, ни редакторов — «пустая страница». Теперь контент
      * приезжает всегда, а WebSocket отвечает только за реальное время.
      */
+    /**
+     * Сколько ждём загрузку содержимого проекта (0.140.1).
+     *
+     * Зависший запрос (прокси без ответа, мобильная сеть) оставлял страницу в «загрузке»
+     * навсегда: ни кадров, ни кнопки «добавить главу» — человек видел пустой экран и не знал,
+     * что делать. В e2e это выглядело как «кнопка не появилась за 60 секунд» (сценарий
+     * `assets`). Двадцать секунд — запас на медленный канал и всё ещё «не навсегда»: дальше
+     * честное «не удалось загрузить» с повтором.
+     */
+    const CONTENT_TIMEOUT_MS = 20_000
+
     const loadContent = async (): Promise<void> => {
       // Запас с прошлого закрытия вкладки: сначала серверный снапшот, затем
       // отложенный апдейт. Порядок обязателен — слияние идёт поверх серверного
@@ -486,7 +497,7 @@ export function useCollab(projectId: string): CollabHandle | null {
       let serverState: Uint8Array<ArrayBufferLike> = new Uint8Array(0)
       let snapshotFailed = false
       try {
-        const snap = await getEventState(projectId)
+        const snap = await getEventState(projectId, AbortSignal.timeout(CONTENT_TIMEOUT_MS))
         if (!active) return
         revision = snap.revision
         serverState = snap.state
@@ -511,7 +522,7 @@ export function useCollab(projectId: string): CollabHandle | null {
       // Не путать с «пользователь всё удалил»: там пусто и в базе.
       if (events.length === 0 && active) {
         try {
-          const rows = await listEventRows(projectId)
+          const rows = await listEventRows(projectId, AbortSignal.timeout(CONTENT_TIMEOUT_MS))
           if (rows.length > 0 && events.length === 0 && active) {
             doc.transact(() => {
               for (const row of rows) {

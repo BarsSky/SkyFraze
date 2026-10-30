@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { E2E_ADMIN_EMAIL, PASSWORD } from './support'
+import { E2E_ADMIN_EMAIL, PASSWORD, readHeading } from './support'
 
 /**
  * Первая регистрация на ЧИСТОЙ инсталляции — и единственное место, где проверяется,
@@ -23,7 +23,10 @@ import { E2E_ADMIN_EMAIL, PASSWORD } from './support'
  */
 test('register → login → /projects (чистая инсталляция)', async ({ page }) => {
   await page.goto('/register')
-  const heading = await page.locator('h1').innerText()
+  // Заголовок с ограниченным ожиданием и разбором отказа (0.140.1): если приложение не
+  // поднялось, сценарий обязан сказать «страница не отрисовалась» с ошибками и HTML, а не
+  // простоять три минуты в locator.innerText.
+  const heading = await readHeading(page, '/register')
 
   if (!/Первый администратор/.test(heading)) {
     const why = `инсталляция не пустая: «${heading}»`

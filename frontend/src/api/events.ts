@@ -45,13 +45,13 @@ export interface FlatEventNode {
   event_date?: string | null
 }
 
-export async function listEventTree(projectId: string): Promise<EventNode[]> {
-  return await http.get(`projects/${projectId}/events`).json<EventNode[]>()
+export async function listEventTree(projectId: string, signal?: AbortSignal): Promise<EventNode[]> {
+  return await http.get(`projects/${projectId}/events`, { signal }).json<EventNode[]>()
 }
 
 /** Плоский список событий проекта (обход дерева в порядке отображения). */
-export async function listEventRows(projectId: string): Promise<FlatEventNode[]> {
-  const tree = await listEventTree(projectId)
+export async function listEventRows(projectId: string, signal?: AbortSignal): Promise<FlatEventNode[]> {
+  const tree = await listEventTree(projectId, signal)
   const out: FlatEventNode[] = []
   const walk = (nodes: EventNode[]) => {
     for (const n of nodes) {
@@ -184,9 +184,10 @@ export interface StateSnapshot {
   revision: number
 }
 
-export async function getEventState(projectId: string): Promise<StateSnapshot> {
+export async function getEventState(projectId: string, signal?: AbortSignal): Promise<StateSnapshot> {
   const resp = await http.get(`projects/${projectId}/events/state`, {
     headers: { Accept: 'application/octet-stream' },
+    signal,
   })
   const revision = Number(resp.headers.get(REVISION_HEADER) ?? '0') || 0
   const buf = await resp.arrayBuffer()

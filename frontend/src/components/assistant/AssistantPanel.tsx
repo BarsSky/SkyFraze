@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   addAIEndpoint,
   applyAIProposal,
@@ -1544,7 +1544,12 @@ export function AssistantPanel({
               ) : (
                 <button
                   onClick={ask}
-                  disabled={consentBlocked || budgetExhausted || text.trim() === ''}
+                  // `!modelRef` — не придирка, а закрытая дыра (0.140.1). Модель приходит
+                  // двумя шагами: настройка (`defaultModel`) и список моделей у провайдера.
+                  // Между ними кнопка была активна, а `ask` на пустой модели молча
+                  // возвращался с ошибкой — вопрос не уходил никуда, и человек (и e2e) видел
+                  // «спросил — ответа нет». Теперь нажатие просто ждёт, пока модель есть.
+                  disabled={consentBlocked || budgetExhausted || text.trim() === '' || !modelRef}
                 >
                   {t('as.ask')}
                 </button>
@@ -1780,3 +1785,4 @@ function generationHint(agent: AISettings): string {
   }
   return selected?.hint ?? ''
 }
+

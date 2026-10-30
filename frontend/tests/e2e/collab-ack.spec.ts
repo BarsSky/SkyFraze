@@ -51,7 +51,13 @@ test('правка доезжает до сервера подтверждени
   await page.getByRole('button', { name: '+ Новый проект' }).click()
   await page.getByPlaceholder('Название').fill(title)
   await page.getByRole('button', { name: 'Создать' }).click()
-  await page.getByRole('link', { name: title }).click()
+
+  // Ссылка одна (0.140.1): проект, созданный, пока шла загрузка списка, появлялся в нём
+  // ДВАЖДЫ — с одинаковым ключом и одинаковым адресом. Тогда `getByRole('link', {name})`
+  // падал на strict mode violation, а человек видел две одинаковые карточки.
+  const projectLink = page.getByRole('link', { name: title })
+  await expect(projectLink).toHaveCount(1)
+  await projectLink.first().click()
   const projectURL = page.url()
   expect(projectURL).toMatch(/\/projects\/[0-9a-f-]+$/)
   const projectId = projectURL.split('/').pop()

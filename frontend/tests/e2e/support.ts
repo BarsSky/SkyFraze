@@ -1,4 +1,4 @@
-import { expect, test, type Locator, type Page } from '@playwright/test'
+﻿import { expect, test, type Locator, type Page } from '@playwright/test'
 
 /**
  * Вход для сценариев e2e на чистой базе.
@@ -93,7 +93,7 @@ export async function apiHeaders(page: Page): Promise<Record<string, string>> {
 
 export async function signIn(page: Page, email: string = E2E_ADMIN_EMAIL): Promise<boolean> {
   await page.goto('/register')
-  const heading = await page.locator('h1').innerText()
+  const heading = await readHeading(page, '/register')
 
   // Заголовок проверяем на обоих языках (0.116.0): интерфейс может быть переключён до входа, и
   // «First administrator» — такой же признак пустой инсталляции, как «Первый администратор».
@@ -168,3 +168,38 @@ async function register(page: Page, email: string): Promise<void> {
   await page.locator('button[type="submit"]').click()
   await expect(page).toHaveURL(/\/projects$/)
 }
+
+/**
+ * Заголовок страницы с ограниченным ожиданием и разбором отказа (0.140.1).
+ *
+ * Зачем. `page.locator('h1').innerText()` без таймаута ждёт столько, сколько жив весь
+ * сценарий: один раз в полном прогоне `mentions.spec` простоял так **180 секунд** и упал
+ * сообщением «locator.innerText: Test timeout» — то есть «страница не отрисовалась», без
+ * единой подсказки, почему (упал бандл? не ответил API? ошибка в консоли?). Три минуты
+ * ожидания без данных — это не диагностика.
+ *
+ * Теперь ожидание ограничено, а при отказе в сообщение попадают ошибки страницы и начало
+ * HTML: по ним видно, SPA не поднялось вовсе или отрисовалось что-то другое.
+ */
+export async function readHeading(page: Page, route: string): Promise<string> {
+  const errors: string[] = []
+  const onPageError = (error: Error) => errors.push(error.message)
+  page.on('pageerror', onPageError)
+  try {
+    return await page.locator('h1').innerText({ timeout: HEADING_TIMEOUT_MS }).catch(async (error) => {
+      const html = await page.content().catch(() => '')
+      throw new Error(
+        `страница ${route} не показала заголовок за ${HEADING_TIMEOUT_MS / 1000} с: ${error.message}\n` +
+          `ошибки страницы: ${errors.length > 0 ? errors.join(' | ') : 'нет'}\n` +
+          `адрес: ${page.url()}\n` +
+          `начало HTML: ${html.replace(/\s+/g, ' ').slice(0, 400)}`,
+      )
+    })
+  } finally {
+    page.off('pageerror', onPageError)
+  }
+}
+
+/** Сколько ждём отрисовку страницы: приложение поднимается за доли секунды, 20 с — с запасом. */
+const HEADING_TIMEOUT_MS = 20_000
+
