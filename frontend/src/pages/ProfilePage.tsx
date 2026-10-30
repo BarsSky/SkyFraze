@@ -1,4 +1,5 @@
 import { ProfileCard } from '../components/account/ProfileCard'
+import { useT } from '../i18n'
 
 /**
  * «Профиль» — всё про мою учётную запись (0.99.0).
@@ -12,12 +13,12 @@ import { ProfileCard } from '../components/account/ProfileCard'
  * настройка входа добавляется сюда одним компонентом, а не правкой страницы.
  */
 export function ProfilePage() {
+  const t = useT()
   return (
     <div className="feed">
-      <h2 className="feed__title">Профиль</h2>
+      <h2 className="feed__title">{t('prof.title')}</h2>
       <p className="muted feed__lead">
-        Как вас найти в поиске и каталоге резидентов, и как защищён вход. Круг соавторов — на
-        отдельной вкладке «Соавторы».
+        {t('prof.hint')}
       </p>
       <ProfileCard />
     </div>

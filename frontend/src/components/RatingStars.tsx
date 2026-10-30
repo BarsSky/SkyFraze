@@ -1,4 +1,6 @@
 import { formatRating } from '../lib/format'
+import { useT } from '../i18n'
+import { useLang } from '../store/lang'
 
 interface Props {
   /** Моя оценка (null — я ещё не голосовал) */
@@ -21,12 +23,14 @@ interface Props {
  * можно), но клик ведёт на вход.
  */
 export function RatingStars({ mine, avg, count, onRate, note, busy }: Props) {
+  const t = useT()
+  const [lang] = useLang()
   const shown = mine ?? Math.round(avg)
   const stars = [1, 2, 3, 4, 5]
 
   return (
     <div className="pub-rating" data-my-rating={mine ?? ''}>
-      <span className="pub-rating__stars" role="group" aria-label="Оценка истории">
+      <span className="pub-rating__stars" role="group" aria-label={t('rate.groupAria')}>
         {stars.map((star) => {
           const filled = star <= shown
           const isMine = mine !== null && star <= mine
@@ -40,13 +44,17 @@ export function RatingStars({ mine, avg, count, onRate, note, busy }: Props) {
                 (isMine ? ' is-mine' : '')
               }
               disabled={busy}
-              aria-label={mine === star ? `Снять оценку ${star}` : `Оценить на ${star}`}
+              aria-label={
+                mine === star
+                  ? t('rate.removeAria', { star })
+                  : t('rate.rateAria', { star })
+              }
               title={
                 onRate
                   ? mine === star
-                    ? 'Нажмите, чтобы снять свою оценку'
-                    : `Оценить на ${star}`
-                  : 'Войдите, чтобы оценить историю'
+                    ? t('rate.removeHint')
+                    : t('rate.hint', { star })
+                  : t('rate.loginHint')
               }
               onClick={() => onRate?.(star)}
             >
@@ -55,7 +63,7 @@ export function RatingStars({ mine, avg, count, onRate, note, busy }: Props) {
           )
         })}
       </span>
-      <span className="pub-rating__value">{formatRating(avg, count)}</span>
+      <span className="pub-rating__value">{formatRating(avg, count, lang)}</span>
       {note && <span className="pub-rating__note">{note}</span>}
     </div>
   )

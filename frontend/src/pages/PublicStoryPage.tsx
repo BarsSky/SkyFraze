@@ -3,6 +3,8 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { TimelineStage, type AssetLookup } from '../components/timeline/TimelineStage'
 import { buildPublicDoc } from '../components/timeline/publicDoc'
 import { RatingStars } from '../components/RatingStars'
+import { useT } from '../i18n'
+import { useLang } from '../store/lang'
 import { ErrorBanner } from '../components/ErrorBanner'
 import {
   getPublicStory,
@@ -22,6 +24,8 @@ import { useAuthStore } from '../store/auth'
  * страница не вызывает. Оценка — единственное действие, и только для вошедших.
  */
 export function PublicStoryPage() {
+  const t = useT()
+  const [lang] = useLang()
   const { slug = '' } = useParams()
   const nav = useNavigate()
   const user = useAuthStore((s) => s.user)
@@ -91,13 +95,13 @@ export function PublicStoryPage() {
       request
         .then((res) => {
           setRating({ mine: res.my_rating, avg: res.rating_avg, count: res.rating_count })
-          setRatingNote(remove ? 'оценка снята' : 'спасибо, оценка учтена')
+          setRatingNote(remove ? t('story.rated') : t('story.thanks'))
         })
         .catch((e) => {
           const status = (e as { response?: Response })?.response?.status
-          if (status === 403) setRatingNote('автор не оценивает свою историю')
-          else if (status === 401) setRatingNote('нужно войти, чтобы оценить')
-          else setRatingNote('не удалось сохранить оценку')
+          if (status === 403) setRatingNote(t('story.ownStory'))
+          else if (status === 401) setRatingNote(t('story.needLogin'))
+          else setRatingNote(t('story.rateFailed'))
         })
         .finally(() => setBusy(false))
     },
@@ -108,18 +112,19 @@ export function PublicStoryPage() {
     return (
       <div className="feed">
         <div className="card feed__empty">
-          <h3 style={{ marginTop: 0 }}>История не найдена</h3>
+          <h3 style={{ marginTop: 0 }}>{t('story.notFound')}</h3>
           <p className="muted">
-            Она снята с публикации или ссылка неверна. Публичными видны только истории,
-            которые автор явно открыл.
+            {t('story.notFoundHint')}
           </p>
           <div className="banner__actions">
             <Link to="/feed">
-              <button type="button">← В ленту</button>
+              <button type="button">{t('story.backToFeed')}</button>
             </Link>
             {user && (
               <Link to="/projects">
-                <button type="button" className="secondary">Мои проекты</button>
+                <button type="button" className="secondary">
+                  {t('story.myProjects')}
+                </button>
               </Link>
             )}
           </div>
@@ -133,23 +138,24 @@ export function PublicStoryPage() {
       <div className="feed">
         <ErrorBanner
           error={error}
-          what="История"
+          what={t('story.what')}
           onRetry={() => setAttempt((n) => n + 1)}
           actions={
             <>
-              <Link className="banner__link" to="/feed">← В ленту</Link>
-              {user && <Link className="banner__link" to="/projects">Мои проекты</Link>}
+              <Link className="banner__link" to="/feed">{t('story.backToFeed')}</Link>
+              {user && <Link className="banner__link" to="/projects">{t('story.myProjects')}</Link>}
             </>
           }
         />
         <p className="muted">
-          Пока страница не открылась, можно посмотреть <Link to="/feed">другие публичные истории</Link>.
+          {t('story.errHint1')} <Link to="/feed">{t('story.errHintLink')}</Link>
+          {t('story.errHint2')}
         </p>
       </div>
     )
   }
 
-  if (!story || !publicDoc) return <p className="muted">Загрузка истории…</p>
+  if (!story || !publicDoc) return <p className="muted">{t('story.loading')}</p>
 
   const item = story.story
 
@@ -161,17 +167,17 @@ export function PublicStoryPage() {
         projectTitle={item.title}
         actions={
           <Link className="sf-btn sf-btn--ghost pub-back" to="/feed">
-            ← Лента
+            {t('story.toFeed')}
           </Link>
         }
         copyFooter={
           <div className="pub-meta">
             <div className="pub-meta__line">
-              <span className="pub-meta__author" title="Автор">
+              <span className="pub-meta__author" title={t('story.author')}>
                 {item.author}
               </span>
-              <span className="pub-meta__views" title="Просмотры">
-                {formatViews(item.views)}
+              <span className="pub-meta__views" title={t('story.views')}>
+                {formatViews(item.views, lang)}
               </span>
             </div>
             <RatingStars
@@ -179,7 +185,7 @@ export function PublicStoryPage() {
               avg={rating.avg}
               count={rating.count}
               onRate={onRate}
-              note={ratingNote ?? (user ? null : 'войдите, чтобы оценить')}
+              note={ratingNote ?? (user ? null : t('story.noteLogin'))}
               busy={busy}
             />
           </div>

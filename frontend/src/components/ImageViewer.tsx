@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { useT } from '../i18n'
 import { createPortal } from 'react-dom'
 
 export interface ViewerImage {
@@ -31,6 +32,7 @@ function swipeThreshold(): number {
  * счётчик «2 / 5», закрытие по Esc, клику по фону или кнопке.
  */
 export function ImageViewer({ images, index, onIndexChange, onClose, title }: Props) {
+  const t = useT()
   const dialogRef = useRef<HTMLDivElement>(null)
   const restoreFocusRef = useRef<HTMLElement | null>(null)
   const dragStartRef = useRef<{ x: number; y: number; pointerId: number; swiped: boolean } | null>(null)
@@ -132,7 +134,7 @@ export function ImageViewer({ images, index, onIndexChange, onClose, title }: Pr
       className="sf-viewer"
       role="dialog"
       aria-modal="true"
-      aria-label={title ? `Просмотр картинок: ${title}` : 'Просмотр картинок'}
+      aria-label={title ? t('view.ariaTitle', { title }) : t('view.aria')}
       ref={dialogRef}
       tabIndex={-1}
       data-viewer-index={current}
@@ -150,8 +152,8 @@ export function ImageViewer({ images, index, onIndexChange, onClose, title }: Pr
         <span className="sf-viewer__count" aria-live="polite">
           {current + 1} / {total}
         </span>
-        <button type="button" className="sf-viewer__close" onClick={onClose} aria-label="Закрыть просмотр">
-          закрыть ✕
+        <button type="button" className="sf-viewer__close" onClick={onClose} aria-label={t('view.closeAria')}>
+          {t('view.close')}
         </button>
       </div>
 
@@ -161,7 +163,7 @@ export function ImageViewer({ images, index, onIndexChange, onClose, title }: Pr
           className="sf-viewer__nav sf-viewer__nav--prev"
           onClick={() => go(-1)}
           disabled={current === 0}
-          aria-label="Предыдущая картинка"
+          aria-label={t('view.prev')}
         >
           ‹
         </button>
@@ -179,14 +181,14 @@ export function ImageViewer({ images, index, onIndexChange, onClose, title }: Pr
           className="sf-viewer__nav sf-viewer__nav--next"
           onClick={() => go(1)}
           disabled={current === total - 1}
-          aria-label="Следующая картинка"
+          aria-label={t('view.next')}
         >
           ›
         </button>
       </div>
 
       {caption && <p className="sf-viewer__caption">{caption}</p>}
-      <p className="sf-viewer__hint">свайп влево-вправо, стрелки ← → или Esc — закрыть</p>
+      <p className="sf-viewer__hint">{t('view.hint')}</p>
     </div>,
     document.body,
   )

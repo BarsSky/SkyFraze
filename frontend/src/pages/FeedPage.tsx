@@ -4,11 +4,13 @@ import { listFeed, publicAssetUrl, type FeedItem, type FeedSort } from '../api/f
 import { ErrorBanner } from '../components/ErrorBanner'
 import { useAuthStore } from '../store/auth'
 import { formatDate, formatRating, formatViews } from '../lib/format'
+import { useT, type Key } from '../i18n'
+import { useLang } from '../store/lang'
 
-const SORTS: Array<{ id: FeedSort; label: string; hint: string }> = [
-  { id: 'new', label: 'Новые', hint: 'Сначала недавно опубликованные' },
-  { id: 'rating', label: 'По оценке', hint: 'Сначала с высокой средней оценкой' },
-  { id: 'views', label: 'По просмотрам', hint: 'Сначала самые читаемые' },
+const SORTS: Array<{ id: FeedSort; labelKey: Key; hintKey: Key }> = [
+  { id: 'new', labelKey: 'feed.sortNew', hintKey: 'feed.sortNewHint' },
+  { id: 'rating', labelKey: 'feed.sortRating', hintKey: 'feed.sortRatingHint' },
+  { id: 'views', labelKey: 'feed.sortViews', hintKey: 'feed.sortViewsHint' },
 ]
 
 /**
@@ -19,6 +21,8 @@ const SORTS: Array<{ id: FeedSort; label: string; hint: string }> = [
  * и (для вошедших) поставить оценку на её странице.
  */
 export function FeedPage() {
+  const t = useT()
+  const [lang] = useLang()
   const [items, setItems] = useState<FeedItem[]>([])
   const [sort, setSort] = useState<FeedSort>('new')
   const [loading, setLoading] = useState(true)
@@ -47,23 +51,23 @@ export function FeedPage() {
     <div className="feed">
       <div className="feed__head">
         <div>
-          <h2 className="feed__title">Публичные истории</h2>
+          <h2 className="feed__title">{t('feed.title')}</h2>
           <p className="muted feed__sub">
-            Таймлайны, которые авторы открыли для всех. Просмотр — без регистрации и без правок.
+            {t('feed.sub')}
           </p>
         </div>
-        <div className="feed__sorts" role="tablist" aria-label="Порядок ленты">
+        <div className="feed__sorts" role="tablist" aria-label={t('feed.sortsAria')}>
           {SORTS.map((s) => (
             <button
               key={s.id}
               type="button"
               role="tab"
               aria-selected={sort === s.id}
-              title={s.hint}
+              title={t(s.hintKey)}
               className={sort === s.id ? 'feed__sort is-active' : 'feed__sort'}
               onClick={() => setSort(s.id)}
             >
-              {s.label}
+              {t(s.labelKey)}
             </button>
           ))}
         </div>
@@ -72,23 +76,23 @@ export function FeedPage() {
       {error != null && (
         <ErrorBanner
           error={error}
-          what="Лента"
+          what={t('feed.what')}
           onRetry={() => void load(sort)}
           actions={
             <>
-              <Link className="banner__link" to="/feed">Обновить ленту</Link>
-              {user && <Link className="banner__link" to="/projects">Мои проекты</Link>}
+              <Link className="banner__link" to="/feed">{t('feed.refresh')}</Link>
+              {user && <Link className="banner__link" to="/projects">{t('feed.myProjects')}</Link>}
             </>
           }
         />
       )}
-      {loading && <p className="muted">Загрузка…</p>}
+      {loading && <p className="muted">{t('feed.loading')}</p>}
 
       {!loading && error == null && items.length === 0 && (
         <div className="card feed__empty">
-          <h3 style={{ marginTop: 0 }}>Пока ничего не опубликовано</h3>
+          <h3 style={{ marginTop: 0 }}>{t('feed.emptyTitle')}</h3>
           <p className="muted">
-            История попадает сюда только после того, как автор нажмёт «Опубликовать» в списке проектов.
+            {t('feed.emptyHint')}
           </p>
         </div>
       )}
@@ -109,17 +113,21 @@ export function FeedPage() {
               <h3 className="feed-card__title">
                 <Link to={`/s/${item.slug}`}>{item.title}</Link>
               </h3>
-              <p className="feed-card__desc muted">{item.description || 'без описания'}</p>
+              <p className="feed-card__desc muted">{item.description || t('feed.noDesc')}</p>
               <div className="feed-card__meta">
-                <span className="feed-card__author" title="Автор">
+                <span className="feed-card__author" title={t('feed.author')}>
                   {item.author}
                 </span>
-                <span title="Просмотры">{formatViews(item.views)}</span>
-                <span title="Оценки">★ {formatRating(item.rating_avg, item.rating_count)}</span>
-                {item.published_at && <span title="Дата публикации">{formatDate(item.published_at)}</span>}
+                <span title={t('feed.views')}>{formatViews(item.views, lang)}</span>
+                <span title={t('feed.ratings')}>
+                  ★ {formatRating(item.rating_avg, item.rating_count, lang)}
+                </span>
+                {item.published_at && (
+                  <span title={t('feed.published')}>{formatDate(item.published_at)}</span>
+                )}
               </div>
               <Link className="feed-card__open" to={`/s/${item.slug}`}>
-                Читать →
+                {t('feed.read')}
               </Link>
             </div>
           </article>
