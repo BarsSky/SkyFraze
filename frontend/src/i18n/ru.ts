@@ -1797,4 +1797,20 @@ export const ru = {
   'presence.editing': 'правит «{title}»',
   'presence.untitled': 'без названия',
   'bg.addImage': '+ картинка',
-} as const
+  // ── выделение фрагмента в показе (0.132.0) ────────────────────────────────────────────
+  'sel.aria': 'Действия с выделенным фрагментом',
+  'sel.toChat': 'В чат проекта',
+  'sel.toAssistant': 'Спросить помощника',
+  'sel.edit': 'Редактировать фрагмент',
+  'sel.chatPrefill': '> «{quote}» — кадр «{frame}»',
+  'sel.assistantPrefill': 'Разбери этот фрагмент из кадра «{frame}»:\n\n> «{quote}»',
+  'sel.quickTitle': 'Быстрая правка фрагмента',
+  'sel.quickHint': 'Кадр «{frame}». Правка сохранится в текст проекта и будет видна всем, у кого проект открыт.',
+  'sel.quickNotFound': 'Этот фрагмент не нашёлся в исходном тексте кадра — откройте кадр в редакторах и поправьте там.',
+  'sel.quickEmpty': 'Фрагмент пуст — править нечего.',
+  'sel.quickSave': 'Сохранить',
+  'sel.quickSaving': 'Сохраняю…',
+  'sel.quickSaved': 'Фрагмент сохранён.',
+  'sel.quickOpenEditors': 'Открыть в редакторах',
+  'sel.quickCancel': 'Отмена',
+  'sel.quickClose': 'Закрыть',} as const

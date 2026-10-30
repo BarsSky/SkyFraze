@@ -30,6 +30,17 @@ import { useAuthStore } from '../../store/auth'
  * секунд. Отдельный WebSocket ради чата не нужен и добавил бы второй канал состояния к уже
  * существующему collaborативному; задержка в пару секунд для обсуждения незаметна.
  */
+/** Цитата из показа проекта: её просят вставить в поле ввода (0.132.0). */
+export interface DockPrefill {
+  /** Вкладка, на которую надо переключиться. */
+  tab: 'assistant' | 'chat'
+  /** Меняется на каждое выделение: по нему панель понимает, что цитата новая. */
+  nonce: number
+  frameId: string
+  frameTitle: string
+  quote: string
+}
+
 interface Props {
   projectId: string
   /** Открыта ли вкладка чата: пока закрыта — только опрос ради маркера «есть новое». */
@@ -38,6 +49,14 @@ interface Props {
   onOpenFrame?: (frameId: string) => void
   /** Сколько пришло, пока вкладка была закрыта. */
   onUnread?: (count: number) => void
+  /**
+   * Выделенный в проекте фрагмент: поле ввода заполняется цитатой и ссылкой на кадр (0.132.0).
+   *
+   * Ссылка — не «голая» строка в тексте: сообщение несёт `event_id` и точную фразу, поэтому
+   * участник нажимает на неё и попадает в тот же кадр. Цитата при этом остаётся в тексте —
+   * разговор читается и без перехода.
+   */
+  prefill?: DockPrefill | null
 }
 
 /** Ключ «последнее прочитанное» — в localStorage: он личный и переживает перезагрузку. */
@@ -88,12 +107,13 @@ function timeOf(iso: string): string {
   return date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
 }
 
-export function ProjectChat({ projectId, visible, onOpenFrame, onUnread }: Props) {
+export function ProjectChat({ projectId, visible, onOpenFrame, onUnread, prefill }: Props) {
   const t = useT()
   const [lang] = useLang()
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [bot, setBot] = useState<ChatBotInfo>({ name: t('chat.botName'), available: false })
   const [text, setText] = useState('')
+  const inputRef = useRef<HTMLTextAreaElement | null>(null)
   const [askBot, setAskBot] = useState(false)
   const [linkId, setLinkId] = useState('')
   const [quote, setQuote] = useState('')
@@ -108,6 +128,19 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread }: Props
   const [editBusy, setEditBusy] = useState(false)
   /** Какая плашка отметки сейчас в запросе (`сообщение:вид`) — защита от двойного нажатия. */
   const [reactionBusy, setReactionBusy] = useState<string | null>(null)
+
+  // Цитата из показа проекта: заполняем поле и ссылку на кадр, но НЕ отправляем — человек
+  // дописывает мысль сам. Автоотправка была бы решением за него.
+  useEffect(() => {
+    if (!prefill || prefill.tab !== 'chat') return
+    setText(t('sel.chatPrefill', { quote: prefill.quote, frame: prefill.frameTitle }))
+    setLinkId(prefill.frameId)
+    setQuote(prefill.quote)
+    requestAnimationFrame(() => inputRef.current?.focus())
+    // Зависимость — только nonce: перерисовка по другим причинам не должна перезаписывать
+    // то, что человек уже начал печатать.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefill?.nonce])
   /**
    * Есть ли в истории сообщения ДО показанных (0.99.2).
    *

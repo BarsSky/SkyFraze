@@ -9,6 +9,7 @@ import { ImageViewer } from '../../ImageViewer'
 import { MarkdownBlock } from '../../MarkdownBlock'
 import { dateLabel } from '../../../collab/eventDate'
 import { useT } from '../../../i18n'
+import { SelectionMenu } from './SelectionMenu'
 
 interface Props {
   chapter: TimelineChapter
@@ -103,7 +104,13 @@ export function CopyPanel({
             <span className="sf-copy__eyebrow">{frame.eyebrow}</span>
             <h2 className="sf-copy__title">{frame.title || t('common.untitled')}</h2>
             {frame.body && (
-              <MarkdownBlock source={frame.body} className="sf-copy__body" assetUrls={assetUrls} />
+              <div
+                className="sf-copy__body-wrap"
+                data-frame-body={frame.id}
+                data-frame-source={frame.body}
+              >
+                <MarkdownBlock source={frame.body} className="sf-copy__body" assetUrls={assetUrls} />
+              </div>
             )}
 
           <ul className="sf-copy__meta">
@@ -168,6 +175,10 @@ export function CopyPanel({
           {nextLabel ? t('copy.nextNamed', { label: nextLabel }) : t('copy.end')}
         </button>
       </div>
+
+      {frame.body && (
+        <SelectionMenu frameId={frame.id} frameTitle={frame.title} source={frame.body} />
+      )}
 
       {footer && <div className="sf-copy__footer">{footer}</div>}
 

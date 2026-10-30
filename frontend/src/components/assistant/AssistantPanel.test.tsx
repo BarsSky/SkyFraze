@@ -1305,4 +1305,35 @@ describe('AssistantPanel', () => {
     expect(screen.getByRole('button', { name: 'Save the role' })).toBeTruthy()
   })
 
+  /**
+   * 0.132.0: цитата из показа проекта. В поле подставляется готовый вопрос про фрагмент, но
+   * отправки нет — человек дописывает, что именно хочет узнать.
+   */
+  it('цитата из показа подставляется в поле помощника и не отправляется', async () => {
+    mocks.config.mockResolvedValue(LOCAL)
+    renderPanel({
+      prefill: {
+        tab: 'assistant',
+        nonce: 1,
+        frameId: 'f1',
+        frameTitle: 'Пролог',
+        quote: 'Аня стоит на пороге',
+      },
+    })
+
+    const input = (await screen.findByLabelText('Сообщение помощнику')) as HTMLTextAreaElement
+    await waitFor(() => expect(input.value).toContain('Аня стоит на пороге'))
+    expect(input.value).toContain('Пролог')
+    // Подсказка про фрагмент, но отправки нет: решает человек.
+    expect(mocks.stream).not.toHaveBeenCalled()
+  })
+
+  it('цитата, адресованная чату, помощника не трогает', async () => {
+    mocks.config.mockResolvedValue(LOCAL)
+    renderPanel({
+      prefill: { tab: 'chat', nonce: 3, frameId: 'f1', frameTitle: 'Пролог', quote: 'не сюда' },
+    })
+    const input = (await screen.findByLabelText('Сообщение помощнику')) as HTMLTextAreaElement
+    expect(input.value).toBe('')
+  })
 })

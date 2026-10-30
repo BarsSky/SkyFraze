@@ -14,6 +14,7 @@ import './styles/versions.css'
 import './styles/trash.css'
 import './styles/notify.css'
 import './styles/about.css'
+import './styles/selection.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

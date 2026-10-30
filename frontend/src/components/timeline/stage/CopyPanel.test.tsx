@@ -88,4 +88,20 @@ describe('CopyPanel', () => {
     render(<CopyPanel chapter={chapter} frame={frame} onJumpFrame={() => {}} onPrev={() => {}} />)
     expect(screen.getByRole('button', { name: 'end of the timeline' })).toBeTruthy()
   })
+
+  /**
+   * 0.132.0: текст кадра размечен для выделения. Меню (и смещения в исходнике) ищут кадр по
+   * `data-frame-body`, а исходник берут из `data-frame-source` — без этой обвязки выделение
+   * некуда привязать.
+   */
+  it('текст кадра отмечен для выделения фрагмента', () => {
+    const { chapter, frame } = firstFrame()
+    const { container } = render(
+      <CopyPanel chapter={chapter} frame={frame} onJumpFrame={() => {}} onPrev={() => {}} />,
+    )
+    const body = container.querySelector('[data-frame-body]') as HTMLElement
+    expect(body).toBeTruthy()
+    expect(body.getAttribute('data-frame-body')).toBe(frame.id)
+    expect(body.getAttribute('data-frame-source')).toContain('Текст кадра.')
+  })
 })

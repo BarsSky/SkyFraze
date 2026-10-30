@@ -65,6 +65,8 @@ import { useLang } from '../../store/lang'
  *     история, выбранная модель и набранный вопрос остаются на месте, а ответ,
  *     пришедший после закрытия, отмечается маркером на плавающей кнопке (`onUnread`).
  */
+import type { DockPrefill } from '../chat/ProjectChat'
+
 interface Props {
   projectId: string
   /** Открыто ли окно: нужно, чтобы отличить «ответ на глазах» от «ответ в фоне». */
@@ -72,6 +74,8 @@ interface Props {
   onClose: () => void
   /** Ответ пришёл, пока окно было закрыто: кнопка показывает маркер. */
   onUnread: () => void
+  /** Цитата из показа проекта: заполняет поле вопроса (0.132.0). */
+  prefill?: DockPrefill | null
   /** Идёт запрос к модели: кнопка показывает «думает», даже если окно закрыто. */
   onThinkingChange: (thinking: boolean) => void
   /** Сообщить странице, что проект изменился (перечитать состояние без realtime). */
@@ -89,6 +93,7 @@ export function AssistantPanel({
   open,
   onClose,
   onUnread,
+  prefill,
   onThinkingChange,
   onProjectChanged,
   onOpenEditors,
@@ -162,6 +167,15 @@ export function AssistantPanel({
    */
   const [images, setImages] = useState<string[]>([])
   const [attachError, setAttachError] = useState<string | null>(null)
+
+  // Цитата из показа проекта (0.132.0): подставляем готовый вопрос про фрагмент. Не отправляем:
+  // человек дописывает, что именно хочет узнать, — так же, как с подсказками в пустом чате.
+  useEffect(() => {
+    if (!prefill || prefill.tab !== 'assistant') return
+    setText(t('sel.assistantPrefill', { quote: prefill.quote, frame: prefill.frameTitle }))
+    requestAnimationFrame(() => inputRef.current?.focus())
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefill?.nonce])
   const [sendError, setSendError] = useState<string | null>(null)
   const [consentNeeded, setConsentNeeded] = useState(false)
   const [agent, setAgent] = useState<AISettings | null>(null)

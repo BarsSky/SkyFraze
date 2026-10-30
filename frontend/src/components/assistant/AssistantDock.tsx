@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useT } from '../../i18n'
+import type { DockPrefill } from '../chat/ProjectChat'
 import { AssistantPanel } from './AssistantPanel'
 import { ProjectChat } from '../chat/ProjectChat'
 
@@ -36,6 +37,8 @@ interface Props {
   projectIsEmpty?: boolean
   /** Открыть кадр из ссылки в чате проекта (0.95.0): страница переключит вкладку редакторов. */
   onOpenFrame?: (frameId: string) => void
+  /** Цитата из показа проекта: вкладка и предзаполненное поле (0.132.0). */
+  prefill?: DockPrefill | null
 }
 
 /**
@@ -55,11 +58,19 @@ export function AssistantDock({
   onOpenEditors,
   projectIsEmpty = true,
   onOpenFrame,
+  prefill = null,
 }: Props) {
   const t = useT()
   const [unread, setUnread] = useState(0)
   const [chatUnread, setChatUnread] = useState(0)
   const [tab, setTab] = useState<DockTab>('assistant')
+
+  // Цитату принесли из показа проекта: открываем нужную вкладку сами, чтобы человек не искал
+  // её вкладкой после действия (0.132.0).
+  useEffect(() => {
+    if (!prefill) return
+    setTab(prefill.tab)
+  }, [prefill?.nonce, prefill])
   const [thinking, setThinking] = useState(false)
   const buttonRef = useRef<HTMLButtonElement | null>(null)
   const windowRef = useRef<HTMLDivElement | null>(null)
@@ -140,6 +151,7 @@ export function AssistantDock({
             onThinkingChange={setThinking}
             onProjectChanged={onProjectChanged}
             onOpenEditors={onOpenEditors}
+            prefill={prefill}
           />
         </div>
         <div className="ai-window__pane" hidden={tab !== 'chat'}>
@@ -148,6 +160,7 @@ export function AssistantDock({
             visible={open && tab === 'chat'}
             onOpenFrame={onOpenFrame}
             onUnread={setChatUnread}
+            prefill={prefill}
           />
         </div>
       </div>

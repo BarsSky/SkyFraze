@@ -1782,4 +1782,20 @@ export const en: Record<Key, string> = {
   'presence.editing': 'edits «{title}»',
   'presence.untitled': 'untitled',
   'bg.addImage': '+ image',
-}
+  // Выделение фрагмента в показе (0.132.0).
+  'sel.aria': 'Actions with the selected fragment',
+  'sel.toChat': 'To the project chat',
+  'sel.toAssistant': 'Ask the assistant',
+  'sel.edit': 'Edit the fragment',
+  'sel.chatPrefill': '> {quote} — frame {frame}',
+  'sel.assistantPrefill': 'Look at this fragment from the frame {frame}:\n\n> {quote}',
+  'sel.quickTitle': 'Quick fragment edit',
+  'sel.quickHint': 'Frame {frame}. The edit is saved into the project text and is visible to everyone who has the project open.',
+  'sel.quickNotFound': 'This fragment was not found in the frame source text — open the frame in the editors and fix it there.',
+  'sel.quickEmpty': 'The fragment is empty — there is nothing to edit.',
+  'sel.quickSave': 'Save',
+  'sel.quickSaving': 'Saving…',
+  'sel.quickSaved': 'The fragment is saved.',
+  'sel.quickOpenEditors': 'Open in the editors',
+  'sel.quickCancel': 'Cancel',
+  'sel.quickClose': 'Close',}

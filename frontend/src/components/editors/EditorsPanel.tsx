@@ -108,7 +108,13 @@ interface Props {
    * молчали. Страница переключает вкладку и передаёт просьбу уже смонтированной панели; `nonce`
    * позволяет повторить переход к тому же кадру.
    */
-  openRequest?: { frameId: string; mention?: Mention; nonce: number } | null
+  openRequest?: {
+    frameId: string
+    mention?: Mention
+    nonce: number
+    /** Выделенный в показе фрагмент: диапазон в поле `body` (0.132.0). */
+    range?: { from: number; to: number } | null
+  } | null
   /** Просьба обработана: страница убирает её, чтобы повторное монтирование не открывало кадр. */
   onOpenRequestHandled?: () => void
   /**
@@ -812,8 +818,22 @@ title: node.item.title || tStatic('ed.untitled'),
    */
   useEffect(() => {
     if (!openRequest?.frameId) return
-    if (openRequest.mention) openFrameWithMention(openRequest.frameId, openRequest.mention)
-    else setSelectedId(openRequest.frameId)
+    if (openRequest.mention) {
+      openFrameWithMention(openRequest.frameId, openRequest.mention)
+    } else {
+      setSelectedId(openRequest.frameId)
+      // Пришли из показа проекта с выделенным фрагментом (0.132.0): кадр открыт — выделяем
+      // тот же кусок в поле текста, чтобы человек сразу видел, о чём речь.
+      const range = openRequest.range
+      if (range !== undefined && range !== null) {
+        setFocusRange((current) => ({
+          field: 'body',
+          from: range.from,
+          to: range.to,
+          nonce: (current?.nonce ?? 0) + 1,
+        }))
+      }
+    }
     scrollWithinMain(document.querySelector<HTMLElement>('[data-editor-panel]'))
     onOpenRequestHandled?.()
   }, [onOpenRequestHandled, openFrameWithMention, openRequest])

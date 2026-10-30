@@ -84,4 +84,34 @@ describe('AssistantDock — вкладки', () => {
     // Окно скрыто атрибутом, а не размонтированием.
     expect(screen.getByRole('dialog', { hidden: true })).toBeTruthy()
   })
+
+  /**
+   * 0.132.0: «отправить в чат» и «спросить помощника» из меню выделения открывают окно СРАЗУ на
+   * нужной вкладке — иначе человек попадал бы не туда и переключал вручную.
+   */
+  it('цитата для помощника открывает вкладку помощника, цитата для чата — вкладку чата', () => {
+    const view = render(
+      <AssistantDock
+        projectId="p1"
+        open
+        onOpenChange={() => {}}
+        onProjectChanged={() => {}}
+        onOpenEditors={() => {}}
+        prefill={{ tab: 'chat', nonce: 1, frameId: 'f1', frameTitle: 'Пролог', quote: 'Аня' }}
+      />,
+    )
+    expect(screen.getByRole('tab', { name: /Чат проекта/ }).getAttribute('aria-selected')).toBe('true')
+
+    view.rerender(
+      <AssistantDock
+        projectId="p1"
+        open
+        onOpenChange={() => {}}
+        onProjectChanged={() => {}}
+        onOpenEditors={() => {}}
+        prefill={{ tab: 'assistant', nonce: 2, frameId: 'f1', frameTitle: 'Пролог', quote: 'Аня' }}
+      />,
+    )
+    expect(screen.getByRole('tab', { name: /Помощник/ }).getAttribute('aria-selected')).toBe('true')
+  })
 })

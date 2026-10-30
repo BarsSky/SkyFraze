@@ -5,6 +5,14 @@ import { ProjectLoading } from '../components/timeline/ProjectLoading'
 import { EditorsPanel } from '../components/editors/EditorsPanel'
 import { RelationsPanel } from '../components/entities/RelationsPanel'
 import { AssistantDock } from '../components/assistant/AssistantDock'
+import { QuickEditWindow } from '../components/timeline/stage/QuickEditWindow'
+import {
+  onQuoteEdit,
+  onQuoteToAssistant,
+  onQuoteToChat,
+  type QuoteEditRequest,
+} from '../lib/storySelection'
+import type { DockPrefill } from '../components/chat/ProjectChat'
 import { VersionsModal } from '../components/versions/VersionsModal'
 import { PresenceBar } from '../components/collab/PresenceBar'
 import { ErrorBanner } from '../components/ErrorBanner'
@@ -91,10 +99,19 @@ export function ProjectTimelinePage() {
    * получает её уже смонтированной).
    */
   const [openFrameRequest, setOpenFrameRequest] = useState<
-    { frameId: string; mention?: Mention; nonce: number } | null
+    { frameId: string; mention?: Mention; nonce: number; range?: { from: number; to: number } | null } | null
   >(null)
   /** Кадр, к которому надо прокрутить показ проекта (кнопка «К проекту»). */
   const [focusFrame, setFocusFrame] = useState<{ id: string; nonce: number } | null>(null)
+  /**
+   * Цитата из показа проекта (0.132.0): выделил текст → «в чат» или «помощнику».
+   *
+   * Хранится вместе с nonce: панель заполняет поле только на НОВУЮ цитату, иначе её
+   * перерисовка по любой другой причине затирала бы то, что человек уже печатает.
+   */
+  const [dockPrefill, setDockPrefill] = useState<DockPrefill | null>(null)
+  /** Окно быстрой правки фрагмента: выделение и кадр, к которому оно относится. */
+  const [quickEdit, setQuickEdit] = useState<QuoteEditRequest | null>(null)
 
   const collab = useCollab(projectId)
   const events = collab?.events
@@ -431,6 +448,53 @@ export function ProjectTimelinePage() {
    * с якорем). Кадр открывается, фраза видна в самой ссылке — подсвечивать «первым совпадением»
    * значило бы подсветить не то место, если фраза встречается дважды.
    */
+  /**
+   * Действия с выделенным фрагментом (0.132.0).
+   *
+   * Три адресата — три разных места страницы, поэтому подписки на события живут здесь: у
+   * страницы есть и док (чат с помощником), и вкладки режимов, и документ кадра для правки.
+   */
+  useEffect(
+    () =>
+      onQuoteToChat((quote) => {
+        setDockPrefill({
+          tab: 'chat',
+          nonce: Date.now(),
+          frameId: quote.frameId,
+          frameTitle: quote.frameTitle,
+          quote: quote.quote,
+        })
+        setAssistantOpen(true)
+      }),
+    [],
+  )
+
+  useEffect(
+    () =>
+      onQuoteToAssistant((quote) => {
+        setDockPrefill({
+          tab: 'assistant',
+          nonce: Date.now(),
+          frameId: quote.frameId,
+          frameTitle: quote.frameTitle,
+          quote: quote.quote,
+        })
+        setAssistantOpen(true)
+      }),
+    [],
+  )
+
+  useEffect(() => onQuoteEdit((request) => setQuickEdit(request)), [])
+
+  /** Документ кадра для окна быстрой правки: тот же Y.Map, что у редакторов. */
+  const quickEditMap = useMemo(() => {
+    if (!quickEdit || !events) return null
+    const found = (events.toArray() as YMap[]).find(
+      (item) => (item.get('id') as string | undefined) === quickEdit.frameId,
+    )
+    return found ?? null
+  }, [events, quickEdit])
+
   const openFrameFromChat = useCallback(
     (frameId: string) => {
       if (!frameId) return
@@ -636,6 +700,27 @@ export function ProjectTimelinePage() {
           onOpenEditors={openEditors}
           projectIsEmpty={eventsCount === 0}
           onOpenFrame={openFrameFromChat}
+          prefill={dockPrefill}
+        />
+      )}
+      {quickEdit !== null && (
+        <QuickEditWindow
+          request={quickEdit}
+          ymap={quickEditMap}
+          onClose={() => setQuickEdit(null)}
+          onOpenEditors={() => {
+            const request = quickEdit
+            setQuickEdit(null)
+            if (!request) return
+            // Уходим в редакторы на тот же фрагмент: диапазон передаём просьбой открыть кадр,
+            // и поле текста выделит ровно этот кусок.
+            setOpenFrameRequest({
+              frameId: request.frameId,
+              nonce: Date.now(),
+              range: request.range,
+            })
+            setView('editors')
+          }}
         />
       )}
     </div>

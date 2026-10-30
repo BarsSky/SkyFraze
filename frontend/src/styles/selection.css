@@ -1,0 +1,110 @@
+/* Выделение фрагмента в показе проекта (0.132.0).
+ *
+ * Меню следует за выделением: position: fixed и координаты из `Range.getBoundingClientRect()`.
+ * Появление — без анимации «вырастания»: меню должно быть под курсором сразу, иначе человек
+ * успевает отпустить выделение и решить, что ничего не произошло.
+ */
+
+.sf-select-menu {
+  position: fixed;
+  z-index: 96;
+  /* Портал в `document.body` — в том числе чтобы не наследовать `pointer-events: none` слоя
+   * текста стадии: иначе нажатия забирает трек прокрутки под ним. */
+  pointer-events: auto;
+  transform: translate(-50%, -100%);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  border-radius: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+}
+
+.sf-select-menu button {
+  border: 0;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 10px;
+  border-radius: 7px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.sf-select-menu button:hover,
+.sf-select-menu button:focus-visible {
+  background: var(--surface);
+}
+
+/* Размер нажатия: на телефоне палец крупнее курсора, а меню — три узкие кнопки в ряд. */
+@media (max-width: 640px) {
+  .sf-select-menu button {
+    padding: 9px 10px;
+    font-size: 12px;
+  }
+}
+
+.sf-quick-edit {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.sf-quick-edit__window {
+  width: min(560px, 100%);
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  border-radius: 14px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+}
+
+.sf-quick-edit__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.sf-quick-edit__hint {
+  margin: 0;
+  font-size: 13px;
+}
+
+.sf-quick-edit textarea {
+  width: 100%;
+  min-height: 120px;
+  resize: vertical;
+  font: inherit;
+  line-height: 1.5;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--fg);
+}
+
+.sf-quick-edit__foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+/* Показ проекта: обёртка текста кадра. Нужна выделению — по её атрибуту `data-frame-body`
+ * компонент понимает, что выделение внутри кадра, а не в подписи или меню. */
+.sf-copy__body-wrap {
+  cursor: text;
+}

@@ -384,4 +384,53 @@ describe('ProjectChat', () => {
     expect(screen.getAllByRole('button', { name: /^to do$/ }).length).toBeGreaterThan(0)
   })
 
+  /**
+   * 0.132.0: цитата из показа проекта. Выделенный фрагмент приходит в поле готовой ссылкой на
+   * кадр — но НЕ отправляется: человек дописывает мысль сам, а автоотправка была бы решением
+   * за него.
+   */
+  it('цитата из показа подставляется в поле со ссылкой на кадр и не отправляется', async () => {
+    listChat.mockResolvedValue({ messages: [], bot: { name: 'Нестор', available: false } })
+    listEventRows.mockResolvedValue([{ id: 'f1', title: 'Пролог', parent_id: null, body: '', event_date: null }])
+    render(
+      <ProjectChat
+        {...base}
+        prefill={{ tab: 'chat', nonce: 1, frameId: 'f1', frameTitle: 'Пролог', quote: 'Аня стоит на пороге' }}
+      />,
+    )
+
+    const input = (await screen.findByLabelText('Сообщение в чат проекта')) as HTMLTextAreaElement
+    await waitFor(() => expect(input.value).toContain('Аня стоит на пороге'))
+    expect(input.value).toContain('Пролог')
+    // Ничего не ушло: поле заполнено, отправка — за человеком.
+    expect(postChat).not.toHaveBeenCalled()
+    // Ссылка на кадр приложена к будущему сообщению, и фраза уже стоит.
+    await waitFor(() =>
+      expect((screen.getByLabelText('Приложить кадр') as HTMLSelectElement).value).toBe('f1'),
+    )
+    expect((screen.getByLabelText('Фраза из кадра') as HTMLInputElement).value).toBe(
+      'Аня стоит на пороге',
+    )
+  })
+
+  it('дописанное человеком не затирается, пока не выделили другой фрагмент', async () => {
+    listChat.mockResolvedValue({ messages: [], bot: { name: 'Нестор', available: false } })
+    listEventRows.mockResolvedValue([])
+    const prefill = { tab: 'chat' as const, nonce: 1, frameId: 'f1', frameTitle: 'Пролог', quote: 'Аня' }
+    const view = render(<ProjectChat {...base} prefill={prefill} />)
+    const input = (await screen.findByLabelText('Сообщение в чат проекта')) as HTMLTextAreaElement
+    fireEvent.change(input, { target: { value: 'моя мысль' } })
+
+    // Перерисовка по другой причине (новое сообщение в ленте) — текст остаётся.
+    view.rerender(<ProjectChat {...base} prefill={prefill} />)
+    expect((screen.getByLabelText('Сообщение в чат проекта') as HTMLTextAreaElement).value).toBe('моя мысль')
+
+    // Новое выделение — новый nonce, поле заменяется.
+    view.rerender(<ProjectChat {...base} prefill={{ ...prefill, nonce: 2, quote: 'дом на холме' }} />)
+    await waitFor(() =>
+      expect(
+        (screen.getByLabelText('Сообщение в чат проекта') as HTMLTextAreaElement).value,
+      ).toContain('дом на холме'),
+    )
+  })
 })

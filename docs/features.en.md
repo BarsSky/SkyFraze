@@ -151,6 +151,16 @@ then people and access.
   changes neither chapters nor cards. New messages arrive without a reload and show up in the bell;
   e-mails about messages are sent with the person's consent and never to the author
   (`docs/project-chat.md`)
+- **Selecting a fragment in the project show** (0.132.0): select a phrase in the frame text and a
+  menu of three items appears next to the selection. **"To the project chat"** opens the chat and puts
+  a quote with a link to the frame into the input (the person finishes and sends it); **"Ask the
+  assistant"** opens the assistant window with a ready question about that fragment; **"Edit the
+  fragment"** opens a small window with exactly the selected piece — the edit goes into the project
+  text and is visible to everyone who has it open, without leaving for the editors tab. The **"Open in
+  the editors"** button takes you to the editors tab **with the same piece selected** in the text
+  field. The place in the source is recovered word by word (the show renders Markdown), and if the
+  text there has already changed, the window honestly refuses to write over someone else's edit
+  (`docs/selection.md`; `docs/project-chat.md`)
 - **Public feed** (`/feed`) and a **public story page** (`/s/{slug}`): anyone can read and rate,
   nobody but the project team can edit
 - Views with de-duplication (one visitor — one view per day) and ratings 1–5 (one rating per user, an
@@ -182,6 +192,7 @@ then people and access.
 | `docs/entity-links.md`, `docs/entity-types.md` | world cards: mentions, links, custom kinds |
 | `docs/comments.md`, `docs/fragment-comments.md` | frame discussions and fragment notes |
 | `docs/project-chat.md` | project-wide chat, Nestor in chat, notifications |
+| `docs/selection.md` | fragment selection in the show: chat, assistant, quick edit, editors |
 | `docs/import-export.md`, `docs/import-export-folders.md` | export and import, folder import and "into place" |
 | `docs/docx-template.md` | DOCX book styling: placeholder, style map, help |
 | `docs/versions.md`, `docs/realtime-editor.md` | version history and realtime editing phases |
