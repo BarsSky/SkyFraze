@@ -14,6 +14,7 @@ import { apiHeaders, gateAssistant, openProjectTab, signIn } from './support'
  */
 test.setTimeout(240_000)
 
+
 /**
  * Закрыть плавающее окно помощника/чата.
  *
@@ -45,6 +46,29 @@ async function projectWithChapter(page: Page): Promise<void> {
   await panel.getByRole('button', { name: 'Спросить' }).click()
   await expect(panel.getByText('Создал главу «Пролог».')).toBeVisible({ timeout: 90_000 })
   await closeDock(page)
+}
+
+/**
+ * Тот же проект с главой, но без помощника: глава создаётся кнопкой, текст пишется в редакторах.
+ *
+ * Зачем второй путь. На телефоне окно помощника занимает экран, а сама проверка — про вёрстку и
+ * выделение; зависимость от заглушки модели делает сценарий длиннее и хрупче (0.135.0: запрос к
+ * помощнику в мобильном контексте так и не ушёл, и сценарий стоял 90 с на тексте ответа).
+ */
+async function projectWithChapterByHand(page: Page): Promise<void> {
+  const title = `Выделение ${Date.now()}`
+  await page.getByRole('button', { name: '+ Новый проект' }).click()
+  await page.getByPlaceholder('Название').fill(title)
+  await page.getByRole('button', { name: 'Создать' }).click()
+  await page.getByRole('link', { name: title }).click()
+  await expect(page).toHaveURL(/\/projects\/[0-9a-f-]+$/)
+  await page.getByRole('button', { name: '+ Добавить первую главу' }).click({ timeout: 60_000 })
+  await openProjectTab(page, 'editors')
+  await page.locator('.ed-row').first().click()
+  const body = page.locator('.ed-form textarea').first()
+  await expect(body).toBeVisible({ timeout: 30_000 })
+  await body.fill('Начало истории.\n\nТак начинается рассказ.')
+  await openProjectTab(page, 'project')
 }
 
 /** Текст кадра в показе: по нему считаем, что вообще можно выделить. */
@@ -260,6 +284,90 @@ test('выделил фрагмент: чат проекта, помощник, 
 })
 
 /**
+ * Длинный кадр (0.135.0): фраза в конце листа должна оказаться НА ЭКРАНЕ.
+ *
+ * Лист кадра прокручивается прогрессом страницы, а не человеком, поэтому подсветка сама по себе
+ * могла остаться за кромкой: кадр открыт, фраза подсвечена, а «строчки» не видно. Сценарий
+ * намеренно делает кадр длинным, ставит фразу в самый конец и проверяет две вещи: лист подкручен
+ * к ней и прямоугольник подсвеченного диапазона внутри экрана.
+ */
+test('длинный кадр: фраза из конца листа видна после перехода в проект', async ({ page }) => {
+  // Ошибки страницы копим: если показ фразы уронит дерево, тест скажет об этом словами, а не
+  // «element not found» (так уже было при отладке).
+  const pageErrors: string[] = []
+  page.on('pageerror', (error) => pageErrors.push(error.message))
+  test.skip(!(await signIn(page)), 'учётной записи e2e нет и регистрация закрыта')
+  await projectWithChapterByHand(page)
+
+  // Текст длиной в несколько экранов: 40 абзацев и заметная фраза в самом конце.
+  const longText = `${Array.from(
+    { length: 40 },
+    (_, index) => `Абзац ${index + 1}: строка для проверки прокрутки кадра.`,
+  ).join('\n\n')}\n\nФонарь.`
+
+  await openProjectTab(page, 'editors')
+  await page.locator('.ed-row').first().click()
+  const body = page.locator('.ed-form textarea').first()
+  await expect(body).toBeVisible({ timeout: 30_000 })
+  await body.fill(longText)
+  await expect(body).toHaveValue(longText)
+
+  // Выделяем последнее слово (оно в самом конце листа) клавиатурой: редактор узнаёт о выделении
+  // из `select`/`keyup`, поэтому кнопка уйдёт с цитатой.
+  await body.click()
+  await page.keyboard.press('Control+End')
+  await page.keyboard.down('Shift')
+  for (let step = 0; step < 'Фонарь.'.length; step += 1) await page.keyboard.press('ArrowLeft')
+  await page.keyboard.up('Shift')
+  const quote = (
+    await body.evaluate((node: HTMLTextAreaElement) =>
+      node.value.slice(node.selectionStart, node.selectionEnd),
+    )
+  ).trim()
+  expect(quote).toBe('Фонарь.')
+  await expect(page.locator('[data-select-fragment]')).toBeVisible({ timeout: 15_000 })
+
+  await page.locator('[data-show-in-project]').click()
+  await expect(page.locator('[data-project-tab="project"]')).toHaveAttribute('aria-selected', 'true', {
+    timeout: 30_000,
+  })
+
+  // Ждём именно ПОКАЗ фразы: переход к кадру — плавная прокрутка трека, и нужный лист появляется
+  // через несколько секунд после просьбы. Проверять «scrollTop > 0» бессмысленно — лист уже
+  // прокручен прогрессом кадра (0.135.0: так эта проверка и проходила, не проверяя ничего).
+  const viewport = page.viewportSize() ?? { width: 1280, height: 720 }
+  const highlightRect = async () =>
+    await page.evaluate(() => {
+      const registry = (CSS as unknown as { highlights?: Map<string, Set<Range>> }).highlights
+      const highlighted = registry?.get('sf-quote')
+      const first = highlighted ? Array.from(highlighted)[0] : undefined
+      if (!first) return null
+      const box = first.getBoundingClientRect()
+      return { top: box.top, bottom: box.bottom, center: (box.top + box.bottom) / 2 }
+    })
+
+  await expect
+    .poll(
+      async () => {
+        const rect = await highlightRect()
+        // Фраза на экране: её верх в окне и до нижней кромки остаётся хотя бы строка.
+        return rect !== null && rect.top >= 0 && rect.top <= viewport.height - 24
+      },
+      { timeout: 30_000, message: 'подсвеченная фраза должна оказаться в пределах экрана' },
+    )
+    .toBe(true)
+
+  const rect = await highlightRect()
+  expect(rect, 'подсветка должна быть в реестре браузера').not.toBeNull()
+  expect(rect!.top).toBeGreaterThanOrEqual(0)
+  expect(rect!.top).toBeLessThanOrEqual(viewport.height - 24)
+  // Середина строки — в окне: у самой последней фразы лист уже не прокрутить дальше, и её нижняя
+  // кромка может на пару пикселей выйти за край короткого окна 1280×720.
+  expect(rect!.center).toBeLessThanOrEqual(viewport.height)
+  expect(pageErrors, `ошибки страницы: ${pageErrors.join(' | ')}`).toEqual([])
+})
+
+/**
  * Телефон, 390×844 (0.134.0). Отчёт: «на мобильной версии и экране 6 дюймов выделение не открывает
  * меню, а на странице остаётся только фон без кнопок».
  *
@@ -290,7 +398,7 @@ test('телефон: меню выделения помещается в экр
 
   try {
     await page.setViewportSize({ width: 390, height: 844 })
-    await projectWithChapter(page)
+    await projectWithChapterByHand(page)
     await openProjectTab(page, 'project')
 
     await selectWord(page)

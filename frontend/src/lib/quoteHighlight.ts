@@ -115,6 +115,38 @@ export interface QuoteHighlight {
   clear: () => void
 }
 
+/** Где фраза лежит внутри прокручиваемого текста: смещение от начала и весь запас прокрутки. */
+export interface QuoteScrollOffset {
+  /**
+   * Смещение начала фразы от начала содержимого, px. **Не обрезается** запасом прокрутки: у самых
+   * последних строк оно больше `max` (лист не может прокрутить их выше своей нижней кромки), и
+   * именно по этой разнице видно, докуда нужно довести лист. Обрезать здесь — значит потерять
+   * сведения и оставить фразу за кромкой (эта ошибка и была поймана в 0.135.0).
+   */
+  top: number
+  /** Сколько всего можно прокрутить (`scrollHeight - clientHeight`), px. */
+  max: number
+}
+
+/**
+ * Смещение фразы внутри прокручиваемого листа кадра (0.135.0).
+ *
+ * Зачем. В стадии текст длинного кадра прокручивается не человеком, а прогрессом прокрутки
+ * страницы, поэтому подсветка сама по себе может оказаться за кромкой листа. Чтобы «открылась
+ * строчка» было правдой и для длинной главы, стадия подкручивает лист к найденной фразе — а для
+ * этого нужно знать её смещение внутри содержимого, а не координаты на экране.
+ *
+ * `null` — фразы в этом листе нет (её переписали).
+ */
+export function quoteScrollOffset(root: HTMLElement, quote: string): QuoteScrollOffset | null {
+  const range = findQuoteRange(root, quote)
+  if (range === null) return null
+  const rootRect = root.getBoundingClientRect()
+  const rangeRect = range.getBoundingClientRect()
+  const max = Math.max(0, root.scrollHeight - root.clientHeight)
+  return { top: Math.max(0, rangeRect.top - rootRect.top + root.scrollTop), max }
+}
+
 const nothing = () => undefined
 
 interface HighlightRegistryLike {

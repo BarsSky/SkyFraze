@@ -26,9 +26,20 @@ import { useLang } from '../../store/lang'
 import { SkyLayer } from './stage/SkyLayer'
 import { SceneFrame } from './stage/SceneFrame'
 import { CopyPanel } from './stage/CopyPanel'
+import { quoteScrollOffset } from '../../lib/quoteHighlight'
+
 import { RouteTree } from './stage/RouteTree'
 import { ChapterChips } from './stage/ChapterChips'
 import { StageTopBar } from './stage/StageTopBar'
+
+/**
+ * Сколько держится «показ фразы» (0.135.0).
+ *
+ * Дольше подсветки (8 с в панели кадра): человеку нужно время прочитать строку в окружении, а
+ * «прыжок назад» посреди чтения хуже, чем показанное место. Раньше срока показ снимают прокрутка
+ * человека, смена кадра и новый запрос.
+ */
+const REVEAL_HOLD_MS = 12_000
 
 export interface AssetLookup {
   url: string
@@ -307,6 +318,23 @@ export function TimelineStage({ events, assetsById, projectTitle, actions, copyF
   // через состояние: состояние квантовано (1/50 кадра), и на длинной главе шаг
   // кванта — это сотни пикселей, текст дёргался бы.
   const frameLocalRef = useRef(0)
+  /**
+   * Пока идёт «показ фразы» — цель прокрутки текста задаёт фраза, а не прогресс кадра (0.135.0).
+   *
+   * Зачем. Текст длинного кадра проезжает по мере прокрутки страницы (`scrollTop` считается из
+   * прогресса), поэтому подсветка фразы ближе к концу листа оказывалась за кромкой: кадр открыт,
+   * фраза подсвечена, а «строчки» не видно. Пока override жив, `driveText` ставит лист на фразу.
+   *
+   * Снимается он раньше срока, если человек сам начал листать (иначе текст «дерётся» с прокруткой),
+   * и при смене кадра: показ относится к одному кадру.
+   */
+  const revealRef = useRef<{
+    quote: string
+    frameId: string
+    until: number
+    nextCheck: number
+    target: number | null
+  } | null>(null)
   const driveText = useCallback(() => {    const scroll = document.querySelector<HTMLElement>('.sf-copy__scroll')
     if (!scroll) return
     const max = scroll.scrollHeight - scroll.clientHeight
@@ -318,9 +346,101 @@ export function TimelineStage({ events, assetsById, projectTitle, actions, copyF
     if (scroll.classList.contains('sf-copy__scroll--long') !== long) {
       scroll.classList.toggle('sf-copy__scroll--long', long)
     }
-    const target = Math.round(max * Math.min(1, Math.max(0, frameLocalRef.current)))
+    // Показ фразы перебивает прогресс: лист стоит на ней, пока человек сам не тронул прокрутку.
+    // Цель пересчитываем на ходу: пока кадр входит, высота листа и длина текста меняются (шрифты,
+    // появление навигации), и посчитанное один раз смещение устаревает — фраза оставалась за
+    // кромкой (0.135.0). Раз в 150 мс достаточно: чаще содержимое не меняется.
+    const reveal = revealRef.current
+    let revealTarget: number | null = null
+    if (reveal !== null && reveal.until > Date.now()) {
+      const now = Date.now()
+      if (reveal.target === null || now >= reveal.nextCheck) {
+        reveal.nextCheck = now + 150
+        const found = quoteScrollOffset(scroll, reveal.quote)
+        if (found !== null) {
+          reveal.target = Math.min(Math.max(found.top - scroll.clientHeight / 3, 0), max)
+        }
+      }
+      revealTarget = reveal.target
+    }
+    const target = Math.round(
+      revealTarget !== null ? revealTarget : max * Math.min(1, Math.max(0, frameLocalRef.current)),
+    )
     if (Math.abs(scroll.scrollTop - target) > 1) scroll.scrollTop = target
   }, [])
+
+  /**
+   * Подкрутить лист к найденной фразе (0.135.0).
+   *
+   * Кадр мог ещё не переключиться (страница просит переход и подсветку одновременно), поэтому
+   * пробуем несколько раз: как только в листе появился текст нужного кадра и фраза нашлась —
+   * ставим override и больше не ищем. Человек тронул прокрутку — показ снимается, дальше текст
+   * ведёт прогресс, как обычно.
+   */
+  useEffect(() => {
+    if (!highlight?.quote) return undefined
+    const quote = highlight.quote
+    const frameId = highlight.frameId
+    let cancelled = false
+    let tries = 0
+    let timer = 0
+    let hold = 0
+    const stop = () => {
+      revealRef.current = null
+      window.clearTimeout(hold)
+    }
+    const attempt = () => {
+      if (cancelled) return
+      tries += 1
+      const scroll = document.querySelector<HTMLElement>('.sf-copy__scroll')
+      const body = scroll?.querySelector<HTMLElement>('[data-frame-body]')
+      if (scroll && body && body.getAttribute('data-frame-body') === frameId) {
+        if (quoteScrollOffset(scroll, quote) !== null) {
+          // Запоминаем ФРАЗУ, а не её смещение: цель прокрутки `driveText` пересчитывает сам, пока
+          // показ жив — высота листа меняется вместе с входом кадра.
+          revealRef.current = {
+            quote,
+            frameId,
+            until: Date.now() + REVEAL_HOLD_MS,
+            nextCheck: 0,
+            target: null,
+          }
+          driveText()
+          window.clearTimeout(hold)
+          hold = window.setTimeout(() => {
+            revealRef.current = null
+            driveText()
+          }, REVEAL_HOLD_MS)
+          return
+        }
+      }
+      if (tries < 120) timer = window.setTimeout(attempt, 100)
+    }
+    attempt()
+    window.addEventListener('wheel', stop, { passive: true })
+    window.addEventListener('touchmove', stop, { passive: true })
+    window.addEventListener('keydown', stop)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+      window.clearTimeout(hold)
+      window.removeEventListener('wheel', stop)
+      window.removeEventListener('touchmove', stop)
+      window.removeEventListener('keydown', stop)
+    }
+  }, [driveText, highlight?.frameId, highlight?.nonce, highlight?.quote])
+
+  /**
+   * Смена кадра снимает показ фразы (0.135.0): просьба относилась к одному кадру, и держать
+   * текст следующего кадра на чужой позиции нельзя.
+   */
+  useEffect(() => {
+    const reveal = revealRef.current
+    if (reveal !== null && reveal.frameId !== state.frame?.id) {
+      revealRef.current = null
+      driveText()
+    }
+  }, [driveText, state.frame?.id])
 
   // ── Скролл → состояние кадра. Значения квантуются: плавность даёт CSS.
   useEffect(() => {

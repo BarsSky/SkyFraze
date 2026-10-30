@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { findQuoteRange, highlightQuote, QUOTE_HIGHLIGHT } from './quoteHighlight'
+import { findQuoteRange, highlightQuote, quoteScrollOffset, QUOTE_HIGHLIGHT } from './quoteHighlight'
 
 /**
  * Подсветка фразы в показе проекта (0.133.0).
@@ -104,5 +104,58 @@ describe('highlightQuote', () => {
 
     applied.clear()
     expect(remove).toHaveBeenCalledWith(QUOTE_HIGHLIGHT)
+  })
+})
+
+/**
+ * Смещение фразы внутри прокручиваемого листа (0.135.0).
+ *
+ * Зачем это нужно: в стадии текст длинного кадра прокручивается прогрессом страницы, и подсветка
+ * сама по себе может оказаться за кромкой. Стадия подкручивает лист к фразе — по этому смещению.
+ */
+describe('quoteScrollOffset', () => {
+  const box = (top: number, height: number) =>
+    ({ top, bottom: top + height, left: 0, right: 100, width: 100, height, x: 0, y: top, toJSON: () => ({}) }) as DOMRect
+
+  afterEach(() => {
+    // jsdom не знает геометрии Range: подменяем и убираем за собой.
+    delete (Range.prototype as unknown as { getBoundingClientRect?: unknown }).getBoundingClientRect
+  })
+
+  it('считает смещение фразы от начала содержимого', () => {
+    const root = mount('<p>Аня вошла в дом.</p>')
+    // Лист стоит в окне на 100 px, содержимое прокручено на 300 px, фраза на 60 px внутри.
+    root.getBoundingClientRect = () => box(100, 400)
+    Object.defineProperty(root, 'scrollHeight', { configurable: true, value: 900 })
+    Object.defineProperty(root, 'clientHeight', { configurable: true, value: 400 })
+    Object.defineProperty(root, 'scrollTop', { configurable: true, value: 300 })
+    Object.defineProperty(Range.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => box(160, 20),
+    })
+
+    expect(quoteScrollOffset(root, 'вошла в дом')).toEqual({ top: 360, max: 500 })
+  })
+
+  it('не обрезает смещение запасом прокрутки: иначе не понять, докуда довести лист', () => {
+    const root = mount('<p>Аня вошла в дом.</p>')
+    root.getBoundingClientRect = () => box(0, 400)
+    Object.defineProperty(root, 'scrollHeight', { configurable: true, value: 500 })
+    Object.defineProperty(root, 'clientHeight', { configurable: true, value: 400 })
+    Object.defineProperty(root, 'scrollTop', { configurable: true, value: 300 })
+    Object.defineProperty(Range.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => box(1020, 20),
+    })
+
+    // Строка ниже нижней кромки: её смещение в содержимом (1020 на экране при прокрутке 300 → 1320)
+    // больше запаса прокрутки (100). Довести лист можно только до 100 — но решает это стадия, а
+    // знать надо настоящее смещение.
+    expect(quoteScrollOffset(root, 'вошла в дом')).toEqual({ top: 1320, max: 100 })
+  })
+
+  it('без фразы говорит «нет»: подкручивать некуда', () => {
+    const root = mount('<p>Аня вошла в дом.</p>')
+    expect(quoteScrollOffset(root, 'совсем другой текст')).toBeNull()
   })
 })
