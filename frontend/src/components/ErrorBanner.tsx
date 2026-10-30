@@ -1,4 +1,6 @@
 import type { ReactNode } from 'react'
+import { useT } from '../i18n'
+import { useLang } from '../store/lang'
 import { Link } from 'react-router-dom'
 import { describeApiError, type ApiErrorSubject } from '../lib/apiError'
 
@@ -24,7 +26,9 @@ interface Props {
  * (в) «Повторить» для временных сбоев и (г) минимум одну доступную ссылку.
  */
 export function ErrorBanner({ error, onRetry, actions, what, subject }: Props) {
-  const info = describeApiError(error, subject)
+  const t = useT()
+  const [lang] = useLang()
+  const info = describeApiError(error, subject, lang)
   return (
     <div className={`banner banner--${info.kind}`} role="alert" data-error-kind={info.kind}>
       <div className="banner__body">
@@ -37,12 +41,12 @@ export function ErrorBanner({ error, onRetry, actions, what, subject }: Props) {
       <div className="banner__actions">
         {info.retryable && onRetry && (
           <button type="button" onClick={onRetry}>
-            Повторить
+            {t('shell.retry')}
           </button>
         )}
         {actions ?? (
           <Link className="banner__link" to="/feed">
-            ← В ленту
+            {t('shell.toFeed')}
           </Link>
         )}
       </div>

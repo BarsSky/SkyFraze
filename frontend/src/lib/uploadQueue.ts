@@ -1,5 +1,7 @@
 import type { Asset } from '../api/assets'
 import { formatBytes } from './format'
+import { translate } from '../i18n'
+import type { Lang } from '../store/lang'
 
 /**
  * Загрузка НЕСКОЛЬКИХ файлов: очередь, прогресс и честная сводка.
@@ -48,6 +50,7 @@ export async function runUploads(
   files: File[],
   upload: (file: File) => Promise<Asset | null>,
   options: UploadQueueOptions,
+  lang: Lang = 'ru',
 ): Promise<UploadOutcome[]> {
   const out: UploadOutcome[] = []
   let quotaHit: string | null = null
@@ -60,25 +63,31 @@ export async function runUploads(
       out.push({
         file,
         asset: null,
-        error: `файл больше ${Math.round(options.maxBytes / 1024 / 1024)} МБ — сервер его не примет`,
+        error: translate(lang, 'up.tooBig', {
+          limit: Math.round(options.maxBytes / 1024 / 1024),
+        }),
       })
       continue
     }
     // Место кончилось на предыдущем файле: не мучаем сервер и человека.
     if (quotaHit !== null) {
-      out.push({ file, asset: null, error: `не загружался: ${quotaHit}` })
+      out.push({
+        file,
+        asset: null,
+        error: translate(lang, 'up.skippedQuota', { reason: quotaHit }),
+      })
       continue
     }
 
     try {
       const asset = await upload(file)
       if (!asset) {
-        out.push({ file, asset: null, error: 'сервер отклонил запрос' })
+        out.push({ file, asset: null, error: translate(lang, 'up.rejected') })
         continue
       }
       out.push({ file, asset, error: null })
     } catch (e) {
-      const message = (await options.describeError?.(e)) ?? 'не удалось загрузить'
+      const message = (await options.describeError?.(e)) ?? translate(lang, 'up.failed')
       out.push({ file, asset: null, error: message })
       if (isQuotaMessage(message)) quotaHit = message
     }
@@ -100,18 +109,27 @@ export function isQuotaMessage(message: string): boolean {
 }
 
 /** Сводка после очереди: «загружено 3 из 5» и причины по неудачным. */
-export function uploadSummary(outcomes: UploadOutcome[]): string {
+export function uploadSummary(outcomes: UploadOutcome[], lang: Lang = 'ru'): string {
   const ok = outcomes.filter((o) => o.asset !== null)
   const failed = outcomes.filter((o) => o.asset === null)
   if (failed.length === 0) {
-    if (ok.length === 1) return `Загружено: ${ok[0].asset?.filename ?? ok[0].file.name}`
+    if (ok.length === 1)
+      return translate(lang, 'up.summaryOne', {
+        name: ok[0].asset?.filename ?? ok[0].file.name,
+      })
     const total = ok.reduce((sum, o) => sum + (o.asset?.size ?? 0), 0)
-    return `Загружено файлов: ${ok.length} (${formatBytes(total)})`
+    return translate(lang, 'up.summaryMany', { count: ok.length, size: formatBytes(total, lang) })
   }
-  const parts = [`загружено ${ok.length} из ${outcomes.length}`]
+  const parts = [translate(lang, 'up.summaryPartial', { ok: ok.length, total: outcomes.length })]
   for (const bad of failed.slice(0, 3)) {
-    parts.push(`${bad.file.name}: ${bad.error ?? 'не удалось'}`)
+    parts.push(
+      translate(lang, 'up.summaryFailed', {
+        name: bad.file.name,
+        reason: bad.error ?? translate(lang, 'up.summaryReasonFallback'),
+      }),
+    )
   }
-  if (failed.length > 3) parts.push(`и ещё ${failed.length - 3} без подробностей`)
+  if (failed.length > 3)
+    parts.push(translate(lang, 'up.summaryMore', { count: failed.length - 3 }))
   return parts.join('; ')
 }

@@ -3,6 +3,63 @@
 Все заметные изменения проекта. Формат — по мотивам [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 версии — [semver](https://semver.org/lang/ru/): обновление админка проверяет по последнему релизу.
 
+## [0.126.0] — 2026-10-30
+
+**Локализация, фаза 2.3d: редактор Markdown, ошибки API, очередь загрузки и переносы файлов.**
+Этим закрывается вся «рабочая» часть интерфейса: дальше остаётся только публичный и админский
+контур (фаза 3).
+
+### Добавлено
+- **Редактор Markdown**: заголовок и `aria-label` окна, режимы («Text and preview» / «Text only» /
+  «Preview only»), 15 кнопок вставок с подсказками, виды диаграмм («Flow», «Sequence», «Timeline»,
+  «Mind map», «Plan», «States»), панель «DOCX markup» (page break, contents, style below, begin и
+  end block), поле текста, строка «Markup: …», счётчик символов, пустой предпросмотр,
+  «Everything is saved» / «There are unsaved edits», подсказка горячих клавиш, «Cancel» и
+  «Save the text».
+- **Тексты ошибок API** (22 подписи): «Page not found», «Sign-in required», «No access», «The data
+  has already changed», «The server could not handle the request», «The server did not answer in
+  time», «No connection to the server» — с подсказками.
+- **Очередь загрузки**: «the file is larger than N MB», «the server rejected the request», сводка
+  («Files uploaded: 2 (1.4 MB)», «1 of 2 uploaded», «and 3 more without details»).
+- **Переносы файлов**: «The frame was not found», «already attached to the frame "X"», «the image
+  became the background», «Attached» / «Moved», «in no frame».
+- **Вставки Markdown**: подписи видов диаграмм и сами каркасы Mermaid, «Column N» в каркасе таблицы.
+- **Маркеры DOCX**: «Page break», «Table of contents», «End the block» — через ключи словаря.
+- **Оболочка**: «Retry», «← To the feed», «Loading the shell…», «Checking the sign-in…» и ошибка
+  «no files chosen» при импорте.
+- Словарь: +128 ключей, всего 1303 в RU и столько же в EN.
+
+### Решения, которые стоит знать
+- **Каркасы Mermaid переводятся вместе с подписями**: они вставляются В ТЕКСТ кадра, и русские
+  «Начало»/«Развилка» в английской истории читались бы как случайный мусор, а не как заготовка.
+  Текст маркеров DOCX (`<!-- sf:pagebreak -->`) наоборот не переводится — это протокол.
+- **Символьные кнопки редактора**: «Ж» и «К» — русские мнемоники жирного и курсива; в английском
+  это «B» и «I» (ключи `md.toolBoldShort` / `md.toolItalicShort`).
+- **Текст ошибки сервера не переводится**: `describeApiError` переводит заголовок и подсказку,
+  а `message` от бэкенда показывается как есть — это данные, и подменять их своими значит врать
+  о причине.
+- **Счётчик символов получил формы числа**: было всегда «50 символов» (и «1 символов»), стало
+  «50 символов» / «50 characters» через `pluralWord` — мелочь, которую видно ровно один раз.
+- **Не переводится намеренно**: «ё»→«е» в `lib/entitySearch` (нужно для поиска по-русски) и
+  подписи языков («English» / «Русский» — их читают на самом языке).
+
+### Проверено
+- unit — **967 тестов в 95 файлах** (было 964), включая английские сценарии `apiError`,
+  `uploadQueue`, `MarkdownEditor` и теста диаграмм: все проходят.
+- `tsc --noEmit` — 0 ошибок.
+- Живой стенд, английский интерфейс: редактор — «Event text · Text and preview · Text only ·
+  Preview only · B I S H1 H2 H3 · code link table formula · Flow Sequence Timeline Mind map Plan
+  States · DOCX markup · Markup: **bold** *italic* # heading - list | table | $
+  `mermaid — a diagram · 50 characters · Everything is saved · Ctrl+Enter — save, Esc — close ·
+  Cancel · Save the text».
+- Переполнение по горизонтали на 390 и 320 px — 0, ошибок в консоли — 0.
+- Замер: 421 строка с кириллицей вне комментариев в 33 файлах (после 2.3c было 523 в 42).
+
+### Не сделано
+- **Фаза 3**: лента, публичная история, профиль, резиденты, соавторы, админка, счётчики и оценки,
+  просмотрщик картинок, уведомления, экраны аудита в EN — 421 строка в 33 файлах.
+- **Серверные тексты остаются русскими**: сообщения бэкенда (`message` в ошибках, предупреждения
+  разбора при импорте, `report.message` шаблона), ответы модели и подсказки админа стенда.
 ## [0.125.0] — 2026-10-30
 
 **Локализация, фаза 2.3c: окно помощника и чат проекта.** Самая большая часть работы — окно

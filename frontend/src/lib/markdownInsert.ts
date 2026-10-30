@@ -1,3 +1,5 @@
+import { translate, type Key } from '../i18n'
+import type { Lang } from '../store/lang'
 /**
  * Вставки markdown из панели инструментов редактора.
  *
@@ -75,10 +77,12 @@ export function heading(text: string, sel: Selection, level: number): EditResult
 }
 
 /** Каркас таблицы: шапка плюс пустые строки — дальше заполняют по месту. */
-export function tableSkeleton(rows = 3, cols = 3): string {
+export function tableSkeleton(rows = 3, cols = 3, lang: Lang = 'ru'): string {
   const width = Math.min(8, Math.max(2, cols))
   const height = Math.min(20, Math.max(2, rows)) - 1
-  const head = `| ${Array.from({ length: width }, (_, i) => `Столбец ${i + 1}`).join(' | ')} |`
+  const head = `| ${Array.from({ length: width }, (_, i) =>
+    translate(lang, 'mdi.tableColumn', { n: i + 1 }),
+  ).join(' | ')} |`
   const sep = `| ${Array.from({ length: width }, () => '---').join(' | ')} |`
   const body = Array.from({ length: height }, () => `| ${Array.from({ length: width }, () => ' ').join(' | ')} |`)
   return [head, sep, ...body].join('\n')
@@ -90,18 +94,23 @@ export function formulaSkeleton(display: boolean): string {
 }
 
 /** Виды диаграмм Mermaid, которые чаще всего нужны в истории. */
-export const DIAGRAM_KINDS = [
-  { id: 'flow', label: 'Схема', source: 'graph TD\n  A[Начало] --> B{Развилка}\n  B -->|да| C[Финал]\n  B -->|нет| A' },
-  { id: 'sequence', label: 'Последовательность', source: 'sequenceDiagram\n  participant Г as Герой\n  participant М as Мир\n  Г->>М: Вопрос\n  М-->>Г: Ответ' },
-  { id: 'timeline', label: 'Хронология', source: 'timeline\n  title Хронология событий\n  Год 1 : Прибытие\n  Год 2 : Первый конфликт' },
-  { id: 'mindmap', label: 'Схема связей', source: 'mindmap\n  root((Мир))\n    Герои\n      Протагонист\n      Антагонист\n    Места\n      Колония' },
-  { id: 'gantt', label: 'План', source: 'gantt\n  title План работ\n  dateFormat YYYY-MM-DD\n  section Текст\n  Черновик :a1, 2026-01-01, 30d\n  Правка :after a1, 20d' },
-  { id: 'state', label: 'Состояния', source: 'stateDiagram-v2\n  [*] --> Спокойствие\n  Спокойствие --> Конфликт\n  Конфликт --> [*]' },
-] as const
+export const DIAGRAM_KINDS = ['flow', 'sequence', 'timeline', 'mindmap', 'gantt', 'state'] as const
 
-export function diagramSkeleton(kind: string): string {
-  const found = DIAGRAM_KINDS.find((k) => k.id === kind) ?? DIAGRAM_KINDS[0]
-  return '```mermaid\n' + found.source + '\n```'
+export type DiagramKind = (typeof DIAGRAM_KINDS)[number]
+
+/**
+ * Виды диаграмм: подпись и каркас — из словаря (0.126.0).
+ *
+ * Каркас тоже переводится: он вставляется В ТЕКСТ кадра, и русские «Начало»/«Развилка» в
+ * английской истории читались бы как случайный мусор, а не как заготовка.
+ */
+export function diagramLabel(kind: string, lang: Lang = 'ru'): string {
+  return translate(lang, `mdi.${kind}` as Key)
+}
+
+export function diagramSkeleton(kind: string, lang: Lang = 'ru'): string {
+  const found = DIAGRAM_KINDS.find((k) => k === kind) ?? DIAGRAM_KINDS[0]
+  return '```mermaid\n' + translate(lang, `mdi.${found}Source` as Key) + '\n```'
 }
 
 /** Блок кода с языком. */

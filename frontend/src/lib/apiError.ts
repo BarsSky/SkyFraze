@@ -1,3 +1,5 @@
+import { translate } from '../i18n'
+import type { Lang } from '../store/lang'
 /**
  * Человеческое описание ошибки API.
  *
@@ -30,7 +32,11 @@ interface ErrLike {
   cause?: unknown
 }
 
-export function describeApiError(e: unknown, subject: ApiErrorSubject = 'story'): ApiErrorInfo {
+export function describeApiError(
+  e: unknown,
+  subject: ApiErrorSubject = 'story',
+  lang: Lang = 'ru',
+): ApiErrorInfo {
   const err = (e ?? {}) as ErrLike
   const status = err.response?.status
   const name = err.name ?? ''
@@ -38,36 +44,101 @@ export function describeApiError(e: unknown, subject: ApiErrorSubject = 'story')
 
   if (status === 404) {
     if (subject === 'person') {
-      return { kind: 'notFound', title: 'Профиль не найден', hint: 'Возможно, человек удалил аккаунт или скрылся из каталога резидентов.', retryable: false, status }
+      return {
+        kind: 'notFound',
+        title: translate(lang, 'err.profileTitle'),
+        hint: translate(lang, 'err.profileHint'),
+        retryable: false,
+        status,
+      }
     }
     if (subject === 'import') {
-      return { kind: 'notFound', title: 'Файлы для импорта не найдены', hint: 'Похоже, выбранная папка или архив уже недоступны — выберите их заново.', retryable: false, status }
+      return {
+        kind: 'notFound',
+        title: translate(lang, 'err.importFilesTitle'),
+        hint: translate(lang, 'err.importFilesHint'),
+        retryable: false,
+        status,
+      }
     }
-    return { kind: 'notFound', title: 'Страница не найдена', hint: 'Возможно, историю сняли с публикации или ссылка устарела.', retryable: false, status }
+    return {
+      kind: 'notFound',
+      title: translate(lang, 'err.pageTitle'),
+      hint: translate(lang, 'err.pageHint'),
+      retryable: false,
+      status,
+    }
   }
   if (status === 401) {
-    return { kind: 'auth', title: 'Нужно войти', hint: 'Сессия истекла — войдите заново, чтобы продолжить.', retryable: false, status }
+    return {
+      kind: 'auth',
+      title: translate(lang, 'err.authTitle'),
+      hint: translate(lang, 'err.authHint'),
+      retryable: false,
+      status,
+    }
   }
   if (status === 403) {
-    return { kind: 'forbidden', title: 'Нет доступа', hint: 'У вашей роли нет прав на это действие.', retryable: false, status }
+    return {
+      kind: 'forbidden',
+      title: translate(lang, 'err.forbiddenTitle'),
+      hint: translate(lang, 'err.forbiddenHint'),
+      retryable: false,
+      status,
+    }
   }
   if (status === 409) {
-    return { kind: 'conflict', title: 'Данные уже изменились', hint: 'Обновите страницу и повторите действие.', retryable: true, status }
+    return {
+      kind: 'conflict',
+      title: translate(lang, 'err.conflictTitle'),
+      hint: translate(lang, 'err.conflictHint'),
+      retryable: true,
+      status,
+    }
   }
   // Импорт: сервер на 400 объясняет причину своими словами («больше 2000 файлов»),
   // поэтому его текст показываем как есть, а повторять тот же файл бессмысленно.
   if (subject === 'import' && status === 400) {
-    return { kind: 'unknown', title: 'Импорт не удался', hint: message || 'Файлы не удалось разобрать.', retryable: false, status }
+    return {
+      kind: 'unknown',
+      title: translate(lang, 'err.importTitle'),
+      hint: message || translate(lang, 'err.importHint'),
+      retryable: false,
+      status,
+    }
   }
   if (typeof status === 'number' && status >= 500) {
-    return { kind: 'server', title: 'Сервер не смог обработать запрос', hint: 'Это временная ошибка на сервере — попробуйте ещё раз через несколько секунд.', retryable: true, status }
+    return {
+      kind: 'server',
+      title: translate(lang, 'err.serverTitle'),
+      hint: translate(lang, 'err.serverHint'),
+      retryable: true,
+      status,
+    }
   }
   if (name === 'TimeoutError' || /timed? ?out/i.test(message)) {
-    return { kind: 'timeout', title: 'Сервер не ответил вовремя', hint: 'Связь могла прерваться (например, во время обновления сервера). Попробуйте ещё раз.', retryable: true }
+    return {
+      kind: 'timeout',
+      title: translate(lang, 'err.timeoutTitle'),
+      hint: translate(lang, 'err.timeoutHint'),
+      retryable: true,
+    }
   }
   if (name === 'TypeError' || /failed to fetch|networkerror|load failed/i.test(message)) {
-    return { kind: 'offline', title: 'Нет связи с сервером', hint: 'Проверьте подключение и попробуйте ещё раз.', retryable: true }
+    return {
+      kind: 'offline',
+      title: translate(lang, 'err.offlineTitle'),
+      hint: translate(lang, 'err.offlineHint'),
+      retryable: true,
+    }
   }
-  const fallbackTitle = subject === 'import' ? 'Импорт не удался' : 'Не удалось загрузить данные'
-  return { kind: 'unknown', title: fallbackTitle, hint: message || 'Неизвестная ошибка.', retryable: true, status }
+  const fallbackTitle =
+    subject === 'import' ? translate(lang, 'err.importTitle') : translate(lang, 'err.fallbackTitle')
+  return {
+    kind: 'unknown',
+    title: fallbackTitle,
+    hint: message || translate(lang, 'err.unknownHint'),
+    retryable: true,
+    status,
+  }
 }

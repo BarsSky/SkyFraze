@@ -39,9 +39,9 @@ export interface DocxMarker {
 
 /** Что можно вставить из панели «Разметка DOCX». */
 export const MARKER_TEMPLATES = [
-  { kind: 'pagebreak' as const, label: 'Разрыв страницы', marker: '<!-- sf:pagebreak -->' },
-  { kind: 'toc' as const, label: 'Оглавление', marker: '<!-- sf:toc -->' },
-  { kind: 'end' as const, label: 'Закончить блок', marker: '<!-- sf:end -->' },
+  { kind: 'pagebreak' as const, labelKey: 'dm.pagebreak', marker: '<!-- sf:pagebreak -->' },
+  { kind: 'toc' as const, labelKey: 'dm.toc', marker: '<!-- sf:toc -->' },
+  { kind: 'end' as const, labelKey: 'dm.end', marker: '<!-- sf:end -->' },
 ]
 
 /** Маркер «следующий кусок — этим стилем шаблона». */

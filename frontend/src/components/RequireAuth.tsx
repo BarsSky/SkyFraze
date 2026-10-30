@@ -1,10 +1,12 @@
 import { Navigate } from 'react-router-dom'
+import { useT } from '../i18n'
 import type { ReactNode } from 'react'
 import { useEffect } from 'react'
 import { useAuthStore } from '../store/auth'
 import { BootSplash } from './BootSplash'
 
 export function RequireAuth({ children }: { children: ReactNode }) {
+  const t = useT()
   const refresh = useAuthStore((s) => s.refreshToken)
   const accessToken = useAuthStore((s) => s.accessToken)
   const user = useAuthStore((s) => s.user)
@@ -23,7 +25,7 @@ export function RequireAuth({ children }: { children: ReactNode }) {
   if (!ready) {
     // Та же заставка, что нарисовал `index.html` до загрузки бандла: переход не мигает разными
     // экранами, и человек не видит пустоту второй раз (0.80.0).
-    return <BootSplash note="Проверяю вход…" />
+    return <BootSplash note={t('shell.checkingAuth')} />
   }
   // Успешная загрузка: есть refresh и user (или хотя бы refresh, а user придёт из /me).
   if (!refresh) {

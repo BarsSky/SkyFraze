@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { setLang } from '../store/lang'
 import { describeApiError } from './apiError'
 
 describe('describeApiError', () => {
@@ -50,4 +51,32 @@ describe('describeApiError', () => {
     expect(info.kind).toBe('unknown')
     expect(info.hint).toContain('странная поломка')
   })
+
+  /**
+   * 0.126.0: описания ошибок — из словаря, язык третьим аргументом (по умолчанию русский, поэтому
+   * проверки выше не тронуты). Заголовок и подсказку видит человек в плашке; на английском
+   * интерфейсе они не должны оставаться русскими.
+   */
+  it('на английском заголовок и подсказка переведены', () => {
+    const notFound = describeApiError({ response: { status: 404 } }, 'story', 'en')
+    expect(notFound.title).toBe('Page not found')
+    expect(notFound.hint).toContain('unpublished')
+
+    const auth = describeApiError({ response: { status: 401 } }, 'story', 'en')
+    expect(auth.title).toBe('Sign-in required')
+
+    const forbidden = describeApiError({ response: { status: 403 } }, 'story', 'en')
+    expect(forbidden.title).toBe('No access')
+
+    // Сервер 400 при импорте: текст сервера показываем как есть, он не переводится.
+    const importError = describeApiError(
+      { response: { status: 400 }, message: 'слишком много файлов: больше 2000' },
+      'import',
+      'en',
+    )
+    expect(importError.title).toBe('The import failed')
+    expect(importError.hint).toBe('слишком много файлов: больше 2000')
+    setLang('ru')
+  })
+
 })

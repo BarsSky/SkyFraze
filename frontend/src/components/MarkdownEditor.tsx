@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { pluralWord, useT } from '../i18n'
+import { useLang } from '../store/lang'
 import { MarkdownBlock } from './MarkdownBlock'
 import { resolveLiveText } from '../collab/liveText'
 import { MARKER_TEMPLATES, beginMarker, insertMarker, styleMarker } from '../lib/docxMarkers'
@@ -7,6 +9,7 @@ import { DocxHelp } from './docx/DocxHelp'
 import {
   DIAGRAM_KINDS,
   codeSkeleton,
+  diagramLabel,
   diagramSkeleton,
   formulaSkeleton,
   heading,
@@ -70,9 +73,11 @@ type Mode = 'split' | 'edit' | 'preview'
  * тестом, здесь только его исполнение.
  */
 export function MarkdownEditor({ value, onSave, onAdopt, onClose, title, assetUrls, docxStyles, initialDocxOpen = false }: Props) {
+  const t = useT()
+  const [lang] = useLang()
   const [text, setText] = useState(value)
   const [mode, setMode] = useState<Mode>('split')
-  const [diagramKind, setDiagramKind] = useState<string>(DIAGRAM_KINDS[0].id)
+  const [diagramKind, setDiagramKind] = useState<string>(DIAGRAM_KINDS[0])
   /** На телефоне панель вставок свёрнута: в строку она не влезает (см. CSS). */
   const [insertsOpen, setInsertsOpen] = useState(false)
   /**
@@ -225,36 +230,40 @@ export function MarkdownEditor({ value, onSave, onAdopt, onClose, title, assetUr
 
   const tools = useMemo(
     () => [
-      { label: 'Ж', title: 'Жирный (Ctrl+B)', run: () => apply(wrapSelection(text, selection(), '**')) },
-      { label: 'К', title: 'Курсив (Ctrl+I)', run: () => apply(wrapSelection(text, selection(), '*')) },
-      { label: 'S', title: 'Зачёркнутый', run: () => apply(wrapSelection(text, selection(), '~~')) },
-      { label: 'H1', title: 'Заголовок 1', run: () => apply(heading(text, selection(), 1)) },
-      { label: 'H2', title: 'Заголовок 2', run: () => apply(heading(text, selection(), 2)) },
-      { label: 'H3', title: 'Заголовок 3', run: () => apply(heading(text, selection(), 3)) },
-      { label: '•', title: 'Маркированный список', run: () => apply(prefixLines(text, selection(), '- ')) },
-      { label: '1.', title: 'Нумерованный список', run: () => apply(prefixLines(text, selection(), '1. ')) },
-      { label: '❝', title: 'Цитата', run: () => apply(prefixLines(text, selection(), '> ')) },
-      { label: 'код', title: 'Блок кода', run: () => apply(insertBlock(text, selection(), codeSkeleton())) },
-      { label: 'ссылка', title: 'Ссылка', run: () => apply(wrapSelection(text, selection(), '[', '](https://)')) },
-      { label: 'таблица', title: 'Таблица 3×3', run: () => apply(insertBlock(text, selection(), tableSkeleton(3, 3))) },
-      { label: 'формула', title: 'Формула в строке ($…$)', run: () => apply(wrapSelection(text, selection(), '$')) },
-      { label: 'Σ', title: 'Формула отдельной строкой ($$…$$)', run: () => apply(insertBlock(text, selection(), formulaSkeleton(true))) },
-      { label: '—', title: 'Разделитель', run: () => apply(insertBlock(text, selection(), '---')) },
+      { label: t('md.toolBoldShort'), title: t('md.toolBold'), run: () => apply(wrapSelection(text, selection(), '**')) },
+      { label: t('md.toolItalicShort'), title: t('md.toolItalic'), run: () => apply(wrapSelection(text, selection(), '*')) },
+      { label: 'S', title: t('md.toolStrike'), run: () => apply(wrapSelection(text, selection(), '~~')) },
+      { label: 'H1', title: t('md.toolH1'), run: () => apply(heading(text, selection(), 1)) },
+      { label: 'H2', title: t('md.toolH2'), run: () => apply(heading(text, selection(), 2)) },
+      { label: 'H3', title: t('md.toolH3'), run: () => apply(heading(text, selection(), 3)) },
+      { label: '•', title: t('md.toolBullet'), run: () => apply(prefixLines(text, selection(), '- ')) },
+      { label: '1.', title: t('md.toolNumbered'), run: () => apply(prefixLines(text, selection(), '1. ')) },
+      { label: '❝', title: t('md.toolQuote'), run: () => apply(prefixLines(text, selection(), '> ')) },
+      { label: t('md.toolCodeShort'), title: t('md.toolCode'), run: () => apply(insertBlock(text, selection(), codeSkeleton())) },
+      { label: t('md.toolLinkShort'), title: t('md.toolLink'), run: () => apply(wrapSelection(text, selection(), '[', '](https://)')) },
+      { label: t('md.toolTableShort'), title: t('md.toolTable'), run: () => apply(insertBlock(text, selection(), tableSkeleton(3, 3, lang))) },
+      { label: t('md.toolFormulaShort'), title: t('md.toolFormulaInline'), run: () => apply(wrapSelection(text, selection(), '$')) },
+      { label: 'Σ', title: t('md.toolFormulaBlock'), run: () => apply(insertBlock(text, selection(), formulaSkeleton(true))) },
+      { label: '—', title: t('md.toolDivider'), run: () => apply(insertBlock(text, selection(), '---')) },
     ],
-    [apply, selection, text],
+    [apply, selection, text, t, lang],
   )
 
   return createPortal(
-    <div className="md-editor" role="dialog" aria-modal="true" aria-label="Редактор текста с Markdown">
+    <div className="md-editor" role="dialog" aria-modal="true" aria-label={t('md.dialogAria')}>
       {docxHelpOpen && <DocxHelp onClose={() => setDocxHelpOpen(false)} />}
       <div className="md-editor__window" ref={windowRef}>
         <div className="md-editor__head">
           <div className="md-editor__titles">
-            <strong>Текст события</strong>
+            <strong>{t('md.title')}</strong>
             {title && <span className="muted">{title}</span>}
           </div>
-          <div className="md-editor__modes" role="group" aria-label="Режим редактора">
-            {([['split', 'Текст и предпросмотр'], ['edit', 'Только текст'], ['preview', 'Только предпросмотр']] as const).map(
+          <div className="md-editor__modes" role="group" aria-label={t('md.modesAria')}>
+            {([
+              ['split', t('md.modeSplit')],
+              ['edit', t('md.modeEdit')],
+              ['preview', t('md.modePreview')],
+              ] as const).map(
               ([id, label]) => (
                 <button
                   key={id}
@@ -267,8 +276,8 @@ export function MarkdownEditor({ value, onSave, onAdopt, onClose, title, assetUr
               ),
             )}
           </div>
-          <button type="button" className="secondary md-editor__close" onClick={onClose} aria-label="Закрыть редактор">
-            закрыть ✕
+          <button type="button" className="secondary md-editor__close" onClick={onClose} aria-label={t('md.closeAria')}>
+            {t('md.close')}
           </button>
         </div>
 
@@ -277,15 +286,15 @@ export function MarkdownEditor({ value, onSave, onAdopt, onClose, title, assetUr
         {conflict && (
           <div className="md-editor__alert" role="status" aria-live="polite">
             <span className="md-editor__alert-text">
-              Соавтор изменил текст. Ваши несохранённые правки не тронуты.
+              {t('md.peerChanged')}
             </span>
             <button type="button" className="secondary" onClick={adopt}>
-              взять версию соавтора
+              {t('md.takePeer')}
             </button>
           </div>
         )}
 
-        <div className="md-editor__toolbar" role="toolbar" aria-label="Вставки Markdown" data-inserts={insertsOpen ? 'open' : 'closed'}>
+        <div className="md-editor__toolbar" role="toolbar" aria-label={t('md.toolbarAria')} data-inserts={insertsOpen ? 'open' : 'closed'}>
           {/* На телефоне кнопки вставок не влезают в строку (их пятнадцать плюс
               выбор вида диаграммы) и раньше уезжали за правый край экрана.
               Поэтому там они живут в сворачиваемой панели, а в строке остаётся
@@ -297,7 +306,7 @@ export function MarkdownEditor({ value, onSave, onAdopt, onClose, title, assetUr
             aria-controls="md-editor-inserts"
             onClick={() => setInsertsOpen((open) => !open)}
           >
-            вставки {insertsOpen ? '▴' : '▾'}
+            {t('md.inserts')} {insertsOpen ? '▴' : '▾'}
           </button>
           <div className="md-editor__inserts" id="md-editor-inserts">
             {tools.map((tool) => (
@@ -309,20 +318,22 @@ export function MarkdownEditor({ value, onSave, onAdopt, onClose, title, assetUr
             <select
               className="md-editor__diagram"
               value={diagramKind}
-              aria-label="Вид диаграммы"
+              aria-label={t('md.diagramAria')}
               onChange={(e) => setDiagramKind(e.target.value)}
             >
               {DIAGRAM_KINDS.map((kind) => (
-                <option key={kind.id} value={kind.id}>{kind.label}</option>
+                <option key={kind} value={kind}>
+                  {diagramLabel(kind, lang)}
+                  </option>
               ))}
             </select>
             <button
               type="button"
               className="secondary"
-              title="Вставить диаграмму Mermaid"
-              onClick={() => apply(insertBlock(text, selection(), diagramSkeleton(diagramKind)))}
+              title={t('md.diagramTitle')}
+              onClick={() => apply(insertBlock(text, selection(), diagramSkeleton(diagramKind, lang)))}
             >
-              диаграмма
+              {t('md.diagram')}
             </button>
           </div>
         </div>
@@ -339,31 +350,31 @@ export function MarkdownEditor({ value, onSave, onAdopt, onClose, title, assetUr
             aria-controls="md-editor-docx"
             onClick={() => setDocxOpen((open) => !open)}
           >
-            Разметка DOCX {docxOpen ? '▴' : '▾'}
+            {t('md.docxMarkup')} {docxOpen ? '▴' : '▾'}
           </button>
           <div className="md-editor__docx-body" id="md-editor-docx">
             <button
               type="button"
               className="secondary"
-              title="Начать новый лист в DOCX на этом месте"
+              title={t('md.pagebreakTitle')}
               onClick={() => insertDocxMarker(MARKER_TEMPLATES[0].marker)}
             >
-              разрыв страницы
+              {t('md.pagebreak')}
             </button>
             <button
               type="button"
               className="secondary"
-              title="Поле оглавления Word на этом месте (обновляется в Word по F9)"
+              title={t('md.tocTitle')}
               onClick={() => insertDocxMarker(MARKER_TEMPLATES[1].marker)}
             >
-              оглавление
+              {t('md.toc')}
             </button>
             {styleNames.length > 0 ? (
               <>
                 <span className="md-editor__toolbar-sep" aria-hidden />
                 <select
                   className="md-editor__docx-style"
-                  aria-label="Стиль шаблона DOCX"
+                  aria-label={t('md.styleAria')}
                   value={currentStyle}
                   onChange={(e) => setDocxStyle(e.target.value)}
                 >
@@ -374,49 +385,46 @@ export function MarkdownEditor({ value, onSave, onAdopt, onClose, title, assetUr
                 <button
                   type="button"
                   className="secondary"
-                  title="Текст ниже — этим стилем шаблона (до следующего маркера)"
+                  title={t('md.styleBelowTitle')}
                   disabled={currentStyle === ''}
                   onClick={() => insertDocxMarker(styleMarker(currentStyle))}
                 >
-                  стиль ниже
+                  {t('md.styleBelow')}
                 </button>
                 <button
                   type="button"
                   className="secondary"
-                  title="Начать кусок этим стилем; закрыть кнопкой «закончить блок»"
+                  title={t('md.beginBlockTitle')}
                   disabled={currentStyle === ''}
                   onClick={() => insertDocxMarker(beginMarker(currentStyle))}
                 >
-                  начать блок
+                  {t('md.beginBlock')}
                 </button>
                 <button
                   type="button"
                   className="secondary"
-                  title="Вернуть обычное оформление"
+                  title={t('md.endBlockTitle')}
                   onClick={() => insertDocxMarker(MARKER_TEMPLATES[2].marker)}
                 >
-                  закончить блок
+                  {t('md.endBlock')}
                 </button>
               </>
             ) : (
               <span className="muted md-editor__docx-hint">
-                Стили шаблона появятся, когда у проекта будет загружен шаблон оформления.
+                {t('md.stylesEmpty')}
               </span>
             )}
-            <span className="muted md-editor__docx-hint">
-              Маркеры не видны в показе и не участвуют в поиске; их понимает только скачивание
-              DOCX.
-            </span>
+            <span className="muted md-editor__docx-hint">{t('md.markersHint')}</span>
             {/* Справка (0.94.0): из редактора её раньше не было видно вовсе, и вопрос «как
                 работает разметка DOCX» оставался без ответа прямо в том месте, где её ставят. */}
             <button
               type="button"
               className="secondary"
-              title="Как работает разметка DOCX и из чего делается шаблон"
+              title={t('md.helpTitle')}
               onClick={() => setDocxHelpOpen(true)}
               data-docx-help-open
             >
-              справка
+              {t('md.help')}
             </button>
           </div>
         </div>
@@ -428,23 +436,24 @@ export function MarkdownEditor({ value, onSave, onAdopt, onClose, title, assetUr
               className="md-editor__textarea"
               value={text}
               spellCheck
-              aria-label="Текст события в Markdown"
+              aria-label={t('md.textAria')}
               onChange={(e) => setText(e.target.value)}
-              placeholder={'Обычный текст, **жирный**, списки и таблицы.\n\nФормула: $E = mc^2$\nДиаграмма:\n```mermaid\ngraph TD\n  A --> B\n```'}
+              placeholder={t('md.placeholder')}
             />
             <div className="md-editor__hint">
               <span className="md-editor__hint-syntax">
-                Разметка: <code>**жирный**</code> <code>*курсив*</code> <code># заголовок</code>{' '}
-                <code>- список</code> <code>| таблица |</code> <code>$формула$</code>{' '}
-                <code>```mermaid</code> — диаграмма
+                {t('md.markupHint')} <code>**bold**</code> <code>*italic*</code> <code># heading</code>{' '}
+                <code>- list</code> <code>| table |</code> <code>$formula$</code>{' '}
+                <code>```mermaid</code>
+                  {t('md.diagramChip')}
               </span>
-              <span className="muted md-editor__hint-count">{text.length} символов</span>
+              <span className="muted md-editor__hint-count">{text.length} {pluralWord(lang, 'md.unit.char', text.length)}</span>
             </div>
           </div>
           <div className="md-editor__pane md-editor__pane--preview">
             <div className="md-editor__preview">
               {text.trim() === ''
-                ? <p className="muted">Здесь появится то, как текст увидят читатели.</p>
+                ? <p className="muted">{t('md.previewEmpty')}</p>
                 : <MarkdownBlock source={text} assetUrls={assetUrls} />}
             </div>
           </div>
@@ -452,12 +461,16 @@ export function MarkdownEditor({ value, onSave, onAdopt, onClose, title, assetUr
 
         <div className="md-editor__foot">
           <span className="muted">
-            {dirty ? 'Есть несохранённые правки' : 'Всё сохранено'}
-            <span className="md-editor__foot-keys"> · Ctrl+Enter — сохранить, Esc — закрыть</span>
+            {dirty ? t('md.dirty') : t('md.saved')}
+            <span className="md-editor__foot-keys">{t('md.keysHint')}</span>
           </span>
           <div className="row" style={{ gap: 8 }}>
-            <button type="button" className="secondary" onClick={onClose}>Отмена</button>
-            <button type="button" onClick={save} disabled={!dirty}>Сохранить текст</button>
+            <button type="button" className="secondary" onClick={onClose}>
+              {t('md.cancel')}
+              </button>
+            <button type="button" onClick={save} disabled={!dirty}>
+              {t('md.save')}
+              </button>
           </div>
         </div>
       </div>

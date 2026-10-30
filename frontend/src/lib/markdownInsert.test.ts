@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   DIAGRAM_KINDS,
+  diagramLabel,
   codeSkeleton,
   diagramSkeleton,
   formulaSkeleton,
@@ -90,11 +91,23 @@ describe('каркасы', () => {
 
   it('диаграммы: все виды дают валидный блок mermaid', () => {
     for (const kind of DIAGRAM_KINDS) {
-      const block = diagramSkeleton(kind.id)
+      const block = diagramSkeleton(kind)
       expect(block.startsWith('```mermaid\n')).toBe(true)
       expect(block.endsWith('```')).toBe(true)
-      expect(block).toContain(kind.source.split('\n')[0])
+      // Подпись вида — из словаря, и она не пустая для каждого вида.
+      expect(diagramLabel(kind)).not.toBe('')
     }
+  })
+
+  /**
+   * 0.126.0: каркас диаграммы тоже переводится — он вставляется В ТЕКСТ кадра, и русские
+   * «Начало»/«Развилка» в английской истории читались бы как случайный мусор.
+   */
+  it('на английском каркас и подпись диаграммы переведены', () => {
+    expect(diagramLabel('flow', 'en')).toBe('Flow')
+    expect(diagramSkeleton('flow', 'en')).toContain('Start')
+    expect(diagramSkeleton('flow', 'en')).not.toMatch(/[А-Яа-яЁё]/)
+    expect(diagramLabel('flow')).toBe('Схема')
   })
 
   it('неизвестный вид диаграммы даёт схему по умолчанию', () => {

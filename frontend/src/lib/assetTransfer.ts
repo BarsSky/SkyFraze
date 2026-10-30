@@ -1,3 +1,5 @@
+import { translate } from '../i18n'
+import type { Lang } from '../store/lang'
 /**
  * Перенос вложения из одного кадра в другой (глава ↔ под-событие).
  *
@@ -51,12 +53,13 @@ export function planAssetMove(
   fromId: string | null,
   toId: string,
   options: { isImage: boolean },
+  lang: Lang = 'ru',
 ): MoveResult {
   const target = frames.find((f) => f.id === toId)
-  if (!target) return { error: 'Кадр не найден — обновите страницу.' }
-  if (fromId === toId) return { error: 'Файл уже в этом кадре.' }
+  if (!target) return { error: translate(lang, 'at.frameMissing') }
+  if (fromId === toId) return { error: translate(lang, 'at.sameFrame') }
   if (target.assetIds.includes(assetId)) {
-    return { error: `Файл уже прикреплён к кадру «${target.label}».` }
+    return { error: translate(lang, 'at.alreadyAttached', { label: target.label }) }
   }
 
   const patches: FramePatch[] = []
@@ -64,9 +67,9 @@ export function planAssetMove(
 
   if (fromId !== null) {
     const source = frames.find((f) => f.id === fromId)
-    if (!source) return { error: 'Исходный кадр не найден — обновите страницу.' }
+    if (!source) return { error: translate(lang, 'at.sourceMissing') }
     if (!source.assetIds.includes(assetId)) {
-      return { error: `Файла нет в кадре «${source.label}».` }
+      return { error: translate(lang, 'at.notInFrame', { label: source.label }) }
     }
     const patch: FramePatch = {
       id: source.id,
@@ -76,7 +79,7 @@ export function planAssetMove(
       // Фон исходного кадра уходит вместе с картинкой: оставлять ссылку на файл,
       // которого в кадре больше нет, нельзя — кадр показывал бы чужую картинку.
       patch.backgroundAssetId = null
-      notes.push(`фон кадра «${source.label}» сброшен`)
+      notes.push(translate(lang, 'at.backgroundReset', { label: source.label }))
     }
     patches.push(patch)
   }
@@ -86,12 +89,12 @@ export function planAssetMove(
     // Как и при загрузке: первая картинка в кадре становится его фоном. Кадр без фона
     // выглядит пустым, а «просто прикрепить картинку» человек и хочет увидеть фоном.
     targetPatch.backgroundAssetId = assetId
-    notes.push(`в кадре «${target.label}» картинка стала фоном`)
+    notes.push(translate(lang, 'at.backgroundSet', { label: target.label }))
   }
   patches.push(targetPatch)
 
-  const what = fromId === null ? 'Прикреплено' : 'Перенесено'
-  const where = `в кадр «${target.label}»`
+  const what = translate(lang, fromId === null ? 'at.attached' : 'at.moved')
+  const where = translate(lang, 'at.toFrame', { label: target.label })
   return {
     patches,
     notice: notes.length > 0 ? `${what} ${where}: ${notes.join(', ')}` : `${what} ${where}`,
@@ -117,9 +120,9 @@ export function attachmentsByAsset(frames: TransferFrame[]): Map<string, Transfe
 }
 
 /** Подпись «где файл»: «01 Пролог, 01.1 Рассвет» или «ни в одном кадре». */
-export function attachmentLabel(frames: TransferFrame[] | undefined): string {
-  if (!frames || frames.length === 0) return 'ни в одном кадре'
+export function attachmentLabel(frames: TransferFrame[] | undefined, lang: Lang = 'ru'): string {
+  if (!frames || frames.length === 0) return translate(lang, 'at.nowhere')
   const names = frames.slice(0, 3).map((f) => f.label)
-  const tail = frames.length > 3 ? ` и ещё ${frames.length - 3}` : ''
+  const tail = frames.length > 3 ? translate(lang, 'at.andMore', { count: frames.length - 3 }) : ''
   return names.join(', ') + tail
 }

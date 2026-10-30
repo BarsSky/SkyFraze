@@ -1,3 +1,5 @@
+import { useT } from '../i18n'
+
 /**
  * Заставка загрузки (0.80.0).
  *
@@ -7,7 +9,8 @@
  * монтирования, пока проверяется вход и грузится проект — чтобы переход не мигал разными
  * экранами. Классы общие (`.boot`), стили есть и в `index.html`, и в `tokens.css`.
  */
-export function BootSplash({ note = 'Загружаю оболочку…' }: { note?: string }) {
+export function BootSplash({ note }: { note?: string }) {
+  const t = useT()
   return (
     <div className="boot" data-boot role="status" aria-live="polite">
       <span className="boot__mark" aria-hidden="true">
@@ -24,7 +27,7 @@ export function BootSplash({ note = 'Загружаю оболочку…' }: { 
         </svg>
       </span>
       <p className="boot__title">SkyFraze</p>
-      <p className="boot__note">{note}</p>
+      <p className="boot__note">{note ?? t('shell.boot')}</p>
       <div className="boot__spinner" aria-hidden="true" />
     </div>
   )

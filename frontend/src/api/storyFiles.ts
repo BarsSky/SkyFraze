@@ -1,4 +1,5 @@
 import { http } from './client'
+import { tStatic } from '../i18n'
 import { parseFilename } from './transfer'
 import { saveBlob } from '../lib/download'
 
@@ -293,7 +294,7 @@ function slugifyFilename(title: string): string {
 
 function requireMarkdownForm(source: MarkdownImportSource | null | undefined): FormData {
   const form = buildMarkdownImportForm(source)
-  if (!form) throw new Error('Не выбрано ни одного файла — выберите папку с md или zip')
+  if (!form) throw new Error(tStatic('shell.noFiles'))
   return form
 }
 

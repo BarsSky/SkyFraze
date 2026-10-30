@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { setLang } from '../store/lang'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { MarkdownEditor } from './MarkdownEditor'
 
@@ -204,4 +205,24 @@ describe('MarkdownEditor — панель «Разметка DOCX»', () => {
     expect(toggle).toHaveAttribute('aria-expanded', 'true')
     expect(screen.getByRole('button', { name: 'разрыв страницы' })).toBeInTheDocument()
   })
+
+  /**
+   * 0.126.0: подписи редактора — из словаря. Символьные кнопки тоже: «Ж» и «К» — русские
+   * мнемоники, на английском это «B» и «I». Что вставляется — разметка Markdown, она одна для
+   * всех языков.
+   */
+  it('на английском подписи редактора переведены', async () => {
+    setLang('en')
+    render(<MarkdownEditor value="Текст" onSave={() => {}} onClose={() => {}} title="Пролог" />)
+    expect(await screen.findByRole('dialog', { name: 'Markdown text editor' })).toBeTruthy()
+    expect(screen.getByText('Event text')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Save the text' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeTruthy()
+    // Кнопки вставок: подпись и подсказка по-английски.
+    expect(screen.getByTitle('Bold (Ctrl+B)')).toBeTruthy()
+    expect(screen.getByTitle('Bulleted list')).toBeTruthy()
+    expect(screen.getByLabelText('Event text in Markdown')).toBeTruthy()
+    setLang('ru')
+  })
+
 })

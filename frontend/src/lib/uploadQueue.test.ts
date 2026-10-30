@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { setLang } from '../store/lang'
 import type { Asset } from '../api/assets'
 import { isQuotaMessage, runUploads, uploadSummary, type UploadOutcome } from './uploadQueue'
 
@@ -121,4 +122,28 @@ describe('isQuotaMessage', () => {
     expect(isQuotaMessage('файл больше 50 МБ — сервер его не примет')).toBe(false)
     expect(isQuotaMessage('сервер ответил 500')).toBe(false)
   })
+
+  /**
+   * 0.126.0: сводка и причины — из словаря, язык параметром (по умолчанию русский, поэтому
+   * проверки выше не тронуты). «Загружено файлов: 2» на английском — «Files uploaded: 2».
+   */
+  it('на английском сводка и причины переведены', async () => {
+    const file = new File(['x'], 'photo.png', { type: 'image/png' })
+    const big = new File(['x'], 'huge.png', { type: 'image/png' })
+    Object.defineProperty(big, 'size', { value: 20 * 1024 * 1024 })
+
+    const outcomes = await runUploads(
+      [file, big],
+      async () => ({ id: 'a1', filename: 'photo.png', size: 1024, mime: 'image/png' }) as never,
+      { maxBytes: 5 * 1024 * 1024 },
+      'en',
+    )
+    const summary = uploadSummary(outcomes, 'en')
+    expect(outcomes[1].error).toContain('larger than')
+    expect(summary).toContain('1 of 2 uploaded')
+    expect(summary).toContain('huge.png')
+    expect(summary).not.toMatch(/[А-Яа-яЁё]/)
+    setLang('ru')
+  })
+
 })
