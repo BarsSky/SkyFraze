@@ -1802,4 +1802,12 @@ export const en: Record<Key, string> = {
   'sel.showMissing': 'The fragment "{quote}" was not found in this frame — the text may have changed.',
   'ee.showInProject': 'Show in the project',
   'ee.showInProjectTitle': 'Open the project show on this frame and highlight the selected piece',
+  'sel.share': 'Link to the fragment',
+  'pub.linkTitle': 'Link to the fragment',
+  'pub.linkField': 'Link address',
+  'pub.linkHint': 'Opens this story on this frame with the phrase highlighted.',
+  'pub.linkCopy': 'Copy',
+  'pub.linkCopied': 'The link is copied.',
+  'pub.linkManual': 'The clipboard is unavailable — the text in the field is already selected.',
+  'pub.linkClose': 'Close',
 }

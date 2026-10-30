@@ -287,6 +287,51 @@ describe('SelectionMenu', () => {
       restore()
     }
   })
+
+  /**
+   * Читатель публичной истории (0.136.0): одно действие — ссылка на фразу.
+   *
+   * У читателя нет ни чата, ни редакторов, и три прежние кнопки на публичной странице ничего не
+   * делали бы: их события там слушать некому. Проверяем и состав меню, и что нажатие уходит
+   * отдельным событием со цитатой и кадром.
+   */
+  it('читателю показывает только «ссылку на фразу»', async () => {
+    const handler = vi.fn()
+    window.addEventListener('skyfraze:quote-link', handler)
+    const view = render(
+      <div>
+        <div data-frame-body="f1">
+          <p>Аня вошла в дом и огляделась.</p>
+        </div>
+        <SelectionMenu frameId="f1" frameTitle="Пролог" source={SOURCE} audience="readers" />
+      </div>,
+    )
+    const body = view.container.querySelector('[data-frame-body="f1"]') as HTMLElement
+    selectIn(body, 'вошла в дом')
+    await waitFor(() => expect(screen.getByRole('toolbar')).toBeTruthy())
+
+    expect(screen.getByRole('button', { name: 'Ссылка на фразу' })).toBeTruthy()
+    // Членских действий у читателя нет вовсе.
+    expect(screen.queryByRole('button', { name: 'В чат проекта' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Спросить помощника' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Редактировать фрагмент' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Ссылка на фразу' }))
+    expect(handler).toHaveBeenCalledTimes(1)
+    expect((handler.mock.calls[0][0] as CustomEvent).detail).toMatchObject({
+      frameId: 'f1',
+      quote: 'вошла в дом',
+    })
+    window.removeEventListener('skyfraze:quote-link', handler)
+  })
+
+  it('участнику меню остаётся прежним: три действия, без ссылки', async () => {
+    const { body } = mount()
+    selectIn(body, 'вошла в дом')
+    await waitFor(() => expect(screen.getByRole('toolbar')).toBeTruthy())
+    expect(screen.queryByRole('button', { name: 'Ссылка на фразу' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'В чат проекта' })).toBeTruthy()
+  })
 })
 
 describe('QuickEditWindow', () => {

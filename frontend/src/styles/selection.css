@@ -120,6 +120,21 @@
   color: var(--fg);
 }
 
+/* Поле со ссылкой на фразу (0.136.0): одна строка, моноширинным шрифтом и с выделением —
+ * если браузер не даст скопировать по кнопке, человек заберёт адрес вручную. */
+.sf-quote-link__field {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 0.82rem;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--fg);
+}
+
 .sf-quick-edit__foot {
   display: flex;
   flex-wrap: wrap;

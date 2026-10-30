@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { TimelineStage, type AssetLookup } from '../components/timeline/TimelineStage'
 import { buildPublicDoc } from '../components/timeline/publicDoc'
 import { RatingStars } from '../components/RatingStars'
@@ -15,6 +15,9 @@ import {
 } from '../api/feed'
 import { formatViews } from '../lib/format'
 import { useAuthStore } from '../store/auth'
+import { onQuoteLink } from '../lib/storySelection'
+import { buildStoryQuoteUrl, readStoryQuoteTarget } from '../lib/storyLink'
+import { QuoteLinkDialog } from '../components/public/QuoteLinkDialog'
 
 /**
  * Публичная страница истории: тот же сценический таймлайн, но только на чтение.
@@ -41,6 +44,16 @@ export function PublicStoryPage() {
   const [ratingNote, setRatingNote] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [attempt, setAttempt] = useState(0)
+  /**
+   * Просьба из адреса: «эта история, этот кадр, эта фраза» (0.136.0).
+   *
+   * Читатель получает такую ссылку от другого читателя или от участника проекта; страница обязана
+   * открыть кадр и подсветить фразу — иначе ссылка ведёт «куда-то в историю».
+   */
+  const [search] = useSearchParams()
+  const target = useMemo(() => readStoryQuoteTarget(search.toString()), [search])
+  /** Готовый адрес для окна «ссылка на фразу» — его собрала страница. */
+  const [linkUrl, setLinkUrl] = useState<string | null>(null)
 
   useEffect(() => {
     let alive = true
@@ -81,6 +94,20 @@ export function PublicStoryPage() {
     }
     return map
   }, [story])
+
+  // Меню выделения в кадре просит ссылку: адрес собирает страница — она знает slug истории.
+  useEffect(
+    () =>
+      onQuoteLink((quote) => {
+        setLinkUrl(
+          buildStoryQuoteUrl(window.location.origin, slug, {
+            frameId: quote.frameId,
+            quote: quote.quote,
+          }),
+        )
+      }),
+    [slug],
+  )
 
   const onRate = useCallback(
     (stars: number) => {
@@ -170,6 +197,15 @@ export function PublicStoryPage() {
             {t('story.toFeed')}
           </Link>
         }
+        audience="readers"
+        /* «Эта история, этот кадр, эта фраза» из адреса (0.136.0): кадр открывается, фраза
+           подсвечивается. `nonce` постоянный, потому что просьба одна на загрузку страницы. */
+        focusFrame={target ? { id: target.frameId, nonce: 1 } : null}
+        highlight={
+          target && target.quote !== ''
+            ? { frameId: target.frameId, quote: target.quote, nonce: 1 }
+            : null
+        }
         copyFooter={
           <div className="pub-meta">
             <div className="pub-meta__line">
@@ -191,6 +227,7 @@ export function PublicStoryPage() {
           </div>
         }
       />
+      {linkUrl !== null && <QuoteLinkDialog url={linkUrl} onClose={() => setLinkUrl(null)} />}
     </div>
   )
 }

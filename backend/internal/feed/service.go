@@ -39,11 +39,27 @@ const (
 type Service struct {
 	store *store.Store
 	proj  *projects.Service
+	live  LiveState
+}
+
+/**
+ * Состояние документа живой комнаты проекта (0.136.0).
+ *
+ * Интерфейс, а не зависимость на транспорт — как `events.LiveRestore` и `transfer.LiveDoc`:
+ * feed не должен тащить websocket-хаб. `nil` — комнат нет (или они в другом процессе), и тогда
+ * работает обычный путь через снапшот базы.
+ */
+type LiveState interface {
+	// LiveState — закодированное состояние документа комнаты; пусто — комнаты нет.
+	LiveState(ctx context.Context, projectID uuid.UUID) []byte
 }
 
 func New(s *store.Store, proj *projects.Service) *Service {
 	return &Service{store: s, proj: proj}
 }
+
+/** Подключить живые комнаты: публичная история должна показывать то же, что видят редакторы. */
+func (s *Service) UseLiveState(live LiveState) { s.live = live }
 
 // ---------- лента ----------
 
@@ -126,9 +142,25 @@ func (s *Service) StoryBySlug(ctx context.Context, slug string, viewerID uuid.UU
 	if err != nil {
 		return nil, err
 	}
-	if state != nil && len(state.YjsState) > 0 {
+	/**
+	 * Сначала — живая комната, потом снапшот базы (0.136.0).
+	 *
+	 * Снапшот пишется раз в несколько секунд, поэтому «опубликовал и сразу открыл ссылку» давало
+	 * читателю прошлый текст: правка ещё не доехала до базы, а комната уже держит её в памяти.
+	 * Публичная история — то место, где это заметно сильнее всего: ссылку пересылают сразу после
+	 * правки. В мультипроцессном стенде комната живёт в одном процессе, и читатель с другого
+	 * получает снапшот — то же поведение, что было раньше.
+	 */
+	var live []byte
+	if s.live != nil {
+		live = s.live.LiveState(ctx, item.ID)
+	}
+	switch {
+	case len(live) > 0:
+		out.State = live
+	case state != nil && len(state.YjsState) > 0:
 		out.State = state.YjsState
-	} else {
+	default:
 		events, err := s.store.ListEvents(ctx, item.ID)
 		if err != nil {
 			return nil, err

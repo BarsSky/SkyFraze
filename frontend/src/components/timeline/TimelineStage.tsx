@@ -71,6 +71,11 @@ interface Props {
    * переход к кадру из «Связей» идёт пропсом (см. `focusFrame`).
    */
   highlight?: { frameId: string; quote: string; nonce: number } | null
+  /**
+   * Кто смотрит (0.136.0): участник видит меню выделения с чатом, помощником и правкой, читатель
+   * публичной истории — одно действие, «ссылка на фразу».
+   */
+  audience?: 'members' | 'readers'
 }
 
 interface EventMeta {
@@ -133,7 +138,10 @@ function resolveAssets(assetIds: string[], lookup: Record<string, AssetLookup>):
  *
  * Стадия занимается только показом и навигацией: редактор — отдельный модуль.
  */
-export function TimelineStage({ events, assetsById, projectTitle, actions, copyFooter, focusFrame, highlight }: Props) {
+export function TimelineStage({
+  events, assetsById, projectTitle, actions, copyFooter, focusFrame, highlight,
+  audience = 'members',
+}: Props) {
   // Карта файлов проекта (id → адрес) для текста кадра: в тексте могут быть ссылки
   // на вложения (`/api/assets/<id>`), и без подмены они не откроются в приложении.
   const assetUrls = useMemo(() => {
@@ -783,6 +791,7 @@ export function TimelineStage({ events, assetsById, projectTitle, actions, copyF
             footer={copyFooter}
             assetUrls={assetUrls}
             highlight={highlight}
+            audience={audience}
           />
         )}
       </div>

@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { useT } from '../../../i18n'
 import {
   locateQuote,
+  requestQuoteLink,
   requestQuoteToAssistant,
   requestQuoteToChat,
   requestQuoteEdit,
@@ -10,18 +11,19 @@ import {
 } from '../../../lib/storySelection'
 
 /**
- * Меню выделенного фрагмента в показе проекта (0.132.0).
+ * Меню выделенного фрагмента в показе проекта (0.132.0; читатель — 0.136.0).
  *
  * Как это выглядит для человека: он выделяет фразу в кадре — рядом с выделением появляется
- * небольшое меню с тремя действиями. Не панель, не окно: меню должно быть там, где рука, и
- * исчезать, как только выделение снято.
+ * небольшое меню с действиями. Не панель, не окно: меню должно быть там, где рука, и исчезать,
+ * как только выделение снято.
  *
  * Почему меню в стадии, а не в шапке. Выделение живёт в тексте кадра, и уводить взгляд в шапку за
  * действием — значит терять и выделение, и место. Меню следует за выделением.
  *
  * Что считает компонент, а что — страница. Здесь только «что выделено» (цитата и смещения в
- * исходнике кадра) и три события наружу; что делать с цитатой, решает страница: открыть док на
- * вкладке чата, открыть док на помощнике или показать окно быстрой правки.
+ * исходнике кадра) и события наружу; что делать с цитатой, решает страница: открыть док на
+ * вкладке чата, открыть док на помощнике, показать окно быстрой правки или собрать ссылку на
+ * публичную историю.
  */
 interface Props {
   /** Кадр, к которому относится текст: id и заголовок нужны в ссылке и в окне правки. */
@@ -29,9 +31,18 @@ interface Props {
   frameTitle: string
   /** Исходный Markdown кадра: по нему восстанавливаются смещения выделения. */
   source: string
+  /**
+   * Кто выделяет (0.136.0).
+   *
+   * `members` — участник проекта: чат, помощник, быстрая правка. `readers` — читатель публичной
+   * истории: у него нет ни чата, ни редакторов, и единственное осмысленное действие — ссылка на
+   * фразу. Показывать читателю три кнопки, которые ничего не делают, значит врать: на публичной
+   * странице их события слушать некому.
+   */
+  audience?: 'members' | 'readers'
 }
 
-export function SelectionMenu({ frameId, frameTitle, source }: Props) {
+export function SelectionMenu({ frameId, frameTitle, source, audience = 'members' }: Props) {
   const t = useT()
   const [visible, setVisible] = useState(false)
   const [position, setPosition] = useState({ left: 0, top: 0 })
@@ -202,16 +213,27 @@ export function SelectionMenu({ frameId, frameTitle, source }: Props) {
       role="toolbar"
       aria-label={t('sel.aria')}
       data-selection-menu
+      data-selection-audience={audience}
     >
-      <button type="button" onClick={() => act(requestQuoteToChat)} data-selection-chat>
-        {t('sel.toChat')}
-      </button>
-      <button type="button" onClick={() => act(requestQuoteToAssistant)} data-selection-assistant>
-        {t('sel.toAssistant')}
-      </button>
-      <button type="button" onClick={() => act(requestQuoteEdit)} data-selection-edit>
-        {t('sel.edit')}
-      </button>
+      {audience === 'readers' ? (
+        // Читателю — одно действие: адрес, который открывает ту же историю на этом кадре с
+        // подсвеченной фразой. Чата и редакторов у него нет (0.136.0).
+        <button type="button" onClick={() => act(requestQuoteLink)} data-selection-link>
+          {t('sel.share')}
+        </button>
+      ) : (
+        <>
+          <button type="button" onClick={() => act(requestQuoteToChat)} data-selection-chat>
+            {t('sel.toChat')}
+          </button>
+          <button type="button" onClick={() => act(requestQuoteToAssistant)} data-selection-assistant>
+            {t('sel.toAssistant')}
+          </button>
+          <button type="button" onClick={() => act(requestQuoteEdit)} data-selection-edit>
+            {t('sel.edit')}
+          </button>
+        </>
+      )}
     </div>,
     document.body,
   )

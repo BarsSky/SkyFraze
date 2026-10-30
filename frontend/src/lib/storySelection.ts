@@ -31,6 +31,14 @@ export const QUOTE_TO_CHAT_EVENT = 'skyfraze:quote-to-chat'
 export const QUOTE_TO_ASSISTANT_EVENT = 'skyfraze:quote-to-assistant'
 /** Открыть окно быстрой правки фрагмента. */
 export const QUOTE_EDIT_EVENT = 'skyfraze:quote-edit'
+/**
+ * Ссылка на фразу в публичной истории (0.136.0).
+ *
+ * Отдельное событие, а не «в чат проекта»: на публичной странице читателя нет ни чата, ни
+ * редакторов, и единственное осмысленное действие с выделением — получить адрес, который
+ * открывает ту же историю на этом кадре с подсвеченной фразой.
+ */
+export const QUOTE_LINK_EVENT = 'skyfraze:quote-link'
 
 /** Окно быстрой правки: что править и где. */
 export interface QuoteEditRequest extends FrameQuote {
@@ -72,6 +80,14 @@ export function requestQuoteEdit(quote: FrameQuote): void {
 }
 export function onQuoteEdit(handler: (request: QuoteEditRequest) => void): () => void {
   return subscribe(QUOTE_EDIT_EVENT, handler)
+}
+
+/** Попросить ссылку на фразу (публичная история, 0.136.0). */
+export function requestQuoteLink(quote: FrameQuote): void {
+  dispatch(QUOTE_LINK_EVENT, quote)
+}
+export function onQuoteLink(handler: (quote: FrameQuote) => void): () => void {
+  return subscribe(QUOTE_LINK_EVENT, handler)
 }
 
 /** Слово с его местом в строке: по ним выделение ищется в исходнике независимо от разметки. */

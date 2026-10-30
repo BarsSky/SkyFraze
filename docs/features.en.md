@@ -168,6 +168,11 @@ then people and access.
   there is no highlight and the frame panel says so in a note. The highlight does not touch the text:
   it lives in the CSS Custom Highlight API, so React still owns the frame markup
   (`docs/selection.md` §6)
+- **A link to a phrase in the public story** (0.136.0): a reader selects a phrase on `/s/{slug}`
+  and gets `/s/{slug}?frame=…&q=…`, which opens the same story on that frame with the phrase
+  highlighted. The reader's menu shows a single action — there is no chat or editors for them.
+  The whole address is visible (the field is pre-selected), and copying works even without
+  `navigator.clipboard` (`docs/selection.md` §8)
 - **Public feed** (`/feed`) and a **public story page** (`/s/{slug}`): anyone can read and rate,
   nobody but the project team can edit
 - Views with de-duplication (one visitor — one view per day) and ratings 1–5 (one rating per user, an

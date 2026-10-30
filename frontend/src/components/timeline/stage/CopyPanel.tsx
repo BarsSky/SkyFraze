@@ -39,6 +39,11 @@ interface Props {
    * кадре». `nonce` нужен, чтобы повторная просьба о той же фразе сработала снова.
    */
   highlight?: { frameId: string; quote: string; nonce: number } | null
+  /**
+   * Кто смотрит кадр (0.136.0). У читателя публичной истории меню выделения показывает одно
+   * действие — ссылку на фразу: чата и редакторов у него нет.
+   */
+  audience?: 'members' | 'readers'
 }
 
 /**
@@ -56,7 +61,7 @@ interface Props {
  */
 export function CopyPanel({
   chapter, frame, onJumpFrame, onPrev, onNext, prevLabel, nextLabel, footer, assetUrls,
-  highlight,
+  highlight, audience = 'members',
 }: Props) {
   const t = useT()
   const images = frame.assets.filter((a) => a.mime.startsWith(IMAGE_MIME_PREFIX))
@@ -217,7 +222,12 @@ export function CopyPanel({
       </div>
 
       {frame.body && (
-        <SelectionMenu frameId={frame.id} frameTitle={frame.title} source={frame.body} />
+        <SelectionMenu
+          frameId={frame.id}
+          frameTitle={frame.title}
+          source={frame.body}
+          audience={audience}
+        />
       )}
 
       {footer && <div className="sf-copy__footer">{footer}</div>}
