@@ -107,7 +107,17 @@ func (s *Service) SaveYjsState(
 	if err := s.proj.RequireEditor(ctx, userID, projectID); err != nil {
 		return 0, err
 	}
-	return s.store.SaveProjectEventState(ctx, projectID, userID, state, baseRevision)
+	rev, err := s.store.SaveProjectEventState(ctx, projectID, userID, state, baseRevision)
+	if err != nil {
+		return 0, err
+	}
+	// Комната в памяти должна узнать о том, что записано по REST: иначе её следующий тик
+	// перезапишет снапшот старым документом и спроецирует в таблицу старый текст (0.138.0).
+	// Yjs-слияние идемпотентно: повторное применение того же состояния ничего не меняет.
+	if s.liveRestore != nil {
+		s.liveRestore.MergeLiveState(ctx, projectID, userID, state)
+	}
+	return rev, nil
 }
 
 // CanEdit — может ли пользователь менять проект.

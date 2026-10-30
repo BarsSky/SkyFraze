@@ -1101,6 +1101,53 @@ func (r *Room) persistFromAnyClient(ctx context.Context, ev *events.Service, log
 	return saveErr
 }
 
+// MergeLiveState — влить сохранённое по REST состояние в документ живой комнаты.
+//
+// Зачем. Клиент без рабочего сокета (прокси без Upgrade, полуоткрытый сокет) пишет снапшот
+// по REST. Комната в памяти об этом не знает и продолжала бы держать старый документ: её
+// следующий тик перезаписал бы свежий снапшот старым и спроецировал в таблицу старый текст
+// (0.138.0). Yjs-слияние идемпотентно, поэтому повторное применение того же состояния ничего
+// не ломает.
+//
+// Возврат: false — комнаты нет, делать нечего.
+func (h *Hub) MergeLiveState(_ context.Context, projectID, by uuid.UUID, state []byte) bool {
+	if len(state) == 0 {
+		return false
+	}
+	h.mu.RLock()
+	room := h.rooms[projectID]
+	h.mu.RUnlock()
+	if room == nil {
+		return false
+	}
+	if err := room.mergeState(by, state); err != nil {
+		h.logger.Warn("collab: merge of rest state failed", "project", projectID, "err", err)
+		return false
+	}
+	return true
+}
+
+// mergeState применяет состояние к документу комнаты и будит соседей.
+func (r *Room) mergeState(by uuid.UUID, state []byte) error {
+	r.docMu.Lock()
+	if r.doc == nil {
+		r.docMu.Unlock()
+		return nil
+	}
+	err := r.doc.Apply(state)
+	if err == nil {
+		r.dirty = true
+		r.lastBy = by
+	}
+	r.docMu.Unlock()
+	if err != nil {
+		return err
+	}
+	// Открытые вкладки должны увидеть то же, что теперь в базе.
+	r.broadcast(nil, state)
+	return nil
+}
+
 // broadcast — рассылает обновление всем клиентам в комнате кроме отправителя.
 //
 // Если у клиента переполнен буфер отправки (медленная сеть, замерший скрипт), его

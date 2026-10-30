@@ -521,6 +521,17 @@ export function useCollab(projectId: string): CollabHandle | null {
     // (debounce + safety-net) с одной базовой ревизией дают ложный 409.
     let saving = false
     let queued = false
+    /**
+     * Есть ли правки, которые ещё не подтверждены записью в базу.
+     *
+     * «Подтверждены» — значит состояние ушло по REST. Отправку по сокету подтверждением не
+     * считаем: `readyState OPEN` не доказывает, что сервер апдейт получил (прокси без Upgrade,
+     * полуоткрытый сокет). Именно на этом терялись правки: клиент считал сокет живым, по REST
+     * не писал, а сервер документа не видел — выгрузка и книга показывали прошлый текст.
+     */
+    let dirty = false
+    /** Когда последний раз состояние подтверждено записью (0 — ещё ни разу). */
+    let lastConfirmedAt = 0
 
     /**
      * Применить апдейт, пришедший извне (сервер, соседняя вкладка, запас с
@@ -553,16 +564,32 @@ export function useCollab(projectId: string): CollabHandle | null {
     }
 
     /**
-     * Пишем ли снапшот по REST.
-     *
-     * Фаза 3: пока сокет открыт, единственный писатель снапшота — сервер. Он
-     * держит документ комнаты, применяет к нему те же апдейты, что мы отправляем,
-     * и сохраняет слитое состояние сам (а при уходе последнего клиента — сразу).
-     * Клиентский REST-путь остаётся для тех, у кого realtime не поднялся: за
-     * прокси без Upgrade, в мобильной сети, при закрытом WebSocket. Раньше писали
-     * все и всегда — N вкладок конкурировали за одну ревизию, отсюда шторм 409.
+     * Сокет закрыт: realtime не поднялся (прокси без Upgrade, мобильная сеть).
      */
-    const writesSnapshot = (): boolean => !(ws && ws.readyState === WebSocket.OPEN)
+    const socketClosed = (): boolean => !(ws && ws.readyState === WebSocket.OPEN)
+
+    /**
+     * Сколько молчания сервера считаем нормой, прежде чем подтвердить состояние по REST.
+     *
+     * Десять секунд, а не «никогда», потому что открытый сокет не гарантирует доставку. Цена —
+     * один PUT состояния на редактора раз в десять секунд, пока он правит; выигрыш — правка
+     * не остаётся «только в браузере» при полуоткрытом соединении (0.138.0).
+     */
+    const SNAP_CONFIRM_MS = 10_000
+
+    /**
+     * Пишем ли снапшот по REST прямо сейчас.
+     *
+     * Без сокета — сразу (иначе писать некому). С сокетом — только если есть не
+     * подтверждённые правки и с прошлой записи прошло `SNAP_CONFIRM_MS`. Так сохраняется
+     * прежнее правило «пока realtime жив, основной писатель — сервер» (N вкладок не
+     * конкурируют за ревизию на каждой букве), но молчаливый обрыв канала больше не
+     * оставляет проект без сохранения.
+     */
+    const writesSnapshot = (): boolean => {
+      if (socketClosed()) return true
+      return dirty && Date.now() - lastConfirmedAt >= SNAP_CONFIRM_MS
+    }
 
     /**
      * Одна запись снапшота с восстановлением после 409 (см. `commitSnapshot`).
@@ -576,6 +603,8 @@ export function useCollab(projectId: string): CollabHandle | null {
       })
       revision = result.revision
       if (!result.ok) return // запас в localStorage остаётся до следующего раза
+      dirty = false
+      lastConfirmedAt = Date.now()
       // Запас убираем только после подтверждённой записи: иначе он стёрся бы
       // ровно в том случае, ради которого и делался (сеть/конфликт).
       if (shouldClearPending(deferred, Y.encodeStateAsUpdate(doc))) {
@@ -618,6 +647,7 @@ export function useCollab(projectId: string): CollabHandle | null {
       // BroadcastChannel. Всё внешнее назад не отправляем: это было бы эхо,
       // которое крутится между вкладками бесконечно.
       if (origin === 'remote' || origin === 'peer') return
+      dirty = true
       if (ws && ws.readyState === WebSocket.OPEN) {
         try { ws.send(update) } catch { /* ignore */ }
       }
@@ -627,7 +657,7 @@ export function useCollab(projectId: string): CollabHandle | null {
     const safetyNet = setInterval(() => {
       if (!active) return
       void flushNow()
-    }, 30000)
+    }, SNAP_CONFIRM_MS)
 
     // Последняя запись при уходе со страницы: sendBeacon не умеет заголовки,
     // поэтому используем fetch с keepalive — он несёт базовую ревизию.
@@ -646,7 +676,7 @@ export function useCollab(projectId: string): CollabHandle | null {
       // сервера в документе комнаты, а уход последнего клиента заставляет его
       // записать снапшот сразу (Фаза 3). Запас в localStorage в этом случае тоже
       // не нужен — он приводил бы к повторной отправке того же состояния.
-      if (!writesSnapshot()) return
+      if (!socketClosed()) return
       const state = Y.encodeStateAsUpdate(doc)
       saveDeferredState(projectId, state, revision, defaultStorage())
       const safe = new Uint8Array(new ArrayBuffer(state.byteLength))
