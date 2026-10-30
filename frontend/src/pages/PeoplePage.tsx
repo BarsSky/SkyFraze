@@ -257,6 +257,7 @@ export function PeoplePage() {
             value={query}
             placeholder={t('ppl.searchPlaceholder')}
             aria-label={t('ppl.searchAria')}
+            data-people-search
             onChange={(e) => setQuery(e.target.value)}
           />
           {/* Кнопка нужна не только ради Enter: явное нажатие применяет запрос

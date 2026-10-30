@@ -94,7 +94,10 @@ export function AcceptInvitation() {
 
   // status === 'ok'
   return (
-    <div style={{ maxWidth: 480, margin: '80px auto', padding: 24, textAlign: 'center' }}>
+    <div
+      style={{ maxWidth: 480, margin: '80px auto', padding: 24, textAlign: 'center' }}
+      data-invitation-accepted
+    >
       <h2 style={{ color: 'var(--success)' }}>{t('acc.doneTitle')}</h2>
       <p className="muted" style={{ marginBottom: 16 }}>
         {user ? t('acc.welcome', { name: user.display_name }) : t('acc.done')}

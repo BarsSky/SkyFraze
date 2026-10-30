@@ -62,6 +62,14 @@ const EMAIL = process.env.AUDIT_EMAIL ?? 'galactic.test@e.com'
 const PASS = process.env.AUDIT_PASS ?? 'hunter22!'
 const DEMO_ID = (process.env.AUDIT_PROJECT ?? 'b8938a83-3b39-42ba-9edd-e0d6c206c548').split('/').filter(Boolean).pop() as string
 const DEMO = `/projects/${DEMO_ID}`
+/**
+ * Язык интерфейса, на котором идёт прогон (0.137.0).
+ *
+ * Селекторы аудита языконезависимы: у органов управления есть `data-*`-маркеры. Но подписи,
+ * вёрстка и тексты — переводятся, и английский экран ломается иначе, чем русский. Поэтому язык
+ * вынесен в переменную: `AUDIT_LANG=en npx tsx tests/audit/visual-audit.ts`.
+ */
+const AUDIT_LANG = process.env.AUDIT_LANG === 'en' ? 'en' : 'ru'
 const ONLY_SCREENS = process.env.ONLY_SCREENS === '1'
 const ONLY_FUNCTIONAL = process.env.ONLY_FUNCTIONAL === '1'
 
@@ -475,6 +483,24 @@ async function gotoFrame(page: Page, step: number) {
   }
 }
 
+/**
+ * Контекст аудита: всегда на выбранном языке интерфейса (0.137.0).
+ *
+ * Язык ставится ДО первой навигации: иначе прогон «в английском» шёл бы на языке, который
+ * остался в localStorage от прошлого прохода, и проверки подписей/вёрстки мерили бы не то.
+ */
+async function auditContext(browser: Browser, options: Record<string, unknown> = {}) {
+  const ctx = await browser.newContext(options)
+  await ctx.addInitScript((lang: string) => {
+    try {
+      window.localStorage.setItem("skyfraze-lang", lang)
+    } catch {
+      // приватный режим или отключённое хранилище: страница откроется на языке по умолчанию
+    }
+  }, AUDIT_LANG)
+  return ctx
+}
+
 async function login(page: Page, email = EMAIL, pass = PASS) {
   // Вход проверяем по факту попадания на страницу проектов, а не по таймауту:
   // под нагрузкой (параллельные сборки/тесты) 1.5 секунды не хватало, и дальше
@@ -486,7 +512,7 @@ async function login(page: Page, email = EMAIL, pass = PASS) {
     await page.click('button[type="submit"]')
     try {
       await page.waitForURL(/\/projects/, { timeout: 25000 })
-      await page.waitForSelector('button:has-text("+ Новый проект")', { timeout: 25000 })
+      await page.waitForSelector('[data-new-project]', { timeout: 25000 })
       return
     } catch {
       // одна повторная попытка: сеть могла мигнуть, токен — не успеть
@@ -555,7 +581,7 @@ async function ensurePublicStory(): Promise<string | null> {
 
 /** Публичные страницы глазами анонима: их видно без входа, правок на них нет. */
 async function visualPublic(browser: Browser, errors: string[], slug: string | null) {
-  const ctx = await browser.newContext({
+  const ctx = await auditContext(browser, {
     viewport: { width: 1440, height: 900 },
     reducedMotion: 'reduce',
   })
@@ -584,7 +610,7 @@ async function visualPublic(browser: Browser, errors: string[], slug: string | n
 async function visualScreens(browser: Browser, errors: string[], slug: string | null) {
   for (const vp of VIEWPORTS) {
     // Один контекст на вьюпорт: логинимся один раз, темы переключаем внутри.
-    const ctx = await browser.newContext({
+    const ctx = await auditContext(browser, {
       viewport: { width: vp.width, height: vp.height },
       reducedMotion: 'reduce',
     })
@@ -654,7 +680,7 @@ async function visualScreens(browser: Browser, errors: string[], slug: string | 
       await shot(page, name)
       applyProbe(await probe(page), 'coauthors', vp.tag, name)
       const coauthorState = (await page.evaluate(`(() => {
-        const search = document.querySelector('input[aria-label="Поиск людей по нику или имени"]')
+        const search = document.querySelector('input[data-coauthor-search]')
         return {
           hasSearch: !!search,
           hasProfileLink: !!document.querySelector('[data-profile-link] a[href="/profile"]'),
@@ -679,7 +705,7 @@ async function visualScreens(browser: Browser, errors: string[], slug: string | 
       await shot(page, name)
       applyProbe(await probe(page), 'profile', vp.tag, name)
       const profileState = (await page.evaluate(`(() => {
-        const nick = document.querySelector('[data-profile] input[aria-label="Ваш ник"]')
+        const nick = document.querySelector('[data-profile] input[data-profile-nick]')
         const keys = document.querySelector('[data-profile] [data-testid], [data-profile] .account-2fa, [data-profile] h4')
         return {
           hasProfile: !!document.querySelector('[data-profile]'),
@@ -746,7 +772,7 @@ async function visualScreens(browser: Browser, errors: string[], slug: string | 
         return {
           rows: document.querySelectorAll('.people__row').length,
           crafts: document.querySelectorAll('.people__filters .craft-chip').length,
-          search: !!document.querySelector('input[aria-label="Поиск резидентов по нику или имени"]'),
+          search: !!document.querySelector('input[data-people-search]'),
           count: (document.querySelector('[data-people-count]')?.textContent || '').trim(),
           first: first ? first.textContent.trim() : null,
         }
@@ -763,7 +789,7 @@ async function visualScreens(browser: Browser, errors: string[], slug: string | 
       if (peopleState.search && peopleState.first) {
         // Поиск идёт от двух символов: берём часть ника первой строки.
         const query = peopleState.first.replace('@', '').slice(0, 4)
-        await page.fill('input[aria-label="Поиск резидентов по нику или имени"]', query)
+        await page.fill('input[data-people-search]', query)
         await page.waitForTimeout(1500)
         const searched = (await page.evaluate(`(() => ({
           rows: document.querySelectorAll('.people__row').length,
@@ -1004,7 +1030,7 @@ async function ensureTestUser(
 
 async function functional(browser: Browser, errors: string[]) {
   const V = 'desktop'
-  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' })
+  const ctx = await auditContext(browser, { viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' })
   const page = await ctx.newPage()
   page.on('pageerror', (e) => errors.push('pageerror: ' + e.message))
 
@@ -1014,10 +1040,10 @@ async function functional(browser: Browser, errors: string[]) {
   const projectName = `Audit ${Date.now()}`
   await page.goto(`${BASE}/projects`)
   await page.waitForTimeout(800)
-  await page.click('button:has-text("+ Новый проект")')
+  await page.click('[data-new-project]')
   await page.fill('input[placeholder="Название"]', projectName)
   await page.fill('textarea', 'Проект для автоаудита')
-  await page.click('button:has-text("Создать")')
+  await page.click('[data-create-project]')
   await page.waitForSelector('h3 a')
   await page.locator('h3 a', { hasText: projectName }).first().click()
   await page.waitForURL(/\/projects\/[a-f0-9-]+$/)
@@ -1026,18 +1052,18 @@ async function functional(browser: Browser, errors: string[]) {
   pass('projects', V, 'создание проекта')
 
   // 2. Иерархия: глава → под-событие → внук
-  await page.click('button:has-text("+ Добавить первую главу")')
+  await page.click('[data-add-first-chapter]')
   await page.waitForTimeout(700)
   // Первая глава открывает вкладки — форма кадра живёт на «Редакторах».
   await ensureEditorsTab(page)
   await page.fill('.ed-form input[placeholder="Заголовок события"]', 'Глава аудита')
   await page.fill('.ed-form textarea', 'Описание главы для проверки вместимости текста и кадра.')
   await page.waitForTimeout(300)
-  await page.click('.ed-toolbar button:has-text("+ подсобытие")')
+  await page.click('[data-add-child]')
   await page.waitForTimeout(600)
   await page.fill('.ed-form input[placeholder="Заголовок события"]', 'Подсобытие аудита')
   await page.waitForTimeout(300)
-  await page.click('.ed-toolbar button:has-text("+ подсобытие")')
+  await page.click('[data-add-child]')
   await page.waitForTimeout(600)
   await page.fill('.ed-form input[placeholder="Заголовок события"]', 'Внук аудита')
   await page.waitForTimeout(400)
@@ -1186,7 +1212,7 @@ async function functional(browser: Browser, errors: string[]) {
   // смотрим, появился ли слой тона у активной сцены.
   await showTab(page, 'editors')
   await selectFirstEditorRow(page)
-  await page.click('.ed-bg .ed-chip:has-text("тон")')
+  await page.click('[data-bg-kind="tone"]')
   await page.waitForTimeout(300)
   await page.locator('.ed-tone').nth(2).click()
   await page.waitForTimeout(500)
@@ -1222,7 +1248,7 @@ async function functional(browser: Browser, errors: string[]) {
 
   // 8. Тема переключается и запоминается
   const before = (await page.evaluate(`document.documentElement.dataset.theme || 'dark'`)) as string
-  await page.click('button[aria-label="Переключить тему"]')
+  await page.click('[data-theme-toggle]')
   await page.waitForTimeout(900)
   const after = (await page.evaluate(`document.documentElement.dataset.theme || 'dark'`)) as string
   await page.reload()
@@ -1248,7 +1274,7 @@ async function functional(browser: Browser, errors: string[]) {
     add({ severity: 'error', area: 'functional', screen: 'teams', viewport: V, check: 'приглашение', detail: `не создалось (${inviteRes.status})`, where: 'teams.Invite' })
   } else {
     pass('teams', V, 'приглашение создано')
-    const ctx2 = await browser.newContext({ viewport: { width: 1280, height: 800 } })
+    const ctx2 = await auditContext(browser, { viewport: { width: 1280, height: 800 } })
     const page2 = await ctx2.newPage()
     // Пользователя создаём так, как это возможно на этой инсталляции
     // (в режиме «по заявке» — заявкой с одобрением администратором),
@@ -1266,8 +1292,10 @@ async function functional(browser: Browser, errors: string[]) {
     for (let i = 0; i < 20; i++) {
       await page2.waitForTimeout(500)
       const url = page2.url()
-      const text = (await page2.evaluate(`document.body.innerText`)) as string
-      if (url.includes(`/projects/${projectId}`) || text.includes('Приглашение принято')) {
+      // По маркеру, а не по подписи: аудит гоняется и в английском интерфейсе (0.137.0).
+      const acceptedShown =
+        (await page2.evaluate(`Boolean(document.querySelector('[data-invitation-accepted]'))`)) === true
+      if (url.includes(`/projects/${projectId}`) || acceptedShown) {
         accepted = true
         break
       }
@@ -1298,7 +1326,7 @@ async function functional(browser: Browser, errors: string[]) {
   }
 
   // 10. Realtime CRDT: вторая вкладка видит правку
-  const peer = await browser.newContext({ viewport: { width: 1280, height: 800 }, reducedMotion: 'reduce' })
+  const peer = await auditContext(browser, { viewport: { width: 1280, height: 800 }, reducedMotion: 'reduce' })
   const peerPage = await peer.newPage()
   await login(peerPage)
   await peerPage.goto(`${BASE}/projects/${projectId}`)
@@ -1343,7 +1371,7 @@ async function functional(browser: Browser, errors: string[]) {
     }
 
     // Публичная страница анонимом: история видна, элементов правки нет.
-    const anonCtx = await browser.newContext({ viewport: { width: 1280, height: 800 }, reducedMotion: 'reduce' })
+    const anonCtx = await auditContext(browser, { viewport: { width: 1280, height: 800 }, reducedMotion: 'reduce' })
     const anon = await anonCtx.newPage()
     await anon.goto(`${BASE}/s/${publicSlug}`)
     const stageOk = await anon
@@ -1442,7 +1470,7 @@ async function functional(browser: Browser, errors: string[]) {
     // Просмотры: повторный заход тем же браузером не накручивает счётчик.
     // Считаем по интерфейсу, а не через fetch: серверный fetch без cookie —
     // это каждый раз «новый посетитель», и такая проверка ловила бы саму себя.
-    const repeatCtx = await browser.newContext({ viewport: { width: 1280, height: 800 }, reducedMotion: 'reduce' })
+    const repeatCtx = await auditContext(browser, { viewport: { width: 1280, height: 800 }, reducedMotion: 'reduce' })
     const repeatPage = await repeatCtx.newPage()
     await repeatPage.goto(`${BASE}/s/${publicSlug}`)
     const viewsReady = await repeatPage

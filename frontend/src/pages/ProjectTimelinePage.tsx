@@ -859,7 +859,7 @@ function EmptyState({ onCreate }: { onCreate: () => void }) {
         {t('project.emptyFirstLine')}
         {t('project.emptySecondLine')}
       </p>
-      <button onClick={onCreate}>{t('project.emptyCreate')}</button>
+      <button onClick={onCreate} data-add-first-chapter>{t('project.emptyCreate')}</button>
       <p className="muted sf-empty__hint">
         {t('project.emptyFilesHint')}
       </p>

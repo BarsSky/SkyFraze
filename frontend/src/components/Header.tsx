@@ -208,6 +208,7 @@ export function Header() {
           <button
             className="secondary header-theme"
             onClick={() => setTheme(nextTheme)}
+            data-theme-toggle
             title={nextTheme === 'light' ? t('header.themeToLight') : t('header.themeToDark')}
             aria-label={t('header.toggleTheme')}
           >

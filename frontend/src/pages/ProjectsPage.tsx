@@ -374,7 +374,9 @@ export function ProjectsPage() {
               }}
             />
           </label>
-          <button onClick={() => setOpenNew((v) => !v)}>{openNew ? t('projects.cancel') : t('projects.newToggle')}</button>
+          <button onClick={() => setOpenNew((v) => !v)} data-new-project>
+            {openNew ? t('projects.cancel') : t('projects.newToggle')}
+          </button>
           {/* Корзина: пока в ней что-то есть, кнопка говорит числом — иначе удалённый
               проект «исчезает» бесследно, и человек не находит способ его вернуть. */}
           <button
@@ -444,7 +446,9 @@ export function ProjectsPage() {
             </p>
           )}
           <div style={{ height: 8 }} />
-          <button type="submit">{template !== null ? t('projects.createByTemplate') : t('projects.create')}</button>
+          <button type="submit" data-create-project>
+            {template !== null ? t('projects.createByTemplate') : t('projects.create')}
+          </button>
         </form>
       )}
 

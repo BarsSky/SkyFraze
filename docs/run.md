@@ -661,7 +661,19 @@ cd frontend
 npx tsx tests/audit/visual-audit.ts              # визуал + функции
 ONLY_SCREENS=1 npx tsx tests/audit/visual-audit.ts    # только визуал
 ONLY_FUNCTIONAL=1 npx tsx tests/audit/visual-audit.ts # только функции
+
+AUDIT_LANG=en ONLY_SCREENS=1 npx tsx tests/audit/visual-audit.ts
+AUDIT_LANG=en ONLY_FUNCTIONAL=1 AUDIT_OUT=../_audit_out-en-functional npx tsx tests/audit/visual-audit.ts
 ```
+
+**Язык не влияет на селекторы** (0.137.0): у кнопок и полей, на которые опирается аудит, есть
+`data-*`-маркеры (`data-new-project`, `data-create-project`, `data-add-first-chapter`,
+`data-add-child`, `data-bg-kind`, `data-people-search`, `data-coauthor-search`,
+`data-profile-nick`, `data-theme-toggle`, `data-invitation-accepted`). До этого селекторы были
+русскими `aria-label` и текстами кнопок, поэтому аудит умел только русский интерфейс — то есть
+английская вёрстка проверялась одним e2e-сценарием по заголовкам. `AUDIT_LANG` ставит язык в
+`localStorage` **до первой навигации** каждого контекста, иначе прогон «в английском» шёл бы на
+языке, оставшемся от прошлого прохода.
 
 С 0.110.0 раннер лежит в проекте — `frontend/tests/audit/visual-audit.ts`, рядом с
 `seed-project.ts`, который готовит для него данные. До этого он был в каталоге агентского скилла
@@ -702,7 +714,7 @@ cd frontend && npx tsx tests/audit/seed-project.ts | tee /tmp/seed.log
 | Job | Что делает | Зачем |
 |---|---|---|
 | `unit-repeat` | `vitest run` три раза | у unit один прогон и нет повторов: один флейк — красный CI, но имя нестабильного теста из одного падения не видно |
-| `audit` | свежий Postgres + backend + заглушка модели + vite, `seed-project.ts`, затем `visual-audit.ts`: сначала экраны (`ONLY_SCREENS=1`), отдельным шагом функциональная матрица (`ONLY_FUNCTIONAL=1`, отчёт в `_audit_out-functional`) | визуальные регрессии (обрезанный текст, элемент за краем, перекрытые контролы, контраст, мелкие цели) раньше ловились только руками на dev-стенде |
+| `audit` | свежий Postgres + backend + заглушка модели + vite, `seed-project.ts`, затем `visual-audit.ts`: сначала экраны (`ONLY_SCREENS=1`), отдельным шагом функциональная матрица (`ONLY_FUNCTIONAL=1`, отчёт в `_audit_out-functional`); с 0.137.0 те же два шага повторяются в английском интерфейсе (`AUDIT_LANG=en`, отчёты в `_audit_out-en` и `_audit_out-en-functional`) | визуальные регрессии (обрезанный текст, элемент за краем, перекрытые контролы, контраст, мелкие цели) раньше ловились только руками на dev-стенде; английские подписи длиннее, и ломаются они иначе |
 | `e2e-repeat` | два полных прогона e2e на **разных чистых базах** (backend перезапускается) | второй прогон ловит случайности в браузере; повтор на той же базе невозможен: `install` проверяет первую регистрацию, а ключ доступа выдаёт коды восстановления только при привязке первого ключа |
 
 Функциональная матрица идёт **каждую ночь с 0.109.0**, отдельным шагом после экранов: до этого

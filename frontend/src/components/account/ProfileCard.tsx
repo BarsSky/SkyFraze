@@ -100,6 +100,7 @@ export function ProfileCard() {
             value={nick}
             onChange={(e) => setNick(normalizeUsername(e.target.value))}
             aria-label={t('prf.nickAria')}
+            data-profile-nick
             placeholder="anna.design"
           />
         </label>

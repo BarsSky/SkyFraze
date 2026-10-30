@@ -189,6 +189,35 @@ jobs:
           npx tsx tests/audit/visual-audit.ts | tee -a /tmp/audit.log
           grep -E 'ИТОГ' /tmp/audit.log || true
 
+      # ─── тот же аудит в английском интерфейсе (0.137.0) ─────────────────────────
+      #
+      # Зачем отдельные шаги. Селекторы раннера языконезависимы (у кнопок есть data-маркеры), но
+      # подписи, переносы и вёрстка переводятся — и английский экран ломается иначе, чем русский:
+      # подписи длиннее, а часть проверок смотрит на фактический кегль и переполнение. До 0.137.0
+      # английский интерфейс проверялся только e2e-сценарием экранов (заголовки), а вся матрица
+      # (кадры, темы, редакторы, роли, realtime, админка) — только по-русски.
+      #
+      # Отчёт — в своих каталогах: скрипт чистит AUDIT_OUT при старте.
+      - name: визуальный аудит (экраны, EN)
+        run: |
+          set -o pipefail
+          cd frontend
+          export ONLY_SCREENS=1
+          export AUDIT_LANG=en
+          export AUDIT_OUT="$GITHUB_WORKSPACE/_audit_out-en"
+          npx tsx tests/audit/visual-audit.ts | tee /tmp/audit-en.log
+          grep -E 'ИТОГ' /tmp/audit-en.log || true
+
+      - name: функциональная матрица (EN)
+        run: |
+          set -o pipefail
+          cd frontend
+          export ONLY_FUNCTIONAL=1
+          export AUDIT_LANG=en
+          export AUDIT_OUT="$GITHUB_WORKSPACE/_audit_out-en-functional"
+          npx tsx tests/audit/visual-audit.ts | tee -a /tmp/audit-en.log
+          grep -E 'ИТОГ' /tmp/audit-en.log || true
+
       - name: отчёт аудита
         if: always()
         run: |
@@ -200,6 +229,14 @@ jobs:
             echo "── функциональная матрица"
             head -40 _audit_out-functional/visual-report.md
           fi
+          if [ -f _audit_out-en/visual-report.md ]; then
+            echo "── экраны (EN)"
+            head -40 _audit_out-en/visual-report.md
+          fi
+          if [ -f _audit_out-en-functional/visual-report.md ]; then
+            echo "── функциональная матрица (EN)"
+            head -40 _audit_out-en-functional/visual-report.md
+          fi
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -210,6 +247,10 @@ jobs:
             _audit_out/visual-report.json
             _audit_out-functional/visual-report.md
             _audit_out-functional/visual-report.json
+            _audit_out-en/visual-report.md
+            _audit_out-en/visual-report.json
+            _audit_out-en-functional/visual-report.md
+            _audit_out-en-functional/visual-report.json
           if-no-files-found: warn
 
       - name: логи при падении

@@ -1636,7 +1636,7 @@ setNotice(t('ed.moved', { label: row.title }))
         <h3 className="ed-panel__title">{t('ed.title')}</h3>
         <div className="ed-toolbar">
           <button type="button" onClick={createChapter}>{t('ed.addChapter')}</button>
-<button type="button" className="secondary" onClick={createChild} disabled={!selectedId}>{t('ed.addChild')}</button>
+<button type="button" className="secondary" onClick={createChild} disabled={!selectedId} data-add-child>{t('ed.addChild')}</button>
 <button type="button" className="secondary ed-danger" onClick={removeSelected} disabled={!selectedId}>{t('ed.delete')}</button>
           {/* Вход в связи: блок карточек выше панели, и без кнопки его не находят */}
           <button

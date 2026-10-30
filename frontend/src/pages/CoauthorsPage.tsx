@@ -209,6 +209,7 @@ export function CoauthorsPage() {
             value={query}
             placeholder={t('coa.searchPlaceholder')}
             aria-label={t('coa.searchAria')}
+            data-coauthor-search
             onChange={(e) => {
               setQuery(e.target.value)
               void runSearch(e.target.value)

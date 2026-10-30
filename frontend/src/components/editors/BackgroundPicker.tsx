@@ -39,6 +39,7 @@ export function BackgroundPicker({ value, images, assetUrls, onUpload, onChange 
         <button
           type="button"
           className={value.kind === 'tone' ? 'ed-chip is-active' : 'ed-chip'}
+          data-bg-kind="tone"
           onClick={() => onChange({ kind: 'tone', tone: value.tone ?? FRAME_TONES[0] })}
         >
           {t('bg.tone')}
