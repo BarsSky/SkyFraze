@@ -388,6 +388,73 @@ describe('ProjectChat', () => {
   })
 
   /**
+   * Гонка ответов (0.140.0).
+   *
+   * Сценарий `chat` падал на «показать прежние»: e2e присылает 101 сообщение подряд, каждое даёт
+   * сигнал из сокета и полную перезагрузку ленты. Ответ перезагрузки, сделанной раньше, приходил
+   * ПОСЛЕ полного и снимал признак «есть прежние» — кнопка исчезала, хотя история ещё была.
+   * Теперь применяется ответ, который свежее применённого; устаревший молчит.
+   */
+  it('устаревший ответ не снимает «показать прежние» (0.140.0)', async () => {
+    let resolveFirst: (value: unknown) => void = () => undefined
+    const first = new Promise((resolve) => {
+      resolveFirst = resolve
+    })
+    // Первая загрузка (догрузка «после последнего», лента пуста) видит одно сообщение и едет долго.
+    listChat.mockImplementationOnce(() => first)
+    // Полная перезагрузка по сигналу из сокета видит полную страницу и отвечает сразу.
+    listChat.mockResolvedValueOnce({ messages: page(100, 'm'), bot: { name: 'Нестор', available: false } })
+    listEventRows.mockResolvedValue([])
+    render(<ProjectChat {...base} />)
+
+    notifyChatChanged('p1')
+    expect(await screen.findByText('показать прежние')).toBeTruthy()
+
+    // Устаревший ответ приехал последним: истории «больше нет» в нём — это про момент до 101-го
+    // сообщения, а не сейчас.
+    resolveFirst({ messages: page(1, 'm', 500), bot: { name: 'Нестор', available: false } })
+    await waitFor(() => expect(listChat.mock.calls.length).toBeGreaterThan(1))
+    expect(screen.getByText('показать прежние')).toBeTruthy()
+  })
+
+  /**
+   * Упавшая перезагрузка не отменяет удачную (0.140.0).
+   *
+   * Сравнивать ответ с последним ЗАПУЩЕННЫМ запросом мало: если самый свежий запрос не дошёл
+   * (прокси оборвал, вкладка ушла в фон), его ответа не будет вовсе — и хороший предыдущий был бы
+   * выброшен, оставив ленту без «есть ещё». Поэтому сравниваем с применённым.
+   */
+  it('упавшая перезагрузка не отменяет удачную (0.140.0)', async () => {
+    // Первая загрузка видит одно сообщение: признак «есть прежние» ещё неизвестен.
+    listChat.mockResolvedValueOnce({ messages: page(1, 'm'), bot: { name: 'Нестор', available: false } })
+    let resolveFirstReload: (value: unknown) => void = () => undefined
+    let rejectSecondReload: (reason: unknown) => void = () => undefined
+    listChat.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFirstReload = resolve
+        }),
+    )
+    listChat.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectSecondReload = reject
+        }),
+    )
+    listEventRows.mockResolvedValue([])
+    render(<ProjectChat {...base} />)
+    await waitFor(() => expect(screen.getAllByText('Как вам новая глава?').length).toBe(1))
+
+    // Две перезагрузки подряд: вторая упала (обрыв), первая — удачная и с полной страницей.
+    notifyChatChanged('p1')
+    notifyChatChanged('p1')
+    rejectSecondReload(new Error('сеть'))
+    resolveFirstReload({ messages: page(100, 'm'), bot: { name: 'Нестор', available: false } })
+
+    expect(await screen.findByText('показать прежние')).toBeTruthy()
+  })
+
+  /**
    * 0.125.0: подписи чата — из словаря, включая отметки («надо сделать» → «to do») и
    * подсказки бота. Тексты сообщений и имена участников остаются данными.
    */

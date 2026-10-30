@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { tStatic, useT, type Key } from '../../i18n'
 import { useLang } from '../../store/lang'
 import {
@@ -159,6 +159,10 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread, prefill
   const skipAutoScroll = useRef(false)
   const listRef = useRef<HTMLUListElement | null>(null)
   const lastIdRef = useRef('')
+  /** Номер последней запущенной перезагрузки ленты (0.140.0). */
+  const pageSeq = useRef(0)
+  /** Номер последней ПРИМЕНЁННОЙ перезагрузки: ответ применяем, только если он свежее. */
+  const appliedSeq = useRef(0)
   /** Кто я: «изменить» показываем только у своих сообщений. */
   const currentUserId = useAuthStore((state) => state.user?.id ?? null)
 
@@ -176,11 +180,25 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread, prefill
    * нему дешевле перечитать страницу, чем поддерживать отдельный канал «что именно изменилось».
    */
   const load = useCallback(async (mode: 'append' | 'reload' = 'append') => {
+    // Номер перезагрузки: применяется ответ, который СВЕЖЕЕ применённого (0.140.0).
+    //
+    // До этого ответы применялись в порядке прихода, и быстрая пачка сообщений (e2e присылает
+    // 101 подряд, каждое — сигнал из сокета) давала гонку: страница, прочитанная, когда сообщений
+    // было меньше сотни, приезжала ПОСЛЕ полной и снимала «показать прежние». Сценарий `chat`
+    // падал именно на этом.
+    //
+    // Сравнение с ПРИМЕНЁННЫМ, а не с последним запущенным, — намеренно: если самый свежий запрос
+    // не дошёл (прокси оборвал, вкладка в фоне), его ответа не будет вовсе, и хороший предыдущий
+    // применять всё равно нужно. Иначе одна упавшая перезагрузка оставляла ленту без «есть ещё».
+    const seq = mode === 'reload' ? ++pageSeq.current : pageSeq.current
     try {
       const initial = lastIdRef.current === ''
       const page = await listChat(projectId, mode === 'reload' ? {} : { after: lastIdRef.current || undefined })
       setBot(page.bot)
       if (mode === 'reload') {
+        // Замену ленты делает только ответ свежее применённого: устаревший молчит целиком.
+        if (seq <= appliedSeq.current) return
+        appliedSeq.current = seq
         setMessages(page.messages)
         lastIdRef.current =
           page.messages.length > 0 ? page.messages[page.messages.length - 1].id : ''
@@ -193,9 +211,16 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread, prefill
           if (fresh.length === 0) return current
           return [...current, ...fresh]
         })
-        lastIdRef.current = page.messages[page.messages.length - 1].id
-        // Первая загрузка (лента была пуста) отвечает и на вопрос «есть ли что-то раньше».
-        if (initial) setHasOlder(page.messages.length >= PAGE_SIZE)
+        // Догрузка новых — дополнение, а не замена: свой ответ не отменяет чужой. Признак «есть
+        // прежние» она может только ПОСТАВИТЬ (страница полная), но не снять: снять его вправе
+        // лишь тот ответ, который видел конец истории, — иначе мимолётная неполная страница
+        // (сообщений ещё меньше сотни) прятала кнопку навсегда.
+        if (seq >= appliedSeq.current) {
+          lastIdRef.current = page.messages[page.messages.length - 1].id
+          if (initial) {
+            setHasOlder((current) => page.messages.length >= PAGE_SIZE || current === true)
+          }
+        }
       }
       setError(null)
     } catch {
@@ -637,3 +662,6 @@ async function explain(error: unknown): Promise<string> {
   // кода состояния; ky кладёт тело в response, поэтому читаем его через общий помощник.
   return (await serverErrorMessage(error)) ?? message ?? tStatic('chat.errSend')
 }
+
+
+

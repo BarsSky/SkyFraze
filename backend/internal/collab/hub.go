@@ -933,27 +933,29 @@ func (r *Room) state() []byte {
 // правку приняли. Валидные, но «ранние» апдейты (не хватает причин-предков) Yjs
 // ставит в очередь и применит позже, так что отдельного случая для них нет.
 //
-// Второе возвращаемое значение — «сервер мигрировал текст»: событие появилось без
-// `title_text`/`body_text` (засев из базы, импорт, старое событие), и поля завёл
-// сервер. Такую правку нужно разослать всем: иначе клиент остался бы со скалярной
-// строкой и, начав печатать, создал бы свою ветку `Y.Text` — то есть ровно ту
-// гонку, из-за которой миграция и переехала на сервер.
-func (r *Room) applyUpdate(by uuid.UUID, data []byte) (bool, error) {
+// Первое возвращаемое значение — «апдейт лёг в документ комнаты»: false значит, что
+// документа нет (не загрузился) и подтверждать клиенту нечего. Второе — «сервер
+// мигрировал текст»: событие появилось без `title_text`/`body_text` (засев из базы,
+// импорт, старое событие), и поля завёл сервер. Такую правку нужно разослать всем:
+// иначе клиент остался бы со скалярной строкой и, начав печатать, создал бы свою
+// ветку `Y.Text` — то есть ровно ту гонку, из-за которой миграция и переехала на
+// сервер.
+func (r *Room) applyUpdate(by uuid.UUID, data []byte) (applied bool, migrated bool, err error) {
 	r.docMu.Lock()
 	defer r.docMu.Unlock()
 	if r.doc == nil {
 		// Документа нет (не загрузился): не мешаем релею работать как раньше.
-		return false, nil
+		return false, false, nil
 	}
 	if err := r.doc.Apply(data); err != nil {
-		return false, err
+		return false, false, err
 	}
 	r.dirty = true
 	r.lastBy = by
 
 	// Миграция перепроверяется только при изменении числа событий: полный обход
 	// документа на каждой букве не нужен, а появление события её как раз и требует.
-	migrated := false
+	migrated = false
 	if count := r.doc.EventCount(); count != r.migratedEvents {
 		if created := r.doc.EnsureTextFields(); created > 0 {
 			r.dirty = true
@@ -966,7 +968,7 @@ func (r *Room) applyUpdate(by uuid.UUID, data []byte) (bool, error) {
 		}
 		r.migratedEvents = count
 	}
-	return migrated, nil
+	return true, migrated, nil
 }
 
 // projectionPayload собирает узлы проекции из серверного документа и их подпись.
@@ -1161,11 +1163,7 @@ func (r *Room) broadcast(from *client, msg []byte) {
 		if c == from {
 			continue
 		}
-		select {
-		case c.send <- msg:
-		default:
-			_ = c.conn.Close()
-		}
+		c.enqueue(msg)
 	}
 }
 
@@ -1217,18 +1215,39 @@ func (c *client) reader(h *Hub) {
 				"project", c.projectID, "user", c.userID, "bytes", len(data))
 			continue
 		}
+		// Кадр правки с номером (0.140.0): сервер обязан ответить подтверждением, иначе
+		// клиент не знает, доехала ли правка, и пишет снапшот по REST через 10 с тишины.
+		// Голый апдейт (старый клиент) обрабатывается ниже прежним путём — без номера
+		// подтверждать нечего.
+		payload := data
+		var ackID []byte
+		if bytes.HasPrefix(data, []byte(updatePrefix)) {
+			id, inner, ok := splitUpdateFrame(data)
+			if !ok || len(inner) == 0 {
+				h.logger.Warn("collab: malformed update frame",
+					"project", c.projectID, "user", c.userID, "bytes", len(data))
+				continue
+			}
+			ackID, payload = id, inner
+		}
 		// Апдейт сначала применяется к серверному документу (из него пишется
 		// снапшот), и только применённый уходит остальным: битые байты им тоже
 		// не подойдут, а клиент-отправитель считал бы правку принятой.
-		migrated, err := c.room.applyUpdate(c.userID, data)
+		applied, migrated, err := c.room.applyUpdate(c.userID, payload)
 		if err != nil {
 			// Отброшенный апдейт — всегда повод посмотреть: у клиента правка
 			// есть, а в снапшот она не попадёт.
 			h.logger.Warn("collab: update rejected",
-				"project", c.projectID, "user", c.userID, "bytes", len(data), "err", err)
+				"project", c.projectID, "user", c.userID, "bytes", len(payload), "err", err)
 			continue
 		}
-		c.room.broadcast(c, data)
+		// Подтверждение — только после применения, и только если документ комнаты реально
+		// есть. Без документа (не загрузился) подтверждать нечего: апдейт уйдёт соседям
+		// релеем, как до Фазы 3, а клиент сохранит себя по REST.
+		if ackID != nil && applied {
+			c.enqueue(ackFrame(ackID))
+		}
+		c.room.broadcast(c, payload)
 		if migrated {
 			// Сервер завёл текстовые поля — об этом должны узнать все, иначе клиент
 			// продолжит писать в скалярную строку и создаст свою ветку Y.Text.

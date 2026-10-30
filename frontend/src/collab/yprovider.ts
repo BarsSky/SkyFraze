@@ -30,6 +30,7 @@ import {
   type FlatEventNode,
   type PutStateResult,
 } from '../api/events'
+import { createAckTracker, encodeUpdateFrame, isAckFrame, parseAckFrame } from './ack'
 
 export type YArray = Y.Array<Y.Map<unknown>>
 export type YMap = Y.Map<unknown>
@@ -207,6 +208,41 @@ export function useCollab(projectId: string): CollabHandle | null {
     /** Отложенный на уходе со страницы апдейт — если он был, его надо слить и сохранить. */
     let deferred: PendingState | null = null
 
+    /**
+     * Ожидания подтверждений сервера (0.140.0).
+     *
+     * Каждый уходящий апдейт получает номер, сервер возвращает его после применения к документу
+     * комнаты. Пока ожидания пусты, «у сервера есть» — доказанный факт, а не надежда на
+     * `readyState OPEN`: снапшот по REST в этом случае не пишется (см. `writesSnapshot`).
+     */
+    const acks = createAckTracker()
+    if (typeof window !== 'undefined') {
+      // Диагностика и e2e, как `__yjsDoc` и `__presence`: по сокету нельзя «посмотреть глазами»,
+      // доехала ли правка до сервера, а проверить это без интерфейса нужно.
+      ;(window as any).__collabAcks = {
+        size: () => acks.size(),
+        confirmed: () => acks.confirmed(),
+      }
+    }
+
+    /**
+     * Отправить правку с номером. `false` — сокета нет: подтверждать будет запись по REST.
+     *
+     * Кадр уходит только целиком (номер + апдейт): голый апдейт сервер тоже примет, но не
+     * подтвердит, и тогда клиент снова начнёт писать снапшот по таймеру.
+     */
+    const sendUpdate = (update: Uint8Array): boolean => {
+      if (!(ws && ws.readyState === WebSocket.OPEN)) return false
+      const id = acks.nextID()
+      try {
+        ws.send(encodeUpdateFrame(id, update))
+      } catch {
+        return false
+      }
+      acks.sent(id)
+      return true
+    }
+
     const canWrite = () => writable === true
     // Присутствие — эфемерное состояние поверх того же сокета: кадры присутствия
     // уходят как обычные сообщения, хаб релеит их всем, кроме отправителя. В
@@ -279,13 +315,7 @@ export function useCollab(projectId: string): CollabHandle | null {
         // уже есть. При переподключении это же досылает правки, накопленные в
         // оффлайне, — CRDT-апдейт, а не перезапись состояния.
         const update = Y.encodeStateAsUpdate(doc)
-        if (update.byteLength > 0 && socket.readyState === WebSocket.OPEN) {
-          try {
-            socket.send(update)
-          } catch {
-            /* ignore */
-          }
-        }
+        if (update.byteLength > 0) sendUpdate(update)
         // Первичная проекция дерева на сервер: у проекта может быть история в
         // CRDT и пустая реляционная модель (после миграции 0002). Роль к этому
         // моменту может быть ещё не известна — тогда проекцию сделает setWritable.
@@ -296,6 +326,10 @@ export function useCollab(projectId: string): CollabHandle | null {
         // актуальное соединение, поэтому двух серий повторов не бывает.
         if (!active || ws !== socket) return
         ws = null
+        // Подтверждений по этим номерам уже не будет: их некому прислать. Сами правки не
+        // теряются — при переподключении уходит состояние целиком, а без него снапшот
+        // сохраняется по REST (`writesSnapshot` при закрытом сокете).
+        acks.clear()
         setStatusOf(wsOpened ? 'reconnecting' : 'connecting', loop.attempt())
         loop.schedule()
       }
@@ -327,6 +361,13 @@ export function useCollab(projectId: string): CollabHandle | null {
           const bytes = new Uint8Array(ev.data)
           if (isChatNotify(bytes)) {
             notifyChatChanged(projectId)
+            return
+          }
+          // Подтверждение приёма правки (0.140.0): документом не является, в Yjs его отдавать
+          // нельзя — тот попытается разобрать мусор. Номера, которых мы не слали, игнорируются:
+          // сервер отвечает только отправителю, но кадр всё равно чужой, пока не доказано обратное.
+          if (isAckFrame(bytes)) {
+            confirmAck(parseAckFrame(bytes))
             return
           }
           if (!presence.receive(bytes)) applyRemoteUpdate(bytes)
@@ -522,16 +563,32 @@ export function useCollab(projectId: string): CollabHandle | null {
     let saving = false
     let queued = false
     /**
-     * Есть ли правки, которые ещё не подтверждены записью в базу.
+     * Есть ли правки, которые ещё не подтверждены ни сервером, ни записью в базу.
      *
-     * «Подтверждены» — значит состояние ушло по REST. Отправку по сокету подтверждением не
-     * считаем: `readyState OPEN` не доказывает, что сервер апдейт получил (прокси без Upgrade,
-     * полуоткрытый сокет). Именно на этом терялись правки: клиент считал сокет живым, по REST
-     * не писал, а сервер документа не видел — выгрузка и книга показывали прошлый текст.
+     * «Подтверждены» теперь двумя способами (0.140.0): подтверждением сервера на кадр правки
+     * («эти байты уже в документе комнаты») и записью снапшота по REST. Отправку в сокет
+     * подтверждением не считаем: `readyState OPEN` не доказывает доставку. Именно на этом
+     * терялись правки до 0.140.0: клиент считал сокет живым, по REST не писал, а сервер
+     * документа не видел — выгрузка и книга показывали прошлый текст.
      */
     let dirty = false
-    /** Когда последний раз состояние подтверждено записью (0 — ещё ни разу). */
+    /** Когда последний раз состояние подтверждено (записью или подтверждением). */
     let lastConfirmedAt = 0
+
+    /**
+     * Сервер подтвердил приём правки (0.140.0).
+     *
+     * Пока ожидания не опустели, `dirty` остаётся: подтверждение одного кадра не значит, что
+     * принят следующий. Пустой список ожиданий — сигнал «писать по REST нечего»: сервер держит
+     * всё в документе комнаты и запишет снапшот своим тиком.
+     */
+    const confirmAck = (id: number | null): void => {
+      if (id === null) return
+      if (!acks.confirm(id)) return
+      if (acks.size() > 0) return
+      dirty = false
+      lastConfirmedAt = Date.now()
+    }
 
     /**
      * Применить апдейт, пришедший извне (сервер, соседняя вкладка, запас с
@@ -571,20 +628,20 @@ export function useCollab(projectId: string): CollabHandle | null {
     /**
      * Сколько молчания сервера считаем нормой, прежде чем подтвердить состояние по REST.
      *
-     * Десять секунд, а не «никогда», потому что открытый сокет не гарантирует доставку. Цена —
-     * один PUT состояния на редактора раз в десять секунд, пока он правит; выигрыш — правка
-     * не остаётся «только в браузере» при полуоткрытом соединении (0.138.0).
+     * Десять секунд, а не «никогда», потому что подтверждение может не прийти: обратный канал
+     * режет прокси, сервер старше клиента, комната не смогла загрузить документ. Цена — один PUT
+     * на редактора раз в десять секунд в этих случаях; при живых подтверждениях (0.140.0) PUT-ов
+     * нет вовсе, потому что `dirty` гаснет на каждом подтверждении.
      */
     const SNAP_CONFIRM_MS = 10_000
 
     /**
      * Пишем ли снапшот по REST прямо сейчас.
      *
-     * Без сокета — сразу (иначе писать некому). С сокетом — только если есть не
-     * подтверждённые правки и с прошлой записи прошло `SNAP_CONFIRM_MS`. Так сохраняется
-     * прежнее правило «пока realtime жив, основной писатель — сервер» (N вкладок не
-     * конкурируют за ревизию на каждой букве), но молчаливый обрыв канала больше не
-     * оставляет проект без сохранения.
+     * Без сокета — сразу (иначе писать некому). С сокетом — только если есть не подтверждённые
+     * правки и с прошлой записи прошло `SNAP_CONFIRM_MS`. Так сохраняется правило «пока realtime
+     * жив, основной писатель — сервер» (N вкладок не конкурируют за ревизию на каждой букве), а
+     * молчаливый обрыв канала больше не оставляет проект без сохранения.
      */
     const writesSnapshot = (): boolean => {
       if (socketClosed()) return true
@@ -605,6 +662,9 @@ export function useCollab(projectId: string): CollabHandle | null {
       if (!result.ok) return // запас в localStorage остаётся до следующего раза
       dirty = false
       lastConfirmedAt = Date.now()
+      // Ожидания не сбрасываем: подтверждения по уже отправленным номерам ещё придут, и пусть
+      // они честно считаются — по счётчику видно, работает ли обратный канал вообще. Сами
+      // номера ограничены в `createAckTracker`, накопления нет.
       // Запас убираем только после подтверждённой записи: иначе он стёрся бы
       // ровно в том случае, ради которого и делался (сеть/конфликт).
       if (shouldClearPending(deferred, Y.encodeStateAsUpdate(doc))) {
@@ -648,9 +708,8 @@ export function useCollab(projectId: string): CollabHandle | null {
       // которое крутится между вкладками бесконечно.
       if (origin === 'remote' || origin === 'peer') return
       dirty = true
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        try { ws.send(update) } catch { /* ignore */ }
-      }
+      // С номером: сервер ответит подтверждением, и `dirty` погаснет без PUT (0.140.0).
+      sendUpdate(update)
       void save()
     })
 
