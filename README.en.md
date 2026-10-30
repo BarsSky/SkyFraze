@@ -103,9 +103,9 @@ their own projects — no permission and no sign-up with us required.
   frames, cards and attachments of your project stay yours and are not sent anywhere.
 - **No telemetry.** There is no analytics and no phone-home in the code: outbound requests go only to
   the model provider you configure yourself (and only when the assistant is enabled).
-- **Forks are allowed and expected.** The single condition is attribution: when you **distribute** a
-  build, keep `LICENSE` and `NOTICE` and do not present the SkyFraze™ name or logo as your own
-  (Apache-2.0, §4 and §6).
+- **Forks are allowed and expected.** The obligations are the same as in Apache-2.0: `LICENSE` and
+  `NOTICE` stay in the build, and the SkyFraze™ name and logo are not presented as your own
+  (sections 4 and 6).
 
 ## Architecture
 
@@ -177,27 +177,19 @@ below lists those originals.
 
 ## License
 
-**Apache License 2.0** — see [LICENSE](LICENSE). In short: you may use, modify, host and sell the
-code as part of your product as long as you keep the copyright notices; a patent grant comes with it
-(section 3), a trademark grant does not (section 6): the SkyFraze™ name and logo are not covered by
-the license.
+SkyFraze is distributed under the **Apache License 2.0** (full text in [LICENSE](LICENSE)). The
+license covers the software and includes a patent grant; it does not cover trademarks — the
+SkyFraze™ name and logo stay with the author (section 6). What is created with the software is not
+covered either: the text, frames, cards and attachments belong to whoever writes them. A license
+change is not planned; contributions are accepted under the same terms as the license itself, with
+no CLA and no transfer of exclusive rights. Contribution terms and the provenance of the project are
+described in [CONTRIBUTING.en.md](CONTRIBUTING.en.md) ([Russian](CONTRIBUTING.md)) and
+[PROVENANCE.md](PROVENANCE.md); citation metadata is in [CITATION.cff](CITATION.cff).
 
-**The license will not change.** The project plans neither a license change nor a closed or paid
-edition, so no CLA is needed or planned: contributions are accepted under Apache-2.0
-(inbound = outbound) with a DCO sign-off (`-s`). Details in
-[CONTRIBUTING.en.md](CONTRIBUTING.en.md) ([Russian](CONTRIBUTING.md)).
-
-Third-party components and their licenses are in
-[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) (Russian; the tables are language-neutral). Three
-items are easy to lose when building an image: `elkjs` (EPL-2.0) in the client build,
-`libheif-tools` (LGPL-3.0) in the backend image and development-only tools under Apache-2.0. Full
-texts of the third-party licenses (EPL-2.0, LGPL-3.0, summaries per Go module and npm package) are in
+Third-party components in the project are under their own licenses: MIT, BSD (2-clause and
+3-clause), Apache-2.0, plus `elkjs` (EPL-2.0) in the client build and `libheif-tools` (LGPL-3.0) in
+the backend image. The list with versions is in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)
+(Russian; the tables are language-neutral), the full texts of the third-party licenses are in
 [`licenses/`](licenses/README.md).
-
-**Source and provenance.** The canonical repository is this one; the first public commit is
-September 26, 2026, the history and releases are public, and tags are signed with an SSH key. How to
-verify authenticity — and what to do if you see a copy claiming to be the original — is in
-[PROVENANCE.md](PROVENANCE.md). To cite the project, use [CITATION.cff](CITATION.cff) (the "Cite this
-repository" button on GitHub).
 
 Version history — [CHANGELOG.md](CHANGELOG.md).
