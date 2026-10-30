@@ -20,6 +20,10 @@
   background: var(--bg);
   border: 1px solid var(--border);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  /* Меню обязано помещаться по ширине: три длинные подписи в ряд на телефоне шире экрана, а
+   * подгонка координатами такое не лечит (и раньше зацикливалась — 0.134.1). */
+  box-sizing: border-box;
+  max-width: calc(100vw - 16px);
 }
 
 .sf-select-menu button {
@@ -32,6 +36,7 @@
   border-radius: 7px;
   cursor: pointer;
   white-space: nowrap;
+  min-width: 0;
 }
 
 .sf-select-menu button:hover,
@@ -39,11 +44,30 @@
   background: var(--surface);
 }
 
-/* Размер нажатия: на телефоне палец крупнее курсора, а меню — три узкие кнопки в ряд. */
-@media (max-width: 640px) {
+/* Телефон и планшет в узком окне: меню складывается в столбец.
+ *
+ * Почему не «уменьшить шрифт»: три русские подписи («В чат проекта», «Спросить помощника»,
+ * «Редактировать фрагмент») в строку не влезают в 390 px ни при каком разумном кегле. Столбец с
+ * целью нажатия 44 px читается и нажимается пальцем, а подписи остаются полными. */
+@media (max-width: 860px) {
+  .sf-select-menu {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 1px;
+    padding: 5px;
+    min-width: 196px;
+    /* Выше выделения, но не выше строки подсказки: столбец из трёх пунктов на маленьком экране
+     * легко упирается в верхнюю кромку, а подгонка координат сместит его вниз — что и нужно. */
+  }
+
   .sf-select-menu button {
-    padding: 9px 10px;
-    font-size: 12px;
+    text-align: left;
+    padding: 11px 12px;
+    font-size: 13px;
+    white-space: normal;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
   }
 }
 

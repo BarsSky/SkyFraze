@@ -296,6 +296,21 @@ export function ProjectTimelinePage() {
     }
   }, [collab])
 
+  /**
+   * Проецировать дерево на сервер БЕЗ оглядки на realtime (0.134.0).
+   *
+   * Зачем отдельно от `pushTree`. `pushTree` — резервный путь для клиента без сокета: он молчит,
+   * когда realtime поднят, потому что проекцию тогда строит сервер сам. Но правка из показа кадра
+   * (окно быстрой правки) — это как раз тот случай, когда серверную копию надо обновить точно, не
+   * надеясь на чужой тик: по проекции проверяется цитата в чате («такой фразы в тексте кадра нет»),
+   * её читает публичная страница и поиск. Ошибку не показываем: правка уже в документе, а провал
+   * синхронизации виден по баннеру связи.
+   */
+  const syncProjection = useCallback(async () => {
+    if (!collab) return
+    await collab.syncTree()
+  }, [collab])
+
   const uploadFile = useCallback(
     async (file: File): Promise<Asset | null> => {
       try {
@@ -737,6 +752,11 @@ export function ProjectTimelinePage() {
           request={quickEdit}
           ymap={quickEditMap}
           onClose={() => setQuickEdit(null)}
+          /* Правка из показа тоже обязана доехать до сервера: без сокета проекцию дерева двигает
+             только страница, и раньше это делала одна панель редакторов (0.134.0). */
+          onSaved={() => {
+            void syncProjection()
+          }}
           onOpenEditors={() => {
             const request = quickEdit
             setQuickEdit(null)

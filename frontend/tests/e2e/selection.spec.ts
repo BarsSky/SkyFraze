@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect, devices, type Page } from '@playwright/test'
 import { apiHeaders, gateAssistant, openProjectTab, signIn } from './support'
 
 /**
@@ -13,6 +13,18 @@ import { apiHeaders, gateAssistant, openProjectTab, signIn } from './support'
  * угадываем: текст кадра пишет заглушка модели, и знать его заранее нельзя.
  */
 test.setTimeout(240_000)
+
+/**
+ * Закрыть плавающее окно помощника/чата.
+ *
+ * Через Esc, а не кнопкой: на телефоне окно занимает экран, и плавающая кнопка под ним не видна
+ * (Playwright честно отказывается по ней кликать), а кнопка «×» есть только на вкладке помощника.
+ * Esc закрывает окно в любом режиме — это и есть штатный путь.
+ */
+async function closeDock(page: Page): Promise<void> {
+  await page.keyboard.press('Escape')
+  await expect(page.locator('[data-assistant-panel]')).toBeHidden({ timeout: 10_000 })
+}
 
 /** Проект с главой «Пролог»: её создаёт заглушка помощника, как в соседних сценариях. */
 async function projectWithChapter(page: Page): Promise<void> {
@@ -32,7 +44,7 @@ async function projectWithChapter(page: Page): Promise<void> {
   await input.fill('Добавь главу «Пролог» с описанием начала истории')
   await panel.getByRole('button', { name: 'Спросить' }).click()
   await expect(panel.getByText('Создал главу «Пролог».')).toBeVisible({ timeout: 90_000 })
-  await page.locator('[data-assistant-fab]').click()
+  await closeDock(page)
 }
 
 /** Текст кадра в показе: по нему считаем, что вообще можно выделить. */
@@ -127,7 +139,7 @@ test('выделил фрагмент: чат проекта, помощник, 
   const chatInput = chat.getByLabel('Сообщение в чат проекта')
   await expect(chatInput).toHaveValue(new RegExp(quote.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
   await expect(chatInput).toHaveValue(/Пролог/)
-  await page.locator('[data-assistant-fab]').click()
+  await closeDock(page)
 
   // 2. Помощнику: та же цитата, но во вкладке помощника — и снова без автоотправки.
   await selectWord(page)
@@ -141,7 +153,7 @@ test('выделил фрагмент: чат проекта, помощник, 
     return field
   })()
   await expect(assistantInput).toHaveValue(new RegExp(quote.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
-  await page.locator('[data-assistant-fab]').click()
+  await closeDock(page)
 
   // 3. Быстрая правка: окно показывает ровно выделенный кусок и сохраняет правку в текст кадра.
   await selectWord(page)
@@ -239,10 +251,79 @@ test('выделил фрагмент: чат проекта, помощник, 
   await messageLink.click()
   // Окно закрываем, чтобы видеть показ: сама подсветка живёт в реестре браузера и от окна не
   // зависит, но проверять её «за окном» — значит проверять не то, что видит человек.
-  await page.locator('[data-assistant-fab]').click()
+  await closeDock(page)
   await expect(page.locator('[data-project-tab="project"]')).toHaveAttribute('aria-selected', 'true', {
     timeout: 30_000,
   })
   await expect(page.locator('[data-frame-body]').first()).toContainText(linked, { timeout: 30_000 })
   await expect.poll(() => highlightSize(page), { timeout: 20_000 }).toBeGreaterThan(0)
+})
+
+/**
+ * Телефон, 390×844 (0.134.0). Отчёт: «на мобильной версии и экране 6 дюймов выделение не открывает
+ * меню, а на странице остаётся только фон без кнопок».
+ *
+ * Причина была в подгонке меню в пределы экрана: три длинные подписи в ряд шире телефона, сдвиг
+ * вправо-влево зацикливался, React упирался в «Maximum update depth exceeded» и размонтировал
+ * дерево — отсюда пустая страница. Здесь проверяется ровно это, на живой вёрстке: меню появляется,
+ * ВСЁ помещается в экран, каждая кнопка — не меньше 40 px, касание открывает чат, и за весь
+ * сценарий в консоли нет ни одной ошибки React.
+ */
+test('телефон: меню выделения помещается в экран, нажимается и не убивает страницу', async ({
+  browser,
+}) => {
+  // Отдельный контекст с телефоном: нужен НАСТОЯЩИЙ тач (`hasTouch`), иначе `touchscreen.tap`
+  // невозможен, а именно касанием человек и пользуется.
+  const context = await browser.newContext({ ...devices['Pixel 5'] })
+  const page = await context.newPage()
+  // Ошибки страницы копим: размонтированное дерево видно именно так.
+  const pageErrors: string[] = []
+  page.on('pageerror', (error) => pageErrors.push(error.message))
+
+  // Пропуск решается ДО try: `test.skip` бросает служебную ошибку, и `finally` с закрытием
+  // контекста превращал пропуск в падение «context has been closed».
+  const signedIn = await signIn(page)
+  if (!signedIn) {
+    await context.close()
+    test.skip(true, 'учётной записи e2e нет и регистрация закрыта')
+  }
+
+  try {
+    await page.setViewportSize({ width: 390, height: 844 })
+    await projectWithChapter(page)
+    await openProjectTab(page, 'project')
+
+    await selectWord(page)
+    const menu = page.locator('[data-selection-menu]')
+    await expect(menu).toBeVisible({ timeout: 15_000 })
+
+    // Меню целиком в экране и нажимается пальцем: это и есть проверка «6 дюймов».
+    const box = await menu.boundingBox()
+    expect(box).not.toBeNull()
+    expect(box!.x).toBeGreaterThanOrEqual(0)
+    expect(box!.y).toBeGreaterThanOrEqual(0)
+    expect(box!.x + box!.width).toBeLessThanOrEqual(390)
+    expect(box!.y + box!.height).toBeLessThanOrEqual(844)
+    for (const selector of [
+      '[data-selection-chat]',
+      '[data-selection-assistant]',
+      '[data-selection-edit]',
+    ]) {
+      const button = await page.locator(selector).boundingBox()
+      expect(button, selector).not.toBeNull()
+      expect(button!.height, `высота нажатия ${selector}`).toBeGreaterThanOrEqual(40)
+    }
+
+    // Касание по первой кнопке открывает чат с цитатой — меню при этом закрывается.
+    const chatButton = (await page.locator('[data-selection-chat]').boundingBox())!
+    await page.touchscreen.tap(chatButton.x + chatButton.width / 2, chatButton.y + chatButton.height / 2)
+    const chat = page.locator('[data-project-chat]')
+    await expect(chat).toBeVisible({ timeout: 20_000 })
+    await expect(chat.getByLabel('Сообщение в чат проекта')).toHaveValue(/\S/)
+    await expect(menu).toBeHidden()
+
+    expect(pageErrors, `ошибки страницы: ${pageErrors.join(' | ')}`).toEqual([])
+  } finally {
+    await context.close().catch(() => undefined)
+  }
 })

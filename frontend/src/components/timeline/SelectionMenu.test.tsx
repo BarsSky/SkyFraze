@@ -39,6 +39,39 @@ function selectIn(element: HTMLElement, text: string) {
 /** Дать отработать requestAnimationFrame, которым меню откладывает чтение выделения. */
 const settle = () => new Promise((resolve) => setTimeout(resolve, 40))
 
+/**
+ * Подменить геометрию ТОЛЬКО у меню выделения.
+ *
+ * jsdom не считает вёрстку: у всех элементов прямоугольник нулевой, и подгонка «в пределы экрана»
+ * (а с ней и её прежний бесконечный цикл) в тестах не воспроизводится. Здесь прямоугольник меню
+ * считается от его же `style.left/top` — как в браузере, где позиция задаёт CSS.
+ */
+function stubMenuGeometry(
+  box: (node: HTMLElement) => { width: number; height: number; left: number; top: number },
+) {
+  const original = HTMLElement.prototype.getBoundingClientRect
+  HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+    if (this.classList?.contains('sf-select-menu')) {
+      const { width, height, left, top } = box(this)
+      return {
+        x: left,
+        y: top,
+        left,
+        top,
+        right: left + width,
+        bottom: top + height,
+        width,
+        height,
+        toJSON: () => ({}),
+      } as DOMRect
+    }
+    return original.call(this)
+  }
+  return () => {
+    HTMLElement.prototype.getBoundingClientRect = original
+  }
+}
+
 afterEach(() => {
   cleanup()
   setLang('ru')
@@ -199,6 +232,60 @@ describe('SelectionMenu', () => {
     expect(screen.getByRole('button', { name: 'To the project chat' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Ask the assistant' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Edit the fragment' })).toBeTruthy()
+  })
+
+  /**
+   * Телефон, 390 px: меню шире экрана (три длинные подписи в ряд) — и раньше подгонка «в пределы
+   * экрана» уезжала вправо, потом влево, потом снова вправо. Бесконечный `setState`, React
+   * размонтирует дерево, и человек остаётся с фоном без кнопок (отчёт 0.134.0). Теперь меню
+   * обязано помещаться по CSS, а подгонка не двигает то, что не влезает.
+   *
+   * В jsdom есть геометрия только та, что мы подставим: раздуваем прямоугольник меню и просим
+   * экран шириной 320 — если защита исчезнет, тест упадёт на «Maximum update depth exceeded».
+   */
+  it('не зацикливается, когда меню шире экрана', async () => {
+    const restore = stubMenuGeometry(() => ({ width: 460, height: 40, left: 10, top: 100 }))
+    const widthBefore = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 320 })
+    try {
+      const { body } = mount()
+      selectIn(body, 'вошла в дом')
+      await waitFor(() => expect(screen.getByRole('toolbar')).toBeTruthy())
+      // Меню на месте и не пытается «уместиться» скачками.
+      expect(screen.getByRole('toolbar')).toBeTruthy()
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: widthBefore })
+      restore()
+    }
+  })
+
+  /**
+   * Выделение у левой кромки: меню должно сдвинуться В экран — и остановиться. Проверяем именно
+   * сходимость: прямоугольник считается от реальной позиции (`style.left`), как в браузере,
+   * поэтому повторный сдвиг на том же месте сломал бы тест бесконечным циклом.
+   */
+  it('сдвигает меню в экран, если выделение у края', async () => {
+    const restore = stubMenuGeometry((node) => ({
+      width: 196,
+      height: 146,
+      left: Number.parseFloat(node.style.left || '0') - 98,
+      top: Number.parseFloat(node.style.top || '0') - 146,
+    }))
+    const widthBefore = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 320 })
+    try {
+      const { body } = mount()
+      selectIn(body, 'вошла в дом')
+      await waitFor(() => expect(screen.getByRole('toolbar')).toBeTruthy())
+      const menu = screen.getByRole('toolbar')
+      // Левый край прямоугольника = left - 98; после подгонки он не левее отступа 8 px.
+      const left = Number.parseFloat(menu.style.left)
+      expect(left - 98).toBeGreaterThanOrEqual(8 - 0.5)
+      expect(left + 98).toBeLessThanOrEqual(320 - 8 + 0.5)
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: widthBefore })
+      restore()
+    }
   })
 })
 

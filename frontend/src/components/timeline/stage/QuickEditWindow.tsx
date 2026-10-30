@@ -26,6 +26,16 @@ interface Props {
   onClose: () => void
   /** Уйти в редакторы на этот же фрагмент (кнопка в окне). */
   onOpenEditors: () => void
+  /**
+   * Правка записана в документ (0.134.0).
+   *
+   * Зачем. Сервер строит свою проекцию дерева сам, но только у ПОДКЛЮЧЁННОГО клиента (правки
+   * едут по сокету). Без сокета (прокси без Upgrade, мобильная сеть) проекцию двигает страница
+   * своим REST-вызовом — и раньше этот вызов делала только панель редакторов. Значит правка из
+   * показа оставалась невидимой серверу: цитата из неё потом не принималась в чате («такой фразы
+   * в тексте кадра нет»), а публичная страница показывала старый текст. Это и поймал e2e.
+   */
+  onSaved?: () => void
 }
 
 /**
@@ -41,7 +51,7 @@ function sameFragment(atOffsets: string, quote: string): boolean {
   return normalize(atOffsets) === normalize(quote)
 }
 
-export function QuickEditWindow({ request, ymap, onClose, onOpenEditors }: Props) {
+export function QuickEditWindow({ request, ymap, onClose, onOpenEditors, onSaved }: Props) {
   const t = useT()
   const [value, setValue] = useState('')
   const [note, setNote] = useState<string | null>(null)
@@ -94,6 +104,9 @@ export function QuickEditWindow({ request, ymap, onClose, onOpenEditors }: Props
       }
       setText(ymap, 'body', current.slice(0, range.from) + next + current.slice(range.to))
       setNote(t('sel.quickSaved'))
+      // Сказать странице: правка в документе. Она проецирует дерево на сервер, если realtime не
+      // поднялся (см. комментарий у `onSaved`).
+      onSaved?.()
     } finally {
       setBusy(false)
     }
