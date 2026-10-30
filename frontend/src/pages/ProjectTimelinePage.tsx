@@ -112,6 +112,16 @@ export function ProjectTimelinePage() {
   const [dockPrefill, setDockPrefill] = useState<DockPrefill | null>(null)
   /** Окно быстрой правки фрагмента: выделение и кадр, к которому оно относится. */
   const [quickEdit, setQuickEdit] = useState<QuoteEditRequest | null>(null)
+  /**
+   * Фраза, которую надо подсветить в показе (0.133.0): пришли по ссылке из чата или нажали
+   * «Показать в проекте» в редакторах.
+   *
+   * Живёт на странице, а не событием: покадровая панель показывается только для активного кадра, и
+   * просьба, отправленная до перехода, уходила бы в пустоту.
+   */
+  const [showQuote, setShowQuote] = useState<{ frameId: string; quote: string; nonce: number } | null>(null)
+  /** Таймер снятия просьбы: подсветка — указатель, а не разметка текста. */
+  const showQuoteTimer = useRef<number | null>(null)
 
   const collab = useCollab(projectId)
   const events = collab?.events
@@ -442,13 +452,6 @@ export function ProjectTimelinePage() {
     [canEdit, eventsCount, tabsShown],
   )
   /**
-   * Открыть кадр из ссылки в чате проекта (0.95.0).
-   *
-   * Без цитаты: сообщение хранит фразу, но точных позиций в тексте у чата нет (это не замечание
-   * с якорем). Кадр открывается, фраза видна в самой ссылке — подсвечивать «первым совпадением»
-   * значило бы подсветить не то место, если фраза встречается дважды.
-   */
-  /**
    * Действия с выделенным фрагментом (0.132.0).
    *
    * Три адресата — три разных места страницы, поэтому подписки на события живут здесь: у
@@ -495,20 +498,42 @@ export function ProjectTimelinePage() {
     return found ?? null
   }, [events, quickEdit])
 
-  const openFrameFromChat = useCallback(
-    (frameId: string) => {
+  /**
+   * Показать кадр в показе и подсветить фразу (0.95.0; цитата — 0.133.0).
+   *
+   * Два входа: ссылка на кадр в чате (её нажимает получатель) и «Показать в проекте» в
+   * редакторах. Раньше ссылка из чата вела в редакторы, и цитату получатель видел только в самой
+   * ссылке. Но чат — разговор о тексте, а не правка: ведём в показ и подсвечиваем фразу, чтобы
+   * человек увидел то самое место. Из показа в редакторы — окно быстрой правки, то есть путь к
+   * правке не удлинился.
+   *
+   * Если фразы в кадре уже нет (соавтор переписал абзац), подсветки не будет: панель кадра скажет
+   * об этом плашкой, а не подсветит первое похожее место.
+   */
+  const showFrameWithQuote = useCallback(
+    (frameId: string, quote?: string) => {
       if (!frameId) return
       const nonce = Date.now()
-      const editorsAvailable = tabsShown && canEdit === true && eventsCount > 0
-      if (editorsAvailable) {
-        setOpenFrameRequest({ frameId, nonce })
-        setView('editors')
-        return
-      }
       if (tabsShown) setView('project')
       setFocusFrame({ id: frameId, nonce })
+      const needle = (quote ?? '').trim()
+      if (needle === '') {
+        setShowQuote(null)
+        return
+      }
+      setShowQuote({ frameId, quote: needle, nonce })
+      if (showQuoteTimer.current !== null) window.clearTimeout(showQuoteTimer.current)
+      // Просьба снимается сама: подсветка — указатель «вот это место», а не разметка текста.
+      showQuoteTimer.current = window.setTimeout(() => setShowQuote(null), 15_000)
     },
-    [canEdit, eventsCount, tabsShown],
+    [tabsShown],
+  )
+
+  useEffect(
+    () => () => {
+      if (showQuoteTimer.current !== null) window.clearTimeout(showQuoteTimer.current)
+    },
+    [],
   )
   /**
    * Высота строки вкладок — в CSS-переменную `--sf-tabs-h` (0.83.0).
@@ -624,6 +649,8 @@ export function ProjectTimelinePage() {
             actions={undefined}
             /* «К проекту» из «Связей» (0.87.0): прокрутка встаёт на выбранный кадр. */
             focusFrame={focusFrame}
+            /* Ссылка из чата и «Показать в проекте» (0.133.0): кадр плюс подсвеченная фраза. */
+            highlight={showQuote}
           />
         )}
 
@@ -655,6 +682,8 @@ export function ProjectTimelinePage() {
                  переключила вкладку, панель открывает кадр и подсвечивает слово. */
               openRequest={openFrameRequest}
               onOpenRequestHandled={() => setOpenFrameRequest(null)}
+              /* «Показать в проекте» (0.133.0): из редакторов в показ, к тому же куску текста. */
+              onShowInProject={showFrameWithQuote}
             />
           </>
         )}
@@ -699,7 +728,7 @@ export function ProjectTimelinePage() {
           onProjectChanged={assistantChanged}
           onOpenEditors={openEditors}
           projectIsEmpty={eventsCount === 0}
-          onOpenFrame={openFrameFromChat}
+          onOpenFrame={showFrameWithQuote}
           prefill={dockPrefill}
         />
       )}

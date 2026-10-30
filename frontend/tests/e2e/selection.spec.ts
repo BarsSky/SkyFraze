@@ -45,6 +45,13 @@ async function stageBody(page: Page) {
   return body
 }
 
+/** Сколько участков подсвечено в показе (CSS Custom Highlight API, 0.133.0). */
+const highlightSize = (page: Page): Promise<number> =>
+  page.evaluate(() => {
+    const registry = (CSS as unknown as { highlights?: Map<string, { size: number }> }).highlights
+    return registry?.get('sf-quote')?.size ?? 0
+  })
+
 /**
  * Выделить слово в тексте кадра двойным щелчком и дождаться меню.
  *
@@ -164,4 +171,59 @@ test('выделил фрагмент: чат проекта, помощник, 
   )
   expect(selected.length).toBeGreaterThan(0)
   expect(edited).toContain(selected)
+
+  // 5. Обратный переход «из редакторов в проект» (0.133.0): кнопка «Показать в проекте» открывает
+  //    показ на этом кадре и подсвечивает выделенный кусок.
+  //
+  //    Выделение — настоящее, клавиатурой: редактор узнаёт о нём из `select`/`keyup`, а
+  //    программный `setSelectionRange` (так поле пришло из показа, шаг 4) этих событий не шлёт.
+  //    Идём посимвольно до слова: словесное выделение браузера останавливается на границах,
+  //    которые зависят от переносов кадра.
+  const target = await editorsBody.evaluate((node: HTMLTextAreaElement) => {
+    const word = /\p{L}{5,}/u.exec(node.value)
+    return word ? { word: word[0], index: word.index, length: word[0].length } : null
+  })
+  expect(target, 'в тексте кадра должно найтись слово от пяти букв').not.toBeNull()
+  await editorsBody.click()
+  await page.keyboard.press('Control+Home')
+  for (let step = 0; step < target!.index; step += 1) await page.keyboard.press('ArrowRight')
+  await page.keyboard.down('Shift')
+  for (let step = 0; step < target!.length; step += 1) await page.keyboard.press('ArrowRight')
+  await page.keyboard.up('Shift')
+  const editorQuote = (
+    await editorsBody.evaluate((node: HTMLTextAreaElement) =>
+      node.value.slice(node.selectionStart, node.selectionEnd),
+    )
+  ).trim()
+  expect(editorQuote).toBe(target!.word)
+  // Редактор знает о выделении: кнопка «замечание к фрагменту» появляется только при нём.
+  await expect(page.locator('[data-select-fragment]')).toBeVisible({ timeout: 15_000 })
+  await page.locator('[data-show-in-project]').click()
+  await expect(page.locator('[data-project-tab="project"]')).toHaveAttribute('aria-selected', 'true', {
+    timeout: 30_000,
+  })
+  await expect(page.locator('[data-frame-body]').first()).toContainText(editorQuote, {
+    timeout: 30_000,
+  })
+  await expect.poll(() => highlightSize(page), { timeout: 20_000 }).toBeGreaterThan(0)
+
+  // 6. «Строчка в проекте» у получателя ссылки из чата (0.133.0): выделили → отправили в чат →
+  //    нажали ссылку на кадр → показ встал на кадр и подсветил ту же фразу.
+  await openProjectTab(page, 'project')
+  const linked = await selectWord(page)
+  await page.locator('[data-selection-chat]').click()
+  const chatPane = page.locator('[data-project-chat]')
+  await expect(chatPane).toBeVisible({ timeout: 20_000 })
+  await chatPane.getByRole('button', { name: 'Отправить' }).click()
+  const messageLink = chatPane.locator('[data-chat-link]').last()
+  await expect(messageLink).toContainText(linked, { timeout: 30_000 })
+  await messageLink.click()
+  // Окно закрываем, чтобы видеть показ: сама подсветка живёт в реестре браузера и от окна не
+  // зависит, но проверять её «за окном» — значит проверять не то, что видит человек.
+  await page.locator('[data-assistant-fab]').click()
+  await expect(page.locator('[data-project-tab="project"]')).toHaveAttribute('aria-selected', 'true', {
+    timeout: 30_000,
+  })
+  await expect(page.locator('[data-frame-body]').first()).toContainText(linked, { timeout: 30_000 })
+  await expect.poll(() => highlightSize(page), { timeout: 20_000 }).toBeGreaterThan(0)
 })

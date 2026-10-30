@@ -80,6 +80,24 @@ describe('ProjectChat', () => {
     expect(screen.getByRole('button', { name: /Анна стоит на пороге/ })).toBeTruthy()
   })
 
+  /**
+   * 0.133.0: получатель нажимает ссылку и попадает в кадр с ПОДСВЕЧЕННОЙ фразой — поэтому цитата
+   * едет вместе с номером кадра, а не остаётся только в тексте ссылки.
+   */
+  it('ссылка на кадр передаёт цитату: получатель увидит то самое место', async () => {
+    listChat.mockResolvedValue({
+      messages: [message({ id: 'm3', event_id: 'f1', quote: 'Анна стоит на пороге' })],
+      bot: { name: 'Нестор', available: false },
+    })
+    listEventRows.mockResolvedValue([{ id: 'f1', title: 'Пролог', parent_id: null, body: '', event_date: null }])
+    const onOpenFrame = vi.fn()
+    render(<ProjectChat {...base} onOpenFrame={onOpenFrame} />)
+
+    const link = await screen.findByRole('button', { name: /Анна стоит на пороге/ })
+    fireEvent.click(link)
+    expect(onOpenFrame).toHaveBeenCalledWith('f1', 'Анна стоит на пороге')
+  })
+
   it('отправляет сообщение и показывает ответ Нестора', async () => {
     listChat.mockResolvedValue({ messages: [], bot: { name: 'Нестор', available: true } })
     listEventRows.mockResolvedValue([])
@@ -141,7 +159,8 @@ describe('ProjectChat', () => {
     render(<ProjectChat {...base} onOpenFrame={onOpenFrame} />)
     const link = await screen.findByRole('button', { name: /к кадру/ })
     fireEvent.click(link)
-    expect(onOpenFrame).toHaveBeenCalledWith('f1')
+    // С 0.133.0 вместе с кадром едет и цитата: получатель увидит подсвеченное место.
+    expect(onOpenFrame).toHaveBeenCalledWith('f1', 'Анна стоит')
   })
 
   it('открытый чат отмечается прочитанным на сервере (0.97.0)', async () => {

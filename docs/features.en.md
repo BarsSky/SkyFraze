@@ -161,6 +161,13 @@ then people and access.
   field. The place in the source is recovered word by word (the show renders Markdown), and if the
   text there has already changed, the window honestly refuses to write over someone else's edit
   (`docs/selection.md`; `docs/project-chat.md`)
+- **Back to the project — to the very same line** (0.133.0): for the recipient, a frame link in the
+  chat opens the **project show** on that frame and **highlights the phrase** (before it went to the
+  editors with no highlight); from the editors the same is done by the **"Show in the project"**
+  button — with the selected piece or with the whole frame. If the phrase is no longer in the frame,
+  there is no highlight and the frame panel says so in a note. The highlight does not touch the text:
+  it lives in the CSS Custom Highlight API, so React still owns the frame markup
+  (`docs/selection.md` §6)
 - **Public feed** (`/feed`) and a **public story page** (`/s/{slug}`): anyone can read and rate,
   nobody but the project team can edit
 - Views with de-duplication (one visitor — one view per day) and ratings 1–5 (one rating per user, an

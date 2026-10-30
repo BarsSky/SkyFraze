@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   IMAGE_MIME_PREFIX,
   eventPosition,
@@ -9,6 +9,7 @@ import { ImageViewer } from '../../ImageViewer'
 import { MarkdownBlock } from '../../MarkdownBlock'
 import { dateLabel } from '../../../collab/eventDate'
 import { useT } from '../../../i18n'
+import { highlightQuote } from '../../../lib/quoteHighlight'
 import { SelectionMenu } from './SelectionMenu'
 
 interface Props {
@@ -32,6 +33,12 @@ interface Props {
    * (эндпоинт требует авторизации, а `<img>` заголовок не передаёт).
    */
   assetUrls?: Record<string, string>
+  /**
+   * Фразу подсветить (0.133.0). Приходит из чата (клик по ссылке на кадр у получателя) и из
+   * редакторов («Показать в проекте»): человек должен увидеть то самое место, а не «где-то в этом
+   * кадре». `nonce` нужен, чтобы повторная просьба о той же фразе сработала снова.
+   */
+  highlight?: { frameId: string; quote: string; nonce: number } | null
 }
 
 /**
@@ -49,13 +56,40 @@ interface Props {
  */
 export function CopyPanel({
   chapter, frame, onJumpFrame, onPrev, onNext, prevLabel, nextLabel, footer, assetUrls,
+  highlight,
 }: Props) {
   const t = useT()
   const images = frame.assets.filter((a) => a.mime.startsWith(IMAGE_MIME_PREFIX))
   const [viewer, setViewer] = useState<number | null>(null)
+  /** Фразу просили подсветить, но в этом кадре её уже нет (0.133.0). */
+  const [missing, setMissing] = useState(false)
+  const bodyRef = useRef<HTMLDivElement | null>(null)
 
   // Просмотр закрывается при смене кадра: следующий кадр — уже другое событие.
   useEffect(() => setViewer(null), [frame.id])
+
+  /**
+   * Подсветка фразы, к которой пришли из чата или из редакторов (0.133.0).
+   *
+   * Подсветка снимается сама через несколько секунд и при смене кадра: это указатель «вот это
+   * место», а не разметка текста. Если фразы в кадре уже нет (соавтор переписал абзац) — не
+   * подсвечиваем первое похожее: говорим об этом плашкой, иначе человек решит, что обсуждали не
+   * то.
+   */
+  useEffect(() => {
+    const node = bodyRef.current
+    if (!node || !highlight || highlight.frameId !== frame.id) return undefined
+    const applied = highlightQuote(node, highlight.quote)
+    setMissing(!applied.found)
+    const timer = window.setTimeout(() => {
+      applied.clear()
+      setMissing(false)
+    }, 8000)
+    return () => {
+      window.clearTimeout(timer)
+      applied.clear()
+    }
+  }, [frame.body, frame.id, highlight?.frameId, highlight?.nonce, highlight?.quote])
 
   const isPhoto = frame.kind === 'image'
   const position = eventPosition(chapter.frames, frame)
@@ -108,9 +142,15 @@ export function CopyPanel({
                 className="sf-copy__body-wrap"
                 data-frame-body={frame.id}
                 data-frame-source={frame.body}
+                ref={bodyRef}
               >
                 <MarkdownBlock source={frame.body} className="sf-copy__body" assetUrls={assetUrls} />
               </div>
+            )}
+            {missing && highlight && (
+              <p className="sf-copy__quote-note" data-quote-missing>
+                {t('sel.showMissing', { quote: highlight.quote })}
+              </p>
             )}
 
           <ul className="sf-copy__meta">

@@ -118,6 +118,14 @@ interface Props {
   /** Просьба обработана: страница убирает её, чтобы повторное монтирование не открывало кадр. */
   onOpenRequestHandled?: () => void
   /**
+   * «Показать в проекте» (0.133.0): страница переключается в показ, встаёт на кадр и подсвечивает
+   * фразу — выделенную в поле текста или (без выделения) кадр целиком.
+   *
+   * Зачем это в редакторах: правя абзац, человек хочет увидеть, как он читается в кадре, не
+   * теряя место. Обратный переход (из показа в редакторы) уже есть — окно быстрой правки.
+   */
+  onShowInProject?: (frameId: string, quote?: string) => void
+  /**
    * Импорт «в место»: вставить разобранный кусок md в этот проект. Возвращает
    * результат сервера (сколько событий и его предупреждения); саму вставку делает
    * страница — у неё есть id проекта и перечитывание состояния без realtime.
@@ -414,7 +422,7 @@ function dropClassFor(hint: DropHint): string {
 export function EditorsPanel({
   events, assets, assetUrls, projectId, canEdit, syncNote, onChanged, onUpload, onImportInto,
   presence, onEditing, assetUsage, onDeleteAsset, assetNote, assetBusyId, onOpenRelations,
-  openRequest, onOpenRequestHandled,
+  openRequest, onOpenRequestHandled, onShowInProject,
 }: Props) {
   const t = useT()
   const [lang] = useLang()
@@ -1929,6 +1937,11 @@ setNotice(t('ed.moved', { label: row.title }))
                 onTyping={markTyping}
                 onFragmentSelected={(fragment: FrameFragment) =>
                   setPendingAnchor({ field: 'body', ...fragment })
+                }
+                onShowInProject={
+                  onShowInProject && selectedId
+                    ? (quote?: string) => onShowInProject(selectedId, quote)
+                    : undefined
                 }
                 focusRange={focusRange}
                 docxStyles={docxStyles}

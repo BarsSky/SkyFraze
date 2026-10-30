@@ -44,8 +44,7 @@ interface Props {
    */
   onFragmentSelected?: (fragment: FrameFragment) => void
   /**
-   * Диапазон, который надо показать в тексте (клик по замечанию к фрагменту). 
-once
+   * Диапазон, который надо показать в тексте (клик по замечанию к фрагменту). `nonce`
    * меняется при каждом нажатии: без него повторный клик по тому же замечанию не сдвинул бы
    * выделение, если оно уже стоит там.
    */
@@ -55,6 +54,11 @@ once
    * редакторе. Приходят из панели редакторов — она уже знает проект и грузит шаблоны.
    */
   docxStyles?: string[]
+  /**
+   * «Показать в проекте» (0.133.0): перейти в показ на этот кадр и подсветить выделенный кусок.
+   * Необязателен: без него кнопки нет (старые страницы, публичная версия).
+   */
+  onShowInProject?: (quote?: string) => void
 }
 
 /**
@@ -124,6 +128,7 @@ export function EventEditor({
   onFragmentSelected,
   focusRange,
   docxStyles,
+  onShowInProject,
 }: Props) {
   const t = useT()
   /**
@@ -279,6 +284,24 @@ export function EventEditor({
           <button type="button" className="secondary" onClick={() => setMdOpen(true)}>
           {t('ee.openMarkdown')}
           </button>
+          {/* «Показать в проекте» (0.133.0): правя текст, человек хочет увидеть его в кадре —
+              с выделенным куском, если он выделен. Обратный путь (из показа в редакторы) —
+              окно быстрой правки в показе. */}
+          {onShowInProject && (
+            <button
+              type="button"
+              className="secondary"
+              title={t('ee.showInProjectTitle')}
+              data-show-in-project
+              onClick={() =>
+                onShowInProject(
+                  selection ? body.slice(selection.from, selection.to).trim() : undefined,
+                )
+              }
+            >
+              {t('ee.showInProject')}
+            </button>
+          )}
           {/* Разметка DOCX (0.94.1). Панель маркеров живёт в окне Markdown, и её было не найти:
               человек искал «Разметка DOCX» в самом редакторе и не видел её вовсе. Теперь есть
               отдельная кнопка, которая открывает то же окно с уже раскрытой панелью. */}

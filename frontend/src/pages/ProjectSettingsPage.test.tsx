@@ -91,9 +91,16 @@ afterEach(() => {
 })
 
 describe('ProjectSettingsPage — язык', () => {
+  /*
+   * `findByText` ждёт секунду по умолчанию. На загруженном раннере полного прогона (102 файла в
+   * несколько воркеров) этой секунды не хватает — и тест «падал» не из-за поведения страницы, а
+   * из-за скорости машины (0.133.0). Ждём столько же, сколько соседние проверки.
+   */
+  const FIND = { timeout: 15_000 }
+
   it('русские подписи на месте: участники, роли и карточки настроек', async () => {
     show()
-    expect(await screen.findByText('Участники')).toBeTruthy()
+    expect(await screen.findByText('Участники', {}, FIND)).toBeTruthy()
     expect(screen.getByText('Добавить соавтора')).toBeTruthy()
     expect(screen.getByText('Оформление DOCX')).toBeTruthy()
     expect(screen.getByText('Шаблон проекта')).toBeTruthy()
@@ -105,7 +112,7 @@ describe('ProjectSettingsPage — язык', () => {
   it('на английском подписи переведены, а люди и проект — данные', async () => {
     setLang('en')
     show()
-    expect(await screen.findByText('Members')).toBeTruthy()
+    expect(await screen.findByText('Members', {}, FIND)).toBeTruthy()
     expect(screen.getByText('Add a co-author')).toBeTruthy()
     expect(screen.getByText('DOCX styling')).toBeTruthy()
     expect(screen.getByText('Project template')).toBeTruthy()

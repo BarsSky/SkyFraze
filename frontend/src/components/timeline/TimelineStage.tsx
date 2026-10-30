@@ -52,6 +52,14 @@ interface Props {
    * эффект не сработал бы второй раз.
    */
   focusFrame?: { id: string; nonce: number } | null
+  /**
+   * Фразу в кадре подсветить (0.133.0): «показать в проекте» из чата и из редакторов.
+   *
+   * Передаётся пропсом, а не событием: покадровая панель монтируется только для активного кадра, и
+   * событие, отправленное до перехода, слышать было бы некому — ровно та же причина, по которой
+   * переход к кадру из «Связей» идёт пропсом (см. `focusFrame`).
+   */
+  highlight?: { frameId: string; quote: string; nonce: number } | null
 }
 
 interface EventMeta {
@@ -114,7 +122,7 @@ function resolveAssets(assetIds: string[], lookup: Record<string, AssetLookup>):
  *
  * Стадия занимается только показом и навигацией: редактор — отдельный модуль.
  */
-export function TimelineStage({ events, assetsById, projectTitle, actions, copyFooter, focusFrame }: Props) {
+export function TimelineStage({ events, assetsById, projectTitle, actions, copyFooter, focusFrame, highlight }: Props) {
   // Карта файлов проекта (id → адрес) для текста кадра: в тексте могут быть ссылки
   // на вложения (`/api/assets/<id>`), и без подмены они не откроются в приложении.
   const assetUrls = useMemo(() => {
@@ -654,6 +662,7 @@ export function TimelineStage({ events, assetsById, projectTitle, actions, copyF
             nextLabel={nextEntry?.label}
             footer={copyFooter}
             assetUrls={assetUrls}
+            highlight={highlight}
           />
         )}
       </div>

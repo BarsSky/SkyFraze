@@ -1813,4 +1813,8 @@ export const ru = {
   'sel.quickSaved': 'Фрагмент сохранён.',
   'sel.quickOpenEditors': 'Открыть в редакторах',
   'sel.quickCancel': 'Отмена',
-  'sel.quickClose': 'Закрыть',} as const
+  'sel.quickClose': 'Закрыть',
+  'sel.showMissing': 'Фрагмент «{quote}» в этом кадре не нашёлся — возможно, текст уже изменили.',
+  'ee.showInProject': 'Показать в проекте',
+  'ee.showInProjectTitle': 'Открыть показ проекта на этом кадре и подсветить выделенный кусок',
+} as const

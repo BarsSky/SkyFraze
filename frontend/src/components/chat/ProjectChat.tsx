@@ -45,8 +45,13 @@ interface Props {
   projectId: string
   /** Открыта ли вкладка чата: пока закрыта — только опрос ради маркера «есть новое». */
   visible: boolean
-  /** Открыть кадр в редакторах (ссылка из сообщения). */
-  onOpenFrame?: (frameId: string) => void
+  /**
+   * Открыть кадр по ссылке из сообщения (0.95.0; фраза — 0.133.0).
+   *
+   * Второй аргумент — цитата: получатель должен увидеть то самое место в показе проекта, а не
+   * искать его глазами в кадре.
+   */
+  onOpenFrame?: (frameId: string, quote?: string) => void
   /** Сколько пришло, пока вкладка была закрыта. */
   onUnread?: (count: number) => void
   /**
@@ -465,7 +470,7 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread, prefill
               <button
                 type="button"
                 className="chat__link"
-                onClick={() => onOpenFrame?.(message.event_id as string)}
+                onClick={() => onOpenFrame?.(message.event_id as string, message.quote)}
                 title={
                   message.quote ? t('chat.toFrameTitle', { quote: message.quote }) : t('chat.toFrame')
                 }

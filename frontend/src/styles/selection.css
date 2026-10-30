@@ -108,3 +108,37 @@
 .sf-copy__body-wrap {
   cursor: text;
 }
+
+/* Подсветка фразы, к которой пришли из чата или из редакторов (0.133.0).
+ *
+ * Основной путь — CSS Custom Highlight API: он красит диапазон, не трогая DOM, поэтому разметку
+ * кадра по-прежнему держит React. Запасной путь — обёртка в <mark>: она нужна браузерам без API (и
+ * это тот путь, что работает в jsdom, то есть покрыт тестами).
+ *
+ * Цвет — свой, а не `mark` по умолчанию: жёлтый фон на тёмной теме выглядит как ошибка, а на
+ * светлой кремово-мятной — как чужой бренд. Акцент темы + подчёркивание читаются спокойнее. */
+::highlight(sf-quote) {
+  background-color: color-mix(in srgb, var(--sf-accent, #7dd3c0) 42%, transparent);
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--sf-accent, #7dd3c0) 70%, currentColor);
+}
+
+.sf-quote-mark {
+  background-color: color-mix(in srgb, var(--sf-accent, #7dd3c0) 42%, transparent);
+  color: inherit;
+  border-radius: 3px;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--sf-accent, #7dd3c0) 70%, currentColor);
+}
+
+/* «Фрагмента в кадре уже нет» — плашка рядом с текстом, а не молчание. */
+.sf-copy__quote-note {
+  margin: 12px 0 0;
+  padding: 8px 12px;
+  border-radius: 10px;
+  font-size: 0.82rem;
+  color: var(--fg);
+  background: var(--chip-bg, rgba(255, 255, 255, 0.06));
+  border: 1px solid var(--surface-line, var(--border));
+}

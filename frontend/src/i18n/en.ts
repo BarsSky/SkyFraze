@@ -1798,4 +1798,8 @@ export const en: Record<Key, string> = {
   'sel.quickSaved': 'The fragment is saved.',
   'sel.quickOpenEditors': 'Open in the editors',
   'sel.quickCancel': 'Cancel',
-  'sel.quickClose': 'Close',}
+  'sel.quickClose': 'Close',
+  'sel.showMissing': 'The fragment "{quote}" was not found in this frame — the text may have changed.',
+  'ee.showInProject': 'Show in the project',
+  'ee.showInProjectTitle': 'Open the project show on this frame and highlight the selected piece',
+}

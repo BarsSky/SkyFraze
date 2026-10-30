@@ -104,4 +104,59 @@ describe('CopyPanel', () => {
     expect(body.getAttribute('data-frame-body')).toBe(frame.id)
     expect(body.getAttribute('data-frame-source')).toContain('Текст кадра.')
   })
+
+  /**
+   * 0.133.0: «показать в проекте» — кадр открылся, и фраза подсвечена.
+   *
+   * В jsdom нет CSS Custom Highlight API, поэтому здесь работает запасной путь (<mark>) — тот же,
+   * что достанется браузерам без API.
+   */
+  it('подсвечивает фразу, к которой пришли из чата', () => {
+    const { chapter, frame } = firstFrame()
+    const { container } = render(
+      <CopyPanel
+        chapter={chapter}
+        frame={frame}
+        onJumpFrame={() => {}}
+        onPrev={() => {}}
+        highlight={{ frameId: frame.id, quote: 'Текст кадра', nonce: 1 }}
+      />,
+    )
+    const mark = container.querySelector('[data-quote-mark]')
+    expect(mark).not.toBeNull()
+    expect(mark!.textContent).toBe('Текст кадра')
+    expect(container.querySelector('[data-quote-missing]')).toBeNull()
+  })
+
+  it('если фразы в кадре уже нет — говорит об этом, а не подсвечивает первое похожее', () => {
+    const { chapter, frame } = firstFrame()
+    const { container } = render(
+      <CopyPanel
+        chapter={chapter}
+        frame={frame}
+        onJumpFrame={() => {}}
+        onPrev={() => {}}
+        highlight={{ frameId: frame.id, quote: 'Совсем другой текст', nonce: 2 }}
+      />,
+    )
+    expect(container.querySelector('[data-quote-mark]')).toBeNull()
+    expect(container.querySelector('[data-quote-missing]')!.textContent).toContain(
+      'Совсем другой текст',
+    )
+  })
+
+  it('подсветка чужого кадра не применяется', () => {
+    const { chapter, frame } = firstFrame()
+    const { container } = render(
+      <CopyPanel
+        chapter={chapter}
+        frame={frame}
+        onJumpFrame={() => {}}
+        onPrev={() => {}}
+        highlight={{ frameId: 'other', quote: 'Текст кадра', nonce: 3 }}
+      />,
+    )
+    expect(container.querySelector('[data-quote-mark]')).toBeNull()
+    expect(container.querySelector('[data-quote-missing]')).toBeNull()
+  })
 })
