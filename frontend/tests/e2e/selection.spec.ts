@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test'
-import { signIn, gateAssistant, openProjectTab } from './support'
+import { apiHeaders, gateAssistant, openProjectTab, signIn } from './support'
 
 /**
  * Выделение фрагмента в показе проекта (0.132.0) — целиком через браузер.
@@ -109,6 +109,10 @@ test('выделил фрагмент: чат проекта, помощник, 
 }) => {
   test.skip(!(await signIn(page)), 'учётной записи e2e нет и регистрация закрыта')
   await projectWithChapter(page)
+  // Проект и токен: шаг 6 ждёт, пока СЕРВЕР увидит правку из шага 3 (он сверяет цитату со своей
+  // проекцией текста), поэтому проверка идёт запросом, а не ожиданием «на глаз».
+  const projectId = page.url().split('/').pop() as string
+  const headers = await apiHeaders(page)
 
   // Стадия: глава показана в режиме «Проект».
   await openProjectTab(page, 'project')
@@ -209,6 +213,21 @@ test('выделил фрагмент: чат проекта, помощник, 
 
   // 6. «Строчка в проекте» у получателя ссылки из чата (0.133.0): выделили → отправили в чат →
   //    нажали ссылку на кадр → показ встал на кадр и подсветил ту же фразу.
+  //
+  //    Перед этим дожидаемся, что СЕРВЕР знает правку из шага 3: сервер сверяет цитату со своей
+  //    проекцией текста и отвергает фразу, которой у него ещё нет («такой фразы в тексте кадра
+  //    нет»). В CI это и случилось: правка доехала до браузера, но не до проекции, и сообщение со
+  //    ссылкой просто не отправилось.
+  await expect
+    .poll(
+      async () => {
+        const response = await page.request.get(`/api/projects/${projectId}/events`, { headers })
+        return response.ok() ? await response.text() : ''
+      },
+      { timeout: 45_000, message: 'правка из быстрого окна должна доехать до проекции на сервере' },
+    )
+    .toContain(edited)
+
   await openProjectTab(page, 'project')
   const linked = await selectWord(page)
   await page.locator('[data-selection-chat]').click()
