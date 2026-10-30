@@ -487,6 +487,26 @@ export function useCollab(projectId: string): CollabHandle | null {
      */
     const CONTENT_TIMEOUT_MS = 20_000
 
+    /**
+     * Прочитать содержимое с одной повторной попыткой (0.140.2).
+     *
+     * Зависание одного запроса (dev-сервер, прокси, мобильная сеть) — обычно мгновенное: кнопка
+     * «добавить главу» не появлялась 60 секунд в e2e у РАЗНЫХ сценариев (`assets`, `docx-markers`),
+     * хотя повторный прогон проходил. Один повтор через полсекунды превращает такой сбой из
+     * «страница пустая» в «страница загрузилась на секунду позже», а человеку — в честную
+     * загрузку вместо пустого экрана.
+     */
+    const readWithRetry = async <T>(read: () => Promise<T>): Promise<T> => {
+      try {
+        return await read()
+      } catch (first) {
+        await new Promise((resolve) => setTimeout(resolve, 500))
+        if (!active) throw first
+        console.log('[yprovider] content read retry:', String(first))
+        return await read()
+      }
+    }
+
     const loadContent = async (): Promise<void> => {
       // Запас с прошлого закрытия вкладки: сначала серверный снапшот, затем
       // отложенный апдейт. Порядок обязателен — слияние идёт поверх серверного
@@ -497,7 +517,9 @@ export function useCollab(projectId: string): CollabHandle | null {
       let serverState: Uint8Array<ArrayBufferLike> = new Uint8Array(0)
       let snapshotFailed = false
       try {
-        const snap = await getEventState(projectId, AbortSignal.timeout(CONTENT_TIMEOUT_MS))
+        const snap = await readWithRetry(() =>
+          getEventState(projectId, AbortSignal.timeout(CONTENT_TIMEOUT_MS)),
+        )
         if (!active) return
         revision = snap.revision
         serverState = snap.state
@@ -522,7 +544,9 @@ export function useCollab(projectId: string): CollabHandle | null {
       // Не путать с «пользователь всё удалил»: там пусто и в базе.
       if (events.length === 0 && active) {
         try {
-          const rows = await listEventRows(projectId, AbortSignal.timeout(CONTENT_TIMEOUT_MS))
+          const rows = await readWithRetry(() =>
+            listEventRows(projectId, AbortSignal.timeout(CONTENT_TIMEOUT_MS)),
+          )
           if (rows.length > 0 && events.length === 0 && active) {
             doc.transact(() => {
               for (const row of rows) {

@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { signIn, openEditorsTab, gateAssistant } from './support'
+import { apiHeaders, signIn, openEditorsTab, gateAssistant } from './support'
 
 /**
  * Правка ФРАГМЕНТА по замечанию — целиком через браузер (0.104.0).
@@ -157,6 +157,32 @@ test('человек правил фрагмент — предложение н
 
   const body = page.locator('.ed-form textarea').first()
   await expect(body).toHaveValue(edited, { timeout: 45_000 })
+
+  /**
+   * Сверка «фрагмент не изменился» идёт по документу КОМНАТЫ, а не по проекции (0.139.0), поэтому
+   * перед «Применить» убеждаемся, что правку видит сервер, а не только вкладки браузера.
+   *
+   * Раньше детерминированным признаком считалось «правку увидела первая вкладка» — но две
+   * вкладки одного браузера синхронизируются ещё и напрямую по `BroadcastChannel`, мимо сокета:
+   * первая вкладка могла показать правку, о которой сервер ещё не знал, сверка проходила, и
+   * предложение применялось. Именно так этот сценарий и упал в полном локальном прогоне
+   * (05.11, под нагрузкой): вместо «устарел» пришло «Текст изменён». Теперь ждём факт из
+   * серверного `GET /events` — он с 0.139.0 читается из того же документа комнаты, по которому
+   * сервер и сверяет.
+   */
+  const headers = await apiHeaders(page)
+  // Берём первую строку правки: переводы строк в JSON приходят как `\n`, и поиск подстроки
+  // с настоящим переводом не нашёл бы её никогда (на этом и сгорел первый вариант проверки).
+  const editedHead = edited.split('\n')[0].slice(0, 12)
+  await expect
+    .poll(
+      async () => {
+        const response = await page.request.get(`/api/projects/${projectId}/events`, { headers })
+        return (await response.text()).includes(editedHead)
+      },
+      { timeout: 30_000, intervals: [300, 700, 1500] },
+    )
+    .toBe(true)
 
   await proposals.getByRole('button', { name: 'Применить' }).click()
   // Отказ словами, а не тихое «применилось куда-то»: человек должен увидеть причину.

@@ -455,9 +455,25 @@ describe('ProjectChat', () => {
   })
 
   /**
-   * 0.125.0: подписи чата — из словаря, включая отметки («надо сделать» → «to do») и
-   * подсказки бота. Тексты сообщений и имена участников остаются данными.
+   * Неполная страница не прячет «показать прежние» насовсем (0.140.2).
+   *
+   * Пока приложение присылает сообщения пачкой (e2e — 101 подряд), каждая перезагрузка читает
+   * ленту в свой момент: ранняя видит 3 сообщения и раньше снимала признак «есть ещё» — кнопка
+   * исчезала, хотя история уже была. Снять признак вправе только `loadOlder` (ответ, который
+   * точно видел конец истории).
    */
+  it('ранняя неполная страница не снимает «показать прежние» (0.140.2)', async () => {
+    listChat.mockResolvedValueOnce({ messages: page(100, 'm'), bot: { name: 'Нестор', available: false } })
+    listEventRows.mockResolvedValue([])
+    render(<ProjectChat {...base} />)
+    expect(await screen.findByText('показать прежние')).toBeTruthy()
+
+    // Перезагрузка по сигналу из сокета, прочитавшая неполную страницу (сообщений пока 3).
+    listChat.mockResolvedValueOnce({ messages: page(3, 'm'), bot: { name: 'Нестор', available: false } })
+    notifyChatChanged('p1')
+    await waitFor(() => expect(screen.getAllByText('Как вам новая глава?').length).toBe(3))
+    expect(screen.getByText('показать прежние')).toBeTruthy()
+  })
   it('на английском подписи чата переведены', async () => {
     setLang('en')
     render(<ProjectChat {...base} />)

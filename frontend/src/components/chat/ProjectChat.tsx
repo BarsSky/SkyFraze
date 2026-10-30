@@ -202,8 +202,14 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread, prefill
         setMessages(page.messages)
         lastIdRef.current =
           page.messages.length > 0 ? page.messages[page.messages.length - 1].id : ''
-        // Столько же, сколько страница: если пришло меньше — показана вся история.
-        setHasOlder(page.messages.length >= PAGE_SIZE)
+        // Признак «есть прежние» этот ответ может поставить, но не снять (0.140.2).
+        //
+        // Снять его вправе только `loadOlder` — то есть ответ, который ТОЧНО видел конец
+        // истории. Иначе кнопка пропадала насовсем: пока приложение присылает сообщения пачкой,
+        // любая перезагрузка, прочитавшая неполную страницу (сообщений ещё меньше сотни),
+        // выключала «показать прежние», и вернуть её было некому. Именно так `chat.spec` и
+        // падал — 101 сообщение в ленте, а кнопки нет.
+        setHasOlder((current) => page.messages.length >= PAGE_SIZE || current === true)
       } else if (page.messages.length > 0) {
         setMessages((current) => {
           const seen = new Set(current.map((item) => item.id))
@@ -662,6 +668,7 @@ async function explain(error: unknown): Promise<string> {
   // кода состояния; ky кладёт тело в response, поэтому читаем его через общий помощник.
   return (await serverErrorMessage(error)) ?? message ?? tStatic('chat.errSend')
 }
+
 
 
 
