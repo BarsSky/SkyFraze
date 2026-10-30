@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { tStatic, useT, type Key } from '../../i18n'
+import { useLang } from '../../store/lang'
 import {
   editChat,
   listChat,
@@ -49,10 +51,10 @@ function seenKey(projectId: string): string {
  * Короткая подпись на плашке («сделать») и полная в подсказке и для скринридера («надо сделать»):
  * в строке сообщения три длинных подписи не помещаются, но человек должен понимать, что нажимает.
  */
-const REACTIONS: Array<{ kind: ChatReactionKind; label: string; full: string }> = [
-  { kind: 'agree', label: 'согласен', full: 'согласен' },
-  { kind: 'todo', label: 'сделать', full: 'надо сделать' },
-  { kind: 'question', label: 'вопрос', full: 'вопрос' },
+const REACTIONS: Array<{ kind: ChatReactionKind; labelKey: Key; fullKey: Key }> = [
+  { kind: 'agree', labelKey: 'chat.reactionAgree', fullKey: 'chat.reactionAgree' },
+  { kind: 'todo', labelKey: 'chat.reactionTodo', fullKey: 'chat.reactionTodoFull' },
+  { kind: 'question', labelKey: 'chat.reactionQuestion', fullKey: 'chat.reactionQuestion' },
 ]
 
 /**
@@ -87,8 +89,10 @@ function timeOf(iso: string): string {
 }
 
 export function ProjectChat({ projectId, visible, onOpenFrame, onUnread }: Props) {
+  const t = useT()
+  const [lang] = useLang()
   const [messages, setMessages] = useState<ChatMessage[]>([])
-  const [bot, setBot] = useState<ChatBotInfo>({ name: 'Нестор', available: false })
+  const [bot, setBot] = useState<ChatBotInfo>({ name: t('chat.botName'), available: false })
   const [text, setText] = useState('')
   const [askBot, setAskBot] = useState(false)
   const [linkId, setLinkId] = useState('')
@@ -157,7 +161,7 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread }: Props
       }
       setError(null)
     } catch {
-      setError('Чат не загрузился — проверьте доступ к проекту.')
+      setError(tStatic('chat.errLoad'))
     }
   }, [projectId])
 
@@ -188,7 +192,7 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread }: Props
       setHasOlder(page.messages.length >= PAGE_SIZE)
       setError(null)
     } catch {
-      setError('Прежние сообщения не загрузились.')
+      setError(tStatic('chat.errOlder'))
     } finally {
       setLoadingOlder(false)
     }
@@ -215,7 +219,8 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread }: Props
     let alive = true
     listEventRows(projectId)
       .then((rows) => {
-        if (alive) setFrames(rows.map((row) => ({ id: row.id, title: row.title || 'без названия' })))
+        if (alive)
+      setFrames(rows.map((row) => ({ id: row.id, title: row.title || tStatic('chat.untitledFrame') })))
       })
       .catch(() => {
         if (alive) setFrames([])
@@ -340,8 +345,8 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread }: Props
   return (
     <div className="chat" data-project-chat>
       <div className="chat__head">
-        <strong>Чат проекта</strong>
-        <span className="muted chat__hint">видят все участники</span>
+        <strong>{t('chat.title')}</strong>
+        <span className="muted chat__hint">{t('chat.hint')}</span>
       </div>
 
       <ul className="chat__list" ref={listRef} data-chat-list>
@@ -356,13 +361,13 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread }: Props
               disabled={loadingOlder}
               data-chat-older
             >
-              {loadingOlder ? 'загружаю прежние…' : 'показать прежние'}
+              {loadingOlder ? t('chat.loadingOlder') : t('chat.showOlder')}
             </button>
           </li>
         )}
         {messages.length === 0 && (
           <li className="chat__empty muted">
-            Пока тихо. Напишите первым или позовите {bot.name} на разбор.
+            {t('chat.silent', { bot: bot.name })}
           </li>
         )}
         {messages.map((message) => {
@@ -384,10 +389,10 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread }: Props
               {message.edited_at !== undefined && (
                 <span
                   className="muted chat__edited"
-                  title={`Изменено в ${timeOf(message.edited_at)}`}
+                  title={t('chat.editedTitle', { time: timeOf(message.edited_at) })}
                   data-chat-edited
                 >
-                  изменено
+                  {t('chat.edited')}
                 </span>
               )}
             </div>
@@ -395,7 +400,7 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread }: Props
               <p className="chat__quote-line" data-chat-reply={message.reply_to}>
                 {quoted
                   ? `→ ${quoted.author_name}: ${quoted.body.slice(0, 80)}${quoted.body.length > 80 ? '…' : ''}`
-                  : '→ сообщение, на которое отвечали, удалено'}
+                  : t('chat.replyDeleted')}
               </p>
             )}
             {isEditing ? (
@@ -403,12 +408,12 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread }: Props
                 <textarea
                   value={editing.text}
                   rows={2}
-                  aria-label={`Изменить сообщение ${message.author_name}`}
+                  aria-label={t('chat.editAria', { author: message.author_name })}
                   onChange={(event) => setEditing({ id: message.id, text: event.target.value })}
                 />
                 <div className="chat__actions">
                   <button type="button" className="secondary" onClick={() => setEditing(null)}>
-                    отмена
+                    {t('chat.cancel')}
                   </button>
                   <button
                     type="button"
@@ -416,7 +421,7 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread }: Props
                     onClick={() => void saveEdit(message.id)}
                     data-chat-edit-save
                   >
-                    сохранить
+                    {t('chat.save')}
                   </button>
                 </div>
               </div>
@@ -428,10 +433,16 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread }: Props
                 type="button"
                 className="chat__link"
                 onClick={() => onOpenFrame?.(message.event_id as string)}
-                title={message.quote ? `Открыть кадр: «${message.quote}»` : 'Открыть кадр'}
+                title={
+                  message.quote ? t('chat.toFrameTitle', { quote: message.quote }) : t('chat.toFrame')
+                }
                 data-chat-link={message.event_id}
               >
-                к кадру{message.quote ? `: «${message.quote}»` : ` «${titles.get(message.event_id) ?? 'кадр удалён'}»`}
+                {message.quote
+                  ? t('chat.toFrameQuote', { quote: message.quote })
+                  : t('chat.toFrameNamed', {
+                      title: titles.get(message.event_id) ?? t('chat.frameDeleted'),
+                    })}
               </button>
             )}
             {/* Отметки (0.98.0): три рабочие, как у реакций на замечания. Показываем все три всегда —
@@ -449,18 +460,18 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread }: Props
                       className={active ? 'chat__reaction is-on' : 'chat__reaction'}
                       aria-pressed={active}
                       aria-label={
-                        count > 0 ? `${reaction.full}: ${count}` : reaction.full
+                        count > 0 ? `${t(reaction.fullKey)}: ${count}` : t(reaction.fullKey)
                       }
                       title={
                         active
-                          ? `Снять отметку «${reaction.full}»`
-                          : `Отметить «${reaction.full}»`
+                          ? t('chat.markOff', { label: t(reaction.fullKey) })
+                           : t('chat.markOn', { label: t(reaction.fullKey) })
                       }
                       disabled={busyThis}
                       onClick={() => void toggleReaction(message.id, reaction.kind)}
                       data-chat-reaction={`${message.id}:${reaction.kind}`}
                     >
-                      {reaction.label}
+                      {t(reaction.labelKey)}
                       {count > 0 && <span className="chat__reaction-count">{count}</span>}
                     </button>
                   )
@@ -472,12 +483,12 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread }: Props
                 <button
                   type="button"
                   className="chat__mini"
-                  aria-label="ответить"
-                  title={`Ответить ${message.author_name}`}
+                  aria-label={t('chat.replyAria')}
+                  title={t('chat.replyTitle', { author: message.author_name })}
                   onClick={() => setReplyTo(message)}
                   data-chat-reply-button={message.id}
                 >
-                  <span aria-hidden="true">↩</span> ответить
+                  <span aria-hidden="true">↩</span> {t('chat.reply')}
                 </button>
                 {mine && message.kind === 'user' && (
                   <button
@@ -485,12 +496,12 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread }: Props
                     className="chat__mini"
                     // Не «удалить», а «изменить» (0.97.1): правка своего — то, что нужно в
                     // обсуждении, а удаление ломало бы цитаты ответов и смысл разговора.
-                    aria-label="изменить"
-                    title="Исправить текст своего сообщения — с отметкой «изменено»"
+                    aria-label={t('chat.editAriaShort')}
+                    title={t('chat.editTitle')}
                     onClick={() => setEditing({ id: message.id, text: message.body })}
                     data-chat-edit={message.id}
                   >
-                    <span aria-hidden="true">✎</span> изменить
+                    <span aria-hidden="true">✎</span> {t('chat.edit')}
                   </button>
                 )}
               </div>
@@ -507,11 +518,11 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread }: Props
         {replyTo !== null && (
           <div className="chat__reply-chip" data-chat-reply-chip>
             <span>
-              ответ {replyTo.author_name}: {replyTo.body.slice(0, 60)}
+              {t('chat.replyTo', { author: replyTo.author_name, body: replyTo.body.slice(0, 60) })}
               {replyTo.body.length > 60 ? '…' : ''}
             </span>
             <button type="button" className="secondary" onClick={() => setReplyTo(null)}>
-              отменить
+              {t('chat.replyCancel')}
             </button>
           </div>
         )}
@@ -519,8 +530,10 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread }: Props
           className="chat__input"
           value={text}
           rows={2}
-          placeholder={`Сообщение участникам… ${bot.available ? '@' + bot.name + ' в тексте — позвать бота.' : ''}`}
-          aria-label="Сообщение в чат проекта"
+          placeholder={t('chat.placeholder', {
+            bot: bot.available ? t('chat.placeholderBot', { name: bot.name }) : '',
+            })}
+          aria-label={t('chat.aria')}
           onChange={(event) => setText(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
@@ -532,14 +545,14 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread }: Props
 
         <div className="chat__attach">
           <label>
-            <span className="muted">кадр</span>
+            <span className="muted">{t('chat.frame')}</span>
             <select
               value={linkId}
-              aria-label="Приложить кадр"
+              aria-label={t('chat.attachFrameAria')}
               onChange={(event) => setLinkId(event.target.value)}
               data-chat-frame
             >
-              <option value="">без ссылки</option>
+              <option value="">{t('chat.noLink')}</option>
               {(frames ?? []).map((frame) => (
                 <option key={frame.id} value={frame.id}>{frame.title}</option>
               ))}
@@ -547,11 +560,11 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread }: Props
           </label>
           {linkId !== '' && (
             <label className="chat__quote">
-              <span className="muted">фраза</span>
+              <span className="muted">{t('chat.phrase')}</span>
               <input
                 value={quote}
-                placeholder="точная фраза из кадра (необязательно)"
-                aria-label="Фраза из кадра"
+                placeholder={t('chat.phrasePlaceholder')}
+                aria-label={t('chat.phraseAria')}
                 onChange={(event) => setQuote(event.target.value)}
               />
             </label>
@@ -564,15 +577,15 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread }: Props
               type="button"
               className={askBot ? undefined : 'secondary'}
               aria-pressed={askBot}
-              title={`${bot.name} ответит в чате — разбор, а не правка: проект он не меняет`}
+              title={t('chat.askBotTitle', { name: bot.name })}
               onClick={() => setAskBot((value) => !value)}
               data-chat-ask-bot
             >
-              {askBot ? `${bot.name} ответит` : 'спросить бота'}
+              {askBot ? t('chat.botWillAnswer', { name: bot.name }) : t('chat.askBot')}
             </button>
           )}
           <button type="button" onClick={() => void send()} disabled={busy || text.trim() === ''} data-chat-send>
-            {busy ? 'Отправляю…' : 'Отправить'}
+            {busy ? t('chat.sending') : t('chat.send')}
           </button>
         </div>
       </div>
@@ -584,5 +597,5 @@ async function explain(error: unknown): Promise<string> {
   const message = error instanceof Error ? error.message : String(error)
   // Сервер объясняет отказы своими словами («такой фразы в тексте кадра нет»), и это полезнее
   // кода состояния; ky кладёт тело в response, поэтому читаем его через общий помощник.
-  return (await serverErrorMessage(error)) ?? message ?? 'Не удалось отправить сообщение.'
+  return (await serverErrorMessage(error)) ?? message ?? tStatic('chat.errSend')
 }

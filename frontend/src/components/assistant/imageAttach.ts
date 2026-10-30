@@ -14,6 +14,9 @@
  *     выглядело бы как «интерфейс разрешил, а сервер отказал».
  */
 
+import { tStatic, translate } from '../../i18n'
+import type { Lang } from '../../store/lang'
+
 /** Сколько картинок можно приложить к одному вопросу (совпадает с серверным). */
 export const MAX_IMAGES = 3
 
@@ -31,16 +34,27 @@ export const ALLOWED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'im
  *
  * `currentCount` — сколько картинок уже приложено: предел общий на вопрос, а не на файл.
  */
-export function imageFileError(file: File, currentCount: number): string | null {
+export function imageFileError(
+  file: File,
+  currentCount: number,
+  lang: Lang = 'ru',
+): string | null {
   if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
-    return `«${file.name}»: формат ${file.type || 'неизвестен'} не поддерживается (можно png, jpeg, webp, gif)`
+    return translate(lang, 'imga.badFormat', {
+      name: file.name,
+      type: file.type || translate(lang, 'imga.unknownType'),
+    })
   }
   if (file.size > MAX_IMAGE_BYTES) {
     const mb = (file.size / (1024 * 1024)).toFixed(1)
-    return `«${file.name}»: ${mb} МБ — больше предела (${MAX_IMAGE_BYTES / (1024 * 1024)} МБ)`
+    return translate(lang, 'imga.tooBig', {
+      name: file.name,
+      size: mb,
+      limit: MAX_IMAGE_BYTES / (1024 * 1024),
+    })
   }
   if (currentCount >= MAX_IMAGES) {
-    return `К одному вопросу можно приложить не больше ${MAX_IMAGES} картинок`
+    return translate(lang, 'imga.tooMany', { limit: MAX_IMAGES })
   }
   return null
 }
@@ -49,11 +63,11 @@ export function imageFileError(file: File, currentCount: number): string | null 
 export function readImageFile(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
-    reader.onerror = () => reject(new Error('не удалось прочитать файл'))
+    reader.onerror = () => reject(new Error(tStatic('imga.readFailed')))
     reader.onload = () => {
       const result = typeof reader.result === 'string' ? reader.result : ''
       if (!result.startsWith('data:')) {
-        reject(new Error('файл прочитался не как картинка'))
+        reject(new Error(tStatic('imga.notImage')))
         return
       }
       resolve(result)

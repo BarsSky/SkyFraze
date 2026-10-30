@@ -35,6 +35,8 @@ import { MarkdownBlock } from '../MarkdownBlock'
 import { EntityProposals } from '../entities/EntityProposals'
 import { MAX_IMAGES, imageFileError, readImageFile } from './imageAttach'
 import { promptHints } from './promptHints'
+import { tStatic, useT } from '../../i18n'
+import { useLang } from '../../store/lang'
 
 /**
  * Содержимое плавающего окна помощника: переписка и настройка (два вида в одном окне).
@@ -93,7 +95,9 @@ export function AssistantPanel({
   projectIsEmpty = true,
 }: Props) {
   const [view, setView] = useState<View>('chat')
-  const [config, setConfig] = useState<AIConfig | null>(null)
+  const t = useT()
+    const [lang] = useLang()
+    const [config, setConfig] = useState<AIConfig | null>(null)
   const [configError, setConfigError] = useState<string | null>(null)
   const [providerId, setProviderId] = useState('')
   const [models, setModels] = useState<AIModel[]>([])
@@ -212,7 +216,8 @@ export function AssistantPanel({
         if (loaded.defaultModel) setModelRef(loaded.defaultModel)
       })
       .catch(async (e) => {
-        if (alive) setConfigError((await serverErrorMessage(e)) ?? 'Не удалось получить настройки помощника.')
+        if (alive)
+          setConfigError((await serverErrorMessage(e)) ?? tStatic('as.errConfig'))
       })
     // Роль и поведение агента — свойство проекта: грузим вместе с настройкой.
     getAISettings(projectId)
@@ -286,7 +291,7 @@ export function AssistantPanel({
         if (!alive) return
         setModels(list)
         if (list.length === 0) {
-          setModelsNote('У этого провайдера нет доступных моделей — проверьте ключ.')
+          setModelsNote(t('as.modelsEmpty'))
           return
         }
         setModelRef((current) => {
@@ -298,7 +303,7 @@ export function AssistantPanel({
       .catch(async (e) => {
         if (!alive) return
         setModels([])
-        setModelsNote((await serverErrorMessage(e)) ?? 'Не удалось получить список моделей.')
+        setModelsNote((await serverErrorMessage(e)) ?? t('as.errModels'))
       })
     return () => {
       alive = false
@@ -361,18 +366,18 @@ export function AssistantPanel({
    */
   const checkModels = useCallback(async () => {
     if (!providerId) return
-    setModelsNote('Проверяю…')
+    setModelsNote(t('as.checking'))
     try {
       const list = await listAIModels(providerId)
       setModels(list)
       setModelsNote(
         list.length === 0
-          ? 'Сервер ответил, но моделей нет: проверьте, что модель скачана или загружена на сервере.'
-          : `Связь есть, моделей: ${list.length}.`,
+          ? t('as.checkNoModels')
+            : t('as.checkOk', { count: list.length }),
       )
     } catch (e) {
       setModels([])
-      setModelsNote((await serverErrorMessage(e)) ?? 'Модель не ответила: проверьте адрес и ключ.')
+      setModelsNote((await serverErrorMessage(e)) ?? t('as.errModelNoAnswer'))
     }
   }, [providerId])
 
@@ -383,7 +388,7 @@ export function AssistantPanel({
       setConsentNeeded(false)
       await refreshConfig()
     } catch (e) {
-      setSendError((await serverErrorMessage(e)) ?? 'Не удалось сохранить согласие.')
+      setSendError((await serverErrorMessage(e)) ?? t('as.errConsentSave'))
     }
   }, [providerId, refreshConfig])
 
@@ -392,14 +397,14 @@ export function AssistantPanel({
       await deleteAIConsent(providerId)
       await refreshConfig()
     } catch (e) {
-      setKeyNote((await serverErrorMessage(e)) ?? 'Не удалось отозвать согласие.')
+      setKeyNote((await serverErrorMessage(e)) ?? t('as.errConsentRevoke'))
     }
   }, [providerId, refreshConfig])
 
   const saveKey = useCallback(async () => {
     const value = keyDraft.trim()
     if (!value) {
-      setKeyNote('Вставьте ключ провайдера.')
+      setKeyNote(t('as.keyEmpty'))
       return
     }
     setKeyBusy(true)
@@ -407,13 +412,13 @@ export function AssistantPanel({
     try {
       await saveAIKey(providerId, value)
       setKeyDraft('')
-      setKeyNote('Ключ сохранён: он хранится на сервере зашифрованным и в браузер не возвращается.')
+      setKeyNote(t('as.keySaved'))
       await refreshConfig()
       // Модели перечитываем сразу: до сохранения ключа провайдер отвечал 428, и
       // человек видел пустой список — после сохранения он должен ожить без перезагрузки.
       setModels(await listAIModels(providerId))
     } catch (e) {
-      setKeyNote((await serverErrorMessage(e)) ?? 'Не удалось сохранить ключ.')
+      setKeyNote((await serverErrorMessage(e)) ?? t('as.errKeySave'))
     } finally {
       setKeyBusy(false)
     }
@@ -424,11 +429,11 @@ export function AssistantPanel({
     setKeyNote(null)
     try {
       await deleteAIKey(providerId)
-      setKeyNote('Ключ удалён.')
+      setKeyNote(t('as.keyRemoved'))
       await refreshConfig()
       setModels([])
     } catch (e) {
-      setKeyNote((await serverErrorMessage(e)) ?? 'Не удалось удалить ключ.')
+      setKeyNote((await serverErrorMessage(e)) ?? t('as.errKeyRemove'))
     } finally {
       setKeyBusy(false)
     }
@@ -444,11 +449,11 @@ export function AssistantPanel({
     const title = endpointDraft.title.trim()
     const url = endpointDraft.url.trim()
     if (title === '') {
-      setEndpointNote('Назовите сервер — так его будет видно в списке моделей.')
+      setEndpointNote(t('as.serverTitleEmpty'))
       return
     }
     if (url === '') {
-      setEndpointNote('Укажите адрес, например http://192.168.1.10:8080/v1')
+      setEndpointNote(t('as.serverUrlExample'))
       return
     }
     setEndpointBusy(true)
@@ -473,18 +478,14 @@ export function AssistantPanel({
       if (added === null) {
         // Запись, скорее всего, создана — не разобрали только ответ. Не выдаём это за
         // ошибку добавления: человеку нужно перечитать список, а не добавлять заново.
-        setEndpointNote('Сервер добавлен, но ответ сервера не разобран — обновите окно.')
+        setEndpointNote(t('as.serverUnparsed'))
       } else if (added.hasKey) {
-        setEndpointNote(
-          `Сервер «${added.title}» добавлен. Ключ хранится на сервере зашифрованным.`,
-        )
+        setEndpointNote(t('as.serverAddedKeyed', { title: added.title }))
       } else {
-        setEndpointNote(
-          `Сервер «${added.title}» добавлен: он появился в списке провайдеров выше.`,
-        )
+        setEndpointNote(t('as.serverAdded', { title: added.title }))
       }
     } catch (e) {
-      setEndpointNote((await serverErrorMessage(e)) ?? 'Не удалось добавить сервер.')
+      setEndpointNote((await serverErrorMessage(e)) ?? t('as.errServerAdd'))
     } finally {
       setEndpointBusy(false)
     }
@@ -512,9 +513,9 @@ export function AssistantPanel({
             fresh.providers.find((p) => p.hasKey || p.local) ?? fresh.providers[0] ?? null
           setProviderId(first ? first.id : '')
         }
-        setEndpointNote(`Сервер «${endpoint.title}» удалён.`)
+        setEndpointNote(t('as.serverRemoved', { title: endpoint.title }))
       } catch (e) {
-        setEndpointNote((await serverErrorMessage(e)) ?? 'Не удалось удалить сервер.')
+        setEndpointNote((await serverErrorMessage(e)) ?? t('as.errServerRemove'))
       } finally {
         setEndpointBusy(false)
       }
@@ -541,13 +542,13 @@ export function AssistantPanel({
         setProposalNote(
           result.warning ||
             (proposal.kind === 'delete_event'
-              ? 'Кадр удалён.'
-              : 'Текст изменён — правка уже у всех, у кого проект открыт.'),
+              ? t('as.appliedDeleted')
+                : t('as.appliedEdited')),
         )
         // Дерево и лента на странице должны увидеть правку без перезагрузки.
         onProjectChanged()
       } catch (e) {
-        setProposalNote((await serverErrorMessage(e)) ?? 'Не удалось применить правку.')
+        setProposalNote((await serverErrorMessage(e)) ?? t('as.errApply'))
       } finally {
         setProposalBusy(null)
       }
@@ -566,12 +567,12 @@ export function AssistantPanel({
         setProposalNote(
           result.warning ||
             (proposal.kind === 'delete_event'
-              ? 'Кадр вернулся на прежнее место.'
-              : 'Вернул прежний текст.'),
+              ? t('as.revertedDelete')
+                : t('as.revertedText')),
         )
         onProjectChanged()
       } catch (e) {
-        setProposalNote((await serverErrorMessage(e)) ?? 'Не удалось вернуть прежний текст.')
+        setProposalNote((await serverErrorMessage(e)) ?? t('as.errRevert'))
       } finally {
         setProposalBusy(null)
       }
@@ -586,9 +587,9 @@ export function AssistantPanel({
       try {
         await discardAIProposal(projectId, proposal.id)
         setProposals((list) => list.filter((item) => item.id !== proposal.id))
-        setProposalNote('Предложение отклонено — проект не изменился.')
+        setProposalNote(t('as.discarded'))
       } catch (e) {
-        setProposalNote((await serverErrorMessage(e)) ?? 'Не удалось отклонить предложение.')
+        setProposalNote((await serverErrorMessage(e)) ?? t('as.errDiscard'))
       } finally {
         setProposalBusy(null)
       }
@@ -618,11 +619,11 @@ export function AssistantPanel({
       setAgent(saved)
       setAgentNote(
         saved.roleTitle
-          ? `Сохранено: роль «${saved.roleTitle}». Агент пишет с этими правилами.`
-          : 'Сохранено: роль не выбрана — агент работает как внимательный соавтор.',
+          ? t('as.roleSaved', { role: saved.roleTitle })
+            : t('as.roleSavedNone'),
       )
     } catch (e) {
-      setAgentNote((await serverErrorMessage(e)) ?? 'Не удалось сохранить роль агента.')
+      setAgentNote((await serverErrorMessage(e)) ?? t('as.errRoleSave'))
     } finally {
       setAgentBusy(false)
     }
@@ -641,11 +642,11 @@ export function AssistantPanel({
     const question = text.trim()
     if (!question || sending) return
     if (!modelRef) {
-      setSendError('Выберите модель: без неё помощник не знает, к кому обращаться.')
+      setSendError(t('as.errNoModel'))
       return
     }
     if (images.length > 0 && !modelSeesImages) {
-      setSendError('Выбранная модель не видит картинки: уберите их или выберите другую модель.')
+      setSendError(t('as.errNoVision'))
       return
     }
     setSending(true)
@@ -748,7 +749,7 @@ export function AssistantPanel({
         setSendError(
           message ??
             (await serverErrorMessage(e)) ??
-            'Помощник не ответил. Проверьте связь и модель.',
+            t('as.errNoAnswer'),
         )
         // Упёрлись в предел — перечитываем настройку: счётчик должен показать правду
         // (локальная цифра могла отстать), а кнопка — заблокироваться.
@@ -791,7 +792,7 @@ export function AssistantPanel({
       setAttachError(null)
       const next = [...images]
       for (const file of Array.from(files)) {
-        const problem = imageFileError(file, next.length)
+        const problem = imageFileError(file, next.length, lang)
         if (problem) {
           setAttachError(problem)
           continue
@@ -799,7 +800,7 @@ export function AssistantPanel({
         try {
           next.push(await readImageFile(file))
         } catch {
-          setAttachError(`«${file.name}»: не удалось прочитать файл`)
+          setAttachError(t('as.attachFailed', { name: file.name }))
         }
       }
       setImages(next)
@@ -826,7 +827,7 @@ export function AssistantPanel({
 
   const hasAnswer = messages.some((m) => m.role === 'assistant')
   /** Имя агента: зашито на сервере, в интерфейсе — как имя соавтора. */
-  const agentName = agent?.agentName || 'Агент'
+  const agentName = agent?.agentName || t('ai.agentName')
   /**
    * Исчерпан ли предел расхода за сутки.
    *
@@ -848,9 +849,9 @@ export function AssistantPanel({
       <header className="ai-head">
         <div className="ai-head__title">
           <span className="ai-head__name">{agentName}</span>
-          <span className="ai-head__model" title={modelRef || 'модель не выбрана'}>
-            {agent?.roleTitle ? `${agent.roleTitle} · ` : 'соавтор проекта · '}
-            {modelLabel || 'модель не выбрана'}
+          <span className="ai-head__model" title={modelRef || t('as.modelNotChosen')}>
+            {agent?.roleTitle ? `${agent.roleTitle} · ` : t('as.coauthorOfProject')}
+            {modelLabel || t('as.modelNotChosen')}
           </span>
         </div>
         <div className="ai-head__actions">
@@ -858,8 +859,8 @@ export function AssistantPanel({
             type="button"
             className="ai-icon"
             aria-pressed={view === 'settings'}
-            aria-label="Настройка помощника"
-            title="Провайдер, модель, ключ и согласие"
+            aria-label={t('as.settingsAria')}
+            title={t('as.settingsTitle')}
             data-assistant-settings
             onClick={() => setView((v) => (v === 'settings' ? 'chat' : 'settings'))}
           >
@@ -868,8 +869,8 @@ export function AssistantPanel({
           <button
             type="button"
             className="ai-icon"
-            aria-label="Закрыть помощника"
-            title="Закрыть (Esc)"
+            aria-label={t('as.closeAria')}
+            title={t('as.closeTitle')}
             data-assistant-close
             onClick={onClose}
           >
@@ -883,9 +884,9 @@ export function AssistantPanel({
       {config != null && !config.enabled && (
         <div className="ai-body">
           <p className="ai-note">
-            Помощник выключен на этом стенде. Включить его может администратор: текст проекта
-            уходит провайдеру модели, поэтому это осознанное решение, а не настройка по
-            умолчанию (<code>AI_ENABLED=true</code>).
+            {t('as.disabled1')}
+              <code>AI_ENABLED=true</code>
+              {t('as.disabled2')}
           </p>
         </div>
       )}
@@ -893,7 +894,7 @@ export function AssistantPanel({
       {config != null && config.enabled && view === 'settings' && (
         <div className="ai-body ai-body--settings" data-assistant-settings-view>
           <label className="ai-field">
-            <span>Провайдер</span>
+            <span>{t('as.provider')}</span>
             <select
               value={providerId}
               onChange={(e) => {
@@ -905,32 +906,38 @@ export function AssistantPanel({
                 <option key={p.id} value={p.id}>
                   {p.title}
                   {p.own
-                    ? ' — свой сервер'
-                    : p.keyless
-                      ? ' — без ключа'
+                    ? t('as.tagOwn')
+                      : p.keyless
+                      ? t('as.tagKeyless')
                       : p.local
-                        ? ' — локальная'
-                        : p.hasKey
-                          ? ''
-                          : ' — нужен ключ'}
+                      ? t('as.tagLocal')
+                      : p.hasKey
+                      ? ''
+                      : t('as.tagNeedsKey')}
                 </option>
               ))}
             </select>
           </label>
 
           <label className="ai-field">
-            <span>Модель</span>
+            <span>{t('as.model')}</span>
             <select
               value={modelRef}
               onChange={(e) => setModelRef(e.target.value)}
               disabled={models.length === 0}
             >
-              {models.length === 0 && <option value="">нет доступных моделей</option>}
+              {models.length === 0 && <option value="">{t('as.noModelsOption')}</option>}
               {models.map((m) => (
                 <option key={m.ref || m.id} value={m.ref || `${m.provider}:${m.id}`}>
                   {m.title}
-                  {m.cloud ? ' · облачная' : m.local ? ' · локальная' : m.free ? ' · бесплатная' : ''}
-                  {m.tools ? '' : ' · без инструментов'}
+                  {m.cloud
+                    ? t('as.tagCloud')
+                    : m.local
+                    ? t('as.tagLocalOption')
+                    : m.free
+                    ? t('as.tagFree')
+                    : ''}
+                    {m.tools ? '' : t('as.tagNoTools')}
                 </option>
               ))}
             </select>
@@ -938,25 +945,7 @@ export function AssistantPanel({
 
           {provider != null && (
             <p className={modelIsCloud ? 'ai-warn' : 'ai-note'}>
-              {modelIsCloud
-                ? 'Выбрана ОБЛАЧНАЯ модель: она считается на удалённом сервере (ollama.com), и текст проекта уходит туда. Локальные модели того же Ollama считаются на машине стенда — выберите «локальная».'
-                : provider.own
-                  ? provider.local
-                    ? `Свой сервер «${provider.title}»: считает на вашей машине (или в вашей сети), текст проекта никуда не уходит.${
-                        provider.keyless ? ' Ключ не нужен.' : ' Ключ задан вместе с адресом сервера.'
-                      }`
-                    : `Свой сервер «${provider.title}», но он не в вашей сети: текст проекта уходит наружу — помощник спросит согласие.${
-                        provider.keyless ? '' : ' Ключ задан вместе с адресом сервера.'
-                      }`
-                  : provider.local
-                    ? provider.keyless
-                      ? 'Свой сервер моделей: считает на вашей машине (или в вашей сети), ключ не нужен и текст проекта никуда не уходит.'
-                      : 'Локальная модель: текст проекта не покидает сервер стенда, ключ не нужен.'
-                    : provider.standKey
-                      ? 'Модели доступны по ключу стенда — свой ключ не обязателен.'
-                      : provider.keyRequired
-                        ? 'Для этого провайдера нужен ключ: добавьте свой — он хранится на сервере зашифрованным.'
-                      : provider.note}
+              {providerNote(provider, modelIsCloud)}
             </p>
           )}
 
@@ -969,18 +958,18 @@ export function AssistantPanel({
             <div className="ai-key">
               <input
                 type="password"
-                placeholder="ключ провайдера"
+                placeholder={t('as.keyPlaceholder')}
                 value={keyDraft}
                 onChange={(e) => setKeyDraft(e.target.value)}
                 disabled={!config.keysReady}
-                aria-label="Ключ провайдера"
+                aria-label={t('as.keyAria')}
               />
               <button onClick={saveKey} disabled={keyBusy || !config.keysReady}>
-                Сохранить
+                {t('as.save')}
               </button>
               {provider.hasKey && (
                 <button className="secondary" onClick={removeKey} disabled={keyBusy}>
-                  Удалить
+                  {t('as.delete')}
                 </button>
               )}
             </div>
@@ -989,15 +978,16 @@ export function AssistantPanel({
           {provider != null && provider.own && (
             <p className="ai-note" data-assistant-own-key>
               {provider.keyless
-                ? 'Ключ этому серверу не нужен. Если он начнёт его требовать — удалите сервер ниже и добавьте заново вместе с ключом.'
-                : 'Ключ этого сервера хранится вместе с адресом. Чтобы заменить — удалите сервер ниже и добавьте заново.'}
+                ? t('as.ownKeylessNote')
+                  : t('as.ownKeyNote')}
             </p>
           )}
 
           {!config.keysReady && (
             <p className="ai-note">
-              На стенде не настроено хранение своих ключей (<code>AI_SECRET_KEY</code>): можно
-              пользоваться локальной моделью или ключом стенда.
+              {t('as.keysNotReady1')}
+                <code>AI_SECRET_KEY</code>
+                {t('as.keysNotReady2')}
             </p>
           )}
           {keyNote != null && <p className="ai-note">{keyNote}</p>}
@@ -1013,9 +1003,7 @@ export function AssistantPanel({
                 }}
               />
               <span>
-                Отправлять текст проекта провайдеру «{provider.title}» (это чужая
-                инфраструктура: в запрос уходит оглавление проекта и те кадры, которые
-                помощник прочитает)
+                {t('as.consentCheck', { title: provider.title })}
               </span>
             </label>
           )}
@@ -1024,20 +1012,20 @@ export function AssistantPanel({
               админ: если у человека llama.cpp на своей машине, без этого блока ему
               подключиться нечем — поля для адреса нет больше нигде. */}
           <div className="ai-endpoints" data-assistant-endpoints>
-            <p className="ai-about__title">Свои серверы моделей</p>
+            <p className="ai-about__title">{t('as.ownServersTitle')}</p>
             <p className="ai-note">
-              Свой сервер (llama.cpp, vLLM, LM Studio, Ollama на вашей машине) добавляется
-              сюда и появляется в списке провайдеров выше. Адрес указывается{' '}
-              <strong>такой, каким его видит сервер стенда</strong>, а не ваш браузер:{' '}
-              <code>http://localhost:8080/v1</code> сработает, только если сервер моделей
-              запущен на самой машине стенда, иначе пишите адрес в сети.
+              {t('as.ownServersHint1')}{' '}
+                <strong>{t('as.ownServersHintStrong')}</strong>
+                {t('as.ownServersHint2')}{' '}
+                <code>http://localhost:8080/v1</code>
+                {t('as.ownServersHint3')}
             </p>
 
             {endpoints === null ? (
-              <p className="ai-note">Список своих серверов не загрузился — откройте окно заново.</p>
+              <p className="ai-note">{t('as.endpointsFailed')}</p>
             ) : endpoints.length === 0 ? (
               <p className="ai-note" data-assistant-endpoints-empty>
-                Своих серверов пока нет.
+                {t('as.endpointsEmpty')}
               </p>
             ) : (
               <ul className="ai-endpoints__list" data-assistant-endpoints-list>
@@ -1048,16 +1036,16 @@ export function AssistantPanel({
                       {endpoint.url}
                     </span>
                     <span className="ai-note">
-                      {endpoint.local ? 'в своей сети, согласие не нужно' : 'наружу, нужен ключ и согласие'}
-                      {endpoint.hasKey ? ' · ключ задан' : ' · без ключа'}
+                      {endpoint.local ? t('as.endpointLocal') : t('as.endpointExternal')}
+                        {endpoint.hasKey ? t('as.endpointHasKey') : t('as.endpointNoKey')}
                     </span>
                     <button
                       className="secondary"
                       onClick={() => void removeEndpoint(endpoint)}
                       disabled={endpointBusy}
-                      aria-label={`Удалить сервер ${endpoint.title}`}
+                      aria-label={t('as.endpointRemoveAria', { title: endpoint.title })}
                     >
-                      Удалить
+                      {t('as.delete')}
                     </button>
                   </li>
                 ))}
@@ -1065,34 +1053,34 @@ export function AssistantPanel({
             )}
 
             <label className="ai-field">
-              <span>Название</span>
+              <span>{t('as.endpointTitleLabel')}</span>
               <input
                 type="text"
                 value={endpointDraft.title}
-                aria-label="Название своего сервера"
-                placeholder="Например: моя машина, llama.cpp"
+                aria-label={t('as.endpointTitleAria')}
+                placeholder={t('as.endpointTitlePlaceholder')}
                 onChange={(e) => setEndpointDraft((d) => ({ ...d, title: e.target.value }))}
               />
             </label>
 
             <label className="ai-field">
-              <span>Адрес OpenAI-совместимого API</span>
+              <span>{t('as.endpointUrlLabel')}</span>
               <input
                 type="text"
                 value={endpointDraft.url}
-                aria-label="Адрес своего сервера"
+                aria-label={t('as.endpointUrlAria')}
                 placeholder="http://192.168.1.10:8080/v1"
                 onChange={(e) => setEndpointDraft((d) => ({ ...d, url: e.target.value }))}
               />
             </label>
 
             <label className="ai-field">
-              <span>Ключ (необязательно)</span>
+              <span>{t('as.endpointKeyLabel')}</span>
               <input
                 type="password"
                 value={endpointDraft.key}
-                aria-label="Ключ своего сервера"
-                placeholder="оставьте пустым, если сервер не спрашивает ключ"
+                aria-label={t('as.endpointKeyAria')}
+                placeholder={t('as.endpointKeyPlaceholder')}
                 disabled={!config.keysReady}
                 onChange={(e) => setEndpointDraft((d) => ({ ...d, key: e.target.value }))}
               />
@@ -1102,73 +1090,72 @@ export function AssistantPanel({
               <input
                 type="checkbox"
                 checked={endpointDraft.local}
-                aria-label="Сервер считает на моей машине"
+                aria-label={t('as.endpointLocalAria')}
                 onChange={(e) => setEndpointDraft((d) => ({ ...d, local: e.target.checked }))}
               />
               <span>
-                Считает на моей машине или в моей сети. Согласие тогда не спрашивается: текст
-                проекта никуда не уходит. Снимите галочку, если это чужой сервер в интернете —
-                без согласия помощник такому серверу текст не отправит.
+                {t('as.endpointLocalHint')}
               </span>
             </label>
 
             {!config.keysReady && (
               <p className="ai-note">
-                Без <code>AI_SECRET_KEY</code> на стенде ключ сохранить некуда: сервер без
-                ключа добавить можно, с ключом — нет.
+                {t('as.noSecret1')}
+                  <code>AI_SECRET_KEY</code>
+                  {t('as.noSecret2')}
               </p>
             )}
 
             <button onClick={() => void saveEndpoint()} disabled={endpointBusy}>
-              {endpointBusy ? 'Сохраняю…' : 'Добавить сервер'}
+              {endpointBusy ? t('as.saving') : t('as.addServer')}
             </button>
             {endpointNote != null && <p className="ai-note">{endpointNote}</p>}
           </div>
 
           <button className="secondary ai-body__back" onClick={() => setView('chat')}>
-            Вернуться к переписке
+            {t('as.backToChat')}
           </button>
 
           {/* Роль и поведение агента: он пишет текст проекта, поэтому у него есть
               характер — и задаёт его владелец проекта, а не админ стенда. */}
           <div className="ai-agent" data-assistant-agent>
-            <p className="ai-about__title">Роль и поведение агента</p>
+            <p className="ai-about__title">{t('as.agentTitle')}</p>
             <p className="ai-note">
-              {agentName} — соавтор проекта: его правки подписаны его именем, и он пишет по тем
-              правилам, которые вы зададите. {agent?.member ? 'Сейчас он в участниках проекта с правом правки.' : ''}
+              {t('as.agentIntro', { name: agentName })}
+                {agent?.member ? t('as.agentMember') : ''}
             </p>
 
             {agent == null ? (
-              <p className="ai-note">Настройки агента не загрузились — попробуйте открыть окно заново.</p>
+              <p className="ai-note">{t('as.agentFailed')}</p>
             ) : agent.canEdit ? (
               <>
                 <label className="ai-field">
-                  <span>Роль</span>
+                  <span>{t('as.roleLabel')}</span>
                   <select
                     value={agentDraft.role}
-                    aria-label="Роль агента"
+                    aria-label={t('as.roleAria')}
                     onChange={(e) => setAgentDraft((d) => ({ ...d, role: e.target.value }))}
                   >
-                    <option value="">без роли — внимательный соавтор</option>
+                    <option value="">{t('as.roleNone')}</option>
                     {agent.roles.map((role) => (
                       <option key={role.id} value={role.id}>
-                        {role.title} — {role.hint}
+                        {t('as.roleOption', { title: role.title, hint: role.hint })}
                       </option>
                     ))}
                   </select>
                 </label>
 
                 <label className="ai-field">
-                  <span>Что агент делает в этом проекте</span>
+                  <span>{t('as.genLabel')}</span>
                   <select
                     value={agentDraft.generation}
-                    aria-label="Режим генерации"
+                    aria-label={t('as.genAria')}
                     onChange={(e) => setAgentDraft((d) => ({ ...d, generation: e.target.value }))}
                   >
                     {agent.generations.map((option) => (
                       <option key={option.id} value={option.id} disabled={!option.available}>
                         {option.title}
-                        {option.available ? '' : ' — недоступно'}
+                        {option.available ? '' : t('as.genUnavailable')}
                       </option>
                     ))}
                   </select>
@@ -1180,12 +1167,12 @@ export function AssistantPanel({
                 </label>
 
                 <label className="ai-field">
-                  <span>Стиль иллюстраций (дописывается в каждый запрос генератора)</span>
+                  <span>{t('as.styleLabel')}</span>
                   <input
                     type="text"
                     value={agentDraft.imageStyle}
-                    aria-label="Стиль иллюстраций"
-                    placeholder="Например: акварель, тёплый свет, без текста на картинке"
+                    aria-label={t('as.styleAria')}
+                    placeholder={t('as.stylePlaceholder')}
                     onChange={(e) => setAgentDraft((d) => ({ ...d, imageStyle: e.target.value }))}
                   />
                 </label>
@@ -1194,28 +1181,27 @@ export function AssistantPanel({
                     мог сказать «в этой книге нет людей»: это часть замысла, а не техника сервера.
                     Пустое поле — не «без ограничений», а «как на стенде», и так и написано. */}
                 <label className="ai-field">
-                  <span>Чего не должно быть на картинке</span>
+                  <span>{t('as.negativeLabel')}</span>
                   <input
                     type="text"
                     value={agentDraft.imageNegative}
-                    aria-label="Чего не должно быть на картинке"
+                    aria-label={t('as.negativeAria')}
                     maxLength={400}
-                    placeholder="Например: люди, современная одежда, текст на картинке"
+                    placeholder={t('as.negativePlaceholder')}
                     onChange={(e) => setAgentDraft((d) => ({ ...d, imageNegative: e.target.value }))}
                   />
                   <span className="ai-note" data-assistant-negative-hint>
-                    Пусто — значит «как на стенде»: сервер подставит своё ограничение. Заданное
-                    здесь важнее стендового.
+                    {t('as.negativeHint')}
                   </span>
                 </label>
 
                 <label className="ai-field">
-                  <span>Указания владельца (уходят в каждый запрос)</span>
+                  <span>{t('as.instructionsLabel')}</span>
                   <textarea
                     value={agentDraft.instructions}
                     rows={3}
-                    aria-label="Указания агенту"
-                    placeholder="Например: пиши сдержанно, без эпитетов; имена героев не менять; даты сверяй с главой 2"
+                    aria-label={t('as.instructionsAria')}
+                    placeholder={t('as.instructionsPlaceholder')}
                     onChange={(e) => setAgentDraft((d) => ({ ...d, instructions: e.target.value }))}
                   />
                 </label>
@@ -1224,24 +1210,23 @@ export function AssistantPanel({
                   <input
                     type="checkbox"
                     checked={agentDraft.enabled}
-                    aria-label="Агент включён в этом проекте"
+                    aria-label={t('as.agentEnabledAria')}
                     onChange={(e) => setAgentDraft((d) => ({ ...d, enabled: e.target.checked }))}
                   />
                   <span>
-                    Агент работает в этом проекте. Снимите галочку, чтобы попросить его не трогать
-                    эту историю — не выключая помощника для всего стенда.
+                    {t('as.agentEnabledHint')}
                   </span>
                 </label>
 
                 <button onClick={saveAgent} disabled={agentBusy}>
-                  {agentBusy ? 'Сохраняю…' : 'Сохранить роль'}
+                  {agentBusy ? t('as.saving') : t('as.saveRole')}
                 </button>
               </>
             ) : (
               <p className="ai-note">
-                Роль агента задаёт владелец проекта.{' '}
-                {agent.roleTitle ? `Сейчас: ${agent.roleTitle}.` : 'Сейчас роль не выбрана.'}
-                {agent.instructions ? ` Указания: ${agent.instructions}` : ''}
+                {t('as.roleOwnerOnly')}{' '}
+                  {agent.roleTitle ? t('as.roleNow', { role: agent.roleTitle }) : t('as.roleNowNone')}
+                  {agent.instructions ? t('as.instructionsNow', { text: agent.instructions }) : ''}
               </p>
             )}
             {agentNote != null && <p className="ai-note">{agentNote}</p>}
@@ -1250,28 +1235,28 @@ export function AssistantPanel({
           {/* Что помощник умеет и чем ограничен — прямо в настройке: вопрос «а что он
               может?» возникает именно здесь, а не в переписке. */}
           <div className="ai-about">
-            <p className="ai-about__title">Что умеет</p>
+            <p className="ai-about__title">{t('as.aboutTitle')}</p>
             <ul className="ai-note">
-              <li>создавать главы верхнего уровня и под-события с текстом в Markdown;</li>
-              <li>смотреть дерево проекта и читать отдельный кадр перед тем, как дописать;</li>
-              <li>ставить дату кадра (вид ГГГГ-ММ-ДД).</li>
+              <li>{t('as.ability1')}</li>
+                <li>{t('as.ability2')}</li>
+                <li>{t('as.ability3')}</li>
               {/* Картинки — только если они действительно доступны. Обещать их в
                   списке «что умеет» при выключенном генераторе нельзя. */}
               {agent?.capabilities.images ? (
-                <li>рисовать иллюстрации к кадрам в заданном стиле.</li>
+                <li>{t('as.abilityImages')}</li>
               ) : (
                 <li className="ai-note" data-assistant-images-unavailable>
-                  картинки: недоступны — {agent?.capabilities.imageNote || agent?.imageNote}
+                  {t('as.imagesUnavailable', {
+                    note: agent?.capabilities.imageNote || agent?.imageNote || '',
+                  })}
                 </li>
               )}
             </ul>
             <p className="ai-note">
-              Чего не делает: не удаляет, не переписывает существующие кадры и не перемещает их —
-              это делается руками в редакторах. За один ответ — до {config.maxToolCalls} новых
-              кадров; всё созданное видно отдельным блоком над полем ввода.
+              {t('as.notDoing', { count: config.maxToolCalls })}
             </p>
             <button className="secondary" onClick={checkModels}>
-              Проверить связь с моделью
+              {t('as.checkConnection')}
             </button>
           </div>
         </div>
@@ -1287,13 +1272,12 @@ export function AssistantPanel({
           <div className="ai-body" ref={listRef} data-assistant-log>
             {messages.length === 0 && (
               <div className="ai-empty">
-                <p className="ai-empty__title">О чём спросить</p>
+                <p className="ai-empty__title">{t('as.emptyTitle')}</p>
                 <p className="ai-note">
-                  Помощник создаёт главы и под-события с описанием в Markdown. Нажмите на
-                  подсказку — текст подставится в поле, и его можно поправить.
+                  {t('as.emptyHint')}
                 </p>
                 <div className="ai-hints" data-assistant-hints>
-                  {promptHints(agent?.role ?? '', projectIsEmpty).map((hint) => (
+                  {promptHints(agent?.role ?? '', projectIsEmpty, lang).map((hint) => (
                     <button
                       key={hint.label}
                       type="button"
@@ -1310,7 +1294,7 @@ export function AssistantPanel({
                   ))}
                 </div>
                 <p className="ai-note">
-                  Изменения применяются сразу и видны всем, у кого проект открыт.
+                  {t('as.emptyChanges')}
                 </p>
               </div>
             )}
@@ -1321,7 +1305,7 @@ export function AssistantPanel({
                   message.role === 'user' ? 'ai-msg ai-msg--user' : 'ai-msg ai-msg--assistant'
                 }
               >
-                <span className="ai-msg__who">{message.role === 'user' ? 'Вы' : agentName}</span>
+                <span className="ai-msg__who">{message.role === 'user' ? t('as.you') : agentName}</span>
                 {message.role === 'user' ? (
                   <p className="ai-msg__text">{message.content}</p>
                 ) : (
@@ -1329,7 +1313,7 @@ export function AssistantPanel({
                     <MarkdownBlock source={message.content} className="ai-msg__text" />
                     {message.stopped && (
                       <p className="ai-msg__stopped" data-assistant-stopped>
-                        Остановлено — в историю попало то, что модель успела сказать.
+                        {t('as.stopped')}
                       </p>
                     )}
                   </>
@@ -1345,24 +1329,24 @@ export function AssistantPanel({
                 <span className="ai-caret" aria-hidden="true" />
               </div>
             )}
-            {sending && streaming === '' && <p className="ai-thinking">Помощник думает…</p>}
+            {sending && streaming === '' && <p className="ai-thinking">{t('as.thinking')}</p>}
             {sending && liveCalls.length > 0 && (
               <p className="ai-note ai-note--padded" data-assistant-live-calls>
-                Уже сделано: {liveCalls.length}
+                {t('as.liveCalls', { count: liveCalls.length })}
               </p>
             )}
           </div>
 
           {changes.length > 0 && (
             <div className="ai-changes" data-assistant-changes>
-              <strong>Изменения в проекте</strong>
+              <strong>{t('as.changesTitle')}</strong>
               <ul>
                 {changes.map((change) => (
                   <li key={`${change.action}-${change.id}`}>{changeLabel(change)}</li>
                 ))}
               </ul>
               <button className="secondary" onClick={onOpenEditors}>
-                Посмотреть в дереве
+                {t('as.viewInTree')}
               </button>
             </div>
           )}
@@ -1371,7 +1355,7 @@ export function AssistantPanel({
               проект ещё НЕ изменился, и «применить» — решение человека, а не агента. */}
           {proposals.length > 0 && (
             <div className="ai-proposals" data-assistant-proposals>
-              <strong>Предложенные правки</strong>
+              <strong>{t('as.proposalsTitle')}</strong>
               <ul>
                 {proposals.map((proposal) => (
                   <li key={proposal.id} className="ai-proposals__item" data-proposal-id={proposal.id}>
@@ -1390,14 +1374,14 @@ export function AssistantPanel({
                         onClick={() => void applyProposal(proposal)}
                         disabled={proposalBusy !== null}
                       >
-                        {proposalBusy === proposal.id ? 'Применяю…' : 'Применить'}
+                        {proposalBusy === proposal.id ? t('as.applying') : t('as.apply')}
                       </button>
                       <button
                         className="secondary"
                         onClick={() => void discardProposal(proposal)}
                         disabled={proposalBusy !== null}
                       >
-                        Отклонить
+                        {t('as.discard')}
                       </button>
                     </span>
                   </li>
@@ -1416,7 +1400,7 @@ export function AssistantPanel({
               сервер сохранил в момент удаления (ai_changes.frame). */}
           {appliedProposals.length > 0 && (
             <div className="ai-proposals ai-proposals--applied" data-assistant-applied>
-              <strong>Правки применены</strong>
+              <strong>{t('as.appliedTitle')}</strong>
               <ul>
                 {appliedProposals.map((proposal) => (
                   <li key={proposal.id} className="ai-proposals__item" data-proposal-id={proposal.id}>
@@ -1428,14 +1412,14 @@ export function AssistantPanel({
                         disabled={proposalBusy !== null}
                       >
                         {proposal.kind === 'delete_event'
-                          ? 'Вернуть кадр'
-                          : proposal.kind === 'update_span'
-                            ? 'Вернуть прежний фрагмент'
+                          ? t('as.revertFrame')
+                            : proposal.kind === 'update_span'
+                            ? t('as.revertSpan')
                             : proposal.kind === 'update_date'
-                              ? 'Вернуть прежнюю дату'
-                              : proposal.kind === 'move_event'
-                                ? 'Вернуть в прежнюю главу'
-                                : 'Вернуть прежний текст'}
+                            ? t('as.revertDate')
+                            : proposal.kind === 'move_event'
+                            ? t('as.revertPlace')
+                            : t('as.revertText')}
                       </button>
                     </span>
                   </li>
@@ -1479,16 +1463,16 @@ export function AssistantPanel({
             <div className="ai-consent" data-consent-required>
               <p>
                 {modelIsCloud
-                  ? `Чтобы продолжить, подтвердите: текст проекта (оглавление и прочитанные кадры) уйдёт ОБЛАЧНОЙ модели «${modelLabel}» — она считается на удалённом сервере, а не на машине стенда.`
-                  : `Чтобы продолжить, подтвердите: текст проекта (оглавление и прочитанные кадры) уйдёт провайдеру «${provider?.title ?? providerId}».`}
+                  ? t('as.consentCloud', { model: modelLabel })
+                    : t('as.consentProvider', { provider: provider?.title ?? providerId })}
               </p>
-              <button onClick={agree}>Согласен, продолжить</button>
+              <button onClick={agree}>{t('as.agreeContinue')}</button>
             </div>
           )}
 
           {consentNeeded && !consentBlocked && (
             <p className="ai-error ai-error--padded">
-              Сервер запросил согласие заново — откройте настройку и подтвердите отправку.
+              {t('as.consentAgain')}
             </p>
           )}
 
@@ -1496,8 +1480,7 @@ export function AssistantPanel({
 
           {budgetExhausted && (
             <p className="ai-error ai-error--padded" data-assistant-budget>
-              Предел расхода на сутки исчерпан ({config?.tokensToday} из {config?.tokenLimit}{' '}
-              токенов). Помощник заработает снова, когда счётчик за сутки сбросится.
+              {t('as.budget', { used: config?.tokensToday, limit: config?.tokenLimit })}
             </p>
           )}
 
@@ -1506,12 +1489,12 @@ export function AssistantPanel({
               <div className="ai-attach" data-assistant-attach>
                 {images.map((image, index) => (
                   <span className="ai-attach__item" key={`${index}-${image.length}`}>
-                    <img src={image} alt={`Приложенная картинка ${index + 1}`} />
+                    <img src={image} alt={t('as.attachAlt', { index: index + 1 })} />
                     <button
                       type="button"
                       className="ai-attach__remove"
                       onClick={() => removeImage(index)}
-                      aria-label={`Убрать картинку ${index + 1}`}
+                      aria-label={t('as.removeImageAria', { index: index + 1 })}
                     >
                       ×
                     </button>
@@ -1532,24 +1515,24 @@ export function AssistantPanel({
                   void ask()
                 }
               }}
-              placeholder="Например: добавь главу «Пролог» с описанием мира в Markdown"
+              placeholder={t('as.inputPlaceholder')}
               rows={2}
               disabled={sending || consentBlocked || budgetExhausted || !config.enabled}
-              aria-label="Сообщение помощнику"
+              aria-label={t('as.inputAria')}
             />
             <div className="ai-composer__row">
               {sending ? (
                 // Пока ответ идёт, главная кнопка — «стоп»: остановить генерацию
                 // человек должен уметь в любой момент, а не ждать конца.
                 <button type="button" className="secondary" onClick={stop} data-assistant-stop>
-                  Стоп
+                  {t('as.stop')}
                 </button>
               ) : (
                 <button
                   onClick={ask}
                   disabled={consentBlocked || budgetExhausted || text.trim() === ''}
                 >
-                  Спросить
+                  {t('as.ask')}
                 </button>
               )}
               {/* Кнопка прикрепления — только у модели, которая картинки видит: иначе
@@ -1576,12 +1559,12 @@ export function AssistantPanel({
                     disabled={sending || images.length >= MAX_IMAGES}
                     title={
                       images.length >= MAX_IMAGES
-                        ? `Больше ${MAX_IMAGES} картинок к одному вопросу не приложить`
-                        : 'Приложить картинку: модель умеет их смотреть'
+                        ? t('as.tooManyImages', { limit: MAX_IMAGES })
+                          : t('as.attachTitle')
                     }
                     data-assistant-attach-button
                   >
-                    Картинка
+                    {t('as.image')}
                   </button>
                 </>
               )}
@@ -1590,15 +1573,16 @@ export function AssistantPanel({
                 className="secondary"
                 onClick={startNewConversation}
                 disabled={sending || !hasAnswer}
-                title="Начать разговор заново: прежняя история остаётся на сервере"
+                title={t('as.newConversationTitle')}
               >
-                Новый
+                {t('as.newConversation')}
               </button>
               <span className="ai-note ai-composer__hint" data-assistant-tokens>
                 {config.tokenLimit > 0
-                  ? `Израсходовано ${config.tokensToday} из ${config.tokenLimit} токенов за сутки`
-                  : `Израсходовано ${config.tokensToday} токенов за сутки`}
-                {' · '}до {config.maxToolCalls} кадров за ответ
+                  ? t('as.tokensLimit', { used: config.tokensToday, limit: config.tokenLimit })
+                    : t('as.tokensUsed', { used: config.tokensToday })}
+                    {' · '}
+                    {t('as.framesPerAnswer', { count: config.maxToolCalls })}
               </span>
             </div>
           </footer>
@@ -1617,27 +1601,25 @@ export function AssistantPanel({
  */
 function proposalTitle(proposal: AIProposal, stage: 'pending' | 'applied'): string {
   const title = proposal.eventTitle
+  const pending = stage === 'pending'
   if (proposal.kind === 'delete_event') {
-    return stage === 'pending' ? `Удалить кадр «${title}»` : `Удалён кадр «${title}»`
+    return tStatic(pending ? 'as.propDeletePending' : 'as.propDeleteApplied', { title })
   }
   if (proposal.kind === 'update_span') {
-    return stage === 'pending'
-      ? `Правка фрагмента в кадре «${title}»`
-      : `Фрагмент в кадре «${title}» изменён`
+    return tStatic(pending ? 'as.propSpanPending' : 'as.propSpanApplied', { title })
   }
   if (proposal.kind === 'update_date') {
-    return stage === 'pending'
-      ? `Поменять дату кадра «${title}»`
-      : `Дата кадра «${title}» изменена`
+    return tStatic(pending ? 'as.propDatePending' : 'as.propDateApplied', { title })
   }
   if (proposal.kind === 'move_event') {
     // Куда переносим — в подписи: «переместить» без адреса человек подтверждал бы вслепую.
-    const to = proposal.newParentTitle === '' ? 'верхний уровень' : `«${proposal.newParentTitle}»`
-    return stage === 'pending'
-      ? `Переместить кадр «${title}» в ${to}`
-      : `Кадр «${title}» перемещён в ${to}`
+    const to =
+      proposal.newParentTitle === ''
+        ? tStatic('as.topLevel')
+        : tStatic('as.quoted', { title: proposal.newParentTitle })
+    return tStatic(pending ? 'as.propMovePending' : 'as.propMoveApplied', { title, to })
   }
-  return stage === 'pending' ? `Переписать кадр «${title}»` : `Переписан кадр «${title}»`
+  return tStatic(pending ? 'as.propRewritePending' : 'as.propRewriteApplied', { title })
 }
 
 /**
@@ -1651,36 +1633,36 @@ function diffSummary(proposal: AIProposal): string {
   if (proposal.kind === 'move_event') {
     // Место в дереве — не текст: показываем прежнюю и новую главу, а «верхний уровень» —
     // словами, иначе пустое «было» читалось бы как «данных нет».
-    const from = proposal.oldParentTitle === '' ? 'верхний уровень' : proposal.oldParentTitle
-    const to = proposal.newParentTitle === '' ? 'верхний уровень' : proposal.newParentTitle
-    parts.push(`место: ${from} → ${to}`)
+    const from = proposal.oldParentTitle === '' ? tStatic('as.topLevel') : proposal.oldParentTitle
+    const to = proposal.newParentTitle === '' ? tStatic('as.topLevel') : proposal.newParentTitle
+    parts.push(tStatic('as.diffPlace', { from, to }))
     return parts.join('; ')
   }
   if (proposal.newTitle !== '' && proposal.newTitle !== proposal.oldTitle) {
-    parts.push(`заголовок: «${proposal.oldTitle}» → «${proposal.newTitle}»`)
+    parts.push(tStatic('as.diffTitle', { from: proposal.oldTitle, to: proposal.newTitle }))
   }
   if (proposal.kind === 'update_date') {
     // Дата — не текст: человеку нужно увидеть ровно «было → станет», а «без изменений» здесь
     // означало бы, что он не понял, что подтверждает.
     // Дату показываем как есть (YYYY-MM-DD): так она выглядит в дереве и в поле редактора, и
     // человек не сверяет «05.03» с «2026-03-05» в другом формате.
-    const before = proposal.oldDate === '' ? 'без даты' : proposal.oldDate
-    const after = proposal.newDate === '' ? 'без даты' : proposal.newDate
-    parts.push(`дата: ${before} → ${after}`)
+    const before = proposal.oldDate === '' ? tStatic('as.noDate') : proposal.oldDate
+    const after = proposal.newDate === '' ? tStatic('as.noDate') : proposal.newDate
+    parts.push(tStatic('as.diffDate', { from: before, to: after }))
     return parts.join('; ')
   }
   if (proposal.newBody !== proposal.oldBody) {
     const before = firstLine(proposal.oldBody)
     const after = firstLine(proposal.newBody)
-    parts.push(`текст: «${before}» → «${after}»`)
+    parts.push(tStatic('as.diffText', { from: before, to: after }))
   }
-  return parts.length > 0 ? parts.join('; ') : 'без изменений'
+  return parts.length > 0 ? parts.join('; ') : tStatic('as.noChanges')
 }
 
 /** Первая содержательная строка текста, обрезанная по словам. */
 function firstLine(text: string): string {
   const clean = text.replace(/[#*_>`]/g, '').trim().split('\n').find((line) => line.trim() !== '')
-  if (!clean) return 'пусто'
+  if (!clean) return tStatic('as.emptyText')
   const trimmed = clean.trim()
   return trimmed.length > 60 ? `${trimmed.slice(0, 60)}…` : trimmed
 }
@@ -1692,17 +1674,44 @@ function firstLine(text: string): string {
 function privacyNote(provider: AIProviderInfo | null, modelIsCloud: boolean): string {
   if (provider == null) return ''
   if (modelIsCloud) {
-    return 'Облачная модель: считается на удалённом сервере (ollama.com), текст проекта уходит туда.'
+    return tStatic('as.privacyCloud')
   }
   if (provider.local) {
-    return provider.keyless
-      ? 'Свой сервер моделей: считает на вашей машине (или в вашей сети) — текст проекта никуда не уходит.'
-      : 'Локальная модель: текст проекта не покидает сервер стенда.'
+    return provider.keyless ? tStatic('as.privacyOwnKeyless') : tStatic('as.privacyLocal')
   }
   if (provider.standKey) {
-    return `Провайдер «${provider.title}» по ключу стенда: текст проекта уходит ему. Согласие спрашивается один раз.`
+    return tStatic('as.privacyStandKey', { title: provider.title })
   }
-  return `Провайдер «${provider.title}»: текст проекта уходит ему — согласие спрашивается один раз.`
+  return tStatic('as.privacyProvider', { title: provider.title })
+}
+
+/**
+ * Куда уходит текст проекта и нужен ли ключ — абзац под выбором модели (0.125.0).
+ *
+ * Отдельной функцией, потому что это вложенное дерево решений: облачная модель, свой сервер
+ * в сети, свой сервер снаружи, локальная модель стенда, ключ стенда. Подписи — из словаря,
+ * `provider.note` с сервера остаётся как есть: это текст админа стенда.
+ */
+function providerNote(provider: AIProviderInfo, modelIsCloud: boolean): string {
+  if (modelIsCloud) return tStatic('as.cloudWarning')
+  if (provider.own) {
+    if (provider.local) {
+      return (
+        tStatic('as.ownLocal', { title: provider.title }) +
+        (provider.keyless ? tStatic('as.ownLocalKeyless') : tStatic('as.ownLocalKeyed'))
+      )
+    }
+    return (
+      tStatic('as.ownExternal', { title: provider.title }) +
+      (provider.keyless ? '' : tStatic('as.ownExternalKeyed'))
+    )
+  }
+  if (provider.local) {
+    return provider.keyless ? tStatic('as.standKeyless') : tStatic('as.standLocal')
+  }
+  if (provider.standKey) return tStatic('as.standKey')
+  if (provider.keyRequired) return tStatic('as.keyRequired')
+  return provider.note
 }
 
 /** Шестерёнка: настройка помощника (провайдер, модель, ключ, согласие). */
@@ -1753,7 +1762,7 @@ function generationHint(agent: AISettings): string {
   const selected = agent.generations.find((option) => option.id === agent.generation)
   if (selected && !selected.available) return selected.hint
   if (!agent.capabilities.images && agent.capabilities.imageNote) {
-    return `Сейчас: ${selected?.hint ?? ''} Картинки недоступны — ${agent.capabilities.imageNote}.`
+    return tStatic('as.genNow', { hint: selected?.hint ?? '', note: agent.capabilities.imageNote })
   }
   return selected?.hint ?? ''
 }

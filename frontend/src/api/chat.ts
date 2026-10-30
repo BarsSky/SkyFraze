@@ -1,4 +1,5 @@
 import { http } from './client'
+import { tStatic } from '../i18n'
 
 /**
  * Общий чат проекта (0.95.0, docs/project-chat.md).
@@ -135,7 +136,7 @@ export async function listChat(
   return {
     messages,
     bot: {
-      name: typeof botRaw.name === 'string' && botRaw.name ? botRaw.name : 'Нестор',
+      name: typeof botRaw.name === 'string' && botRaw.name ? botRaw.name : tStatic('chat.botName'),
       available: botRaw.available === true,
     },
   }
@@ -156,7 +157,7 @@ export async function postChat(projectId: string, input: ChatPostInput): Promise
     })
     .json<{ message?: unknown; reply?: unknown; note?: unknown }>()
   const message = readMessage(raw?.message)
-  if (message === null) throw new Error('сервер не вернул сообщение')
+  if (message === null) throw new Error(tStatic('chat.errNoMessage'))
   const reply = readMessage(raw?.reply)
   return {
     message,
@@ -221,7 +222,7 @@ function readMessage(raw: unknown): ChatMessage | null {
     id,
     project_id: typeof record.project_id === 'string' ? record.project_id : '',
     author_id: typeof record.author_id === 'string' ? record.author_id : undefined,
-    author_name: typeof record.author_name === 'string' ? record.author_name : 'участник',
+    author_name: typeof record.author_name === 'string' ? record.author_name : tStatic('chat.authorMember'),
     kind,
     body: typeof record.body === 'string' ? record.body : '',
     event_id: typeof record.event_id === 'string' && record.event_id ? record.event_id : undefined,

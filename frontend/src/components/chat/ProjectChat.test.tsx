@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { ProjectChat } from './ProjectChat'
 import { notifyChatChanged } from '../../lib/chatEvents'
 import { useAuthStore } from '../../store/auth'
+import { setLang } from '../../store/lang'
 
 /**
  * Чат проекта (0.95.0).
@@ -51,6 +52,7 @@ const message = (over: Record<string, unknown> = {}) => ({
 })
 
 afterEach(() => {
+  setLang('ru')
   cleanup()
   vi.clearAllMocks()
   localStorage.clear()
@@ -365,4 +367,21 @@ describe('ProjectChat', () => {
     fireEvent.click(button)
     await waitFor(() => expect(screen.queryByText('показать прежние')).toBeNull())
   })
+
+  /**
+   * 0.125.0: подписи чата — из словаря, включая отметки («надо сделать» → «to do») и
+   * подсказки бота. Тексты сообщений и имена участников остаются данными.
+   */
+  it('на английском подписи чата переведены', async () => {
+    setLang('en')
+    render(<ProjectChat {...base} />)
+    expect(await screen.findByText('Project chat')).toBeTruthy()
+    expect(screen.getByText('seen by every member')).toBeTruthy()
+    expect(screen.getByLabelText('Message to the project chat')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Send' })).toBeTruthy()
+    // Отметки: короткая подпись и доступное имя из словаря.
+    expect(screen.getAllByRole('button', { name: /^agree$/ }).length).toBeGreaterThan(0)
+    expect(screen.getAllByRole('button', { name: /^to do$/ }).length).toBeGreaterThan(0)
+  })
+
 })

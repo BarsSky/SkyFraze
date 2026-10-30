@@ -5,7 +5,10 @@
  * входов: две копии этого разбора разошлись бы в названиях («Chrome» против «Chrome Browser»)
  * и человек читал бы один и тот же сеанс по-разному в двух списках.
  */
-export function describeBrowser(userAgent: string): string {
+import { translate } from '../i18n'
+import type { Lang } from '../store/lang'
+
+export function describeBrowser(userAgent: string, lang: Lang = 'ru'): string {
   const agent = userAgent || ''
   const browser = /Firefox/i.test(agent)
     ? 'Firefox'
@@ -15,7 +18,7 @@ export function describeBrowser(userAgent: string): string {
         ? 'Chrome'
         : /Safari/i.test(agent)
           ? 'Safari'
-          : 'Неизвестный браузер'
+          : translate(lang, 'agent.unknownBrowser')
   const platform = /Windows/i.test(agent)
     ? 'Windows'
     : /Android/i.test(agent)

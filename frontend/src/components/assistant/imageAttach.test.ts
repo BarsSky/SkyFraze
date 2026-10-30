@@ -44,4 +44,22 @@ describe('readImageFile', () => {
     // Те же байты, что положили: чтение не должно ничего терять.
     expect(atob(result.split(',')[1])).toBe(String.fromCharCode(...bytes))
   })
+
+  /**
+   * 0.125.0: причины отказа — из словаря, язык третьим аргументом (по умолчанию русский).
+   * Проверяем, что переводится и текст, и подставленные значения: имя файла и размер.
+   */
+  it('на английском причины отказа переведены', () => {
+    const pdf = new File(['x'], 'письмо.pdf', { type: 'application/pdf' })
+    expect(imageFileError(pdf, 0, 'en')).toContain('is not supported')
+    expect(imageFileError(pdf, 0, 'en')).toContain('письмо.pdf')
+
+    const big = new File(['x'], 'photo.png', { type: 'image/png' })
+    Object.defineProperty(big, 'size', { value: 4 * 1024 * 1024 })
+    expect(imageFileError(big, 0, 'en')).toContain('over the limit')
+
+    const png = new File(['x'], 'photo.png', { type: 'image/png' })
+    expect(imageFileError(png, 3, 'en')).toBe('No more than 3 images can be attached to one question')
+  })
+
 })

@@ -12,11 +12,14 @@
  * поправить. Автоотправка тратила бы токены на формулировку, которую он не выбирал.
  */
 
-/** Одна подсказка: короткая подпись и то, что подставится в поле ввода. */
-export interface PromptHint {
-  label: string
-  prompt: string
-}
+import { translate, type Key } from '../../i18n'
+import type { Lang } from '../../store/lang'
+
+/** Подсказка в готовом виде: подпись и промпт на языке интерфейса. */
+export type PromptHint = { label: string; prompt: string }
+
+/** Пара ключей словаря: подпись и то, что подставится в поле ввода. */
+type HintKeys = { label: Key; prompt: Key }
 
 /**
  * Что предложить в пустом чате.
@@ -24,79 +27,54 @@ export interface PromptHint {
  * `role` — выбранная владельцем роль агента (`''` — роль не выбрана, «внимательный
  * соавтор»); `projectIsEmpty` — в проекте ещё нет ни одного кадра, и тогда первая
  * подсказка предлагает собрать проект с нуля, а не дописывать к существующему.
+ *
+ * Язык — параметром (0.125.0), по умолчанию русский: подсказка уходит модели как текст
+ * запроса, поэтому на английском интерфейсе и запрос английский.
  */
-export function promptHints(role = '', projectIsEmpty = true): PromptHint[] {
-  const start: PromptHint = projectIsEmpty
-    ? {
-        label: 'Собери проект с нуля',
-        prompt:
-          'Собери проект по описанию: придумай три главы и для каждой — по два под-события. Опиши мир и завязку.',
-      }
-    : {
-        label: 'Продолжи историю',
-        prompt: 'Предложи, что логично произойдёт дальше, и добавь это главой с описанием.',
-      }
+export function promptHints(role = '', projectIsEmpty = true, lang: Lang = 'ru'): PromptHint[] {
+  const start: HintKeys = projectIsEmpty
+    ? { label: 'ph.fromScratch', prompt: 'ph.fromScratchPrompt' }
+    : { label: 'ph.continue', prompt: 'ph.continuePrompt' }
 
+  let keys: HintKeys[]
   switch (role) {
     case 'chronicler':
-      return [
+      keys = [
         start,
-        {
-          label: 'Выстрой хронологию',
-          prompt: 'Проверь порядок глав и под-событий и поправь, чтобы даты не противоречили друг другу.',
-        },
-        {
-          label: 'Добавь главу с датой',
-          prompt: 'Добавь главу «Пролог» с датой начала истории и кратким описанием.',
-        },
+        { label: 'ph.timeline', prompt: 'ph.timelinePrompt' },
+        { label: 'ph.chapterWithDate', prompt: 'ph.chapterWithDatePrompt' },
       ]
+      break
     case 'editor':
-      return [
-        {
-          label: 'Найди повторы',
-          prompt: 'Пройди по главам и скажи, где повторяются формулировки и что стоит сократить.',
-        },
-        {
-          label: 'Уточни формулировки',
-          prompt: 'Предложи более точные названия для глав — короткие и без украшательств.',
-        },
+      keys = [
+        { label: 'ph.repeats', prompt: 'ph.repeatsPrompt' },
+        { label: 'ph.wording', prompt: 'ph.wordingPrompt' },
         start,
       ]
+      break
     case 'architect':
-      return [
+      keys = [
         start,
-        {
-          label: 'Разбей главу на части',
-          prompt: 'Разбей вторую главу на три под-события с осмысленными названиями.',
-        },
-        {
-          label: 'Проверь баланс',
-          prompt: 'Посмотри на структуру: в каких главах кадров слишком много или слишком мало?',
-        },
+        { label: 'ph.splitChapter', prompt: 'ph.splitChapterPrompt' },
+        { label: 'ph.balance', prompt: 'ph.balancePrompt' },
       ]
+      break
     case 'coauthor':
-      return [
+      keys = [
         start,
-        {
-          label: 'Придумай детали мира',
-          prompt: 'Придумай три детали мира — место, обычай и технику — и добавь их под-событиями.',
-        },
-        {
-          label: 'Добавь поворот',
-          prompt: 'Предложи неожиданный поворот в середине истории и добавь его главой.',
-        },
+        { label: 'ph.worldDetails', prompt: 'ph.worldDetailsPrompt' },
+        { label: 'ph.twist', prompt: 'ph.twistPrompt' },
       ]
+      break
     default:
-      return [
+      keys = [
         start,
-        {
-          label: 'Добавь главу',
-          prompt: 'Добавь главу «Пролог» с описанием начала истории в Markdown.',
-        },
-        {
-          label: 'Разбей главу',
-          prompt: 'Разбей первую главу на три под-события с короткими описаниями.',
-        },
+        { label: 'ph.addChapter', prompt: 'ph.addChapterPrompt' },
+        { label: 'ph.splitFirst', prompt: 'ph.splitFirstPrompt' },
       ]
   }
+  return keys.map((hint) => ({
+    label: translate(lang, hint.label),
+    prompt: translate(lang, hint.prompt),
+  }))
 }

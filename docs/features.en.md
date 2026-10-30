@@ -163,8 +163,9 @@ then people and access.
   registration and requests, the About page, the project list and the trash, the project page as a
   whole (editors panel, stage, frame, route, discussion, versions), the whole relations section —
   including the card ego-graph, the matrix, the mention card and the assistant's card proposals —
-  and the project settings with folder import and the DOCX template help; the rest stays Russian —
-  phases and volume measurement in `docs/ui-localization.md`
+  the project settings with folder import and the DOCX template help, and the assistant window with
+  the project chat; the rest stays Russian — phases and volume measurement in
+  `docs/ui-localization.md`
 - **"About" («О проекте»)** (`/about`) — a page instead of a site footer: what the platform is, the
   license and copyright notices, source and releases, documentation in Russian and English, privacy
   (no telemetry, data stays on your server), third-party components, contacts and the **build number

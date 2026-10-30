@@ -1,4 +1,5 @@
 import { http } from './client'
+import { tStatic } from '../i18n'
 
 /**
  * ИИ-помощник: подключение моделей, свои ключи, согласие и беседы.
@@ -357,7 +358,7 @@ export function parseAISettings(raw: unknown): AISettings {
   const record = asRecord(raw)
   const capabilities = asRecord(record?.capabilities)
   return {
-    agentName: asText(record?.agent_name) || 'Агент',
+    agentName: asText(record?.agent_name) || tStatic('ai.agentName'),
     agentId: asText(record?.agent_id),
     role: asText(record?.role),
     roleTitle: asText(record?.role_title),
@@ -790,7 +791,7 @@ export async function streamAIMessage(
   )
   const reader = response.body?.getReader()
   if (!reader) {
-    throw new Error('сервер не отдал поток ответа')
+    throw new Error(tStatic('ai.errNoStream'))
   }
   const decoder = new TextDecoder()
   let buffer = ''
@@ -817,7 +818,7 @@ export async function streamAIMessage(
       case 'done':
         return event.turn ?? null
       case 'error':
-        throw new Error(event.error || 'помощник не смог ответить')
+        throw new Error(event.error || tStatic('ai.errNoAnswer'))
       default:
         // Незнакомое событие — не повод рвать ответ: сервер может научиться присылать
         // новое, а старый интерфейс просто его не покажет.
@@ -843,7 +844,7 @@ export async function streamAIMessage(
     }
   }
   if (!turn) {
-    throw new Error('помощник не прислал итог — попробуйте ещё раз')
+    throw new Error(tStatic('ai.errNoResult'))
   }
   return turn
 }
@@ -1219,13 +1220,15 @@ function parseMessage(raw: unknown): AIMessage | null {
 export function changeLabel(change: AIChange): string {
   switch (change.action) {
     case 'created_chapter':
-      return `создана глава «${change.title}»`
+      return tStatic('ai.changeChapter', { title: change.title })
     case 'created_sub_event':
-      return `создано под-событие «${change.title}»`
+      return tStatic('ai.changeSubEvent', { title: change.title })
     case 'image_created':
-      return `нарисована иллюстрация к кадру «${change.title}»`
+      return tStatic('ai.changeImage', { title: change.title })
     default:
-      return change.title ? `изменение: «${change.title}»` : 'изменение проекта'
+      return change.title
+      ? tStatic('ai.changeOther', { title: change.title })
+      : tStatic('ai.changeGeneric')
   }
 }
 

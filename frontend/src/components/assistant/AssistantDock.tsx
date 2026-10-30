@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useT } from '../../i18n'
 import { AssistantPanel } from './AssistantPanel'
 import { ProjectChat } from '../chat/ProjectChat'
 
@@ -55,6 +56,7 @@ export function AssistantDock({
   projectIsEmpty = true,
   onOpenFrame,
 }: Props) {
+  const t = useT()
   const [unread, setUnread] = useState(0)
   const [chatUnread, setChatUnread] = useState(0)
   const [tab, setTab] = useState<DockTab>('assistant')
@@ -95,11 +97,11 @@ export function AssistantDock({
         ref={windowRef}
         hidden={!open}
         role="dialog"
-        aria-label="Помощник и чат проекта"
+        aria-label={t('dock.aria')}
         data-assistant-panel
       >
         {/* Вкладки окна (0.95.0): помощник и общий чат проекта в одном месте. */}
-        <div className="ai-window__tabs" role="tablist" aria-label="Чем открыть окно">
+        <div className="ai-window__tabs" role="tablist" aria-label={t('dock.tabsAria')}>
           <button
             type="button"
             role="tab"
@@ -108,7 +110,7 @@ export function AssistantDock({
             onClick={() => setTab('assistant')}
             data-dock-tab="assistant"
           >
-            Помощник
+            {t('dock.assistant')}
           </button>
           <button
             type="button"
@@ -118,7 +120,7 @@ export function AssistantDock({
             onClick={() => setTab('chat')}
             data-dock-tab="chat"
           >
-            Чат проекта
+            {t('dock.chat')}
             {chatUnread > 0 && (
               <span className="ai-window__tab-badge" data-chat-badge>
                 {chatUnread > 9 ? '9+' : chatUnread}
@@ -157,12 +159,12 @@ export function AssistantDock({
         aria-expanded={open}
         aria-label={
           badge
-            ? `ИИ-помощник: непрочитанных ответов ${badge}`
+            ? t('dock.unread', { count: badge })
             : open
-              ? 'Закрыть помощника'
-              : 'Открыть помощника'
+              ? t('dock.close')
+              : t('dock.open')
         }
-        title={open ? 'Свернуть помощника' : 'ИИ-помощник: создать главы и под-события'}
+        title={open ? t('dock.collapse') : t('dock.openTitle')}
         data-assistant-fab
         /* Помечаем кнопку как НАМЕРЕННЫЙ слой поверх контента: она плавающая по
            замыслу, и аудит интерфейса не должен считать её пересечением с тем, что

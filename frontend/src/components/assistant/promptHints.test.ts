@@ -37,4 +37,25 @@ describe('promptHints', () => {
       }
     }
   })
+
+  /**
+   * 0.125.0: подсказки — из словаря, язык третьим аргументом (по умолчанию русский, поэтому
+   * проверки выше не тронуты). Подсказка уходит модели как текст запроса, поэтому на английском
+   * интерфейсе и запрос английский — иначе модель получила бы русскую формулировку в английском
+   * чате.
+   */
+  it('на английском подсказки и промпты переведены', () => {
+    const hints = promptHints('', true, 'en')
+    expect(hints[0].label).toBe('Build the project from scratch')
+    expect(hints[0].prompt).toMatch(/three chapters/)
+
+    const chronicler = promptHints('chronicler', false, 'en')
+    expect(chronicler[0].label).toBe('Continue the story')
+    expect(chronicler.map((hint) => hint.label)).toContain('Sort out the chronology')
+    // Ни одной кириллической буквы: подсказка целиком на языке интерфейса.
+    for (const hint of promptHints('coauthor', true, 'en')) {
+      expect(hint.label + hint.prompt).not.toMatch(/[А-Яа-яЁё]/)
+    }
+  })
+
 })

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { AIConfig, AIEndpoint, AIModel, AIProposal, AISettings, AITurn } from '../../api/assistant'
 import { AssistantPanel } from './AssistantPanel'
+import { setLang } from '../../store/lang'
 
 /**
  * Содержимое окна помощника: то, что видит и чего не видит человек.
@@ -185,6 +186,7 @@ function renderPanel(props: Partial<Parameters<typeof AssistantPanel>[0]> = {}) 
 }
 
 beforeEach(() => {
+  setLang('ru')
   for (const fn of Object.values(mocks)) fn.mockReset()
   mocks.error.mockResolvedValue({ message: null, consentRequired: false })
   mocks.models.mockResolvedValue(MODELS)
@@ -1273,4 +1275,34 @@ describe('AssistantPanel', () => {
     expect(screen.queryByLabelText('Роль агента')).toBeNull()
     expect(screen.queryByRole('button', { name: 'Сохранить роль' })).toBeNull()
   })
+
+  /**
+   * 0.125.0: подписи окна — из словаря. Проверяем главное: поле ввода, кнопки отправки и
+   * настройка помощника говорят по-английски, а имя агента и модели остаются данными
+   * (его задаёт сервер: «Нестор», «Llama 3.1 8B»).
+   */
+  it('на английском подписи окна переведены', async () => {
+    setLang('en')
+    mocks.config.mockResolvedValue(LOCAL)
+    renderPanel()
+
+    const input = (await screen.findByLabelText('Message to the assistant')) as HTMLTextAreaElement
+    expect(input.disabled).toBe(false)
+    expect(screen.getByRole('button', { name: 'Ask' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'New' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Assistant settings' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Close the assistant' })).toBeTruthy()
+    // Данные: имя агента приходит с сервера.
+    expect(screen.getByText('Нестор')).toBeTruthy()
+
+    // Настройка: провайдер, модель, свой сервер.
+    fireEvent.click(screen.getByRole('button', { name: 'Assistant settings' }))
+    expect(await screen.findByText('Own model servers')).toBeTruthy()
+    expect(screen.getByLabelText('Provider')).toBeTruthy()
+    expect(screen.getByLabelText('Own server address')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Add the server' })).toBeTruthy()
+    expect(screen.getByText('Agent role and behaviour')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Save the role' })).toBeTruthy()
+  })
+
 })
