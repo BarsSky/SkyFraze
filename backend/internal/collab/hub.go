@@ -303,6 +303,11 @@ func (h *Hub) editLive(
 		// Живой комнаты нет: снапшот пишет вызывающий.
 		return yjs.EditOutcome{}, nil
 	}
+	// Слепая комната сначала доливает базу (0.140.3): правка по неполному документу
+	// заставила бы проекцию потерять кадры, которых комната не видела.
+	if room.blind() {
+		room.adoptBase(ctx, h.ev, h.logger)
+	}
 
 	room.docMu.Lock()
 	// Комната могла появиться ровно сейчас и ещё читать документ из базы. Писать в
@@ -565,6 +570,11 @@ func (h *Hub) InsertLive(
 	if room == nil {
 		return yjs.InsertOutcome{}, nil
 	}
+	// Слепая комната сначала доливает базу (0.140.3): вставка в неполный документ
+	// заставила бы проекцию потерять кадры, которых комната не видела.
+	if room.blind() {
+		room.adoptBase(ctx, h.ev, h.logger)
+	}
 
 	room.docMu.Lock()
 	// Комната могла появиться ровно сейчас, и её документ ещё читается из базы
@@ -655,6 +665,10 @@ func (h *Hub) AttachAssetLive(
 	h.mu.RUnlock()
 	if room == nil {
 		return yjs.AttachOutcome{}, nil
+	}
+	// Слепая комната сначала доливает базу (0.140.3) — тот же случай, что у вставки.
+	if room.blind() {
+		room.adoptBase(ctx, h.ev, h.logger)
 	}
 
 	room.docMu.Lock()
@@ -803,7 +817,7 @@ func (h *Hub) addClient(conn *websocket.Conn, userID, projectID uuid.UUID) *clie
 	// Серверный документ комнаты: из него пишется снапшот и в него применяются
 	// апдейты клиентов. Загружаем до первого сообщения — иначе первый апдейт
 	// пришлось бы буферизовать «до загрузки».
-	room.ensureDoc(context.Background(), h.ev, userID, projectID)
+	room.ensureDoc(context.Background(), h.ev, h.logger, userID, projectID)
 
 	// Подключившемуся отдаём состояние КОМНАТЫ: в нём уже есть серверная миграция
 	// текста (title_text/body_text), которой в снапшоте базы может ещё не быть.
@@ -861,9 +875,29 @@ type Room struct {
 	loading bool
 	// migratedEvents — сколько событий было при последней проверке миграции текста.
 	migratedEvents int
+	// loadedEvents — сколько кадров было в документе при загрузке (0.140.3).
+	//
+	// По нему комната отличает «у меня пусто, потому что проект пуст» от «у меня пусто,
+	// потому что я загрузилась раньше, чем в базу записали кадры». Второе состояние —
+	// слепое: правки клиентов ссылаются на структуры, которых в её документе нет, Yjs держит
+	// их в очереди, а её тик записывает в базу пустоту (так в CI пропала глава, созданная
+	// помощником, после перезагрузки страницы). Лечится adoptBase; запись пустоты в этом
+	// состоянии запрещена.
+	loadedEvents int
 	// projectionSignature — подпись последней удачной проекции дерева: по ней
 	// понимаем, что структура и текст не менялись и писать в таблицу нечего.
 	projectionSignature string
+}
+
+// blind — комната пуста, но при загрузке не видела ни одного кадра (0.140.3).
+//
+// Это не «проект пуст», а «комната не знает содержимого»: документ мог загрузиться раньше,
+// чем в базу записали первую главу (помощник, импорт «в место», REST-путь). Пока состояние
+// такое, писать в базу нельзя — иначе пустота комнаты затрёт чужие кадры.
+func (r *Room) blind() bool {
+	r.docMu.Lock()
+	defer r.docMu.Unlock()
+	return r.doc != nil && r.doc.EventCount() == 0 && r.loadedEvents == 0
 }
 
 func (r *Room) HasClients() bool {
@@ -877,7 +911,7 @@ func (r *Room) HasClients() bool {
 // Ошибку загрузки не запоминаем навсегда: если база мигнула, следующий вошедший
 // клиент попробует снова, а комната без документа просто ничего не сохраняет —
 // клиенты в этом случае пишут снапшот по REST, как до Фазы 3.
-func (r *Room) ensureDoc(ctx context.Context, ev *events.Service, userID, projectID uuid.UUID) {
+func (r *Room) ensureDoc(ctx context.Context, ev *events.Service, logger *slog.Logger, userID, projectID uuid.UUID) {
 	r.docMu.Lock()
 	if r.doc != nil || r.loading {
 		r.docMu.Unlock()
@@ -900,6 +934,9 @@ func (r *Room) ensureDoc(ctx context.Context, ev *events.Service, userID, projec
 	}
 	r.doc = doc
 	r.migratedEvents = doc.EventCount()
+	// Что комната видела при загрузке: нужно, чтобы отличить «проект пуст» от «я пуста,
+	// потому что загрузилась раньше записи» (см. loadedEvents и adoptBase).
+	r.loadedEvents = r.migratedEvents
 	// Миграция старого текста — здесь, а не на клиенте: сервер единственный
 	// писатель, поэтому ветка Y.Text на ключе ровно одна. Клиент, создавший её
 	// сам, рисковал проиграть LWW соседу, сделавшему то же самое одновременно.
@@ -914,6 +951,14 @@ func (r *Room) ensureDoc(ctx context.Context, ev *events.Service, userID, projec
 		r.dirty = true
 	}
 	r.docMu.Unlock()
+
+	// Загрузились пустыми? Возможно, снапшот в базе появился уже ПОСЛЕ нашего чтения
+	// (проект создали и сразу написали главу через помощника или импорт). Доливаем базу
+	// сразу, а не ждём первой правки: иначе клиенты успеют прислать дельты, которым в
+	// нашем документе не на что опереться (0.140.3).
+	if r.blind() {
+		r.adoptBase(ctx, ev, logger)
+	}
 }
 
 // state — полное состояние документа комнаты (пусто, если документ не загружен).
@@ -940,7 +985,13 @@ func (r *Room) state() []byte {
 // иначе клиент остался бы со скалярной строкой и, начав печатать, создал бы свою
 // ветку `Y.Text` — то есть ровно ту гонку, из-за которой миграция и переехала на
 // сервер.
-func (r *Room) applyUpdate(by uuid.UUID, data []byte) (applied bool, migrated bool, err error) {
+func (r *Room) applyUpdate(ctx context.Context, ev *events.Service, logger *slog.Logger, by uuid.UUID, data []byte) (applied bool, migrated bool, err error) {
+	// Слепая комната сначала доливает базу (0.140.3): иначе правка-дельта приедет к
+	// документу, в котором нет её структур, Yjs положит её в очередь — и мы вернём
+	// клиенту «принято», хотя в документе ничего не изменилось.
+	if r.blind() {
+		r.adoptBase(ctx, ev, logger)
+	}
 	r.docMu.Lock()
 	defer r.docMu.Unlock()
 	if r.doc == nil {
@@ -1044,6 +1095,27 @@ func (r *Room) broadcastState() {
 // там сбой записи нужно показать человеку. Тик и уход клиента ошибку игнорируют —
 // они всё равно повторят попытку, а показать её некому.
 func (r *Room) persistFromAnyClient(ctx context.Context, ev *events.Service, logger *slog.Logger) error {
+	// Слепая комната (0.140.3): сначала доливаем базу, и только потом решаем, что писать.
+	// Если после доливки всё ещё пусто — писать нельзя: в базе могут быть кадры, которых
+	// эта комната не видела (только в таблице, без снапшота), и «пусто» их затрёт.
+	if r.blind() {
+		r.adoptBase(ctx, ev, logger)
+		if r.blind() {
+			// Долить нечего (снапшота нет), но кадры могут жить только в таблице — так
+			// выглядит проект, импортированный без CRDT. Писать «пусто» поверх нельзя:
+			// это и была потеря главы в CI.
+			has, err := ev.HasEvents(ctx, r.projectID)
+			if err != nil {
+				logger.Warn("collab: cannot check base before save", "project", r.projectID, "err", err)
+				return nil
+			}
+			if has {
+				logger.Warn("collab: blind room skips empty save", "project", r.projectID)
+				return nil
+			}
+		}
+	}
+
 	r.docMu.Lock()
 	doc, dirty, by := r.doc, r.dirty, r.lastBy
 	if doc == nil {
@@ -1233,7 +1305,7 @@ func (c *client) reader(h *Hub) {
 		// Апдейт сначала применяется к серверному документу (из него пишется
 		// снапшот), и только применённый уходит остальным: битые байты им тоже
 		// не подойдут, а клиент-отправитель считал бы правку принятой.
-		applied, migrated, err := c.room.applyUpdate(c.userID, payload)
+		applied, migrated, err := c.room.applyUpdate(context.Background(), h.ev, h.logger, c.userID, payload)
 		if err != nil {
 			// Отброшенный апдейт — всегда повод посмотреть: у клиента правка
 			// есть, а в снапшот она не попадёт.
@@ -1292,3 +1364,7 @@ func projectIDFromPath(p string) string {
 	}
 	return s
 }
+
+
+
+

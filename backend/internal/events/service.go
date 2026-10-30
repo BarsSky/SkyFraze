@@ -212,6 +212,19 @@ func (s *Service) rows(ctx context.Context, projectID uuid.UUID) ([]store.Event,
 	return s.store.ListEvents(ctx, projectID)
 }
 
+// HasEvents — есть ли у проекта кадры в хранимой проекции (таблица `events`).
+//
+// Нужно защите от затирания (0.140.3): слепая комната (загрузила пустой документ) не должна
+// записывать своё «пусто» поверх проекта, где кадры уже есть. Смотрит именно таблицу, а не
+// живой документ: проверяется содержимое БАЗЫ, которое комната собирается перезаписать.
+func (s *Service) HasEvents(ctx context.Context, projectID uuid.UUID) (bool, error) {
+	rows, err := s.store.ListEvents(ctx, projectID)
+	if err != nil {
+		return false, err
+	}
+	return len(rows) > 0, nil
+}
+
 // CreateEvent — новое событие (запись: editor+). Родитель проверяется на
 // существование в этом же проекте, глубина ограничена MaxDepth.
 func (s *Service) CreateEvent(
