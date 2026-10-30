@@ -35,7 +35,9 @@ test('английский интерфейс: экраны переведены
   // Проект создаём через интерфейс, чтобы заодно проверить его подписи по-английски.
   const title = `i18n screens ${Date.now()}`
   await page.goto('/projects')
-  await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByRole('heading', { name: 'Projects', exact: true })).toBeVisible({
+    timeout: 20_000,
+  })
   await page.getByRole('button', { name: '+ New project' }).click()
   await page.getByPlaceholder('Name').fill(title)
   await page.getByRole('button', { name: 'Create', exact: true }).click()
@@ -86,7 +88,12 @@ test('английский интерфейс: экраны переведены
   await expect(page.getByRole('heading', { name: 'How people find you' })).toBeVisible()
 
   await page.goto('/people')
-  await expect(page.getByRole('heading', { name: 'Residents' })).toBeVisible({ timeout: 30_000 })
+  // `exact` — потому что на пустом каталоге рядом стоит заголовок «The residents catalogue is
+  // empty», и подстрочное совпадение по слову Residents давало два элемента (strict mode). На
+  // стенде с резидентами этой поломки не видно: сценарий упал в CI на ПУСТОЙ базе (0.132.1).
+  await expect(page.getByRole('heading', { name: 'Residents', exact: true })).toBeVisible({
+    timeout: 30_000,
+  })
 
   await page.goto('/coauthors')
   await expect(page.getByRole('heading', { name: 'Co-authors', exact: true })).toBeVisible({
