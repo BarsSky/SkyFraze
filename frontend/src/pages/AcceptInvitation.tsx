@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useT } from '../i18n'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useAuthStore } from '../store/auth'
 import { acceptInvitation } from '../api/teams'
@@ -9,6 +10,7 @@ import { acceptInvitation } from '../api/teams'
  * - Если не залогинен: предлагает войти, потом повторно переходит на эту страницу.
  */
 export function AcceptInvitation() {
+  const t = useT()
   const { token } = useParams<{ token: string }>()
   const nav = useNavigate()
   const refresh = useAuthStore((s) => s.refreshToken)
@@ -21,7 +23,7 @@ export function AcceptInvitation() {
   useEffect(() => {
     if (!token) {
       setStatus('error')
-      setErrMsg('Токен приглашения не указан')
+      setErrMsg(t('acc.noToken'))
       return
     }
     if (!refresh) {
@@ -42,7 +44,7 @@ export function AcceptInvitation() {
       .catch((e: any) => {
         setStatus('error')
         // Попробуем извлечь сообщение из JSON-ответа
-        const msg = e?.response?.data?.error || e?.message || 'Не удалось принять приглашение'
+        const msg = e?.response?.data?.error || e?.message || t('acc.failed')
         setErrMsg(msg)
       })
   }, [token, refresh, access, nav])
@@ -50,7 +52,7 @@ export function AcceptInvitation() {
   if (status === 'loading') {
     return (
       <div style={{ maxWidth: 480, margin: '80px auto', padding: 24, textAlign: 'center' }}>
-        <p className="muted">Принимаем приглашение…</p>
+        <p className="muted">{t('acc.accepting')}</p>
       </div>
     )
   }
@@ -59,15 +61,15 @@ export function AcceptInvitation() {
     const next = token ? `/invitations/${token}` : '/projects'
     return (
       <div style={{ maxWidth: 480, margin: '80px auto', padding: 24, textAlign: 'center' }}>
-        <h2>Приглашение в проект</h2>
+        <h2>{t('acc.title')}</h2>
         <p className="muted" style={{ marginBottom: 16 }}>
-          Чтобы принять приглашение, войдите в аккаунт.
+          {t('acc.loginHint')}
         </p>
         <Link to={`/login`}>
-          <button>Войти</button>
+          <button>{t('acc.login')}</button>
         </Link>
         <p className="muted" style={{ marginTop: 16, fontSize: 12 }}>
-          После входа вернитесь по ссылке приглашения.
+          {t('acc.loginReturn')}
         </p>
       </div>
     )
@@ -76,14 +78,14 @@ export function AcceptInvitation() {
   if (status === 'error') {
     return (
       <div style={{ maxWidth: 480, margin: '80px auto', padding: 24, textAlign: 'center' }}>
-        <h2>Не удалось принять приглашение</h2>
+        <h2>{t('acc.failTitle')}</h2>
         <p className="error">{errMsg}</p>
         <p className="muted" style={{ marginTop: 12, fontSize: 13 }}>
-          Возможные причины: приглашение истекло, уже использовано, или вы не тот получатель.
+          {t('acc.failHint')}
         </p>
         <div style={{ marginTop: 16 }}>
           <Link to="/projects">
-            <button className="secondary">К моим проектам</button>
+            <button className="secondary">{t('acc.toProjects')}</button>
           </Link>
         </div>
       </div>
@@ -93,15 +95,15 @@ export function AcceptInvitation() {
   // status === 'ok'
   return (
     <div style={{ maxWidth: 480, margin: '80px auto', padding: 24, textAlign: 'center' }}>
-      <h2 style={{ color: 'var(--success)' }}>✓ Приглашение принято!</h2>
+      <h2 style={{ color: 'var(--success)' }}>{t('acc.doneTitle')}</h2>
       <p className="muted" style={{ marginBottom: 16 }}>
-        {user ? `Добро пожаловать в проект, ${user.display_name}!` : 'Приглашение успешно принято'}
+        {user ? t('acc.welcome', { name: user.display_name }) : t('acc.done')}
       </p>
       <Link to={`/projects/${projectId}`}>
-        <button>Открыть проект</button>
+        <button>{t('acc.open')}</button>
       </Link>
       <p className="muted" style={{ marginTop: 12, fontSize: 12 }}>
-        Редирект автоматически через секунду…
+        {t('acc.redirect')}
       </p>
     </div>
   )

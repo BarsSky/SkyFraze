@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { tStatic, useT } from '../../i18n'
 import {
   addPasskey,
   deletePasskey,
@@ -23,6 +24,7 @@ import { useAuthStore } from '../../store/auth'
 type Note = { kind: 'ok' | 'error'; text: string } | null
 
 export function PasskeySettings() {
+  const t = useT()
   const user = useAuthStore((state) => state.user)
   const enabled = user?.passkeys_enabled === true
   const supported = passkeysSupported()
@@ -60,7 +62,7 @@ export function PasskeySettings() {
       setKeys((prev) => [result.key, ...prev])
       setName('')
       if (result.recoveryCodes.length > 0) setRecovery(result.recoveryCodes)
-      setNote({ kind: 'ok', text: 'Ключ привязан: теперь можно входить по отпечатку или PIN.' })
+      setNote({ kind: 'ok', text: t('pk.linkedNote') })
     } catch (e) {
       setNote({ kind: 'error', text: await describePasskeyError(e) })
     } finally {
@@ -75,7 +77,7 @@ export function PasskeySettings() {
       await deletePasskey(id)
       setKeys((prev) => prev.filter((key) => key.id !== id))
       setPendingDelete(null)
-      setNote({ kind: 'ok', text: 'Ключ удалён: этим устройством больше нельзя войти.' })
+      setNote({ kind: 'ok', text: t('pk.removedNote') })
     } catch (e) {
       setNote({ kind: 'error', text: await describePasskeyError(e) })
     } finally {
@@ -87,23 +89,20 @@ export function PasskeySettings() {
 
   return (
     <div className="passkeys" data-passkeys>
-      <h4 className="twofa__subhead">Ключи доступа</h4>
+      <h4 className="twofa__subhead">{t('pk.subhead')}</h4>
       <p className="muted twofa__hint">
-        Ключ доступа — это отпечаток, Face ID или PIN устройства. Вход по ключу заменяет код из
-        приложения, но не пароль: без пароля аккаунт остался бы без пути восстановления.
+        {t('pk.intro')}
       </p>
 
       {!supported && (
         <p className="muted" data-passkeys-unsupported>
-          Этот браузер не поддерживает ключи доступа. Попробуйте другой — например, свежий Chrome,
-          Safari или Edge.
+          {t('pk.unsupported')}
         </p>
       )}
 
       {supported && loaded && keys.length === 0 && (
         <p className="muted" data-passkeys-empty>
-          Ключей пока нет. Привязать стоит два: телефон и ноутбук — потеря одного устройства не
-          станет потерей аккаунта.
+          {t('pk.none')}
         </p>
       )}
 
@@ -111,7 +110,7 @@ export function PasskeySettings() {
         <ul className="passkeys__list" data-passkeys-list>
           {keys.map((key) => (
             <li key={key.id} className="passkeys__item">
-              <span className="passkeys__name">{key.name || 'ключ без имени'}</span>
+              <span className="passkeys__name">{key.name || t('pk.unnamed')}</span>
               <span className="muted passkeys__meta">{describeKey(key)}</span>
               {pendingDelete === key.id ? (
                 <span className="passkeys__confirm">
@@ -122,10 +121,10 @@ export function PasskeySettings() {
                     disabled={busy}
                     data-passkey-delete-confirm
                   >
-                    Удалить
+                    {t('pk.delete')}
                   </button>
                   <button type="button" className="secondary" onClick={() => setPendingDelete(null)}>
-                    Оставить
+                    {t('pk.keep')}
                   </button>
                 </span>
               ) : (
@@ -134,10 +133,10 @@ export function PasskeySettings() {
                   className="secondary"
                   onClick={() => setPendingDelete(key.id)}
                   disabled={busy}
-                  aria-label={`Удалить ключ ${key.name || ''}`.trim()}
+                  aria-label={t('pk.deleteAria', { name: (key.name || '').trim() })}
                   data-passkey-delete
                 >
-                  Удалить
+                  {t('pk.delete')}
                 </button>
               )}
             </li>
@@ -150,12 +149,12 @@ export function PasskeySettings() {
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="например, ноутбук"
-            aria-label="Имя ключа"
+            placeholder={t('pk.namePlaceholder')}
+            aria-label={t('pk.nameAria')}
             maxLength={60}
           />
           <button type="button" onClick={() => void add()} disabled={busy} data-passkey-add>
-            {busy ? 'Жду подтверждения…' : 'Привязать ключ'}
+            {busy ? t('pk.waiting') : t('pk.link')}
           </button>
         </div>
       )}
@@ -163,9 +162,8 @@ export function PasskeySettings() {
       {recovery.length > 0 && (
         <div className="twofa__codes" data-passkey-recovery>
           <p>
-            <strong>Коды восстановления.</strong> Показываются один раз. Каждый заменяет ключ при
-            входе — сохраните их в надёжном месте: это последний путь в аккаунт, если устройство
-            потеряется.
+            <strong>{t('pk.recoveryTitle')}</strong>
+            {t('pk.recoveryHint')}
           </p>
           <ul>
             {recovery.map((code) => (
@@ -175,7 +173,7 @@ export function PasskeySettings() {
             ))}
           </ul>
           <button type="button" className="secondary" onClick={() => setRecovery([])}>
-            Я сохранил коды
+            {t('pk.savedCodes')}
           </button>
         </div>
       )}
@@ -202,9 +200,9 @@ export function PasskeySettings() {
 export function describeKey(key: PasskeyKey, now: Date = new Date()): string {
   const parts: string[] = []
   const created = formatDate(key.created_at, now)
-  if (created) parts.push(`привязан ${created}`)
+  if (created) parts.push(tStatic('pk.partLinked', { name: created }))
   const used = formatDate(key.last_used_at, now)
-  if (used) parts.push(`вход ${used}`)
+  if (used) parts.push(tStatic('pk.partUsed', { name: used }))
   const transport = transportName(key.transports)
   if (transport) parts.push(transport)
   return parts.join(' · ')
@@ -217,9 +215,9 @@ function formatDate(value: string | undefined, now: Date): string {
   // Свежие — относительными («сегодня», «3 дня назад»): так человек быстрее понимает, что
   // ключом давно не пользовались.
   const days = Math.floor((now.getTime() - date.getTime()) / 86_400_000)
-  if (days <= 0) return 'сегодня'
-  if (days === 1) return 'вчера'
-  if (days < 30) return `${days} дн. назад`
+  if (days <= 0) return tStatic('pk.today')
+  if (days === 1) return tStatic('pk.yesterday')
+  if (days < 30) return tStatic('pk.daysAgo', { days })
   return date.toLocaleDateString('ru-RU')
 }
 
@@ -231,11 +229,11 @@ function transportName(raw: string): string {
     .filter(Boolean)[0]
   switch (first) {
     case 'internal':
-      return 'встроенный'
+      return tStatic('pk.kindBuiltin')
     case 'hybrid':
-      return 'телефон как ключ'
+      return tStatic('pk.kindPhone')
     case 'usb':
-      return 'USB-ключ'
+      return tStatic('pk.kindUsb')
     case 'nfc':
       return 'NFC'
     case 'ble':

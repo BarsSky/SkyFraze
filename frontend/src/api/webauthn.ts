@@ -1,4 +1,5 @@
 import { http, serverErrorMessage } from './client'
+import { tStatic } from '../i18n'
 import { useAuthStore } from '../store/auth'
 import type { UserPublic } from './auth'
 
@@ -188,7 +189,7 @@ export async function addPasskey(
   const cred = (await navigator.credentials.create({
     publicKey: toCreationOptions(begin.publicKey),
   })) as PublicKeyCredential | null
-  if (!cred) throw new Error('браузер не создал ключ')
+  if (!cred) throw new Error(tStatic('wa.noKey'))
   // Имя и пропуск — в строке запроса: тело занято ответом аутентификатора, иначе пришлось бы
   // разбирать и собирать его заново, рискуя проверить подпись не над тем, что пришло.
   const url =
@@ -214,7 +215,7 @@ export async function loginWithPasskey(ticket: string): Promise<UserPublic> {
   const cred = (await navigator.credentials.get({
     publicKey: toRequestOptions(begin.publicKey),
   })) as PublicKeyCredential | null
-  if (!cred) throw new Error('браузер не вернул подпись ключа')
+  if (!cred) throw new Error(tStatic('wa.noSignature'))
   const done = await http
     .post(
       `auth/login/webauthn/finish?challenge=${encodeURIComponent(begin.challenge)}`,
@@ -234,15 +235,15 @@ export async function loginWithPasskey(ticket: string): Promise<UserPublic> {
  */
 export async function describePasskeyError(e: unknown): Promise<string> {
   const name = (e as { name?: string } | null)?.name ?? ''
-  if (name === 'NotAllowedError') return 'Ключ не подтверждён — окно закрылось или время вышло.'
-  if (name === 'InvalidStateError') return 'Такой ключ уже привязан к аккаунту.'
-  if (name === 'NotSupportedError') return 'Этот браузер не поддерживает ключи доступа.'
-  if (e instanceof Error && e.message === 'браузер не создал ключ') {
-    return 'Браузер не создал ключ — попробуйте ещё раз.'
+  if (name === 'NotAllowedError') return tStatic('wa.notAllowed')
+  if (name === 'InvalidStateError') return tStatic('wa.invalidState')
+  if (name === 'NotSupportedError') return tStatic('wa.notSupported')
+  if (e instanceof Error && e.message === tStatic('wa.noKey')) {
+    return tStatic('wa.notCreated')
   }
-  if (e instanceof Error && e.message === 'браузер не вернул подпись ключа') {
-    return 'Браузер не подтвердил ключ — попробуйте ещё раз.'
+  if (e instanceof Error && e.message === tStatic('wa.noSignature')) {
+    return tStatic('wa.notConfirmed')
   }
   const server = await serverErrorMessage(e)
-  return server ?? 'Не удалось выполнить операцию с ключом доступа.'
+  return server ?? tStatic('wa.failed')
 }

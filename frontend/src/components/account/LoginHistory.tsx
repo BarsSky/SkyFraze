@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { tStatic, useT } from '../../i18n'
 import { listLogins, type LoginAttempt } from '../../api/auth'
 import { describeBrowser } from '../../lib/agent'
 
@@ -14,6 +15,7 @@ import { describeBrowser } from '../../lib/agent'
  */
 
 export function LoginHistory() {
+  const t = useT()
   const [attempts, setAttempts] = useState<LoginAttempt[]>([])
   const [retentionDays, setRetentionDays] = useState(0)
   const [loaded, setLoaded] = useState(false)
@@ -39,10 +41,10 @@ export function LoginHistory() {
 
   return (
     <div className="logins" data-logins>
-      <h4 className="twofa__subhead">Последние входы</h4>
+      <h4 className="twofa__subhead">{t('lh.title')}</h4>
       {attempts.length === 0 ? (
         <p className="muted" data-logins-empty>
-          Записей пока нет. Здесь появятся входы в аккаунт — и неудачные попытки тоже.
+          {t('lh.empty')}
         </p>
       ) : (
         <ul className="logins__list" data-logins-list>
@@ -63,8 +65,8 @@ export function LoginHistory() {
       )}
       <p className="muted twofa__hint" data-logins-retention>
         {retentionDays > 0
-          ? `Хранятся последние ${attempts.length} записей за ${retentionDays} дней. Не узнаёте вход — смените пароль и привяжите новый ключ.`
-          : 'Не узнаёте вход — смените пароль и привяжите новый ключ.'}
+          ? t('lh.retention', { count: attempts.length, days: retentionDays })
+          : t('lh.hint')}
       </p>
     </div>
   )
@@ -81,31 +83,31 @@ export function describeLoginAttempt(attempt: LoginAttempt): string {
     case 'ok':
       switch (attempt.factor) {
         case 'password':
-          return 'Вход по паролю'
+          return tStatic('lh.byPassword')
         case 'totp':
-          return 'Вход по коду из приложения'
+          return tStatic('lh.byTotp')
         case 'recovery':
-          return 'Вход по коду восстановления'
+          return tStatic('lh.byRecovery')
         case 'passkey':
-          return 'Вход по ключу доступа'
+          return tStatic('lh.byPasskey')
         default:
-          return 'Вход выполнен'
+          return tStatic('lh.ok')
       }
     case 'bad_password':
-      return 'Неудачно: неверный пароль'
+      return tStatic('lh.badPassword')
     case 'bad_code':
-      return 'Неудачно: неверный код'
+      return tStatic('lh.badCode')
     case 'bad_key':
-      return 'Неудачно: ключ не подошёл'
+      return tStatic('lh.badKey')
     case 'locked':
-      return 'Неудачно: слишком много попыток'
+      return tStatic('lh.badRate')
     case 'request_pending':
-      return 'Неудачно: заявка ещё не одобрена'
+      return tStatic('lh.badPending')
     case 'request_rejected':
-      return 'Неудачно: заявка отклонена'
+      return tStatic('lh.badRejected')
     default:
       // Неизвестный исход не прячем: «неизвестно» честнее, чем пустая строка.
-      return 'Неизвестная попытка'
+      return tStatic('lh.unknown')
   }
 }
 

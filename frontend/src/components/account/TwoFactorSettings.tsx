@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { useT } from '../../i18n'
 import {
   disableTOTP,
   enableTOTP,
@@ -28,6 +29,7 @@ import { PasskeySettings } from './PasskeySettings'
 type Stage = 'idle' | 'setup' | 'codes'
 
 export function TwoFactorSettings() {
+  const t = useT()
   const user = useAuthStore((state) => state.user)
   const setUser = useAuthStore((state) => state.setUser)
   const enabled = user?.totp_enabled === true
@@ -64,7 +66,7 @@ export function TwoFactorSettings() {
       setStage('setup')
       setCode('')
     } catch {
-      setNote('Не удалось начать настройку — попробуйте ещё раз.')
+      setNote(t('tfa.startFailed'))
     } finally {
       setBusy(false)
     }
@@ -80,7 +82,7 @@ export function TwoFactorSettings() {
       // Профиль перечитываем: признак «включено» рисуется по нему.
       if (user) setUser({ ...user, totp_enabled: true })
     } catch {
-      setNote('Код не подошёл. Проверьте время на телефоне и введите код заново.')
+      setNote(t('tfa.codeWrong'))
     } finally {
       setBusy(false)
     }
@@ -93,9 +95,9 @@ export function TwoFactorSettings() {
       await disableTOTP(disableCode.trim())
       setDisableCode('')
       if (user) setUser({ ...user, totp_enabled: false })
-      setNote('Двухфакторный вход выключен: теперь для входа достаточно пароля.')
+      setNote(t('tfa.disabled'))
     } catch {
-      setNote('Код не подошёл — вход остался двухфакторным.')
+      setNote(t('tfa.disableWrongCode'))
     } finally {
       setBusy(false)
     }
@@ -108,12 +110,12 @@ export function TwoFactorSettings() {
       const revoked = await revokeOtherSessions()
       setNote(
         revoked > 0
-          ? `Закрыто сеансов: ${revoked}. Этот браузер остался в аккаунте.`
-          : 'Других активных сеансов не было.',
+          ? t('tfa.revoked', { count: revoked })
+          : t('tfa.noSessions'),
       )
       await loadSessions()
     } catch {
-      setNote('Не удалось закрыть другие сеансы.')
+      setNote(t('tfa.revokeFailed'))
     } finally {
       setBusy(false)
     }
@@ -121,30 +123,28 @@ export function TwoFactorSettings() {
 
   return (
     <section className="twofa" data-two-factor>
-      <h3 style={{ marginTop: 0 }}>Вход и устройства</h3>
+      <h3 style={{ marginTop: 0 }}>{t('tfa.title')}</h3>
 
       <div className="twofa__row">
-        <strong>Двухфакторный вход</strong>
+        <strong>{t('tfa.heading')}</strong>
         <span className="muted" data-totp-state={enabled ? 'on' : 'off'}>
-          {enabled ? 'включён' : 'выключен'}
+          {enabled ? t('tfa.on') : t('tfa.off')}
         </span>
       </div>
       <p className="muted twofa__hint">
-        Пароль — единственный фактор, пока не включён второй. Код из приложения-аутентификатора
-        защищает вход, даже если пароль утечёт.
+        {t('tfa.explain')}
       </p>
 
       {!enabled && stage === 'idle' && (
         <button type="button" onClick={() => void start()} disabled={busy} data-totp-enable>
-          {busy ? 'Готовлю…' : 'Включить двухфакторный вход'}
+          {busy ? t('tfa.preparing') : t('tfa.enable')}
         </button>
       )}
 
       {!enabled && stage === 'setup' && (
         <div className="twofa__setup">
           <p className="muted">
-            Добавьте секрет в приложение (Aegis, Google Authenticator, 1Password) и введите код,
-            который оно покажет. Секрет показывается один раз.
+            {t('tfa.step2')}
           </p>
           <code className="twofa__secret" data-totp-secret>{secret}</code>
           <p className="muted twofa__url">{url}</p>
@@ -152,12 +152,12 @@ export function TwoFactorSettings() {
             <input
               value={code}
               onChange={(e) => setCode(e.target.value)}
-              placeholder="код из приложения"
+              placeholder={t('tfa.codePlaceholder')}
               inputMode="numeric"
-              aria-label="Код подтверждения"
+              aria-label={t('tfa.codeAria')}
             />
             <button type="button" onClick={() => void confirm()} disabled={busy || code.trim() === ''}>
-              {busy ? 'Проверяю…' : 'Включить'}
+              {busy ? t('tfa.checking') : t('tfa.confirm')}
             </button>
           </div>
         </div>
@@ -166,8 +166,8 @@ export function TwoFactorSettings() {
       {stage === 'codes' && (
         <div className="twofa__codes" data-totp-codes>
           <p>
-            <strong>Коды восстановления.</strong> Каждый — одноразовый, заменяет телефон при
-            входе. Показываются один раз: сохраните их в надёжном месте.
+            <strong>{t('pk.recoveryTitle')}</strong>
+            {t('tfa.recoveryHint')}
           </p>
           <ul>
             {codes.map((recovery) => (
@@ -177,7 +177,7 @@ export function TwoFactorSettings() {
             ))}
           </ul>
           <button type="button" className="secondary" onClick={() => setStage('idle')}>
-            Я сохранил коды
+            {t('tfa.savedCodes')}
           </button>
         </div>
       )}
@@ -187,18 +187,18 @@ export function TwoFactorSettings() {
           <input
             value={disableCode}
             onChange={(e) => setDisableCode(e.target.value)}
-            placeholder="код приложения или восстановления"
-            aria-label="Код для отключения"
+            placeholder={t('tfa.disablePlaceholder')}
+            aria-label={t('tfa.disableAria')}
           />
           <button type="button" className="secondary ed-danger" onClick={() => void turnOff()} disabled={busy}>
-            Выключить
+            {t('tfa.disable')}
           </button>
         </div>
       )}
 
-      <h4 className="twofa__subhead">Активные сеансы</h4>
+      <h4 className="twofa__subhead">{t('tfa.sessions')}</h4>
       {sessions.length === 0 ? (
-        <p className="muted">Активных сеансов не видно (обновите страницу).</p>
+        <p className="muted">{t('tfa.sessionsEmpty')}</p>
       ) : (
         <ul className="twofa__sessions" data-sessions>
           {sessions.map((session) => (
@@ -209,7 +209,7 @@ export function TwoFactorSettings() {
         </ul>
       )}
       <button type="button" className="secondary" onClick={() => void closeOthers()} disabled={busy} data-sessions-revoke>
-        Выйти на всех устройствах, кроме этого
+        {t('tfa.revokeOthers')}
       </button>
 
       {/* Ключи доступа — второй фактор рядом с кодом из приложения (0.65.0). */}

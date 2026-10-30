@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { pluralWord, useT } from '../i18n'
+import { useLang } from '../store/lang'
 import { Link } from 'react-router-dom'
 import { inviteCoauthor } from '../api/coauthors'
 import {
@@ -34,6 +36,8 @@ const MIN_QUERY = 2
  * человек скрывается отсюда сам, сняв галочку в профиле.
  */
 export function PeoplePage() {
+  const t = useT()
+  const [lang] = useLang()
   const user = useAuthStore((s) => s.user)
   const [query, setQuery] = useState('')
   const [debounced, setDebounced] = useState('')
@@ -132,7 +136,9 @@ export function PeoplePage() {
     try {
       await inviteCoauthor(target.id, message, targetCrafts)
       setInviteFor(null)
-      setNote(`Заявка отправлена: ${target.display_name} (@${target.username})`)
+      setNote(
+        t('ppl.invited', { name: target.display_name, nick: target.username }),
+      )
       // Связь изменилась прямо сейчас — помечаем строку, чтобы кнопка не
       // предлагала отправить ту же заявку второй раз.
       setItems((prev) =>
@@ -171,16 +177,17 @@ export function PeoplePage() {
    * заявку кнопка не предлагает — связь приходит вместе с человеком.
    */
   function relationControl(person: Person) {
-    if (user?.id === person.id) return <span className="muted">это вы</span>
-    if (person.relation === 'coauthor') return <span className="muted">уже соавтор</span>
+    if (user?.id === person.id) return <span className="muted">{t('ppl.thatIsYou')}</span>
+    if (person.relation === 'coauthor')
+      return <span className="muted">{t('ppl.alreadyCoauthor')}</span>
     if (person.relation === 'request-outgoing') {
-      return <span className="muted">заявка отправлена, ждём ответа</span>
+      return <span className="muted">{t('ppl.outgoing')}</span>
     }
     if (person.relation === 'request-incoming') {
       return (
         <span className="muted people__relation">
-          этот человек позвал вас —{' '}
-          <Link className="people__link" to="/coauthors">ответить</Link>
+          {t('ppl.incoming')}{' '}
+          <Link className="people__link" to="/coauthors">{t('ppl.reply')}</Link>
         </span>
       )
     }
@@ -193,7 +200,7 @@ export function PeoplePage() {
           setInviteFor(person)
         }}
       >
-        Позвать в соавторы
+        {t('ppl.invite')}
       </button>
     )
   }
@@ -205,36 +212,42 @@ export function PeoplePage() {
     <div className="coauthors people" data-people>
       <div className="feed__head">
         <div>
-          <h2 className="feed__title">Резиденты</h2>
+          <h2 className="feed__title">{t('ppl.title')}</h2>
           <p className="muted feed__sub">
-            Зарегистрированные участники: чем занимаются и что уже опубликовали.
-            Заявку в соавторы можно отправить прямо из строки.
+            {t('ppl.sub')}
           </p>
         </div>
         <Link to="/coauthors">
-          <button className="secondary" type="button">← К соавторам</button>
+          <button className="secondary" type="button">
+            {t('ppl.backToCoauthors')}
+          </button>
         </Link>
       </div>
 
       {user && user.discoverable === false && (
         <p className="muted people__self-note">
-          Вас не видно в каталоге: галочка «Показывать меня в списке резидентов» снята в профиле на
-          странице <Link className="people__link" to="/coauthors">«Соавторы»</Link>.
+          {t('ppl.hidden1')}{' '}
+          <Link className="people__link" to="/coauthors">
+            {t('set.coauthors')}
+          </Link>
+          {t('ppl.hidden2')}
         </p>
       )}
 
       {error != null && (
         <ErrorBanner
           error={error}
-          what="Резиденты"
+          what={t('ppl.what')}
           onRetry={() => void load(activeQuery, craft, 0)}
-          actions={<Link className="banner__link" to="/coauthors">← К соавторам</Link>}
+          actions={<Link className="banner__link" to="/coauthors">{t('ppl.backToCoauthors')}</Link>}
         />
       )}
       {note && (
         <div className="card pub-note">
           {note}
-          <button className="secondary" type="button" onClick={() => setNote(null)}>ок</button>
+          <button className="secondary" type="button" onClick={() => setNote(null)}>
+            {t('ppl.ok')}
+          </button>
         </div>
       )}
 
@@ -242,28 +255,30 @@ export function PeoplePage() {
         <form className="coauthors__search" role="search" onSubmit={submitSearch}>
           <input
             value={query}
-            placeholder="Поиск по нику (@nick) или имени"
-            aria-label="Поиск резидентов по нику или имени"
+            placeholder={t('ppl.searchPlaceholder')}
+            aria-label={t('ppl.searchAria')}
             onChange={(e) => setQuery(e.target.value)}
           />
           {/* Кнопка нужна не только ради Enter: явное нажатие применяет запрос
               сразу, а не после паузы набора. */}
-          <button type="submit" className="secondary">Найти</button>
+          <button type="submit" className="secondary">
+            {t('ppl.find')}
+          </button>
         </form>
         {trimmed.length === 1 && (
           <p className="muted people__hint">
-            Поиск идёт от двух символов — пока показан весь каталог.
+            {t('ppl.hint2')}
           </p>
         )}
 
-        <div className="people__filters" role="group" aria-label="Фильтр по специализациям">
+        <div className="people__filters" role="group" aria-label={t('ppl.filtersAria')}>
           <button
             type="button"
             className={craft === null ? 'craft-chip is-picked' : 'craft-chip'}
             aria-pressed={craft === null}
             onClick={() => setCraft(null)}
           >
-            все
+            {t('ppl.all')}
           </button>
           {CRAFT_CATALOG.map((item) => (
             <button
@@ -279,10 +294,13 @@ export function PeoplePage() {
           ))}
         </div>
 
-        {loading && <p className="muted">Загрузка…</p>}
+        {loading && <p className="muted">{t('ppl.loading')}</p>}
         {!loading && error == null && (
           <p className="muted people__count" data-people-count>
-            Найдено: {total} {plural(total, 'резидент', 'резидента', 'резидентов')}
+            {t('ppl.found', {
+              count: total,
+              word: pluralWord(lang, 'ppl.unit.resident', total),
+            })}
           </p>
         )}
       </section>
@@ -291,27 +309,26 @@ export function PeoplePage() {
         {empty && (
           <div className="people__empty" data-people-empty>
             <h3 className="people__empty-title">
-              {filtering ? 'Никого не нашлось' : 'Каталог резидентов пуст'}
+              {filtering ? t('ppl.noneFound') : t('ppl.catalogueEmpty')}
             </h3>
             {filtering ? (
               <>
                 <p className="muted people__empty-text">
-                  Попробуйте другое имя или ник: ник пишется латиницей, например{' '}
-                  <code>@anna.design</code>.
+                  {t('ppl.tryHint1')}{' '}
+                  <code>@anna.design</code>
+                  {t('ppl.tryHint2')}
                 </p>
                 <button type="button" className="secondary" onClick={resetFilters}>
-                  Сбросить поиск и фильтр
+                  {t('ppl.reset')}
                 </button>
               </>
             ) : (
               <>
                 <p className="muted people__empty-text">
-                  Пока никто не зарегистрировался. Каталог заполняется сам: как только на
-                  инсталляции появляются участники, они видны здесь — со своим резюме и
-                  специализациями.
+                  {t('ppl.emptyHint')}
                 </p>
                 <Link className="people__link" to="/coauthors">
-                  Профиль и круг соавторов →
+                  {t('ppl.profileLink')}
                 </Link>
               </>
             )}
@@ -343,12 +360,7 @@ export function PeoplePage() {
                   {person.public_stories > 0 && (
                     <span className="people__public">
                       {person.public_stories}{' '}
-                      {plural(
-                        person.public_stories,
-                        'публичная история',
-                        'публичные истории',
-                        'публичных историй',
-                      )}
+                      {pluralWord(lang, 'ppl.unit.story', person.public_stories)}
                     </span>
                   )}
                 </div>
@@ -364,12 +376,12 @@ export function PeoplePage() {
                 {bio ? (
                   <p className={isOpen ? 'people__bio muted is-open' : 'people__bio muted'}>{bio}</p>
                 ) : (
-                  <p className="people__bio muted">о себе пока не рассказал</p>
+                  <p className="people__bio muted">{t('ppl.noBio')}</p>
                 )}
 
                 {isOpen && (
                   <div className="people__details">
-                    {detailFor === person.id && <p className="muted">Загружаю публичные истории…</p>}
+                    {detailFor === person.id && <p className="muted">{t('ppl.loadingStories')}</p>}
                     {detailIssue && (
                       <p className="muted people__detail-error" role="alert">
                         <span>
@@ -381,17 +393,19 @@ export function PeoplePage() {
                             type="button"
                             onClick={() => void loadDetail(person)}
                           >
-                            Повторить
+                            {t('ppl.retry')}
                           </button>
                         )}
                       </p>
                     )}
                     {profile && (
                       <div className="people__stories">
-                        <span className="muted">Публичные истории: {profile.stories.length}</span>
+                        <span className="muted">
+                          {t('ppl.storiesCount', { count: profile.stories.length })}
+                        </span>
                         {profile.stories.length === 0 ? (
                           <p className="muted people__stories-empty">
-                            Ничего не опубликовано: проекты человека пока закрыты.
+                            {t('ppl.nothingPublished')}
                           </p>
                         ) : (
                           <ul className="people__story-list">
@@ -412,7 +426,7 @@ export function PeoplePage() {
 
               <div className="people__actions">
                 <button type="button" className="secondary" onClick={() => toggle(person)}>
-                  {isOpen ? 'Свернуть' : 'Подробнее'}
+                  {isOpen ? t('ppl.collapse') : t('ppl.details')}
                 </button>
                 {relationControl(person)}
               </div>
@@ -439,7 +453,9 @@ export function PeoplePage() {
               disabled={loadingMore}
               onClick={() => void load(activeQuery, craft, items.length)}
             >
-              {loadingMore ? 'Загружаю…' : `Показать ещё (${total - items.length})`}
+              {loadingMore
+                ? t('ppl.loadingMore')
+                : t('ppl.showMore', { count: total - items.length })}
             </button>
           </div>
         )}

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useT } from '../../i18n'
 import { normalizeUsername, validUsername } from '../../api/coauthors'
 import { updateProfile, type ProfilePatch } from '../../api/auth'
 import { useAuthStore } from '../../store/auth'
@@ -21,6 +22,7 @@ import { craftsOf } from '../../lib/crafts'
 const BIO_LIMIT = 600
 
 export function ProfileCard() {
+  const t = useT()
   const user = useAuthStore((s) => s.user)
   const [name, setName] = useState(user?.display_name ?? '')
   const [nick, setNick] = useState(user?.username ?? '')
@@ -67,47 +69,55 @@ export function ProfileCard() {
     try {
       await updateProfile(patch)
       setState('saved')
-      setMessage('Сохранено')
+      setMessage(t('prf.saved'))
     } catch (e) {
       setState('idle')
-      setMessage(/409/.test(String(e)) ? 'Этот ник уже занят — попробуйте другой' : 'Не удалось сохранить')
+      setMessage(
+        /409/.test(String(e)) ? t('prf.nickTaken') : t('prf.saveFailed'),
+      )
     }
   }
 
   return (
     <section className="card" data-profile>
-      <h3 style={{ marginTop: 0 }}>Как вас найти</h3>
+      <h3 style={{ marginTop: 0 }}>{t('prf.title')}</h3>
       <p className="muted" style={{ marginTop: 0 }}>
-        Ник — это то, что человек вводит в поиске: <code>@{user?.username}</code>. Резюме
-        и специализации здесь же попадают в каталог резидентов.
+        {t('prf.intro1')} <code>@{user?.username}</code>.
+        {t('prf.intro2')}
       </p>
       <div className="row" style={{ gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
         <label style={{ flex: '1 1 220px' }}>
-          <span className="muted" style={{ display: 'block', marginBottom: 4 }}>Имя</span>
-          <input value={name} onChange={(e) => setName(e.target.value)} aria-label="Ваше имя" />
+          <span className="muted" style={{ display: 'block', marginBottom: 4 }}>
+            {t('prf.nameLabel')}
+          </span>
+          <input value={name} onChange={(e) => setName(e.target.value)} aria-label={t('prf.nameAria')} />
         </label>
         <label style={{ flex: '1 1 200px' }}>
-          <span className="muted" style={{ display: 'block', marginBottom: 4 }}>Ник</span>
+          <span className="muted" style={{ display: 'block', marginBottom: 4 }}>
+            {t('prf.nickLabel')}
+          </span>
           <input
             value={nick}
             onChange={(e) => setNick(normalizeUsername(e.target.value))}
-            aria-label="Ваш ник"
+            aria-label={t('prf.nickAria')}
             placeholder="anna.design"
           />
         </label>
       </div>
       {!nickOk && nick.length > 0 && (
-        <p className="ed-panel__note">Ник: от 3 до 32 символов, латиница, цифры, точка, дефис, подчёркивание.</p>
+        <p className="ed-panel__note">{t('prf.nickNote')}</p>
       )}
 
       <label className="coauthors__bio">
-        <span className="muted" style={{ display: 'block', marginBottom: 4 }}>О себе</span>
+        <span className="muted" style={{ display: 'block', marginBottom: 4 }}>
+            {t('prf.bioLabel')}
+          </span>
         <textarea
           rows={3}
           maxLength={BIO_LIMIT}
           value={bio}
-          aria-label="О себе"
-          placeholder="Чем занимаетесь, что пишете и чем можете помочь в общем деле"
+          aria-label={t('prf.bioAria')}
+          placeholder={t('prf.bioPlaceholder')}
           onChange={(e) => setBio(e.target.value)}
         />
         <span className="muted coauthors__counter">{bio.length} / {BIO_LIMIT}</span>
@@ -115,7 +125,7 @@ export function ProfileCard() {
 
       <div className="coauthors__profile-crafts">
         <span className="muted" style={{ display: 'block', marginBottom: 6 }}>
-          Специализации — что вы берёте на себя в общем деле
+          {t('prf.craftsLabel')}
         </span>
         <CraftPicker initial={crafts} value={crafts} onChange={setCrafts} />
       </div>
@@ -127,10 +137,9 @@ export function ProfileCard() {
           onChange={(e) => setDiscoverable(e.target.checked)}
         />
         <span>
-          Показывать меня в списке резидентов
+          {t('prf.discoverable')}
           <span className="muted" style={{ display: 'block' }}>
-            Включено по умолчанию: снимите галочку, чтобы скрыть себя из каталога и из
-            поиска людей.
+            {t('prf.discoverableHint')}
           </span>
         </span>
       </label>
@@ -143,17 +152,16 @@ export function ProfileCard() {
           data-notify-comments
         />
         <span>
-          Присылать замечания на почту
+          {t('prf.notifyComments')}
           <span className="muted" style={{ display: 'block' }}>
-            Обсуждение кадров — ваше дело и ваших соавторов: письмо уходит на почтовый сервер
-            стенда с текстом замечаний. Выключено по умолчанию.
+            {t('prf.notifyCommentsHint')}
           </span>
         </span>
       </label>
 
       <div className="row" style={{ gap: 12, marginTop: 12, flexWrap: 'wrap', alignItems: 'center' }}>
         <button type="button" disabled={state === 'busy' || !nickOk || !changed} onClick={() => void save()}>
-          {state === 'busy' ? 'Сохраняю…' : 'Сохранить профиль'}
+          {state === 'busy' ? t('prf.saving') : t('prf.save')}
         </button>
         {message && <span className="muted">{message}</span>}
       </div>
