@@ -1045,7 +1045,7 @@ async function functional(browser: Browser, errors: string[]) {
   await page.goto(`${BASE}/projects`)
   await page.waitForTimeout(800)
   await page.click('[data-new-project]')
-  await page.fill('input[placeholder="Название"]', projectName)
+  await page.fill('[data-project-name]', projectName)
   await page.fill('textarea', 'Проект для автоаудита')
   await page.click('[data-create-project]')
   await page.waitForSelector('h3 a')
@@ -1060,16 +1060,16 @@ async function functional(browser: Browser, errors: string[]) {
   await page.waitForTimeout(700)
   // Первая глава открывает вкладки — форма кадра живёт на «Редакторах».
   await ensureEditorsTab(page)
-  await page.fill('.ed-form input[placeholder="Заголовок события"]', 'Глава аудита')
+  await page.fill('[data-event-title]', 'Глава аудита')
   await page.fill('.ed-form textarea', 'Описание главы для проверки вместимости текста и кадра.')
   await page.waitForTimeout(300)
   await page.click('[data-add-child]')
   await page.waitForTimeout(600)
-  await page.fill('.ed-form input[placeholder="Заголовок события"]', 'Подсобытие аудита')
+  await page.fill('[data-event-title]', 'Подсобытие аудита')
   await page.waitForTimeout(300)
   await page.click('[data-add-child]')
   await page.waitForTimeout(600)
-  await page.fill('.ed-form input[placeholder="Заголовок события"]', 'Внук аудита')
+  await page.fill('[data-event-title]', 'Внук аудита')
   await page.waitForTimeout(400)
 
   // Дальше проверяется СЦЕНА — она живёт на вкладке «Проект», а только что заполняли «Редакторы».
@@ -1346,7 +1346,7 @@ async function functional(browser: Browser, errors: string[]) {
   })
   await page.waitForTimeout(600)
   const marker = `realtime ${Date.now()}`
-  await page.fill('.ed-form input[placeholder="Заголовок события"]', marker)
+  await page.fill('[data-event-title]', marker)
   let seen = false
   for (let i = 0; i < 20; i++) {
     await peerPage.waitForTimeout(500)

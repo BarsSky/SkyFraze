@@ -394,7 +394,13 @@ export function ProjectsPage() {
 
       {openNew && (
         <form className="card" onSubmit={onCreate}>
-          <input placeholder={t('projects.name')} value={title} onChange={(e) => setTitle(e.target.value)} required />
+          <input
+            placeholder={t('projects.name')}
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            data-project-name
+            required
+          />
           <div style={{ height: 8 }} />
           <textarea
             placeholder={t('projects.desc')}

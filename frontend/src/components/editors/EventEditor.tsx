@@ -243,6 +243,7 @@ export function EventEditor({
             onTyping?.()
           }}
           placeholder={t('ee.titlePlaceholder')}
+          data-event-title
         />
       </label>
 
