@@ -95,7 +95,7 @@ export function BackgroundPicker({ value, images, assetUrls, onUpload, onChange 
                 if (file) onUpload(file)
               }}
             />
-            + картинка
+            {t('bg.addImage')}
           </label>
         </div>
       )}

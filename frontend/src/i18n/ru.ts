@@ -519,7 +519,8 @@ export const ru = {
   'ent.note.saveFailed': 'Не удалось сохранить.',
   'entity.times.one': 'раз',
   'entity.times.few': 'раза',
-  'entity.times.many': 'раз',  'ent.note.deleted': 'Карточка удалена.',
+  'entity.times.many': 'раз',
+  'ent.note.deleted': 'Карточка удалена.',
   'ent.note.deleteFailed': 'Не удалось удалить.',
   // ── «Связи»: заголовок вкладки и эго-граф (фаза 2.2e) ────────────────────────────────────
   'rel.title': 'Связи',
@@ -1795,4 +1796,5 @@ export const ru = {
   'presence.typing': 'печатает…',
   'presence.editing': 'правит «{title}»',
   'presence.untitled': 'без названия',
+  'bg.addImage': '+ картинка',
 } as const

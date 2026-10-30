@@ -507,7 +507,8 @@ export const en: Record<Key, string> = {
   'ent.note.saveFailed': 'Could not save.',
   'entity.times.one': 'time',
   'entity.times.few': 'times',
-  'entity.times.many': 'times',  'ent.note.deleted': 'Card deleted.',
+  'entity.times.many': 'times',
+  'ent.note.deleted': 'Card deleted.',
   'ent.note.deleteFailed': 'Could not delete.',
   'rel.title': 'Relations',
   'rel.hint': 'Character, place and theme cards: aliases, mentions in the text, chronology, the matrix and the link graph. The project text lives in "Editors"; this is what surrounds it.',
@@ -1780,4 +1781,5 @@ export const en: Record<Key, string> = {
   'presence.typing': 'is typing…',
   'presence.editing': 'edits «{title}»',
   'presence.untitled': 'untitled',
+  'bg.addImage': '+ image',
 }
