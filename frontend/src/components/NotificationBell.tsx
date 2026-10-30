@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { pluralWord, useT } from '../i18n'
+import { useLang } from '../store/lang'
 import { Link, useLocation } from 'react-router-dom'
 import { projectsWithUnseen, type ProjectUnseen } from '../api/comments'
 import { chatUnseen, type ChatUnseen } from '../api/chat'
@@ -27,6 +29,8 @@ import { plural } from '../lib/format'
 const REFRESH_MS = 60_000
 
 export function NotificationBell() {
+  const t = useT()
+  const [lang] = useLang()
   const [rows, setRows] = useState<ProjectUnseen[]>([])
   /** Непрочитанное в чате (0.97.0): отдельный список, потому что новость другая — не «замечание к
       кадру», а «в проекте поговорили». */
@@ -89,9 +93,9 @@ export function NotificationBell() {
         className="secondary notify__button"
         aria-expanded={open}
         aria-label={
-          total > 0 ? `Новые замечания: ${total}` : 'Новые замечания'
+          total > 0 ? t('ntf.newShort', { count: total }) : t('ntf.new')
         }
-        title={total > 0 ? `Новых замечаний: ${total}` : 'Новых замечаний нет'}
+        title={total > 0 ? t('ntf.count', { count: total }) : t('ntf.noneTitle')}
         data-notify-bell
         onClick={(event) => {
           event.stopPropagation()
@@ -106,15 +110,15 @@ export function NotificationBell() {
         )}
       </button>
       {open && (
-        <div className="notify__panel" data-notify-panel role="group" aria-label="Новые замечания">
+        <div className="notify__panel" data-notify-panel role="group" aria-label={t('ntf.new')}>
           {rows.length === 0 && chatRows.length === 0 ? (
             <p className="muted notify__empty" data-notify-empty>
-              Новых замечаний нет
+              {t('ntf.none')}
             </p>
           ) : (
             <>
               <p className="muted notify__hint">
-                Замечания к кадрам и сообщения в общем чате проектов
+                {t('ntf.hint')}
               </p>
               {chatRows.map((row) => (
                 <Link
@@ -124,9 +128,12 @@ export function NotificationBell() {
                   data-notify-chat={row.projectId}
                   onClick={() => setOpen(false)}
                 >
-                  <span className="notify__title">{row.title || 'Проект'}</span>
+                  <span className="notify__title">{row.title || t('ntf.project')}</span>
                   <span className="notify__count">
-                    чат: {row.unread} {plural(row.unread, 'новое', 'новых', 'новых')}
+                    {t('ntf.chat', {
+                    count: row.unread,
+                    word: pluralWord(lang, 'ntf.chatUnit', row.unread),
+                  })}
                   </span>
                 </Link>
               ))}
@@ -138,14 +145,14 @@ export function NotificationBell() {
                   data-notify-item={row.projectId}
                   onClick={() => setOpen(false)}
                 >
-                  <span className="notify__title">{row.title || 'Проект'}</span>
+                  <span className="notify__title">{row.title || t('ntf.project')}</span>
                   <span className="notify__count">
                     {row.mentions > 0 && (
                       <span className="notify__mention" data-notify-mention={row.mentions}>
-                        вас упомянули
+                        {t('ntf.mentioned')}
                       </span>
                     )}
-                    {row.unread} {plural(row.unread, 'новое', 'новых', 'новых')}
+                    {row.unread} {pluralWord(lang, 'ntf.chatUnit', row.unread)}
                   </span>
                 </Link>
               ))}

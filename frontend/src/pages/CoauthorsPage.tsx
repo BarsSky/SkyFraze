@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useT } from '../i18n'
 import { Link } from 'react-router-dom'
 import {
   decideCoauthor,
@@ -30,6 +31,7 @@ import { craftsOf } from '../lib/crafts'
  * Доступ к закрытым проектам включает владелец проектов, и только на чтение.
  */
 export function CoauthorsPage() {
+  const t = useT()
   const user = useAuthStore((s) => s.user)
   const [list, setList] = useState<CoauthorList>({ coauthors: [], incoming: [], outgoing: [] })
   const [query, setQuery] = useState('')
@@ -78,8 +80,8 @@ export function CoauthorsPage() {
     try {
       await decideCoauthor(link.id, accept)
       setNote(accept
-        ? `${link.other_display_name} теперь соавтор — можно добавить его в проект`
-        : `Заявка от ${link.other_display_name} отклонена`)
+        ? t('coa.accepted', { name: link.other_display_name })
+        : t('coa.declinedIncoming', { name: link.other_display_name }))
       await load()
       if (query.trim().length >= 2) await runSearch(query)
     } catch (e) {
@@ -93,7 +95,7 @@ export function CoauthorsPage() {
     setBusy(link.id)
     try {
       await removeCoauthor(link.id)
-      setNote(`${link.other_display_name} больше не соавтор`)
+      setNote(t('coa.removed', { name: link.other_display_name }))
       await load()
     } catch (e) {
       setError(e)
@@ -132,7 +134,7 @@ export function CoauthorsPage() {
     try {
       await inviteCoauthor(target.id, message, crafts)
       setInviteFor(null)
-      setNote(`Заявка отправлена: ${target.display_name} (@${target.username})`)
+      setNote(t('coa.invited', { name: target.display_name, nick: target.username }))
       await load()
       if (query.trim().length >= 2) await runSearch(query)
     } catch (e) {
@@ -151,29 +153,32 @@ export function CoauthorsPage() {
     <div className="coauthors">
       <div className="feed__head">
         <div>
-          <h2 className="feed__title">Соавторы</h2>
+          <h2 className="feed__title">{t('coa.title')}</h2>
           <p className="muted feed__sub">
-            Круг людей, с которыми делается общее дело. Соавтор попадает в список при добавлении
-            в проект, а его специализации подсказывают, кому что поручить.
+            {t('coa.sub')}
           </p>
         </div>
         <Link to="/projects">
-          <button className="secondary" type="button">← К проектам</button>
+          <button className="secondary" type="button">
+              {t('coa.backToProjects')}
+            </button>
         </Link>
       </div>
 
       {error != null && (
         <ErrorBanner
           error={error}
-          what="Соавторы"
+          what={t('coa.what')}
           onRetry={() => void load()}
-          actions={<Link className="banner__link" to="/projects">← К проектам</Link>}
+          actions={<Link className="banner__link" to="/projects">{t('coa.backToProjects')}</Link>}
         />
       )}
       {note && (
         <div className="card pub-note">
           {note}
-          <button className="secondary" type="button" onClick={() => setNote(null)}>ок</button>
+          <button className="secondary" type="button" onClick={() => setNote(null)}>
+              {t('coa.ok')}
+            </button>
         </div>
       )}
 
@@ -181,35 +186,36 @@ export function CoauthorsPage() {
           пользователя в Соавторах». Здесь остаётся короткий указатель — человек, который искал
           настройки и раньше находил их тут, не должен уйти ни с чем. */}
       <section className="card" data-profile-link>
-        <h3 style={{ marginTop: 0 }}>Ваш профиль</h3>
+        <h3 style={{ marginTop: 0 }}>{t('coa.yourProfile')}</h3>
         <p className="muted" style={{ marginTop: 0 }}>
-          Имя, ник, резюме, специализации, видимость в каталоге, ключи доступа и журнал входов — на
-          вкладке «Профиль».
+          {t('coa.profileHint')}
         </p>
         {/* Ссылка — inline-flex: у строчной ссылки высота была 21 px, и аудит справедливо
             ругался «мелкая цель нажатия» (0.99.0). Внутри — обычная secondary-кнопка. */}
         <Link to="/profile" style={{ display: 'inline-flex' }}>
-          <button className="secondary" type="button">Открыть профиль</button>
+          <button className="secondary" type="button">
+                {t('coa.openProfile')}
+              </button>
         </Link>
       </section>
 
       <section className="card">
-        <h3 style={{ marginTop: 0 }}>Найти человека</h3>
+        <h3 style={{ marginTop: 0 }}>{t('coa.findPerson')}</h3>
         <p className="muted" style={{ marginTop: 0 }}>
-          Поиск по нику (@nick) или по имени. Ник виден в шапке и меняется в блоке «Как вас найти».
+          {t('coa.findHint')}
         </p>
         <div className="coauthors__search">
           <input
             value={query}
-            placeholder="@nick или имя"
-            aria-label="Поиск людей по нику или имени"
+            placeholder={t('coa.searchPlaceholder')}
+            aria-label={t('coa.searchAria')}
             onChange={(e) => {
               setQuery(e.target.value)
               void runSearch(e.target.value)
             }}
           />
           <button type="button" disabled={searching || query.trim().length < 2} onClick={() => void runSearch(query)}>
-            {searching ? 'Ищу…' : 'Найти'}
+            {searching ? t('coa.searching') : t('coa.find')}
           </button>
         </div>
 
@@ -217,7 +223,7 @@ export function CoauthorsPage() {
           <div className="coauthors__results" data-search-results>
             {found.length === 0 && (
               <p className="muted">
-                Никого не нашлось. Проверьте ник: он пишется латиницей, например <code>@anna.design</code>.
+                {t('coa.nobody1')} <code>@anna.design</code>{t('coa.nobody2')}
               </p>
             )}
             {found.map((person) => (
@@ -236,14 +242,18 @@ export function CoauthorsPage() {
                 <div className="coauthors__actions">
                   {person.relation === '' && (
                     <button type="button" disabled={busy === person.id} onClick={() => setInviteFor(person)}>
-                      Позвать в соавторы
+                      {t('coa.invite')}
                     </button>
                   )}
-                  {person.relation === 'request-outgoing' && <span className="muted">заявка отправлена</span>}
-                  {person.relation === 'request-incoming' && (
-                    <span className="muted">этот человек позвал вас — заявка ниже</span>
+                  {person.relation === 'request-outgoing' && (
+                    <span className="muted">{t('coa.outgoing')}</span>
                   )}
-                  {person.relation === 'coauthor' && <span className="muted">уже соавтор</span>}
+                  {person.relation === 'request-incoming' && (
+                    <span className="muted">{t('coa.incoming')}</span>
+                  )}
+                  {person.relation === 'coauthor' && (
+                    <span className="muted">{t('coa.alreadyCoauthor')}</span>
+                  )}
                 </div>
               </div>
             ))}
@@ -263,7 +273,8 @@ export function CoauthorsPage() {
       {(pendingCount > 0 || list.outgoing.length > 0) && (
         <section className="card" data-requests>
           <h3 style={{ marginTop: 0 }}>
-            Заявки{pendingCount > 0 && <span className="coauthors__badge">{pendingCount}</span>}
+            {t('coa.requests')}
+            {pendingCount > 0 && <span className="coauthors__badge">{pendingCount}</span>}
           </h3>
           {list.incoming.map((link) => (
             <div key={link.id} className="coauthors__row">
@@ -281,7 +292,7 @@ export function CoauthorsPage() {
               </div>
               <div className="coauthors__actions">
                 <button type="button" disabled={busy === link.id} onClick={() => void onDecide(link, true)}>
-                  Принять
+                  {t('coa.accept')}
                 </button>
                 <button
                   type="button"
@@ -289,7 +300,7 @@ export function CoauthorsPage() {
                   disabled={busy === link.id}
                   onClick={() => void onDecide(link, false)}
                 >
-                  Отклонить
+                  {t('coa.decline')}
                 </button>
               </div>
             </div>
@@ -299,7 +310,7 @@ export function CoauthorsPage() {
               <div className="coauthors__who">
                 <strong>{link.other_display_name}</strong>
                 <span className="coauthors__nick">@{link.other_username}</span>
-                <span className="muted">ждёт ответа</span>
+                <span className="muted">{t('coa.waiting')}</span>
                 {craftsOf(link.crafts).length > 0 && (
                   <span className="coauthors__crafts">
                     {craftsOf(link.crafts).map((craft) => (
@@ -310,7 +321,7 @@ export function CoauthorsPage() {
               </div>
               <div className="coauthors__actions">
                 <button type="button" className="secondary" disabled={busy === link.id} onClick={() => void onRemove(link)}>
-                  Отменить заявку
+                  {t('coa.cancelRequest')}
                 </button>
               </div>
             </div>
@@ -319,11 +330,10 @@ export function CoauthorsPage() {
       )}
 
       <section className="card" data-coauthors>
-        <h3 style={{ marginTop: 0 }}>Мои соавторы: {list.coauthors.length}</h3>
+        <h3 style={{ marginTop: 0 }}>{t('coa.myCoauthors', { count: list.coauthors.length })}</h3>
         {list.coauthors.length === 0 && (
           <p className="muted">
-            Пока никого. Найдите человека по нику выше и позовите — после согласия он появится
-            в списке при добавлении участника в проект.
+            {t('coa.emptyHint')}
           </p>
         )}
         {list.coauthors.map((link) => {
@@ -337,7 +347,7 @@ export function CoauthorsPage() {
                 <strong>{link.other_display_name}</strong>
                 <span className="coauthors__nick">@{link.other_username}</span>
                 <span className="coauthors__crafts">
-                  {crafts.length === 0 && <span className="muted">специализации не указаны</span>}
+                  {crafts.length === 0 && <span className="muted">{t('coa.craftsEmpty')}</span>}
                   {crafts.map((craft) => (
                     <span key={craft} className="craft-chip">{craft}</span>
                   ))}
@@ -351,7 +361,7 @@ export function CoauthorsPage() {
                     disabled={busy === link.id}
                     onChange={(e) => void onToggleClosed(link, e.target.checked)}
                   />
-                  <span>видит мои закрытые проекты (только чтение)</span>
+                  <span>{t('coa.seesPrivate')}</span>
                 </label>
                 <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
                   <button
@@ -359,13 +369,15 @@ export function CoauthorsPage() {
                     className="secondary"
                     onClick={() => setCraftsFor(craftsFor === link.id ? null : link.id)}
                   >
-                    Специализации
+                    {t('coa.crafts')}
                   </button>
                   <button type="button" className="secondary ed-danger" disabled={busy === link.id} onClick={() => void onRemove(link)}>
-                    Убрать
+                    {t('coa.remove')}
                   </button>
                 </div>
-                <Link to="/projects" className="muted">добавить в проект →</Link>
+                <Link to="/projects" className="muted">
+                  {t('coa.addToProject')}
+                </Link>
               </div>
               {craftsFor === link.id && (
                 <CraftPicker

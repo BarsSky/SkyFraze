@@ -1,4 +1,5 @@
 import { http } from './client'
+import { tStatic } from '../i18n'
 
 /**
  * Карточки сущностей проекта: персонажи, места, темы (docs/entity-links.md).
@@ -52,7 +53,7 @@ export async function createEntity(
     .post(`projects/${projectId}/entities`, { json: input })
     .json<{ entity?: unknown }>()
   const entity = readEntity(raw?.entity)
-  if (entity === null) throw new Error('сервер не вернул карточку')
+  if (entity === null) throw new Error(tStatic('api.errNoEntity'))
   return entity
 }
 
@@ -65,7 +66,7 @@ export async function updateEntity(
     .patch(`projects/${projectId}/entities/${encodeURIComponent(id)}`, { json: input })
     .json<{ entity?: unknown }>()
   const entity = readEntity(raw?.entity)
-  if (entity === null) throw new Error('сервер не вернул карточку')
+  if (entity === null) throw new Error(tStatic('api.errNoEntity'))
   return entity
 }
 
@@ -175,7 +176,7 @@ export async function addEntityLink(
       json: { to: toId, label },
     })
     .json<{ link?: EntityLink }>()
-  if (!raw?.link) throw new Error('сервер не вернул связь')
+  if (!raw?.link) throw new Error(tStatic('api.errNoLink'))
   return raw.link
 }
 

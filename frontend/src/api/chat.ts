@@ -172,7 +172,7 @@ export async function editChat(projectId: string, messageId: string, body: strin
     .patch(`projects/${projectId}/chat/messages/${messageId}`, { json: { body } })
     .json<{ message?: unknown }>()
   const message = readMessage(raw?.message)
-  if (message === null) throw new Error('сервер не вернул сообщение')
+  if (message === null) throw new Error(tStatic('chat.errNoMessage'))
   return message
 }
 

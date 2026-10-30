@@ -1,4 +1,5 @@
 import { FRAME_TONES } from '../timeline/timelineModel'
+import { useT } from '../../i18n'
 import type { Asset } from '../../api/assets'
 
 export type BackgroundKind = 'inherit' | 'tone' | 'asset'
@@ -24,29 +25,30 @@ interface Props {
  * `bg_asset`) и используются стадией при показе кадра.
  */
 export function BackgroundPicker({ value, images, assetUrls, onUpload, onChange }: Props) {
+  const t = useT()
   return (
     <div className="ed-bg" data-background-kind={value.kind}>
-      <div className="ed-bg__modes" role="group" aria-label="Тип фона">
+      <div className="ed-bg__modes" role="group" aria-label={t('bg.modesAria')}>
         <button
           type="button"
           className={value.kind === 'inherit' ? 'ed-chip is-active' : 'ed-chip'}
           onClick={() => onChange({ kind: 'inherit' })}
         >
-          как у главы
+          {t('bg.asChapter')}
         </button>
         <button
           type="button"
           className={value.kind === 'tone' ? 'ed-chip is-active' : 'ed-chip'}
           onClick={() => onChange({ kind: 'tone', tone: value.tone ?? FRAME_TONES[0] })}
         >
-          тон
+          {t('bg.tone')}
         </button>
         <button
           type="button"
           className={value.kind === 'asset' ? 'ed-chip is-active' : 'ed-chip'}
           onClick={() => onChange({ kind: 'asset', assetId: value.assetId ?? images[0]?.id })}
         >
-          картинка
+          {t('bg.image')}
         </button>
       </div>
 
@@ -59,7 +61,7 @@ export function BackgroundPicker({ value, images, assetUrls, onUpload, onChange 
               className={value.tone === tone ? 'ed-tone is-active' : 'ed-tone'}
               style={{ background: tone }}
               title={tone}
-              aria-label={`Тон ${tone}`}
+              aria-label={t('bg.toneAria', { tone })}
               onClick={() => onChange({ kind: 'tone', tone })}
             />
           ))}
@@ -68,7 +70,7 @@ export function BackgroundPicker({ value, images, assetUrls, onUpload, onChange 
 
       {value.kind === 'asset' && (
         <div className="ed-bg__images">
-          {images.length === 0 && <p className="muted">Сначала прикрепите картинку к событию.</p>}
+          {images.length === 0 && <p className="muted">{t('bg.needImage')}</p>}
           {images.map((asset) => (
             <button
               key={asset.id}

@@ -1,4 +1,5 @@
 import * as Y from 'yjs'
+import { tStatic } from '../i18n'
 import { useEffect, useRef, useState } from 'react'
 import { useAuthStore } from '../store/auth'
 import { buildEventTree } from './eventTree'
@@ -214,7 +215,7 @@ export function useCollab(projectId: string): CollabHandle | null {
     const presence = createPresence({
       user: {
         id: authUser?.id ?? '',
-        name: authUser?.display_name || authUser?.username || authUser?.email || 'Соавтор',
+        name: authUser?.display_name || authUser?.username || authUser?.email || tStatic('col.coauthor'),
       },
     })
     const detachPresenceOut = presence.onOutgoing((frame) => {

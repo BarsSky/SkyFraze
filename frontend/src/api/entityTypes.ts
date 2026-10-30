@@ -1,4 +1,5 @@
 import { http } from './client'
+import { tStatic } from '../i18n'
 import { kindLabel } from './entities'
 
 /**
@@ -53,7 +54,7 @@ export async function createEntityType(
     })
     .json<{ type?: unknown }>()
   const type = readType(raw?.type)
-  if (type === null) throw new Error('сервер не вернул созданный тип')
+  if (type === null) throw new Error(tStatic('api.errNoType'))
   return type
 }
 
@@ -75,7 +76,7 @@ export async function updateEntityType(
     })
     .json<{ type?: unknown }>()
   const type = readType(raw?.type)
-  if (type === null) throw new Error('сервер не вернул тип после правки')
+  if (type === null) throw new Error(tStatic('api.errNoTypeAfterEdit'))
   return type
 }
 

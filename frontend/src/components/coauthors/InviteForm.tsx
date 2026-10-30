@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useT } from '../../i18n'
 import { CraftPicker } from './CraftPicker'
 
 /**
@@ -19,28 +20,34 @@ export function InviteForm({
   onCancel: () => void
   onSubmit: (message: string, crafts: string[]) => void
 }) {
+  const t = useT()
   const [message, setMessage] = useState('')
   const [crafts, setCrafts] = useState<string[]>([])
   return (
     <div className="coauthors__form" data-invite-form>
       <h4 style={{ marginTop: 0 }}>
-        Заявка для {person.display_name} <span className="muted">@{person.username}</span>
+        {t('inv.title', { name: person.display_name })}{' '}
+        <span className="muted">@{person.username}</span>
       </h4>
       <label>
-        <span className="muted" style={{ display: 'block', marginBottom: 4 }}>Сообщение (необязательно)</span>
+        <span className="muted" style={{ display: 'block', marginBottom: 4 }}>
+              {t('inv.messageLabel')}
+            </span>
         <textarea
           rows={2}
           value={message}
-          placeholder="Например: пишем роман про колонию — нужен человек на правописание"
+          placeholder={t('inv.placeholder')}
           onChange={(e) => setMessage(e.target.value)}
         />
       </label>
       <CraftPicker initial={crafts} onChange={setCrafts} />
       <div className="row" style={{ gap: 8, marginTop: 10 }}>
         <button type="button" disabled={busy} onClick={() => onSubmit(message, crafts)}>
-          {busy ? 'Отправляю…' : 'Отправить заявку'}
+          {busy ? t('inv.sending') : t('inv.send')}
         </button>
-        <button type="button" className="secondary" onClick={onCancel}>Отмена</button>
+        <button type="button" className="secondary" onClick={onCancel}>
+            {t('inv.cancel')}
+          </button>
       </div>
     </div>
   )

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { useT, type Key } from '../i18n'
 import { Link, useNavigate } from 'react-router-dom'
 import {
   approveRegistration,
@@ -22,10 +23,10 @@ import { formatDate } from '../lib/format'
 
 type Tab = 'pending' | 'approved' | 'rejected'
 
-const TABS: Array<{ id: Tab; label: string }> = [
-  { id: 'pending', label: 'На рассмотрении' },
-  { id: 'approved', label: 'Одобренные' },
-  { id: 'rejected', label: 'Отклонённые' },
+const TABS: Array<{ id: Tab; labelKey: Key }> = [
+  { id: 'pending', labelKey: 'adm.tabPending' },
+  { id: 'approved', labelKey: 'adm.tabApproved' },
+  { id: 'rejected', labelKey: 'adm.tabRejected' },
 ]
 
 /**
@@ -36,6 +37,7 @@ const TABS: Array<{ id: Tab; label: string }> = [
  * администратор отвечает за вход на инсталляцию, а не за содержимое.
  */
 export function AdminPage() {
+  const t = useT()
   const user = useAuthStore((s) => s.user)
   const nav = useNavigate()
   const [settings, setSettings] = useState<AdminSettings | null>(null)
@@ -78,7 +80,7 @@ export function AdminPage() {
     setChecking(true)
     try {
       await loadUpdate(true)
-      setNote('Проверил релизы на GitHub')
+      setNote(t('adm.releasesChecked'))
     } finally {
       setChecking(false)
     }
@@ -89,11 +91,11 @@ export function AdminPage() {
     setUpdating(true)
     try {
       await requestUpdate(target)
-      setNote(`Заявка на обновление до ${target} создана — хост применит её в течение минуты`)
+      setNote(t('adm.updateRequested', { target }))
       await loadUpdate(true)
     } catch (e) {
       const status = (e as { response?: Response })?.response?.status
-      setError(status === 409 ? new Error('Обновление уже идёт') : e)
+      setError(status === 409 ? new Error(t('adm.updateInProgress')) : e)
     } finally {
       setUpdating(false)
     }
@@ -104,10 +106,10 @@ export function AdminPage() {
     try {
       const s = await setRegistrationMode(mode)
       setSettings(s)
-      setNote(mode === 'open' ? 'Регистрация открыта для всех' : 'Регистрация только по заявке')
+      setNote(mode === 'open' ? t('adm.registrationOpen') : t('adm.registrationByRequest'))
     } catch {
       setNote(null)
-      setError(new Error('Не удалось изменить режим регистрации — повторите попытку'))
+      setError(new Error(t('adm.registrationFailed')))
     } finally {
       setBusy(null)
     }
@@ -117,11 +119,11 @@ export function AdminPage() {
     setBusy(id)
     try {
       await approveRegistration(id)
-      setNote(`Доступ для ${email} открыт — можно входить указанным паролем`)
+      setNote(t('adm.accessOpened', { email }))
       await load()
     } catch (e) {
       const status = (e as { response?: Response })?.response?.status
-      setError(status === 409 ? new Error(`Email ${email} уже занят`) : e)
+      setError(status === 409 ? new Error(t('adm.emailTaken', { email })) : e)
     } finally {
       setBusy(null)
     }
@@ -131,7 +133,7 @@ export function AdminPage() {
     setBusy(id)
     try {
       await rejectRegistration(id, '')
-      setNote(`Заявка ${email} отклонена`)
+      setNote(t('adm.requestRejected', { email }))
       await load()
     } catch (e) {
       setError(e)
@@ -145,13 +147,13 @@ export function AdminPage() {
     return (
       <div className="feed">
         <div className="card feed__empty">
-          <h3 style={{ marginTop: 0 }}>Нужны права администратора</h3>
+          <h3 style={{ marginTop: 0 }}>{t('adm.noAdminTitle')}</h3>
           <p className="muted">
-            Администратор назначается при развёртывании: переменная окружения <code>ADMIN_EMAILS</code>.
-            Если админов ещё нет, им становится первый зарегистрированный пользователь.
+            {t('adm.noAdminHint1')} <code>ADMIN_EMAILS</code>
+            {t('adm.noAdminHint2')}
           </p>
           <button type="button" onClick={() => nav('/projects')}>
-            ← К проектам
+            {t('adm.backToProjects')}
           </button>
         </div>
       </div>
@@ -164,25 +166,27 @@ export function AdminPage() {
     <div className="admin">
       <div className="feed__head">
         <div>
-          <h2 className="feed__title">Администрирование</h2>
+          <h2 className="feed__title">{t('adm.title')}</h2>
           <p className="muted feed__sub">
-            Кто может завести аккаунт на этой инсталляции. Содержимое проектов админу недоступно.
+            {t('adm.sub')}
           </p>
         </div>
         <Link to="/projects">
-          <button className="secondary" type="button">← К проектам</button>
+          <button className="secondary" type="button">
+          {t('adm.backToProjects')}
+          </button>
         </Link>
       </div>
 
       {error != null && (
         <ErrorBanner
           error={error}
-          what="Админка"
+                    what={t('adm.what')}
           onRetry={() => void load()}
           actions={
             <>
-              <Link className="banner__link" to="/projects">← К проектам</Link>
-              <Link className="banner__link" to="/feed">Лента</Link>
+              <Link className="banner__link" to="/projects">{t('adm.backToProjects')}</Link>
+              <Link className="banner__link" to="/feed">{t('adm.feed')}</Link>
             </>
           }
         />
@@ -190,13 +194,15 @@ export function AdminPage() {
       {note && (
         <div className="card pub-note">
           {note}
-          <button className="secondary" type="button" onClick={() => setNote(null)}>ок</button>
+          <button className="secondary" type="button" onClick={() => setNote(null)}>
+          {t('adm.ok')}
+          </button>
         </div>
       )}
 
       <section className="card">
-        <h3 style={{ marginTop: 0 }}>Регистрация</h3>
-        <div className="admin__modes" role="radiogroup" aria-label="Режим регистрации">
+        <h3 style={{ marginTop: 0 }}>{t('adm.registration')}</h3>
+        <div className="admin__modes" role="radiogroup" aria-label={t('adm.modeAria')}>
           <button
             type="button"
             role="radio"
@@ -205,8 +211,8 @@ export function AdminPage() {
             disabled={busy === 'mode'}
             onClick={() => void onMode('request')}
           >
-            <b>По заявке</b>
-            <span>Аккаунт создаёт администратор после рассмотрения заявки (по умолчанию)</span>
+            <b>{t('adm.byRequest')}</b>
+            <span>{t('adm.byRequestHint')}</span>
           </button>
           <button
             type="button"
@@ -216,37 +222,41 @@ export function AdminPage() {
             disabled={busy === 'mode'}
             onClick={() => void onMode('open')}
           >
-            <b>Свободная</b>
-            <span>Любой может зарегистрироваться сам</span>
+            <b>{t('adm.free')}</b>
+            <span>{t('adm.freeHint')}</span>
           </button>
         </div>
         {settings && (
           <p className="muted admin__stats">
-            пользователей: {settings.users} · администраторов: {settings.admins} · заявок на рассмотрении: {settings.pending_requests}
+            {t('adm.counts', {
+            users: settings.users,
+            admins: settings.admins,
+            pending: settings.pending_requests,
+            })}
           </p>
         )}
       </section>
 
       <section className="card">
-        <h3 style={{ marginTop: 0 }}>Заявки на доступ</h3>
-        <div className="feed__sorts" role="tablist" aria-label="Статус заявок">
-          {TABS.map((t) => (
+        <h3 style={{ marginTop: 0 }}>{t('adm.requests')}</h3>
+        <div className="feed__sorts" role="tablist" aria-label={t('adm.statusAria')}>
+          {TABS.map((tabItem) => (
             <button
-              key={t.id}
+              key={tabItem.id}
               type="button"
               role="tab"
-              aria-selected={tab === t.id}
-              className={tab === t.id ? 'feed__sort is-active' : 'feed__sort'}
-              onClick={() => setTab(t.id)}
+              aria-selected={tab === tabItem.id}
+              className={tab === tabItem.id ? 'feed__sort is-active' : 'feed__sort'}
+              onClick={() => setTab(tabItem.id)}
             >
-              {t.label} ({requests.filter((r) => r.status === t.id).length})
+              {t(tabItem.labelKey)} ({requests.filter((r) => r.status === tabItem.id).length})
             </button>
           ))}
         </div>
 
         {visible.length === 0 ? (
           <p className="muted" style={{ marginTop: 12 }}>
-            {tab === 'pending' ? 'Новых заявок нет.' : 'Пусто.'}
+            {tab === 'pending' ? t('adm.nonePending') : t('adm.none')}
           </p>
         ) : (
           <ul className="admin__requests">
@@ -260,7 +270,7 @@ export function AdminPage() {
                 {r.status === 'pending' && (
                   <div className="row">
                     <button type="button" disabled={busy === r.id} onClick={() => void onApprove(r.id, r.email)}>
-                      Одобрить
+                                      {t('adm.approve')}
                     </button>
                     <button
                       type="button"
@@ -268,11 +278,15 @@ export function AdminPage() {
                       disabled={busy === r.id}
                       onClick={() => void onReject(r.id, r.email)}
                     >
-                      Отклонить
+                                      {t('adm.reject')}
                     </button>
                   </div>
                 )}
-                {r.status !== 'pending' && <span className="muted">{r.status === 'approved' ? 'одобрена' : 'отклонена'}</span>}
+                {r.status !== 'pending' && (
+                <span className="muted">
+                {r.status === 'approved' ? t('adm.approved') : t('adm.rejected')}
+                </span>
+                )}
               </li>
             ))}
           </ul>
@@ -280,49 +294,50 @@ export function AdminPage() {
       </section>
 
       <section className="card">
-        <h3 style={{ marginTop: 0 }}>Обновление</h3>
-        {!update && <p className="muted">Проверяю версию…</p>}
+        <h3 style={{ marginTop: 0 }}>{t('adm.update')}</h3>
+        {!update && <p className="muted">{t('adm.checkingVersion')}</p>}
         {update && (
           <>
             <div className="admin__update">
               <div>
                 <div className="admin__update-version">
-                  Текущая версия: <b>{update.check.current || 'dev'}</b>
+                  {t('adm.current')} <b>{update.check.current || 'dev'}</b>
                   {update.check.commit ? ` (${update.check.commit})` : ''}
                 </div>
                 {update.check.configured ? (
                   update.check.error ? (
-                    <div className="muted">Не удалось проверить: {update.check.error}</div>
+                    <div className="muted">{t('adm.checkFailed', { error: update.check.error })}</div>
                   ) : update.check.latest ? (
                     <div className="muted">
-                      Последний релиз:{' '}
+                      {t('adm.lastRelease')}{' '}
                       <a href={update.check.latest.url} target="_blank" rel="noreferrer">
                         {update.check.latest.tag}
                       </a>{' '}
-                      {update.check.update_available ? '— доступно обновление' : '— у вас актуальная версия'}
+                      {update.check.update_available ? t('adm.updateAvailable') : t('adm.upToDate')}
                     </div>
                   ) : (
-                    <div className="muted">Релизов пока нет</div>
+                    <div className="muted">{t('adm.noReleases')}</div>
                   )
                 ) : (
                   <div className="muted">
-                    Источник не настроен: укажите <code>UPDATE_REPO=владелец/репозиторий</code> в <code>.env</code> и
-                    перезапустите backend.
+                    {t('adm.noSource1')} <code>{t('adm.noSourceExample')}</code>
+                    {t('adm.noSource2')} <code>.env</code>
+                    {t('adm.noSource3')}
                   </div>
                 )}
               </div>
               <div className="row" style={{ flexWrap: 'wrap', gap: 8 }}>
                 <button type="button" className="secondary" disabled={checking} onClick={() => void onCheckUpdates()}>
-                  {checking ? 'Проверяю…' : 'Проверить обновления'}
+                  {checking ? t('adm.checking') : t('adm.checkUpdates')}
                 </button>
                 {update.check.update_available && update.check.latest && (
                   <button
                     type="button"
                     disabled={updating || ['requested', 'running'].includes(update.status?.status ?? '')}
-                    title="Заявку применит хост: git pull + docker compose up -d --build"
+                    title={t('adm.applyTitle')}
                     onClick={() => void onRequestUpdate(update.check.latest!.tag)}
                   >
-                    Обновить до {update.check.latest.tag}
+                    {t('adm.updateTo', { tag: update.check.latest.tag })}
                   </button>
                 )}
               </div>
@@ -330,7 +345,7 @@ export function AdminPage() {
 
             {update.status && update.status.status !== 'idle' && (
               <p className="admin__update-state">
-                Состояние: <b>{update.status.status}</b>
+                {t('adm.state')} <b>{update.status.status}</b>
                 {update.status.message ? ` — ${update.status.message}` : ''}
                 {update.status.ended_at ? ` (${formatDate(update.status.ended_at)})` : ''}
               </p>
@@ -338,15 +353,17 @@ export function AdminPage() {
 
             {update.status?.status === 'requested' && (
               <p className="muted">
-                Заявка создана. Применяет хост: systemd-юнит <code>skyfraze-update.path</code> и скрипт{' '}
-                <code>deploy/skyfraze-update.sh</code>. Если через минуту ничего не началось — проверьте, установлены ли
-                юниты (<code>sudo bash deploy/install-update-units.sh</code>).
+                {t('adm.requestCreated1')} <code>skyfraze-update.path</code>
+                {t('adm.requestCreated2')} <code>deploy/skyfraze-update.sh</code>
+                {t('adm.requestCreated3')}
+                <code>sudo bash deploy/install-update-units.sh</code>
+                {t('adm.requestCreated4')}
               </p>
             )}
 
             {update.log && (
               <details className="admin__update-log">
-                <summary>Лог последнего обновления</summary>
+                <summary>{t('adm.logSummary')}</summary>
                 <pre>{update.log}</pre>
               </details>
             )}
@@ -357,13 +374,13 @@ export function AdminPage() {
       <StoragePanel />
 
       <section className="card">
-        <h3 style={{ marginTop: 0 }}>Пользователи ({users.length})</h3>
+        <h3 style={{ marginTop: 0 }}>{t('adm.users', { count: users.length })}</h3>
         <ul className="admin__users">
           {users.map((u) => (
             <li key={u.id}>
               <span>{u.display_name}</span>
               <span className="muted">{u.email}</span>
-              {u.is_admin && <span className="pub-badge">админ</span>}
+              {u.is_admin && <span className="pub-badge">{t('adm.adminBadge')}</span>}
             </li>
           ))}
         </ul>

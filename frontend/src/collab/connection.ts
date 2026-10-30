@@ -1,3 +1,4 @@
+import { tStatic } from '../i18n'
 /**
  * Состояние realtime-соединения как одно значение.
  *
@@ -28,11 +29,11 @@ export function connectionNotice(status: CollabStatus, attempt: number): string 
     case 'open':
       return null
     case 'reconnecting':
-      return 'Связь с realtime-сервером прервалась, переподключаюсь…'
+      return tStatic('col.disconnected')
     case 'offline':
     default:
       return attempt >= OFFLINE_AFTER_ATTEMPTS
-        ? 'realtime недоступен: правки сохраняются, но другие вкладки увидят их после перезагрузки'
-        : 'Связь с realtime-сервером прервалась, переподключаюсь…'
+        ? tStatic('col.unavailable')
+        : tStatic('col.disconnected')
   }
 }

@@ -1,4 +1,5 @@
 import { typingLabel, type PeerState } from '../../collab/awareness'
+import { tStatic, useT } from '../../i18n'
 // Стили тянет за собой сам компонент: так бар остаётся одним самодостаточным
 // куском (styles/presence.css), и его подключение не требует правок в main.tsx,
 // где перечислены стили остальных страниц.
@@ -21,7 +22,7 @@ interface Props {
 }
 
 /** Сосед правит событие, которого нет в приехавшем списке (удалили/ещё не пришло). */
-const UNKNOWN_EVENT = 'правит другое событие'
+const UNKNOWN_EVENT_KEY = 'presence.unknownEvent'
 
 /**
  * Короткая подпись для узкого экрана. Полная формулировка («Аня и Борис
@@ -29,7 +30,7 @@ const UNKNOWN_EVENT = 'правит другое событие'
  * на 320px места хватает на одно слово. Оба варианта лежат в разметке рядом, а
  * какой виден, решает CSS: так текст не зависит от замера ширины в JS.
  */
-const SHORT_TYPING = 'печатает…'
+const SHORT_TYPING_KEY = 'presence.typing'
 
 /**
  * Кто сейчас в проекте: инициалы на цвете человека, имя и что он правит.
@@ -43,16 +44,17 @@ const SHORT_TYPING = 'печатает…'
  * было бы дважды одним и тем же текстом.
  */
 export function PresenceBar({ peers, events }: Props) {
+  const t = useT()
   if (peers.length === 0) return null
 
   const titles = new Map(
-    events.map((event) => [event.id, event.title.trim() || 'без названия']),
+    events.map((event) => [event.id, event.title.trim() || tStatic('presence.untitled')]),
   )
   const typingShown = new Set<string>()
 
   return (
-    <div className="presence" data-presence aria-label="Кто сейчас в проекте">
-      <span className="presence__lead">В проекте:</span>
+    <div className="presence" data-presence aria-label={t('presence.aria')}>
+      <span className="presence__lead">{t('presence.lead')}</span>
       <ul className="presence__list">
         {peers.map((peer) => {
           const where = peer.eventId ? titles.get(peer.eventId) : null
@@ -81,17 +83,17 @@ export function PresenceBar({ peers, events }: Props) {
               </span>
               {peer.eventId && (
                 <span className="presence__where" title={where ?? peer.eventId}>
-                  {where ? `правит «${where}»` : UNKNOWN_EVENT}
+                  {where ? t('presence.editing', { title: where }) : t(UNKNOWN_EVENT_KEY)}
                 </span>
               )}
               {showTyping && (
                 <span className="presence__typing" data-presence-typing>
                   <span className="presence__typing-full">
-                    {typingLabel(peers, typingKey) ?? SHORT_TYPING}
+                    {typingLabel(peers, typingKey) ?? t(SHORT_TYPING_KEY)}
                   </span>
                   {/* Для скринридера короткий дубль не нужен: полный текст уже прочитан. */}
                   <span className="presence__typing-short" aria-hidden="true">
-                    {SHORT_TYPING}
+                    {t(SHORT_TYPING_KEY)}
                   </span>
                 </span>
               )}

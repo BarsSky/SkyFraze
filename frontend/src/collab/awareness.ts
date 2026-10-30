@@ -1,3 +1,4 @@
+import { tStatic } from '../i18n'
 /**
  * Присутствие: кто сейчас в проекте, какое событие правит и печатает ли.
  *
@@ -227,9 +228,10 @@ export function editingPeers(peers: PeerState[], eventId: string): PeerState[] {
 export function typingLabel(peers: PeerState[], eventId: string): string | null {
   const typing = editingPeers(peers, eventId).filter((peer) => peer.typing)
   if (typing.length === 0) return null
-  if (typing.length === 1) return `${typing[0].name} печатает…`
-  if (typing.length === 2) return `${typing[0].name} и ${typing[1].name} печатают…`
-  return `печатают ${typing.length} человека`
+  if (typing.length === 1) return tStatic('col.typingOne', { name: typing[0].name })
+  if (typing.length === 2)
+    return tStatic('col.typingTwo', { first: typing[0].name, second: typing[1].name })
+  return tStatic('col.typingMany', { count: typing.length })
 }
 
 /** Порядок показа: сначала те, кто печатает, затем по имени, затем по соединению. */

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useT } from '../../i18n'
 import { CRAFT_CATALOG } from '../../lib/crafts'
 
 /**
@@ -23,6 +24,7 @@ export function CraftPicker({
   onSave?: (crafts: string[]) => void
   onCancel?: () => void
 }) {
+  const t = useT()
   const [own, setOwn] = useState<string[]>(initial)
   const [custom, setCustom] = useState('')
   const picked = value ?? own
@@ -62,8 +64,8 @@ export function CraftPicker({
       <div className="crafts__custom">
         <input
           value={custom}
-          placeholder="своя формулировка"
-          aria-label="Своя специализация"
+          placeholder={t('cpk.ownPlaceholder')}
+          aria-label={t('cpk.ownAria')}
           onChange={(e) => setCustom(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
@@ -73,18 +75,22 @@ export function CraftPicker({
           }}
         />
         <button type="button" className="secondary" onClick={addCustom} disabled={custom.trim().length === 0}>
-          Добавить
+          {t('cpk.add')}
         </button>
       </div>
       {picked.length > 0 && (
         <p className="muted" style={{ margin: '6px 0 0' }}>
-          Выбрано: {picked.join(' · ')}
+          {t('cpk.picked', { list: picked.join(' · ') })}
         </p>
       )}
       {onSave && (
         <div className="row" style={{ gap: 8, marginTop: 8 }}>
-          <button type="button" disabled={busy} onClick={() => onSave(picked)}>Сохранить</button>
-          <button type="button" className="secondary" onClick={onCancel}>Отмена</button>
+          <button type="button" disabled={busy} onClick={() => onSave(picked)}>
+            {t('cpk.save')}
+          </button>
+          <button type="button" className="secondary" onClick={onCancel}>
+            {t('cpk.cancel')}
+          </button>
         </div>
       )}
     </div>
