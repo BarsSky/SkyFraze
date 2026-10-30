@@ -34,6 +34,7 @@ import (
 	"github.com/skyfraze/backend/internal/collab/yjs"
 	"github.com/skyfraze/backend/internal/entities"
 	"github.com/skyfraze/backend/internal/events"
+	"github.com/skyfraze/backend/internal/livedoc"
 	"github.com/skyfraze/backend/internal/projects"
 	"github.com/skyfraze/backend/internal/store"
 	"github.com/skyfraze/backend/internal/transfer"
@@ -217,6 +218,9 @@ type Service struct {
 	// помощник знает словарь маркеров, но не предлагает style=/begin= — имён, которых нет в
 	// шаблоне, в Word не применить.
 	docxStyles DocxStyles
+	// live — документ живой комнаты проекта (0.139.0): по нему помощник читает текст, который
+	// редакторы видят сейчас. Необязателен: без него работает проекция.
+	live livedoc.Live
 }
 
 // New собирает сервис. Отсутствие вставки или прав не валит сервер: помощник —
@@ -255,6 +259,24 @@ func (s *Service) UseEditor(editor EventEditor) { s.editor = editor }
 // UseDocxStyles подключает имена стилей шаблона оформления: без него маркеры DOCX в правилах
 // есть, а стилей нет (и модель не придумывает имена).
 func (s *Service) UseDocxStyles(styles DocxStyles) { s.docxStyles = styles }
+
+// UseLiveState подключает документ живой комнаты (0.139.0).
+//
+// Помощник читает дерево в семи местах: контекст запроса, инструменты, проверки «кадр не
+// изменился с момента предложения». Все они брали проекцию, которая отстаёт от документа на
+// период тика комнаты, — и модель писала правку по старому тексту, а «не изменился» прощало
+// правку, сделанную секунду назад. Путь записи при этом давно идёт в документ
+// (`transfer.UpdateEventText`), так что читать проекцию было несимметрично.
+func (s *Service) UseLiveState(live livedoc.Live) { s.live = live }
+
+// currentEvents — дерево проекта «как его видят редакторы»: документ живой комнаты, иначе
+// проекция. Комнаты нет или в документе ещё нет кадров — берём проекцию как раньше.
+func (s *Service) currentEvents(ctx context.Context, projectID uuid.UUID) ([]store.Event, error) {
+	if rows, ok := livedoc.RowsLive(ctx, s.live, projectID); ok {
+		return rows, nil
+	}
+	return s.store.ListEvents(ctx, projectID)
+}
 
 // Limits — действующие пределы (интерфейс показывает их в подсказке).
 func (s *Service) Limits() Limits { return s.limits }
@@ -740,7 +762,7 @@ func (s *Service) send(
 	if err != nil {
 		return nil, err
 	}
-	list, err := s.store.ListEvents(ctx, projectID)
+	list, err := s.currentEvents(ctx, projectID)
 	if err != nil {
 		return nil, err
 	}

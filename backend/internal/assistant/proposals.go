@@ -403,7 +403,7 @@ func (s *Service) DiscardProposal(ctx context.Context, userID, projectID, propos
 func (s *Service) requireUnchanged(
 	ctx context.Context, projectID, eventID uuid.UUID, wantTitle, wantBody string,
 ) error {
-	rows, err := s.store.ListEvents(ctx, projectID)
+	rows, err := s.currentEvents(ctx, projectID)
 	if err != nil {
 		return err
 	}
@@ -421,14 +421,15 @@ func (s *Service) requireUnchanged(
 
 // requireDateUnchanged проверяет, что дата кадра та же, что была в предложении.
 //
-// Тем же путём, что и сверка текста: читаем проекцию (`ListEvents`), а не часы. Проекция
-// отстаёт от документа не больше чем на период сохранения комнаты (5 с) — этого достаточно,
-// чтобы «человек успел поправить дату в другой вкладке» не затиралось молча. Кадр мог
-// исчезнуть — тогда тоже отказ: применять правку некуда.
+// Тем же путём, что и сверка текста: читаем текущее дерево (`currentEvents` — документ живой
+// комнаты, иначе проекция), а не часы. Без живой комнаты проекция отстаёт от документа не
+// больше чем на период сохранения (5 с) — этого достаточно, чтобы «человек успел поправить
+// дату в другой вкладке» не затиралось молча. Кадр мог исчезнуть — тогда тоже отказ:
+// применять правку некуда.
 func (s *Service) requireDateUnchanged(
 	ctx context.Context, projectID, eventID uuid.UUID, want string,
 ) error {
-	rows, err := s.store.ListEvents(ctx, projectID)
+	rows, err := s.currentEvents(ctx, projectID)
 	if err != nil {
 		return err
 	}
@@ -455,7 +456,7 @@ func (s *Service) requireDateUnchanged(
 func (s *Service) requireParentUnchanged(
 	ctx context.Context, projectID, eventID uuid.UUID, want *uuid.UUID,
 ) error {
-	rows, err := s.store.ListEvents(ctx, projectID)
+	rows, err := s.currentEvents(ctx, projectID)
 	if err != nil {
 		return err
 	}

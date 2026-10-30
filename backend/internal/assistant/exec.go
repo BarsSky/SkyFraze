@@ -438,7 +438,7 @@ func (s *Service) toolDeleteEvent(
 	}
 	// Детей проверяем ДО предложения: предлагать то, что сервер заведомо не применит, —
 	// значит показать человеку кнопку, которая не работает.
-	list, err := s.store.ListEvents(ctx, projectID)
+	list, err := s.currentEvents(ctx, projectID)
 	if err != nil {
 		return refusedCall(call, "не удалось прочитать проект: "+err.Error())
 	}
@@ -623,7 +623,7 @@ func pickText(next *string, current string) string {
 
 // findEvent ищет кадр в проекции проекта.
 func (s *Service) findEvent(ctx context.Context, projectID, eventID uuid.UUID) (store.Event, bool) {
-	list, err := s.store.ListEvents(ctx, projectID)
+	list, err := s.currentEvents(ctx, projectID)
 	if err != nil {
 		return store.Event{}, false
 	}
@@ -668,7 +668,7 @@ func humanSize(bytes int) string {
 
 // toolListEvents отдаёт дерево проекта.
 func (s *Service) toolListEvents(ctx context.Context, projectID uuid.UUID, call ai.ToolCall) toolResult {
-	list, err := s.store.ListEvents(ctx, projectID)
+	list, err := s.currentEvents(ctx, projectID)
 	if err != nil {
 		return refusedCall(call, "не удалось прочитать дерево проекта: "+err.Error())
 	}
@@ -829,7 +829,7 @@ func (s *Service) toolReadEvent(ctx context.Context, projectID uuid.UUID, call a
 	if err != nil {
 		return refusedCall(call, err.Error())
 	}
-	list, err := s.store.ListEvents(ctx, projectID)
+	list, err := s.currentEvents(ctx, projectID)
 	if err != nil {
 		return refusedCall(call, "не удалось прочитать проект: "+err.Error())
 	}
@@ -869,7 +869,7 @@ func (s *Service) toolCreate(
 		return refusedCall(call, "create_sub_event требует parent_id — идентификатор главы из list_events")
 	}
 
-	list, err := s.store.ListEvents(ctx, projectID)
+	list, err := s.currentEvents(ctx, projectID)
 	if err != nil {
 		return refusedCall(call, "не удалось прочитать проект: "+err.Error())
 	}

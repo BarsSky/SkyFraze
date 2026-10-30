@@ -81,3 +81,50 @@ func TestSaveYjsStateMergesIntoLiveRoom(t *testing.T) {
 }
 
 var _ events.LiveRestore = (*fakeLive)(nil)
+
+// TestListTreePrefersLiveRoom — GET /events отдаёт документ комнаты, а не проекцию (0.139.0).
+//
+// Зачем. Проекцию обновляет тик комнаты раз в несколько секунд. Панель связей и чат проекта
+// зовут `GET /events`; до этого они видели прошлый заголовок кадра, хотя в редакторе он уже
+// новый. Проверяем ровно выбор источника: документ и таблица нарочно расходятся.
+func TestListTreePrefersLiveRoom(t *testing.T) {
+	e := setupRevisions(t)
+	ctx := context.Background()
+	projectID := e.project(t) // в проекции — «Глава 1» и «Глава 2»
+
+	doc := yjs.NewDoc()
+	if err := doc.SeedEvents([]yjs.EventSeed{
+		{ID: uuid.NewString(), Title: "Глава из документа", Body: "свежий текст из комнаты"},
+	}); err != nil {
+		t.Fatalf("документ комнаты: %v", err)
+	}
+	e.svc.UseLiveRestore(&fakeLive{state: doc.EncodeState()})
+
+	tree, err := e.svc.ListTree(ctx, e.user, projectID)
+	if err != nil {
+		t.Fatalf("дерево: %v", err)
+	}
+	if len(tree) != 1 {
+		t.Fatalf("корневых кадров: %d, ожидался 1 (из документа)", len(tree))
+	}
+	if tree[0].Title != "Глава из документа" || tree[0].Body != "свежий текст из комнаты" {
+		t.Fatalf("GET /events отдал проекцию, а не документ: %q / %q", tree[0].Title, tree[0].Body)
+	}
+}
+
+// TestListTreeFallsBackWithoutRoom — комнаты нет, и GET /events работает как раньше.
+func TestListTreeFallsBackWithoutRoom(t *testing.T) {
+	e := setupRevisions(t)
+	ctx := context.Background()
+	projectID := e.project(t)
+
+	e.svc.UseLiveRestore(&fakeLive{}) // состояние пустое: комнаты в этом процессе нет
+
+	tree, err := e.svc.ListTree(ctx, e.user, projectID)
+	if err != nil {
+		t.Fatalf("дерево без комнаты: %v", err)
+	}
+	if len(tree) != 2 || tree[0].Title != "Глава 1" {
+		t.Fatalf("без комнаты дерево потеряло проекцию: %+v", tree)
+	}
+}

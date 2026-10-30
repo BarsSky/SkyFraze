@@ -21,6 +21,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/skyfraze/backend/internal/livedoc"
 	"github.com/skyfraze/backend/internal/store"
 )
 
@@ -59,10 +60,29 @@ type ProjectAccess interface {
 type Service struct {
 	store *store.Store
 	proj  ProjectAccess
+	// live — документ живой комнаты проекта (0.139.0): по нему считаются упоминания карточек,
+	// чтобы «где встречается Анна» отвечало по тексту, который редакторы видят сейчас.
+	// Необязателен: без комнаты работает проекция.
+	live livedoc.Live
 }
 
 func New(st *store.Store, proj ProjectAccess) *Service {
 	return &Service{store: st, proj: proj}
+}
+
+// UseLiveState подключает документ живой комнаты (0.139.0).
+//
+// Упоминания карточек считаются по тексту кадров, а проекцию обновляет тик комнаты раз в
+// несколько секунд: до этого «где встречается Анна» (и помощник тем же путём) отвечало по
+// прошлому тексту — сразу после того, как персонажа дописали в главу.
+func (s *Service) UseLiveState(live livedoc.Live) { s.live = live }
+
+// currentEvents — кадры проекта «как их видят редакторы»: документ комнаты, иначе проекция.
+func (s *Service) currentEvents(ctx context.Context, projectID uuid.UUID) ([]store.Event, error) {
+	if rows, ok := livedoc.RowsLive(ctx, s.live, projectID); ok {
+		return rows, nil
+	}
+	return s.store.ListEvents(ctx, projectID)
 }
 
 // Input — что приходит от человека (создание или правка).
@@ -293,10 +313,10 @@ func (s *Service) Delete(ctx context.Context, userID, projectID, id uuid.UUID) e
 
 // Usage — где каждая карточка встречается в проекте (0.70.0).
 //
-// Считается по проекции дерева (`events`), а не по хранимым упоминаниям: текст кадров там уже
-// есть, и выводить из него связи дешевле, чем поддерживать вторую таблицу с якорями и её
-// синхронизацию. Заодно это работает без открытой вкладки — именно поэтому метод нужен
-// помощнику, а не только интерфейсу.
+// Считается по текущему дереву (с 0.139.0 — документ живой комнаты, иначе проекция), а не по
+// хранимым упоминаниям: текст кадров там уже есть, и выводить из него связи дешевле, чем
+// поддерживать вторую таблицу с якорями и её синхронизацию. Заодно это работает без открытой
+// вкладки — именно поэтому метод нужен помощнику, а не только интерфейсу.
 func (s *Service) Usage(
 	ctx context.Context, userID, projectID uuid.UUID,
 ) ([]EntityUsageRow, error) {
@@ -310,7 +330,7 @@ func (s *Service) Usage(
 	if len(list) == 0 {
 		return nil, nil
 	}
-	events, err := s.store.ListEvents(ctx, projectID)
+	events, err := s.currentEvents(ctx, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -342,7 +362,7 @@ func (s *Service) Frames(
 	if err != nil {
 		return nil, err
 	}
-	events, err := s.store.ListEvents(ctx, projectID)
+	events, err := s.currentEvents(ctx, projectID)
 	if err != nil {
 		return nil, err
 	}

@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/skyfraze/backend/internal/livedoc"
 	"github.com/skyfraze/backend/internal/projects"
 	"github.com/skyfraze/backend/internal/store"
 )
@@ -183,15 +184,32 @@ func (s *Service) ProjectTreeServer(ctx context.Context, projectID, by uuid.UUID
 }
 
 // ListTree — дерево событий проекта (чтение: viewer+).
+//
+// Строки берутся из документа живой комнаты, если она есть в этом процессе (0.139.0): проекция
+// обновляется тиком комнаты раз в несколько секунд, и до этого GET /events отдавал ПРОШЛЫЙ
+// текст — тот же разрыв, что в 0.136–0.138 ловили на публичной странице и выгрузке. Комнаты
+// нет — прежний путь, проекция.
 func (s *Service) ListTree(ctx context.Context, userID, projectID uuid.UUID) ([]TreeEvent, error) {
 	if err := s.proj.RequireViewer(ctx, userID, projectID); err != nil {
 		return nil, err
 	}
-	evs, err := s.store.ListEvents(ctx, projectID)
+	evs, err := s.rows(ctx, projectID)
 	if err != nil {
 		return nil, err
 	}
 	return BuildTree(evs), nil
+}
+
+// rows — строки проекта «как их видят редакторы»: документ живой комнаты, иначе проекция.
+//
+// Только чтение. Запись (`CreateEvent`, `MoveEvent`, `DeleteEvent` — REST-эндпоинты, которыми
+// интерфейс не пользуется) остаётся на проекции: она пишет в таблицу, и читать для неё
+// документ значило бы проверять инварианты по одному источнику, а писать в другой.
+func (s *Service) rows(ctx context.Context, projectID uuid.UUID) ([]store.Event, error) {
+	if rows, ok := livedoc.RowsLive(ctx, s.liveRestore, projectID); ok {
+		return rows, nil
+	}
+	return s.store.ListEvents(ctx, projectID)
 }
 
 // CreateEvent — новое событие (запись: editor+). Родитель проверяется на
@@ -453,7 +471,10 @@ func (s *Service) SyncTree(
 	if err := s.store.ReplaceEventTreeChecked(ctx, projectID, userID, rows, baseRevision); err != nil {
 		return nil, err
 	}
-	return s.ListTree(ctx, userID, projectID)
+	// Отвечаем тем, что только что записали, а не чтением источника: `ListTree` с 0.139.0
+	// предпочитает документ живой комнаты, и ответ разошёлся бы с проекцией, которую вызвавший
+	// только что синхронизировал.
+	return BuildTree(rows), nil
 }
 
 func findEvent(evs []store.Event, id uuid.UUID) *store.Event {

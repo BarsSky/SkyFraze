@@ -26,6 +26,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/skyfraze/backend/internal/livedoc"
 	"github.com/skyfraze/backend/internal/store"
 )
 
@@ -116,6 +117,9 @@ type Service struct {
 	notify Notifier
 	// logger — журнал сервиса: очередь писем и сигнал в сокет не должны ронять ответ.
 	logger *slog.Logger
+	// live — документ живой комнаты проекта: по нему проверяется цитата (0.139.0).
+	// Может быть nil — тогда работает проекция.
+	live livedoc.Live
 }
 
 // New собирает сервис чата.
@@ -136,6 +140,12 @@ func (s *Service) UseBot(bot Bot, name string) {
 
 // UseNotifier подключает сигнал о новом сообщении (0.96.0): без него чат работает по опросу.
 func (s *Service) UseNotifier(n Notifier) { s.notify = n }
+
+// UseLiveState подключает документ живой комнаты (0.139.0): цитата проверяется по тексту,
+// который редакторы видят сейчас, а не по проекции, которая догоняет его раз в несколько секунд.
+// Иначе отправка «выделил фразу → в чат» в первые секунды после правки отвечала «такой фразы
+// нет» — на глазах у человека, который эту фразу только что написал.
+func (s *Service) UseLiveState(live livedoc.Live) { s.live = live }
 
 // BotName — имя бота для интерфейса (подпись кнопки «спросить …»).
 func (s *Service) BotName() string { return s.botName }
@@ -294,6 +304,27 @@ type Input struct {
 	ReplyTo *uuid.UUID
 }
 
+// frame — кадр «как его видят редакторы» (0.139.0): из документа живой комнаты, если она есть,
+// иначе из проекции.
+//
+// Почему документ главный. Проекция обновляется тиком комнаты раз в несколько секунд, и в эти
+// секунды новый кадр в ней ещё «старый». Цитату при этом присылает тот, кто текст только что
+// написал, — и получал отказ «такой фразы нет» на собственную правку.
+//
+// Если комната есть и в её документе кадра нет, проекция уже не спасает: документ не старее
+// таблицы, значит кадр удалён (или id чужой). Возвращаем «не найден», а не догадку.
+func (s *Service) frame(ctx context.Context, projectID, eventID uuid.UUID) (*store.Event, error) {
+	if rows, ok := livedoc.RowsLive(ctx, s.live, projectID); ok {
+		for i := range rows {
+			if rows[i].ID == eventID {
+				return &rows[i], nil
+			}
+		}
+		return nil, store.ErrNotFound
+	}
+	return s.store.GetEvent(ctx, projectID, eventID)
+}
+
 // Post сохраняет сообщение участника и, если попросили, ответ Нестора.
 func (s *Service) Post(
 	ctx context.Context, userID, projectID uuid.UUID, in Input,
@@ -313,7 +344,7 @@ func (s *Service) Post(
 	// Ссылка на кадр и цитату: кадр обязан быть из ЭТОГО проекта, фраза — из его текста.
 	var frame *store.Event
 	if in.EventID != nil {
-		event, err := s.store.GetEvent(ctx, projectID, *in.EventID)
+		event, err := s.frame(ctx, projectID, *in.EventID)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				return nil, ErrEventNotFound

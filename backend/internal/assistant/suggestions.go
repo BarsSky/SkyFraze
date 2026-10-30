@@ -149,7 +149,7 @@ func hasAnyDate(tree []store.Event) bool {
 
 // suggestionsFor — предложения для проекта: читает дерево и считает шаги.
 func (s *Service) suggestionsFor(ctx context.Context, projectID uuid.UUID, caps Capabilities) []Suggestion {
-	list, err := s.store.ListEvents(ctx, projectID)
+	list, err := s.currentEvents(ctx, projectID)
 	if err != nil {
 		// Сбой чтения дерева не должен ломать ответ: предложения — украшение, а не
 		// часть ответа на вопрос.
