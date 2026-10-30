@@ -748,7 +748,11 @@ async function visualScreens(browser: Browser, errors: string[], slug: string | 
           en: !!document.querySelector('[data-about] [lang="en"]'),
         }
       })()`)) as { about: boolean; version: string | null; links: number; en: boolean }
-      if (!aboutState.about || !aboutState.version || !aboutState.version.startsWith('Сборка')) {
+      // Проверяем НАЛИЧИЕ значения, а не русскую подпись «Сборка»: подпись переводится, а
+      // версия сборки — данные. Ищем цифру версии или коммит, потому что «Build dev» на
+      // dev-стенде и «Сборка dev» — это одно и то же (0.137.0).
+      const versionLooksReal = !!aboutState.version && /[0-9a-f]{7}|\d+\.\d+|dev/i.test(aboutState.version)
+      if (!aboutState.about || !versionLooksReal) {
         add({
           severity: 'error', area: 'functional', screen: 'about', viewport: vp.tag,
           check: '«О проекте» без версии сборки', detail: JSON.stringify(aboutState),

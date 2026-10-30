@@ -30,4 +30,15 @@
 @media (max-width: 640px) {
   .about { padding: 12px 12px 28px; }
   .about__grid { grid-template-columns: 1fr; }
+  /* Ссылки в карточках — цель нажатия, а не текст: 13 px подписи дают 15 px высоты, и аудит
+     справедливо называет это мелкой целью (английские подписи «License text», «How to
+     contribute» на 390 px были 69×15 и 101×15). */
+  .about__links { padding-left: 0; list-style: none; }
+  .about__links li { margin: 2px 0; }
+  .about__links a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 34px;
+    padding: 2px 0;
+  }
 }

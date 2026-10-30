@@ -199,7 +199,7 @@ export function ProjectSettingsPage() {
           {coauthors.length === 0 && (
             <p className="muted">
               {t('set.coauthorsEmpty')}{' '}
-              <Link to="/coauthors">{t('set.findPeopleLink')}</Link>
+              <Link className="settings-link" to="/coauthors">{t('set.findPeopleLink')}</Link>
             </p>
           )}
           <div className="list">

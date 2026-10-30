@@ -202,3 +202,11 @@ span.craft-chip { cursor: default; }
 .logins__what { font-size: 13px; }
 .logins__meta { font-size: 12px; flex: 1 1 auto; }
 
+
+/* Ссылка «найти людей по нику» в настройках проекта (0.137.0): на телефоне это цель нажатия,
+ * а не строка текста — 17 px высоты мало (нашёл английский прогон аудита). */
+.settings-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+}
