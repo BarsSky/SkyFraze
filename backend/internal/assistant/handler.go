@@ -497,6 +497,10 @@ func (h *Handler) fail(w http.ResponseWriter, op string, err error) {
 	// объяснением, что уменьшить (главу) или что сменить (модель с большим контекстом).
 	case errors.Is(err, ai.ErrTooLarge):
 		writeErr(w, http.StatusBadGateway, err.Error())
+	// «Не уложилась в лимит ответа» (0.142.6): текст ответа неполный — говорим это словами,
+	// а не показываем обрезанный JSON.
+	case errors.Is(err, ai.ErrOutputLimit):
+		writeErr(w, http.StatusBadGateway, err.Error())
 	case errors.Is(err, ai.ErrNoKey):
 		writeErr(w, http.StatusPreconditionRequired,
 			"для этой модели нужен ключ провайдера — добавьте свой в настройках помощника")

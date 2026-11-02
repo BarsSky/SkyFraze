@@ -210,3 +210,21 @@ func TestOpenAIStreamShortAnswerNotLost(t *testing.T) {
 		t.Fatalf("поток %q, ответ %q", shown.String(), reply.Content)
 	}
 }
+
+// TestOpenAITruncatedAnswerIsOutputLimit — оборванный по лимиту ответ с текстом (0.142.6).
+//
+// Живой случай: модель начала переписывать главу, упёрлась в max_tokens и прислала половину
+// JSON вызова. Показывать это человеку бессмысленно — говорим, что ответ неполный.
+func TestOpenAITruncatedAnswerIsOutputLimit(t *testing.T) {
+	s := newStub(t, func(w http.ResponseWriter, r *http.Request, _ *stub) {
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"[{\"name\":\"update_event_text\",\"arguments\":{\"body_md\":\"# Опи"},"finish_reason":"length"}]}`))
+	})
+	client, _ := ai.NewClient(s.provider(ai.KindOpenAI, "custom"), "k", 5*time.Second)
+	_, err := client.Chat(context.Background(), ai.Request{Model: "gemma", MaxTokens: 2048})
+	if !errors.Is(err, ai.ErrOutputLimit) {
+		t.Fatalf("ожидалась ошибка лимита ответа, получено: %v", err)
+	}
+	if !strings.Contains(err.Error(), "AI_MAX_OUTPUT_TOKENS") {
+		t.Fatalf("нет подсказки в ошибке: %v", err)
+	}
+}

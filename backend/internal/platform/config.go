@@ -131,7 +131,7 @@ type Config struct {
 	// рассуждения: при малом лимите видимого текста не остаётся, сервер отдаёт
 	// finish_reason=length, и помощник «не может ответить» без внятной причины. 2048 по
 	// умолчанию — с запасом на размышления и обычный ответ главы.
-	AIMaxOutputTokens int `envconfig:"AI_MAX_OUTPUT_TOKENS" default:"2048"`
+	AIMaxOutputTokens int `envconfig:"AI_MAX_OUTPUT_TOKENS" default:"4096"`
 	// AIDebug — писать в журнал содержимое запросов и ответов модели (AI_DEBUG=1).
 	//
 	// По умолчанию выключено: в сообщениях текст проекта. Но при разборе «модель не ответила»

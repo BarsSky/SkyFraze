@@ -98,7 +98,7 @@ services:
       AI_MAX_TOOL_CALLS: ${AI_MAX_TOOL_CALLS:-10}
       # Предел ответа модели и журнал провайдера (0.141.0): «думающие» модели иначе тратят весь
       # бюджет на reasoning_content, и помощник «не отвечает» без причины.
-      AI_MAX_OUTPUT_TOKENS: ${AI_MAX_OUTPUT_TOKENS:-2048}
+      AI_MAX_OUTPUT_TOKENS: ${AI_MAX_OUTPUT_TOKENS:-4096}
       AI_DEBUG: ${AI_DEBUG:-false}
       AI_TIMEOUT_SECONDS: ${AI_TIMEOUT_SECONDS:-120}
       AI_TOKENS_PER_DAY: ${AI_TOKENS_PER_DAY:-0}
@@ -192,4 +192,5 @@ volumes:
 networks:
   skyfraze-net:
     driver: bridge
+
 

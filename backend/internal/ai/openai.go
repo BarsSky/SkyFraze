@@ -300,10 +300,13 @@ func thinkingBudgetError(reply Reply, req Request, warned bool) error {
 			"(%d символов размышлений, лимит ответа %d) — увеличьте AI_MAX_OUTPUT_TOKENS",
 			ErrUnavailable, reply.ReasoningLen, req.MaxTokens)
 	}
-	if visible == "" && reply.FinishReason == "length" {
-		return fmt.Errorf("%w: ответ оборван по лимиту (%d токенов), а видимого текста нет — "+
-			"модель потратила бюджет на рассуждения; увеличьте AI_MAX_OUTPUT_TOKENS",
-			ErrUnavailable, req.MaxTokens)
+	if reply.FinishReason == "length" {
+		// Ответ оборван по лимиту: он неполный в любом случае (0.142.6). Показывать человеку
+		// обрезанный JSON вызова или половину абзаца — хуже, чем сказать, что модель не
+		// уложилась в лимит ответа.
+		return fmt.Errorf("%w: ответ модели оборван по лимиту (%d токенов, текст %d знаков, "+
+			"рассуждений %d) — увеличьте AI_MAX_OUTPUT_TOKENS или попросите правку одного фрагмента",
+			ErrOutputLimit, req.MaxTokens, len([]rune(visible)), reply.ReasoningLen)
 	}
 	return nil
 }
