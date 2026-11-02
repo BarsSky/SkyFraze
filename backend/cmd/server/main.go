@@ -276,6 +276,10 @@ func main() {
 		MaxToolCalls:      cfg.AIMaxToolCalls,
 		TimeoutSeconds:    cfg.AITimeoutSeconds,
 		TokensPerDay:      cfg.AITokensPerDay,
+		// Холодный старт и молчание сервера (0.145.0): модель, выгруженная из памяти,
+		// поднимается минутами, и общий предел запроса рвал такое ожидание.
+		LoadWaitSeconds:   cfg.AILoadWaitSeconds,
+		StreamIdleSeconds: cfg.AIStreamIdleSeconds,
 		// Предел ответа и диагностика (0.141.0): «думающие» модели иначе тратят весь бюджет
 		// на рассуждения, и помощник «не отвечает» без причины.
 		MaxOutputTokens: cfg.AIMaxOutputTokens,

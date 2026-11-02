@@ -1,4 +1,4 @@
-﻿package assistant
+package assistant
 
 // stream_gate_test.go — что показывается человеку из потока модели.
 //

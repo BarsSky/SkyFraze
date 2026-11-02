@@ -388,6 +388,38 @@ describe('AssistantPanel', () => {
     expect(await screen.findByText('Создал главу «Пролог».')).toBeTruthy()
   })
 
+  it('через 20 секунд молчания объясняет, что модель загружается', async () => {
+    // 0.145.0: локальная модель выгружается из памяти, и первый запрос поднимает её
+    // минутами. Без пояснения человек решает, что помощник сломался, и перезагружает
+    // страницу — а это и есть настоящий обрыв запроса.
+    mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
+    let finish: (turn: AITurn) => void = () => {}
+    mocks.stream.mockImplementation(
+      () =>
+        new Promise<AITurn>((resolve) => {
+          finish = resolve
+        }),
+    )
+    // Порог подсказки — параметром: изображать двадцать секунд ожидания в тесте незачем.
+    const { view } = renderPanel({ coldStartHintMs: 40 })
+
+    const input = (await screen.findByLabelText('Сообщение помощнику')) as HTMLTextAreaElement
+    await waitFor(() => expect(input.disabled).toBe(false))
+    fireEvent.change(input, { target: { value: 'Помоги с орфографией и стилем главы' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Спросить' }))
+
+    // До порога — обычное «думает…», после — объяснение про загрузку модели.
+    await waitFor(() =>
+      expect(document.querySelector('[data-assistant-thinking]')?.textContent).toContain(
+        'Модель загружается на сервере',
+      ),
+    )
+
+    finish(TURN)
+    await waitFor(() => expect(screen.queryByText(/Модель загружается на сервере/)).toBeNull())
+    view.unmount()
+  })
+
   it('при исчерпанном пределе расхода объясняет это и не даёт отправить', async () => {
     mocks.config.mockResolvedValue({
       ...REMOTE,

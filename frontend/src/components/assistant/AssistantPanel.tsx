@@ -84,6 +84,13 @@ interface Props {
   onOpenEditors: () => void
   /** Пуст ли проект: от этого зависят подсказки в пустом чате. */
   projectIsEmpty?: boolean
+  /**
+   * Через сколько миллисекунд молчания сказать «модель загружается» (0.145.0).
+   *
+   * Параметром, а не константой, — чтобы это можно было проверить тестом, не изображая
+   * двадцать секунд ожидания.
+   */
+  coldStartHintMs?: number
 }
 
 type View = 'chat' | 'settings'
@@ -98,6 +105,7 @@ export function AssistantPanel({
   onProjectChanged,
   onOpenEditors,
   projectIsEmpty = true,
+  coldStartHintMs = 20000,
 }: Props) {
   const [view, setView] = useState<View>('chat')
   const t = useT()
@@ -186,6 +194,12 @@ export function AssistantPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prefill?.nonce])
   const [sendError, setSendError] = useState<string | null>(null)
+  /**
+   * Долгое молчание сервера моделей (0.145.0): локальная модель выгружается из памяти, и первый
+   * запрос после простоя поднимает её минутами. Без пояснения человек решает, что помощник
+   * сломался, и перезагружает страницу — а это обрывает запрос на самом деле.
+   */
+  const [coldStart, setColdStart] = useState(false)
   const [consentNeeded, setConsentNeeded] = useState(false)
   const [agent, setAgent] = useState<AISettings | null>(null)
   const [agentDraft, setAgentDraft] = useState<{
@@ -696,6 +710,15 @@ export function AssistantPanel({
     const controller = new AbortController()
     abortRef.current = controller
     let answer = ''
+    // Если ответа нет 20 секунд — почти наверняка сервер поднимает выгруженную модель:
+    // говорим об этом словами, вместо голого «думает…».
+    setColdStart(false)
+    const coldTimer = window.setTimeout(() => setColdStart(true), coldStartHintMs)
+    /** Первый признак жизни от модели: дальше подсказка про загрузку не нужна. */
+    const answered = () => {
+      window.clearTimeout(coldTimer)
+      setColdStart(false)
+    }
     // Черновик нового текста кадра убираем только при удачном ответе: при ошибке (в том
     // числе «черновик оборвался») человек должен увидеть то, что уже было написано.
     let keepDraft = false
@@ -707,21 +730,30 @@ export function AssistantPanel({
         handlers: {
           onStart: (id) => setConversationId(id),
           onDelta: (piece) => {
+            answered()
             answer += piece
             setStreaming(answer)
           },
-          onCall: (call) => setLiveCalls((current) => [...current, call.detail || call.name]),
+          onCall: (call) => {
+            answered()
+            setLiveCalls((current) => [...current, call.detail || call.name])
+          },
           // Черновик нового текста кадра показываем по мере написания: ради этого он и
           // отдельным событием, а не молчанием до конца генерации.
-          onDraft: (piece) => setDraft((current) => current + piece),
+          onDraft: (piece) => {
+            answered()
+            setDraft((current) => current + piece)
+          },
           onDraftTruncated: () => setDraftTruncated(true),
           onChange: (change) => setChanges((current) => [...current, change]),
           // Предложение показываем сразу, как только оно пришло: пока идёт ответ, оно уже
           // существует на сервере, и человек может применить его, не дожидаясь конца.
-          onProposal: (proposal) =>
+          onProposal: (proposal) => {
+            answered()
             setProposals((current) =>
               current.some((item) => item.id === proposal.id) ? current : [...current, proposal],
-            ),
+            )
+          },
         },
         signal: controller.signal,
       })
@@ -789,6 +821,8 @@ export function AssistantPanel({
         if (tokenBudget) void refreshConfig()
       }
     } finally {
+      window.clearTimeout(coldTimer)
+      setColdStart(false)
       abortRef.current = null
       setStreaming(null)
       setLiveCalls([])
@@ -812,6 +846,7 @@ export function AssistantPanel({
     onProjectChanged,
     onUnread,
     refreshConfig,
+    coldStartHintMs,
   ])
 
   /** «Стоп»: обрываем запрос — сервер сохранит то, что модель успела сказать. */
@@ -1369,7 +1404,11 @@ export function AssistantPanel({
                 <span className="ai-caret" aria-hidden="true" />
               </div>
             )}
-            {sending && streaming === '' && <p className="ai-thinking">{t('as.thinking')}</p>}
+            {sending && streaming === '' && (
+              <p className="ai-thinking" data-assistant-thinking>
+                {coldStart ? t('as.coldStartHint') : t('as.thinking')}
+              </p>
+            )}
             {/* Черновик нового текста кадра: модель пишет его для человека, но кадр ещё
                 не изменён и это не реплика помощника. Отдельный блок — потому что
                 перепутать «модель сказала» и «модель предлагает переписать» нельзя. */}

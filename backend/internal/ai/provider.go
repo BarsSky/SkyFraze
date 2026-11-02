@@ -252,6 +252,12 @@ type Reply struct {
 	// ReasoningLen — сколько символов модели ушло в рассуждения (`reasoning_content`).
 	// Для диагностики: если ответа нет, а здесь сотни символов, бюджет съели размышления.
 	ReasoningLen int
+	// FirstByteMS — через сколько миллисекунд после запроса пришли первые байты ответа.
+	//
+	// Нужно, чтобы отличать «модель думала» от «сервер поднимал выгруженную модель»:
+	// холодный старт на стенде занимал 117 с, обычный ответ — 10–40. Пишется в журнал
+	// (`ai: ответ модели`, поле waited_ms) и в лог только когда ожидание заметное.
+	FirstByteMS int
 }
 
 // Client — то, что умеет любой провайдер.
@@ -277,7 +283,29 @@ var (
 	// ErrOutputLimit — модель не уложилась в лимит ответа (finish_reason=length). Текст ответа
 	// неполный: обрезанный JSON вызова инструмента или половина абзаца.
 	ErrOutputLimit = errors.New("модель не уложилась в лимит ответа")
+	// ErrModelLoading — сервер моделей ещё поднимает модель (0.145.0).
+	//
+	// У локальных балансеров выгруженную модель загружает первый же запрос: он висит
+	// минутами или сразу отвечает «model is loading». Это НЕ ошибка и НЕ «провайдер
+	// недоступен»: запрос надо повторить, а человеку — сказать, что модель загружается.
+	ErrModelLoading = errors.New("модель загружается на сервере")
 )
+
+// Timeouts — пределы ожидания одного обращения к модели (0.145.0).
+//
+// Зачем три разных предела вместо одного. Холодный старт (модель выгружена из памяти) и
+// обычная генерация — разные по длительности события: на стенде первый запрос после простоя
+// занял 117 секунд, а следующие — 10–40. Один общий предел либо рвал холодный старт, либо
+// позволял зависшему соединению висеть вечно.
+type Timeouts struct {
+	// Request — весь обычный (не потоковый) запрос.
+	Request time.Duration
+	// LoadWait — сколько ждать ПЕРВЫХ байт потокового ответа: сервер может поднимать
+	// выгруженную модель, и всё это время он молчит законно.
+	LoadWait time.Duration
+	// Idle — сколько терпеть молчание сервера уже после начала ответа.
+	Idle time.Duration
+}
 
 // httpTimeout — предел на один запрос. Локальные модели на слабой машине думают
 // долго, поэтому значение настраивается (AI_TIMEOUT_SECONDS).
@@ -290,15 +318,28 @@ func httpTimeout(seconds int) time.Duration {
 
 // NewClient собирает клиента для провайдера. key — ключ (пользователя или стенда);
 // для Ollama и для провайдеров с Keyless он не нужен.
+//
+// Один предел на всё: так клиента собирают тесты и ручные проверки.
 func NewClient(p Provider, key string, timeout time.Duration) (Client, error) {
+	return NewClientWithTimeouts(p, key, Timeouts{Request: timeout, LoadWait: timeout, Idle: timeout})
+}
+
+// NewClientWithTimeouts — клиент с раздельными пределами ожидания (0.145.0).
+func NewClientWithTimeouts(p Provider, key string, timeouts Timeouts) (Client, error) {
+	if timeouts.LoadWait <= 0 {
+		timeouts.LoadWait = timeouts.Request
+	}
+	if timeouts.Idle <= 0 {
+		timeouts.Idle = timeouts.Request
+	}
 	switch p.Kind {
 	case KindOllama:
-		return newOllama(p, timeout), nil
+		return newOllama(p, timeouts), nil
 	case KindOpenAI:
 		if strings.TrimSpace(key) == "" && !p.Keyless {
 			return nil, fmt.Errorf("%w: %s", ErrNoKey, p.ID)
 		}
-		return newOpenAI(p, key, timeout), nil
+		return newOpenAI(p, key, timeouts), nil
 	default:
 		return nil, fmt.Errorf("неизвестный провайдер: %s", p.Kind)
 	}

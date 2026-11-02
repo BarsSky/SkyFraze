@@ -23,10 +23,20 @@ type openAIClient struct {
 	provider Provider
 	key      string
 	client   *http.Client
+	// streamClient — отдельный клиент для потока: без общего Timeout, потому что его
+	// работу делают сторожа ожидания первых байт и молчания (см. stall.go).
+	streamClient *http.Client
+	timeouts     Timeouts
 }
 
-func newOpenAI(p Provider, key string, timeout time.Duration) *openAIClient {
-	return &openAIClient{provider: p, key: strings.TrimSpace(key), client: &http.Client{Timeout: timeout}}
+func newOpenAI(p Provider, key string, timeouts Timeouts) *openAIClient {
+	return &openAIClient{
+		provider:     p,
+		key:          strings.TrimSpace(key),
+		client:       &http.Client{Timeout: timeouts.Request},
+		streamClient: &http.Client{},
+		timeouts:     timeouts,
+	}
 }
 
 // openAIModels — ответ GET /models. Поля цены есть только у OpenRouter; остальные
@@ -389,7 +399,16 @@ func (c *openAIClient) ChatStream(ctx context.Context, req Request, onText func(
 	if err != nil {
 		return Reply{}, err
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.provider.BaseURL+"/chat/completions", bytes.NewReader(raw))
+	// Поток ограничен не общим Timeout, а двумя сторожами: ожидание первых байт
+	// (сервер может поднимать выгруженную модель) и молчание уже в ответе. Общий предел
+	// оставляем с запасом — он нужен только против вечного «ручейка».
+	ctxStream, cancelStream := context.WithTimeout(ctx,
+		c.timeouts.Request+c.timeouts.LoadWait)
+	defer cancelStream()
+	watch := newStallWatch(c.timeouts.LoadWait, cancelStream)
+	defer watch.stop()
+
+	httpReq, err := http.NewRequestWithContext(ctxStream, http.MethodPost, c.provider.BaseURL+"/chat/completions", bytes.NewReader(raw))
 	if err != nil {
 		return Reply{}, err
 	}
@@ -397,11 +416,20 @@ func (c *openAIClient) ChatStream(ctx context.Context, req Request, onText func(
 	httpReq.Header.Set("Accept", "text/event-stream")
 	c.authorize(httpReq)
 
-	resp, err := c.client.Do(httpReq)
+	started := time.Now()
+	resp, err := c.streamClient.Do(httpReq)
 	if err != nil {
+		if watch.stalled() && ctx.Err() == nil {
+			return Reply{}, fmt.Errorf("%w: %s: модель не начала отвечать за %s — "+
+				"вероятно, она загружается; повторите запрос через минуту",
+				ErrModelLoading, c.provider.Title, roundSeconds(c.timeouts.LoadWait))
+		}
 		return Reply{}, fmt.Errorf("%w: %s: %v", ErrUnavailable, c.provider.Title, err)
 	}
 	defer resp.Body.Close()
+	// Первые байты пришли — дальше следим только за молчанием.
+	watch.setLimit(c.timeouts.Idle)
+	resp.Body = &watchedBody{ReadCloser: resp.Body, watch: watch}
 	if resp.StatusCode >= 400 {
 		limited, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
 		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
@@ -424,6 +452,9 @@ func (c *openAIClient) ChatStream(ctx context.Context, req Request, onText func(
 	var text strings.Builder
 
 	err = readSSE(resp.Body, func(data string) error {
+		if reply.FirstByteMS == 0 {
+			reply.FirstByteMS = int(time.Since(started).Milliseconds())
+		}
 		if strings.TrimSpace(data) == "[DONE]" {
 			return errStreamEnd
 		}
@@ -478,6 +509,11 @@ func (c *openAIClient) ChatStream(ctx context.Context, req Request, onText func(
 		return nil
 	})
 	if err := streamEndOrError(err); err != nil {
+		if watch.stalled() && ctx.Err() == nil {
+			// Не отмена человеком и не конец ответа: сервер замолчал посреди генерации.
+			return Reply{}, fmt.Errorf("%w: сервер молчал дольше %s — ответ оборван",
+				ErrUnavailable, roundSeconds(c.timeouts.Idle))
+		}
 		return Reply{}, streamStopped(ctx, err)
 	}
 	// Поток кончился, а начало так и осталось придержанным (короткий ответ короче подписи
@@ -663,7 +699,55 @@ func httpError(status int, body []byte) error {
 		return fmt.Errorf("%w: контекст модели меньше запроса (код %d) — уменьшите главу или "+
 			"возьмите модель с бо́льшим контекстом; ответ сервера: %s", ErrTooLarge, status, detail)
 	}
+	if isModelLoading(status, text) {
+		return fmt.Errorf("%w: сервер отвечает «%s» (код %d)", ErrModelLoading, shortText(text, 200), status)
+	}
 	return fmt.Errorf("%w: код %d: %s", ErrUnavailable, status, text)
+}
+
+// isModelLoading — сервер занят загрузкой модели, а не сломался (0.145.0).
+//
+// Так отвечают локальные балансеры и llama.cpp-подобные серверы, когда модель выгружена из
+// памяти: «model is loading», «Loading model», «retry in 30s», «модель загружается». Это
+// повод подождать и повторить, а не сказать человеку «провайдер недоступен».
+func isModelLoading(status int, text string) bool {
+	switch status {
+	case http.StatusServiceUnavailable, http.StatusConflict, http.StatusTooManyRequests, 425:
+	default:
+		return false
+	}
+	lower := strings.ToLower(text)
+	for _, marker := range []string{
+		"loading", "load model", "model is loading", "starting", "retry in",
+		"загруж", "поднима", "занят",
+	} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// shortText — обрезать текст ошибки для сообщения человеку.
+func shortText(text string, limit int) string {
+	text = strings.TrimSpace(text)
+	runes := []rune(text)
+	if len(runes) <= limit {
+		return text
+	}
+	return string(runes[:limit]) + "…"
+}
+
+// roundSeconds — длительность ожидания по-русски (для сообщений об ошибке).
+func roundSeconds(d time.Duration) string {
+	if d <= 0 {
+		return "неизвестное время"
+	}
+	seconds := int(d.Round(time.Second) / time.Second)
+	if seconds%60 == 0 {
+		return fmt.Sprintf("%d мин", seconds/60)
+	}
+	return fmt.Sprintf("%d с", seconds)
 }
 
 // openAIError — ошибка провайдера в ответе или в событии потока.

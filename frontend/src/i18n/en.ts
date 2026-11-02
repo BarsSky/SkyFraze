@@ -1178,6 +1178,8 @@ export const en: Record<Key, string> = {
   'as.thinking': 'The assistant is thinking…',
   'as.liveCalls': 'Done so far: {count}',
   'as.draftTitle': 'Draft of the new frame text',
+  'as.coldStartHint':
+    'The model is loading on the server — the first answer after a pause may take a minute or two. Please wait.',
   'as.draftHint': 'The model is writing it for you — the frame text stays unchanged until you confirm.',
   'as.draftTruncated':
     'The draft broke off: the model did not finish it, so it was not applied — try again or edit paragraph by paragraph.',

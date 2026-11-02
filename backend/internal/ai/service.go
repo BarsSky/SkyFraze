@@ -37,6 +37,15 @@ type Config struct {
 	DefaultModel      string
 	MaxToolCalls      int
 	TimeoutSeconds    int
+	// LoadWaitSeconds — сколько ждать первых байт ответа (0.145.0).
+	//
+	// Локальный балансер держит модели на диске и грузит их по требованию: первый запрос
+	// после простоя висит, пока модель поднимается (на стенде — 117 секунд). Наш общий
+	// предел запроса такие ожидания рвал, и помощник «не отвечал». Здесь — отдельное,
+	// намеренно большее ожидание.
+	LoadWaitSeconds int
+	// StreamIdleSeconds — сколько терпеть молчание сервера уже в потоке (0.145.0).
+	StreamIdleSeconds int
 	// TokensPerDay — предел расхода на человека за сутки (0 — без предела).
 	//
 	// Зачем предел вообще. Ключ стенда платит админ, и «один человек спросил 300 раз
@@ -426,7 +435,7 @@ func ParseModelRef(ref string) (provider, model string, err error) {
 // checkKey проверяет ключ запросом списка моделей: 401/403 означает «ключ не принят»,
 // недоступность провайдера — не повод не сохранить ключ (может, у него перерыв).
 func (s *Service) checkKey(ctx context.Context, provider Provider, key string) error {
-	client, err := NewClient(provider, key, httpTimeout(s.cfg.TimeoutSeconds))
+	client, err := NewClientWithTimeouts(provider, key, s.timeouts())
 	if err != nil {
 		return err
 	}
@@ -482,7 +491,12 @@ func (s *Service) Chat(ctx context.Context, userID uuid.UUID, providerID string,
 	s.applyDefaults(&req)
 	s.logRequest(provider, req, false)
 	started := time.Now()
-	reply, err := client.Chat(ctx, req)
+	var reply Reply
+	err = s.retryLoading(ctx, provider, nil, func() error {
+		var chatErr error
+		reply, chatErr = client.Chat(ctx, req)
+		return chatErr
+	})
 	s.logReply(provider, req, reply, time.Since(started), err)
 	return reply, err
 }
@@ -513,8 +527,22 @@ func (s *Service) StreamChat(
 	s.applyDefaults(&req)
 	s.logRequest(provider, req, true)
 	started := time.Now()
+	// Пока человеку не ушёл ни один кусок, повтор безопасен: «модель загружается» приходит
+	// до первой дельты. Как только текст пошёл, повтор задвоил бы ответ.
+	sent := false
+	onTextOnce := func(text string) error {
+		if text != "" {
+			sent = true
+		}
+		return onText(text)
+	}
 	if streamer, ok := client.(Streamer); ok {
-		reply, err := streamer.ChatStream(ctx, req, onText)
+		var reply Reply
+		err = s.retryLoading(ctx, provider, func() bool { return !sent }, func() error {
+			var streamErr error
+			reply, streamErr = streamer.ChatStream(ctx, req, onTextOnce)
+			return streamErr
+		})
 		s.logReply(provider, req, reply, time.Since(started), err)
 		return reply, err
 	}
@@ -598,6 +626,11 @@ func (s *Service) logReply(provider Provider, req Request, reply Reply, took tim
 		"tool_calls", strings.Join(names, ","),
 		"tokens_in", reply.TokensIn, "tokens_out", reply.TokensOut,
 	)
+	// Ожидание первых байт пишем только когда оно заметное: это и есть ответ на вопрос
+	// «модель думала или сервер её поднимал» (0.145.0).
+	if reply.FirstByteMS >= 5000 {
+		args = append(args, "waited_ms", reply.FirstByteMS)
+	}
 	if s.cfg.DebugPayloads {
 		args = append(args, "content", truncate(reply.Content, 2000))
 	}
@@ -635,7 +668,7 @@ func (s *Service) clientFor(ctx context.Context, userID uuid.UUID, provider Prov
 			return nil, err
 		}
 		if len(endpoint.KeyCiphertext) == 0 {
-			return NewClient(provider, "", httpTimeout(s.cfg.TimeoutSeconds))
+			return NewClientWithTimeouts(provider, "", s.timeouts())
 		}
 		if s.cipher == nil {
 			return nil, ErrNoCipher
@@ -644,7 +677,7 @@ func (s *Service) clientFor(ctx context.Context, userID uuid.UUID, provider Prov
 		if err != nil {
 			return nil, errors.New("ключ своего сервера не читается — добавьте сервер заново")
 		}
-		return NewClient(provider, plain, httpTimeout(s.cfg.TimeoutSeconds))
+		return NewClientWithTimeouts(provider, plain, s.timeouts())
 	}
 
 	key := ""
@@ -671,7 +704,68 @@ func (s *Service) clientFor(ctx context.Context, userID uuid.UUID, provider Prov
 	if key == "" && provider.Kind != KindOllama && !provider.Keyless {
 		return nil, fmt.Errorf("%w: %s", ErrNoKey, provider.Title)
 	}
-	return NewClient(provider, key, httpTimeout(s.cfg.TimeoutSeconds))
+	return NewClientWithTimeouts(provider, key, s.timeouts())
+}
+
+// timeouts — три предела ожидания из настроек стенда (0.145.0).
+//
+// LoadWait по умолчанию заметно больше Timeout: холодный старт локальной модели на стенде
+// занял 117 секунд, и общий предел запроса его рвал. Idle — тишина уже в потоке: дольше
+// двух минут молчащий сервер считается зависшим.
+func (s *Service) timeouts() Timeouts {
+	request := httpTimeout(s.cfg.TimeoutSeconds)
+	loadWait := time.Duration(s.cfg.LoadWaitSeconds) * time.Second
+	if s.cfg.LoadWaitSeconds <= 0 {
+		loadWait = 4 * time.Minute
+	}
+	idle := time.Duration(s.cfg.StreamIdleSeconds) * time.Second
+	if s.cfg.StreamIdleSeconds <= 0 {
+		idle = 2 * time.Minute
+	}
+	if loadWait < request {
+		loadWait = request
+	}
+	if idle < request {
+		idle = request
+	}
+	return Timeouts{Request: request, LoadWait: loadWait, Idle: idle}
+}
+
+// retryLoading повторяет обращение к модели, пока сервер её поднимает (0.145.0).
+//
+// Зачем. Локальные балансеры на выгруженную модель отвечают «model is loading» / 503 вместо
+// того, чтобы держать соединение. Для человека это не ошибка: нужно подождать. Ждём не дольше
+// бюджета загрузки и повторяем только для СВОИХ серверов — у облачных провайдеров 503 значит
+// совсем другое (перегрузка), и повторять там запрос наугад нельзя.
+//
+// canRetry нужен потоковому пути: если текст уже ушёл человеку, повтор задвоил бы его.
+func (s *Service) retryLoading(
+	ctx context.Context, provider Provider, canRetry func() bool, fn func() error,
+) error {
+	if !provider.Local && provider.Kind != KindOllama {
+		return fn()
+	}
+	const wait = 5 * time.Second
+	deadline := time.Now().Add(s.timeouts().LoadWait)
+	for {
+		err := fn()
+		if err == nil || !errors.Is(err, ErrModelLoading) {
+			return err
+		}
+		if canRetry != nil && !canRetry() {
+			return err
+		}
+		if time.Now().Add(wait).After(deadline) {
+			return err
+		}
+		s.logger.Warn("ai: модель загружается — ждём",
+			"provider", provider.ID, "wait", wait.String())
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(wait):
+		}
+	}
 }
 
 // standKey — ключ стенда из окружения (может быть пустым).

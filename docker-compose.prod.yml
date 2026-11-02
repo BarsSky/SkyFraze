@@ -101,6 +101,11 @@ services:
       AI_MAX_OUTPUT_TOKENS: ${AI_MAX_OUTPUT_TOKENS:-4096}
       AI_DEBUG: ${AI_DEBUG:-false}
       AI_TIMEOUT_SECONDS: ${AI_TIMEOUT_SECONDS:-120}
+      # Холодный старт (0.145.0): выгруженную модель сервер поднимает минутами, и общий
+      # предел запроса рвал это ожидание. AI_STREAM_IDLE_SECONDS — сколько терпеть молчание
+      # сервера уже в потоке.
+      AI_LOAD_WAIT_SECONDS: ${AI_LOAD_WAIT_SECONDS:-240}
+      AI_STREAM_IDLE_SECONDS: ${AI_STREAM_IDLE_SECONDS:-120}
       AI_TOKENS_PER_DAY: ${AI_TOKENS_PER_DAY:-0}
       # Генерация изображений: A1111-совместимый сервер (Automatic1111, Forge, SD.Next).
       # Пусто — генерации нет, и помощник честно скажет об этом.

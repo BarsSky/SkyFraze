@@ -18,16 +18,23 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 )
 
 type ollamaClient struct {
 	provider Provider
 	client   *http.Client
+	// streamClient — без общего Timeout: его работу делают сторожа потока (см. stall.go).
+	streamClient *http.Client
+	timeouts     Timeouts
 }
 
-func newOllama(p Provider, timeout time.Duration) *ollamaClient {
-	return &ollamaClient{provider: p, client: &http.Client{Timeout: timeout}}
+func newOllama(p Provider, timeouts Timeouts) *ollamaClient {
+	return &ollamaClient{
+		provider:     p,
+		client:       &http.Client{Timeout: timeouts.Request},
+		streamClient: &http.Client{},
+		timeouts:     timeouts,
+	}
 }
 
 // ollamaTags — ответ GET /api/tags.
@@ -217,24 +224,39 @@ func (c *ollamaClient) ChatStream(ctx context.Context, req Request, onText func(
 	if err != nil {
 		return Reply{}, err
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.provider.BaseURL+"/api/chat", bytes.NewReader(raw))
+	// Как и у OpenAI-совместимого клиента: поток ограничен сторожами (ожидание первых
+	// байт и молчание), а не общим Timeout — иначе холодный старт рвётся на середине
+	// загрузки модели (0.145.0).
+	ctxStream, cancelStream := context.WithTimeout(ctx, c.timeouts.Request+c.timeouts.LoadWait)
+	defer cancelStream()
+	watch := newStallWatch(c.timeouts.LoadWait, cancelStream)
+	defer watch.stop()
+
+	httpReq, err := http.NewRequestWithContext(ctxStream, http.MethodPost, c.provider.BaseURL+"/api/chat", bytes.NewReader(raw))
 	if err != nil {
 		return Reply{}, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "application/x-ndjson")
 
-	resp, err := c.client.Do(httpReq)
+	resp, err := c.streamClient.Do(httpReq)
 	if err != nil {
+		if watch.stalled() && ctx.Err() == nil {
+			return Reply{}, fmt.Errorf("%w: %s: модель не начала отвечать за %s — "+
+				"вероятно, она загружается; повторите запрос через минуту",
+				ErrModelLoading, c.provider.BaseURL, roundSeconds(c.timeouts.LoadWait))
+		}
 		return Reply{}, fmt.Errorf("%w: %s: %v", ErrUnavailable, c.provider.BaseURL, err)
 	}
 	defer resp.Body.Close()
+	watch.setLimit(c.timeouts.Idle)
+	resp.Body = &watchedBody{ReadCloser: resp.Body, watch: watch}
 	if resp.StatusCode >= 400 {
 		limited, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
 		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 			return Reply{}, fmt.Errorf("%w: %s", ErrUnauthorized, strings.TrimSpace(string(limited)))
 		}
-		return Reply{}, fmt.Errorf("%w: код %d: %s", ErrUnavailable, resp.StatusCode, strings.TrimSpace(string(limited)))
+		return Reply{}, httpError(resp.StatusCode, limited)
 	}
 
 	reply := Reply{Model: req.Model}
@@ -279,6 +301,10 @@ func (c *ollamaClient) ChatStream(ctx context.Context, req Request, onText func(
 		return nil
 	})
 	if err != nil {
+		if watch.stalled() && ctx.Err() == nil {
+			return Reply{}, fmt.Errorf("%w: сервер молчал дольше %s — ответ оборван",
+				ErrUnavailable, roundSeconds(c.timeouts.Idle))
+		}
 		return Reply{}, streamStopped(ctx, err)
 	}
 	reply.Content = text.String()
@@ -380,7 +406,9 @@ func (c *ollamaClient) do(req *http.Request, out any) error {
 		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 			return fmt.Errorf("%w: %s", ErrUnauthorized, strings.TrimSpace(string(raw)))
 		}
-		return fmt.Errorf("%w: код %d: %s", ErrUnavailable, resp.StatusCode, strings.TrimSpace(string(raw)))
+		// «Модель загружается» — ожидание, а не поломка (0.145.0): тот же разбор, что
+		// у OpenAI-совместимого клиента.
+		return httpError(resp.StatusCode, raw)
 	}
 	if err := json.Unmarshal(raw, out); err != nil {
 		return fmt.Errorf("%w: разбор ответа: %v", ErrUnavailable, err)
