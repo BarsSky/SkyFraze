@@ -493,6 +493,10 @@ func (h *Handler) fail(w http.ResponseWriter, op string, err error) {
 	// 502 говорит «проблема на стороне модели», а текст объясняет, что делать.
 	case errors.Is(err, ErrNoAnswer):
 		writeErr(w, http.StatusBadGateway, err.Error())
+	// «Контекст модели меньше запроса» (0.142.1) — тоже состояние провайдера: 502 с
+	// объяснением, что уменьшить (главу) или что сменить (модель с большим контекстом).
+	case errors.Is(err, ai.ErrTooLarge):
+		writeErr(w, http.StatusBadGateway, err.Error())
 	case errors.Is(err, ai.ErrNoKey):
 		writeErr(w, http.StatusPreconditionRequired,
 			"для этой модели нужен ключ провайдера — добавьте свой в настройках помощника")

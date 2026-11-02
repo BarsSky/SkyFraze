@@ -152,3 +152,61 @@ func TestOllamaSendsNumPredict(t *testing.T) {
 		t.Fatalf("ответ: %v", err)
 	}
 }
+
+// TestOpenAIStreamHidesProviderWarning — предупреждение балансера не показывается в потоке
+// (0.142.1).
+//
+// Оно приходит обычным куском content, ДО того как станет известен finish_reason. Раньше
+// человек видел «⚠️ Модель сгенерировала только размышления…» посреди ответа.
+func TestOpenAIStreamHidesProviderWarning(t *testing.T) {
+	s := newStub(t, func(w http.ResponseWriter, r *http.Request, _ *stub) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":%q}}]}\n\n", warningText)
+		fmt.Fprint(w, `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","type":"function","function":{"name":"read_event","arguments":"{}"}}]}}]}`+"\n\n")
+		fmt.Fprint(w, `data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}`+"\n\n")
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	})
+	client, _ := ai.NewClient(s.provider(ai.KindOpenAI, "custom"), "k", 5*time.Second)
+	var shown strings.Builder
+	reply, err := client.(ai.Streamer).ChatStream(context.Background(),
+		ai.Request{Model: "gemma", MaxTokens: 512}, func(text string) error {
+			shown.WriteString(text)
+			return nil
+		})
+	if err != nil {
+		t.Fatalf("поток: %v", err)
+	}
+	if strings.Contains(shown.String(), "размышления") {
+		t.Fatalf("человеку показали предупреждение сервера: %q", shown.String())
+	}
+	if reply.Content != "" {
+		t.Fatalf("предупреждение осталось в ответе: %q", reply.Content)
+	}
+	if len(reply.ToolCalls) != 1 || reply.ToolCalls[0].Name != "read_event" {
+		t.Fatalf("вызов потерян: %+v", reply.ToolCalls)
+	}
+}
+
+// TestOpenAIStreamShortAnswerNotLost — придержанное начало показывается, если ответ короче
+// подписи предупреждения (иначе «Да.» потерялось бы из-за фильтра).
+func TestOpenAIStreamShortAnswerNotLost(t *testing.T) {
+	s := newStub(t, func(w http.ResponseWriter, r *http.Request, _ *stub) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, `data: {"choices":[{"delta":{"content":"Да."}}]}`+"\n\n")
+		fmt.Fprint(w, `data: {"choices":[{"delta":{},"finish_reason":"stop"}]}`+"\n\n")
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	})
+	client, _ := ai.NewClient(s.provider(ai.KindOpenAI, "custom"), "k", 5*time.Second)
+	var shown strings.Builder
+	reply, err := client.(ai.Streamer).ChatStream(context.Background(),
+		ai.Request{Model: "gemma"}, func(text string) error {
+			shown.WriteString(text)
+			return nil
+		})
+	if err != nil {
+		t.Fatalf("поток: %v", err)
+	}
+	if shown.String() != "Да." || reply.Content != "Да." {
+		t.Fatalf("поток %q, ответ %q", shown.String(), reply.Content)
+	}
+}

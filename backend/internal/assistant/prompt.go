@@ -231,6 +231,13 @@ const imageTools = ""
 // формат вызова должен быть показан модели буквально.
 const fence = "```"
 
+// treeContextBudget — сколько знаков оглавления допустимо в запросе (0.142.1).
+//
+// У балансеров и локальных серверов окно модели может быть 16k токенов; правила + оглавление
+// + результат инструмента в него не влезали, и сервер отвечал 413 «контекст не тот». Оглавление
+// режем по размеру, а не только по числу кадров: длинные заголовки тоже дают объём.
+const treeContextBudget = 12000
+
 // treeContext — оглавление проекта в виде текста: то, что уходит модели вместо
 // полного текста. Пустое дерево — тоже информация («проект пуст»), и модель должна
 // это видеть, иначе она будет искать главы, которых нет.
@@ -250,7 +257,13 @@ func treeContext(list []store.Event, limit int) string {
 		if e.EventDate != nil {
 			date = e.EventDate.Format("2006-01-02")
 		}
-		fmt.Fprintf(&b, "%s | %d | %s | %s\n", e.ID, e.Depth, indent(e.Depth)+e.Title, date)
+		line := fmt.Sprintf("%s | %d | %s | %s\n", e.ID, e.Depth, indent(e.Depth)+e.Title, date)
+		if b.Len()+len(line) > treeContextBudget {
+			fmt.Fprintf(&b, "… оглавление обрезано по размеру: ещё %d кадр(ов) видно через list_events.\n",
+				len(list)-shown)
+			break
+		}
+		b.WriteString(line)
 		shown++
 	}
 	return b.String()

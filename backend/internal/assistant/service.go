@@ -899,17 +899,32 @@ func (s *Service) history(ctx context.Context, conversationID uuid.UUID) ([]ai.M
 	}
 	out := make([]ai.Message, 0, len(stored))
 	for _, m := range stored {
+		// Историю тоже режем по размеру (0.142.1): двадцать сообщений с длинными ответами
+		// помощника вместе с правилами и оглавлением не влезали в окно локальной модели.
+		content := truncateRunes(m.Content, historyMessageChars)
 		switch m.Role {
 		case "user":
-			out = append(out, ai.Message{Role: "user", Content: m.Content})
+			out = append(out, ai.Message{Role: "user", Content: content})
 		case "assistant":
-			if strings.TrimSpace(m.Content) == "" {
+			if strings.TrimSpace(content) == "" {
 				continue
 			}
-			out = append(out, ai.Message{Role: "assistant", Content: m.Content})
+			out = append(out, ai.Message{Role: "assistant", Content: content})
 		}
 	}
 	return out, nil
+}
+
+// historyMessageChars — сколько знаков одного сообщения истории отдавать модели (0.142.1).
+const historyMessageChars = 4000
+
+// truncateRunes обрезает строку по рунам, не разрезая UTF-8.
+func truncateRunes(text string, limit int) string {
+	runes := []rune(text)
+	if len(runes) <= limit {
+		return text
+	}
+	return string(runes[:limit]) + "…"
 }
 
 // converse — цикл «спросили модель → выполнили инструменты → спросили снова».

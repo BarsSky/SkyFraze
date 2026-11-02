@@ -412,7 +412,7 @@ func (c *openAIClient) ChatStream(ctx context.Context, req Request, onText func(
 		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 			return Reply{}, fmt.Errorf("%w: %s", ErrUnauthorized, strings.TrimSpace(string(limited)))
 		}
-		return Reply{}, fmt.Errorf("%w: код %d: %s", ErrUnavailable, resp.StatusCode, strings.TrimSpace(string(limited)))
+		return Reply{}, httpError(resp.StatusCode, limited)
 	}
 
 	type toolAcc struct {
@@ -421,6 +421,9 @@ func (c *openAIClient) ChatStream(ctx context.Context, req Request, onText func(
 		args strings.Builder
 	}
 	acc := map[int]*toolAcc{}
+	// live придерживает начало потока: предупреждение балансера приходит обычным куском
+	// content, и отдавать его человеку нельзя (0.142.1).
+	live := liveFilter{}
 	order := []int{}
 	reply := Reply{Model: req.Model}
 	var text strings.Builder
@@ -457,7 +460,7 @@ func (c *openAIClient) ChatStream(ctx context.Context, req Request, onText func(
 		if piece := textOf(delta.Content); piece != "" {
 			text.WriteString(piece)
 			if onText != nil {
-				if err := onText(piece); err != nil {
+				if err := forwardLive(&live, piece, onText); err != nil {
 					return err
 				}
 			}
@@ -481,6 +484,18 @@ func (c *openAIClient) ChatStream(ctx context.Context, req Request, onText func(
 	})
 	if err := streamEndOrError(err); err != nil {
 		return Reply{}, streamStopped(ctx, err)
+	}
+	// Поток кончился, а начало так и осталось придержанным (короткий ответ короче подписи
+	// предупреждения, например «Да.»): показываем его, иначе человек не увидит ответа.
+	if !live.decided && live.held.Len() > 0 {
+		held := live.held.String()
+		live.decided = true
+		live.held.Reset()
+		if !strings.HasPrefix(held, warningSignature) && onText != nil {
+			if err := onText(held); err != nil {
+				return Reply{}, streamStopped(ctx, err)
+			}
+		}
 	}
 
 	sort.Ints(order)
@@ -593,10 +608,65 @@ func (c *openAIClient) do(req *http.Request, out any) error {
 		return fmt.Errorf("%w: %s", ErrUnauthorized, strings.TrimSpace(string(raw)))
 	}
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("%w: код %d: %s", ErrUnavailable, resp.StatusCode, strings.TrimSpace(string(raw)))
+		return httpError(resp.StatusCode, raw)
 	}
 	if err := json.Unmarshal(raw, out); err != nil {
 		return fmt.Errorf("%w: разбор ответа: %v", ErrUnavailable, err)
 	}
 	return nil
+}
+
+// warningSignature — начало предупреждения балансера о том, что видимого ответа нет.
+const warningSignature = "⚠️ Модель сгенерировала только размышления"
+
+// liveFilter придерживает начало потока, чтобы не показать человеку предупреждение сервера.
+//
+// Почему нельзя просто отфильтровать в конце: поток отдаётся по кускам, и предупреждение
+// приходит ОДНИМ куском content — до того, как станет известен finish_reason. Снаружи это
+// «модель пишет ⚠️ Модель сгенерировала только размышления…» посреди ответа (0.142.1).
+type liveFilter struct {
+	decided bool
+	held    strings.Builder
+}
+
+// forwardLive отдаёт кусок человеку, если это не предупреждение сервера.
+func forwardLive(live *liveFilter, piece string, onText func(string) error) error {
+	if live.decided {
+		return onText(piece)
+	}
+	live.held.WriteString(piece)
+	held := live.held.String()
+	switch {
+	case strings.HasPrefix(warningSignature, held):
+		// Пока это может оказаться началом предупреждения — ждём.
+		return nil
+	case strings.HasPrefix(held, warningSignature):
+		// Это предупреждение: человеку не показываем.
+		live.decided = true
+		live.held.Reset()
+		return nil
+	default:
+		live.decided = true
+		live.held.Reset()
+		return onText(held)
+	}
+}
+
+// httpError переводит ответ об ошибке в понятную ошибку провайдера.
+//
+// Отдельно — 413 «контекст не влез» (0.142.1): у балансеров и локальных серверов окно модели
+// меньше, чем наш запрос (правила + дерево проекта + результат инструмента), и они отвечают
+// 413 с числами. Без разбора это выглядело как «провайдер недоступен», хотя дело в размере
+// запроса: человеку нужно либо короче глава, либо модель с большим контекстом.
+func httpError(status int, body []byte) error {
+	text := strings.TrimSpace(string(body))
+	if status == http.StatusRequestEntityTooLarge || strings.Contains(text, "context") && status == http.StatusBadRequest {
+		detail := text
+		if len([]rune(detail)) > 400 {
+			detail = string([]rune(detail)[:400]) + "…"
+		}
+		return fmt.Errorf("%w: контекст модели меньше запроса (код %d) — уменьшите главу или "+
+			"возьмите модель с бо́льшим контекстом; ответ сервера: %s", ErrTooLarge, status, detail)
+	}
+	return fmt.Errorf("%w: код %d: %s", ErrUnavailable, status, text)
 }

@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/skyfraze/backend/internal/store"
 )
 
@@ -89,5 +91,29 @@ func TestSystemPromptCarriesCapabilitiesAndRole(t *testing.T) {
 	// Инструмента генерации в этой версии нет — и правила не должны его обещать.
 	if strings.Contains(prompt, "generate_image") {
 		t.Error("правила обещают инструмент, которого нет")
+	}
+}
+
+// TestTreeContextCapsSize — оглавление режется по РАЗМЕРУ, а не только по числу кадров
+// (0.142.1).
+//
+// У локальной модели окно 16k токенов: правила + оглавление + результат инструмента не
+// влезали, сервер отвечал 413 «контекст не тот», и помощник «не мог ответить».
+func TestTreeContextCapsSize(t *testing.T) {
+	long := strings.Repeat("Очень длинный заголовок кадра ", 8)
+	rows := make([]store.Event, 0, 300)
+	for i := 0; i < 300; i++ {
+		rows = append(rows, store.Event{ID: uuid.New(), Title: long, Depth: 0})
+	}
+	text := treeContext(rows, 10000)
+	if len(text) > treeContextBudget+400 {
+		t.Fatalf("оглавление не ограничено по размеру: %d знаков", len(text))
+	}
+	if !strings.Contains(text, "оглавление обрезано по размеру") {
+		t.Fatalf("нет пометки об обрезке: …%s", text[len(text)-200:])
+	}
+	// Хотя бы несколько кадров в оглавлении остаются: это не «пусто вместо дерева».
+	if strings.Count(text, "| 0 |") < 3 {
+		t.Fatalf("оглавление потеряло кадры: %q", text[:200])
 	}
 }

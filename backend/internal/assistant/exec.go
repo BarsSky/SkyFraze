@@ -666,6 +666,10 @@ func humanSize(bytes int) string {
 	return fmt.Sprintf("%.1f МБ", float64(bytes)/(1024*1024))
 }
 
+// toolBodyChars — сколько знаков текста кадра отдавать модели (0.142.1):
+// глава на 20 000 знаков съедала половину окна локальной модели.
+const toolBodyChars = 6000
+
 // toolListEvents отдаёт дерево проекта.
 func (s *Service) toolListEvents(ctx context.Context, projectID uuid.UUID, call ai.ToolCall) toolResult {
 	list, err := s.currentEvents(ctx, projectID)
@@ -837,8 +841,17 @@ func (s *Service) toolReadEvent(ctx context.Context, projectID uuid.UUID, call a
 		if e.ID != id {
 			continue
 		}
+		// Текст кадра в ответ инструмента режем (0.142.1): глава на 20 000 знаков сама по
+		// себе съедала половину контекстного окна локальной модели, и следующий раунд падал
+		// с 413 «контекст не тот». Модели хватает начала текста; правку она предлагает по
+		// фрагменту, а не по всему кадру.
+		body := e.Body
+		if runes := []rune(body); len(runes) > toolBodyChars {
+			body = string(runes[:toolBodyChars]) +
+				"\n…(текст кадра обрезан для контекста; полный — в редакторе)"
+		}
 		payload := map[string]any{
-			"id": e.ID.String(), "title": e.Title, "body_md": e.Body, "depth": e.Depth,
+			"id": e.ID.String(), "title": e.Title, "body_md": body, "depth": e.Depth,
 		}
 		if e.EventDate != nil {
 			payload["date"] = e.EventDate.Format("2006-01-02")
