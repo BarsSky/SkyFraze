@@ -68,6 +68,10 @@ func ParseTextToolCalls(content string) (string, []ai.ToolCall) {
 	if cleaned, calls, ok := parseFencedToolCalls(content); ok {
 		return cleaned, calls
 	}
+	// Сырой шаблон модели: <|tool_call|>имя{аргументы} (0.142.4).
+	if cleaned, calls := ParseAngleToolCalls(stripEmptyFences(content)); len(calls) > 0 {
+		return cleaned, calls
+	}
 	return parseLooseToolCalls(stripEmptyFences(content))
 }
 
@@ -174,7 +178,7 @@ func parseLooseToolCalls(content string) (string, []ai.ToolCall) {
 
 // trimSpecialTokens убирает служебные токены локальных моделей по краям ответа.
 func trimSpecialTokens(s string) string {
-	for _, token := range []string{"<end_of_turn>", "<|im_end|>", "<|eot_id|>", "<|end|>", "</s>"} {
+	for _, token := range []string{"<end_of_turn>", "<|end_of_turn|>", "<|im_end|>", "<|eot_id|>", "<|end|>", "</s>", "<|tool_call|>", "<|tool_call>"} {
 		s = strings.ReplaceAll(s, token, "")
 	}
 	return strings.TrimSpace(s)
@@ -335,4 +339,146 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// angleToolMarkers — служебные маркеры вызова у «сырых» шаблонов (0.142.4).
+//
+// Живая gemma отвечает так: `<|tool_call|>update_event_text{body_md: "…", event_id: "…"}` —
+// имя и «почти JSON» в фигурных скобках. Ключи без кавычек, поэтому обычный разбор не
+// срабатывает, и вызов оставался текстом в ответе.
+var angleToolMarkers = []string{"<|tool_call|>", "<|tool_call>", "<tool_call|>"}
+
+// ParseAngleToolCalls разбирает вызовы формата `<|tool_call|>имя{аргументы}`.
+//
+// Аргументы могут быть с ключами без кавычек — такой «JSON» чиним (quoteBareKeys) и, если он
+// так и не разобрался, отдаём как `_raw`: валидация инструмента скажет человеку, чего не
+// хватает, вместо тихой потери вызова.
+func ParseAngleToolCalls(content string) (string, []ai.ToolCall) {
+	var calls []ai.ToolCall
+	rest := content
+	for {
+		pos, marker := indexAny(rest, angleToolMarkers)
+		if pos < 0 {
+			break
+		}
+		after := rest[pos+len(marker):]
+		nameEnd := 0
+		for nameEnd < len(after) {
+			c := after[nameEnd]
+			if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' {
+				nameEnd++
+				continue
+			}
+			break
+		}
+		name := after[:nameEnd]
+		bodyStart := strings.IndexByte(after[nameEnd:], '{')
+		if name == "" || bodyStart < 0 {
+			return content, nil
+		}
+		bodyStart += nameEnd
+		bodyEnd := matchBrace(after, bodyStart)
+		if bodyEnd < 0 {
+			return content, nil
+		}
+		args := decodeArguments(json.RawMessage(quoteBareKeys(after[bodyStart : bodyEnd+1])))
+		calls = append(calls, ai.ToolCall{
+			ID:        fmt.Sprintf("angle-%d-%s", len(calls), name),
+			Name:      name,
+			Arguments: args,
+		})
+		rest = rest[:pos] + rest[pos+len(marker)+bodyEnd+1:]
+	}
+	if len(calls) == 0 {
+		return content, nil
+	}
+	return trimSpecialTokens(strings.TrimSpace(rest)), calls
+}
+
+// indexAny — где раньше всех встречается один из маркеров.
+func indexAny(text string, markers []string) (int, string) {
+	best, found := -1, ""
+	for _, marker := range markers {
+		if pos := strings.Index(text, marker); pos >= 0 && (best < 0 || pos < best) {
+			best, found = pos, marker
+		}
+	}
+	return best, found
+}
+
+// matchBrace находит закрывающую скобку для открытой в pos (с учётом строк и вложенности).
+func matchBrace(text string, pos int) int {
+	depth := 0
+	inString := false
+	escaped := false
+	for i := pos; i < len(text); i++ {
+		c := text[i]
+		switch {
+		case escaped:
+			escaped = false
+		case c == '\\' && inString:
+			escaped = true
+		case c == '"':
+			inString = !inString
+		case inString:
+			// внутри строки скобки не считаем
+		case c == '{':
+			depth++
+		case c == '}':
+			depth--
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+// quoteBareKeys делает из «почти JSON» нормальный: `{body_md: "x"}` → `{"body_md": "x"}`.
+//
+// Модели пишут ключи без кавычек, и без этого шага аргументы вызова не разбирались бы вовсе.
+func quoteBareKeys(raw string) string {
+	var out strings.Builder
+	inString := false
+	for i := 0; i < len(raw); i++ {
+		c := raw[i]
+		if c == '"' && (i == 0 || raw[i-1] != '\\') {
+			inString = !inString
+			out.WriteByte(c)
+			continue
+		}
+		if inString {
+			out.WriteByte(c)
+			continue
+		}
+		if (c == '{' || c == ',') && i+1 < len(raw) {
+			out.WriteByte(c)
+			j := i + 1
+			for j < len(raw) && (raw[j] == ' ' || raw[j] == '\n' || raw[j] == '\t') {
+				out.WriteByte(raw[j])
+				j++
+			}
+			start := j
+			for j < len(raw) && (raw[j] >= 'a' && raw[j] <= 'z' || raw[j] >= 'A' && raw[j] <= 'Z' || raw[j] == '_' || raw[j] >= '0' && raw[j] <= '9') {
+				j++
+			}
+			if j > start {
+				k := j
+				for k < len(raw) && (raw[k] == ' ' || raw[k] == '\n' || raw[k] == '\t') {
+					k++
+				}
+				if k < len(raw) && raw[k] == ':' {
+					out.WriteByte('"')
+					out.WriteString(raw[start:j])
+					out.WriteByte('"')
+					i = j - 1
+					continue
+				}
+			}
+			i = j - 1
+			continue
+		}
+		out.WriteByte(c)
+	}
+	return out.String()
 }

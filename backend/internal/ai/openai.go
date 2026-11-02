@@ -47,10 +47,7 @@ type openAIModels struct {
 			InputModalities []string `json:"input_modalities"`
 		} `json:"architecture"`
 	} `json:"data"`
-	Error *struct {
-		Message string `json:"message"`
-		Type    string `json:"type"`
-	} `json:"error"`
+	Error *openAIError `json:"error"`
 }
 
 // ListModels спрашивает у провайдера список моделей с этим ключом.
@@ -235,10 +232,7 @@ type openAIChatResponse struct {
 		PromptTokens     int `json:"prompt_tokens"`
 		CompletionTokens int `json:"completion_tokens"`
 	} `json:"usage"`
-	Error *struct {
-		Message string `json:"message"`
-		Type    string `json:"type"`
-	} `json:"error"`
+	Error *openAIError `json:"error"`
 }
 
 func (c *openAIClient) Chat(ctx context.Context, req Request) (Reply, error) {
@@ -374,9 +368,7 @@ type openAIStreamChunk struct {
 		PromptTokens     int `json:"prompt_tokens"`
 		CompletionTokens int `json:"completion_tokens"`
 	} `json:"usage"`
-	Error *struct {
-		Message string `json:"message"`
-	} `json:"error"`
+	Error *openAIError `json:"error"`
 }
 
 // ChatStream — потоковый вариант Chat: сервер отдаёт события SSE со кусками текста.
@@ -669,4 +661,44 @@ func httpError(status int, body []byte) error {
 			"возьмите модель с бо́льшим контекстом; ответ сервера: %s", ErrTooLarge, status, detail)
 	}
 	return fmt.Errorf("%w: код %d: %s", ErrUnavailable, status, text)
+}
+
+// openAIError — ошибка провайдера в ответе или в событии потока.
+//
+// Форма гуляет: `{"error":{"message":"…"}}`, `{"error":"строка"}` (так отвечает балансер на
+// 18080, когда поток оборвался), иногда `detail`. Жёсткая структура на таком поле ломала
+// разбор ВСЕГО потока: `cannot unmarshal string into Go struct field …` — и помощник «не мог
+// ответить» уже после того, как инструменты выполнились (0.142.4).
+type openAIError struct{ Message string }
+
+func (e *openAIError) UnmarshalJSON(raw []byte) error {
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		e.Message = text
+		return nil
+	}
+	var obj struct {
+		Message string `json:"message"`
+		Error   string `json:"error"`
+		Detail  string `json:"detail"`
+	}
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		e.Message = strings.TrimSpace(string(raw))
+		return nil
+	}
+	e.Message = firstNonEmptyStr(obj.Message, obj.Error, obj.Detail)
+	if e.Message == "" {
+		e.Message = strings.TrimSpace(string(raw))
+	}
+	return nil
+}
+
+// firstNonEmptyStr — первая непустая строка.
+func firstNonEmptyStr(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }

@@ -380,3 +380,24 @@ func TestStreamGateHidesFencedCall(t *testing.T) {
 		t.Fatalf("человеку показали служебный блок: %q", shown.String())
 	}
 }
+
+// TestParseAngleToolCalls — живой формат gemma <|tool_call|>имя{ключи без кавычек} (0.142.4).
+//
+// Именно так модель ответила на «поправь орфографию первой главы» после 0.142.3: вызов
+// приезжал текстом, человек видел `<|tool_call|>update_event_text{body_md: …}` вместо правки.
+func TestParseAngleToolCalls(t *testing.T) {
+	content := "Готовлю правку.\n\n<|tool_call|>update_event_text{body_md: \"Демо-сцена: так лучше.\", event_id: \"17b25a13-1c32-4d15-838f-01da583b2f4a\"}<|end_of_turn|>"
+	cleaned, calls := ParseTextToolCalls(content)
+	if len(calls) != 1 || calls[0].Name != ToolUpdateText {
+		t.Fatalf("вызовы: %+v", calls)
+	}
+	if got, _ := calls[0].Arguments["body_md"].(string); got != "Демо-сцена: так лучше." {
+		t.Fatalf("аргументы: %+v", calls[0].Arguments)
+	}
+	if got, _ := calls[0].Arguments["event_id"].(string); got != "17b25a13-1c32-4d15-838f-01da583b2f4a" {
+		t.Fatalf("id кадра: %+v", calls[0].Arguments)
+	}
+	if cleaned != "Готовлю правку." {
+		t.Fatalf("текст: %q", cleaned)
+	}
+}

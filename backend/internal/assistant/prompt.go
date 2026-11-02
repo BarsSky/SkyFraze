@@ -1,4 +1,4 @@
-﻿package assistant
+package assistant
 
 // prompt.go — что именно уходит модели как контекст и правила.
 //
@@ -307,4 +307,3 @@ func treeRows(list []store.Event) []treeRow {
 func maxDepthHint() string {
 	return fmt.Sprintf("глубже %d уровней дерево не поддерживает", events.MaxDepth)
 }
-

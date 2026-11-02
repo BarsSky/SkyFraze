@@ -1,4 +1,4 @@
-﻿package assistant
+package assistant
 
 // exec.go — выполнение инструментов, которые попросила модель.
 //
@@ -1016,4 +1016,3 @@ func createErrorText(err error) string {
 		return err.Error()
 	}
 }
-

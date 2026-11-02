@@ -1,4 +1,4 @@
-﻿package assistant
+package assistant
 
 // service.go — беседа с моделью о проекте: контекст, вызовы инструментов, история.
 //
@@ -1219,4 +1219,3 @@ func mustJSON(v any) json.RawMessage {
 func depthLimitError() error {
 	return fmt.Errorf("под этот кадр нельзя вложить ещё один: %s (%d)", maxDepthHint(), events.MaxDepth)
 }
-

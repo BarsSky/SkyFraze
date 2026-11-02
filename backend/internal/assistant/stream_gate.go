@@ -118,6 +118,10 @@ func (g *streamGate) feedDeciding(piece string) error {
 		g.held.Reset()
 		g.mode = "protocol"
 		return nil
+	case strings.HasPrefix(trimmed, "<|"): // <|tool_call|>… — служебный вызов (0.142.4)
+		g.held.Reset()
+		g.mode = "protocol"
+		return nil
 	case couldBeProtocolStart(trimmed):
 		// Данных мало: ждём ещё кусок, чтобы не показать человеку первый символ
 		// служебного JSON.
@@ -194,7 +198,7 @@ func keepTail(g *streamGate, text string) {
 // protocolIndex — где в тексте начинается служебный блок (или -1).
 func protocolIndex(text string) int {
 	best := -1
-	for _, marker := range []string{fenceProtocol, "\n" + arrayStart, arrayStart} {
+	for _, marker := range []string{fenceProtocol, "\n" + arrayStart, arrayStart, "<|tool_call|>", "<|tool_call>"} {
 		if idx := strings.Index(text, marker); idx >= 0 && (best < 0 || idx < best) {
 			best = idx
 		}
