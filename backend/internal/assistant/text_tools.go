@@ -184,12 +184,37 @@ func trimSpecialTokens(s string) string {
 	return strings.TrimSpace(s)
 }
 
+// knownToolNames — все инструменты, которые помощник умеет выполнять (0.142.5).
+//
+// Зачем список вообще: он защищает от «JSON-ответа, который не вызов» — модели иногда
+// возвращают просто данные в виде JSON, и принимать их за попытку что-то изменить нельзя.
+//
+// Почему он был неверным: в списке стояли только четыре инструмента (чтение и создание),
+// а инструменты правки добавились позже. Из-за этого вызов вида
+// `[{"name":"update_event_text","arguments":{…}}]` считался «не вызовом» и оставался текстом
+// в ответе — ровно так помощник «нормально не отрабатывал» правку главы на живом стенде.
+var knownToolNames = map[string]bool{
+	ToolListEvents:          true,
+	ToolReadEvent:           true,
+	ToolCreateChapter:       true,
+	ToolCreateSub:           true,
+	ToolUpdateText:          true,
+	ToolUpdateDate:          true,
+	ToolDeleteEvent:         true,
+	ToolMoveEvent:           true,
+	ToolGenerateImage:       true,
+	ToolReadComments:        true,
+	ToolProposeFragmentEdit: true,
+	ToolListEntities:        true,
+	ToolReadEntity:          true,
+	ToolProposeEntities:     true,
+}
+
 // hasKnownTool — есть ли среди вызовов инструмент, который мы действительно умеем
 // выполнять. Это и есть защита от «JSON-ответа, который не вызов».
 func hasKnownTool(calls []ai.ToolCall) bool {
 	for _, call := range calls {
-		switch call.Name {
-		case ToolListEvents, ToolReadEvent, ToolCreateChapter, ToolCreateSub:
+		if knownToolNames[call.Name] {
 			return true
 		}
 	}

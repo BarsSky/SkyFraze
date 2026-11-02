@@ -401,3 +401,36 @@ func TestParseAngleToolCalls(t *testing.T) {
 		t.Fatalf("текст: %q", cleaned)
 	}
 }
+
+// TestParseTextToolCallsFencedEditCall — живой ответ gemma после прозы (0.142.5).
+//
+// Модель написала «Предлагаю переписать…» и приложила вызов инструмента правки в ограде
+// ```json. Список «известных» инструментов в hasKnownTool был из четырёх штук, правки в нём не
+// было — вызов считался «не вызовом» и оставался текстом, поэтому правка не применялась.
+func TestParseTextToolCallsFencedEditCall(t *testing.T) {
+	content := "Предлагаю переписать текст первой главы.\n\n```json\n" +
+		`[{"name": "update_event_text", "arguments": {"id": "17b25a13-1c32-4d15-838f-01da583b2f4a", "body_md": "# Описание сцены"}}]` +
+		"\n```"
+	cleaned, calls := ParseTextToolCalls(content)
+	if len(calls) != 1 || calls[0].Name != ToolUpdateText {
+		t.Fatalf("вызовы: %+v", calls)
+	}
+	if got, _ := calls[0].Arguments["id"].(string); got != "17b25a13-1c32-4d15-838f-01da583b2f4a" {
+		t.Fatalf("аргументы: %+v", calls[0].Arguments)
+	}
+	if cleaned != "Предлагаю переписать текст первой главы." {
+		t.Fatalf("текст: %q", cleaned)
+	}
+}
+
+// TestParseTextToolCallsUnknownFencedToolStaysText — незнакомый инструмент по-прежнему не вызов.
+func TestParseTextToolCallsUnknownFencedToolStaysText(t *testing.T) {
+	content := "```json\n[{\"name\": \"delete_everything\", \"arguments\": {}}]\n```"
+	cleaned, calls := ParseTextToolCalls(content)
+	if len(calls) != 0 {
+		t.Fatalf("незнакомый инструмент принят за вызов: %+v", calls)
+	}
+	if !strings.Contains(cleaned, "delete_everything") {
+		t.Fatalf("текст потерян: %q", cleaned)
+	}
+}
