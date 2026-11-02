@@ -23,6 +23,7 @@ package assistant
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/skyfraze/backend/internal/ai"
@@ -55,6 +56,11 @@ type toolBlock struct {
 // ответ модели, и человек должен увидеть её текст, а не пятисотую ошибку. Поэтому
 // неразобранный блок просто остаётся в тексте (его видно), а вызовов нет.
 func ParseTextToolCalls(content string) (string, []ai.ToolCall) {
+	// Наш собственный «текстовый канал» правки: ```skyfraze-text id=<uuid> и текст кадра.
+	// Никакого JSON-экранирования — именно на нём ломалась маленькая модель (0.143.0).
+	if cleaned, calls, ok := parseTextEditBlocks(content); ok {
+		return cleaned, calls
+	}
 	if block, ok := findToolBlock(content); ok {
 		calls := decodeTextCalls(content[block.bodyStart:block.bodyEnd])
 		if len(calls) > 0 {
@@ -214,6 +220,10 @@ var knownToolNames = map[string]bool{
 	ToolListEntities:        true,
 	ToolReadEntity:          true,
 	ToolProposeEntities:     true,
+	// Абзацы (0.143.0): вызов вида [{"name":"update_event_paragraph",…}] должен узнаваться
+	// так же, как остальные, иначе он останется текстом в ответе — та самая ошибка списка.
+	ToolReadEventParagraphs: true,
+	ToolUpdateParagraph:     true,
 }
 
 // hasKnownTool — есть ли среди вызовов инструмент, который мы действительно умеем
@@ -533,6 +543,17 @@ func stripBrokenCallBlocks(content string) string {
 			return strings.TrimSpace(stripBrokenCallBlocks(out[:block.start]))
 		}
 	}
+	// Недописанный блок нового текста кадра (0.143.0). Модель, которую просили отдать текст
+	// блоком ```skyfraze-text, может оборваться на середине текста — тогда закрывающей ограды
+	// нет, `fencedBlocks` блока не видит, и в ответ человеку попал бы весь недоотданный текст
+	// с открытой оградой. Всё от маркера до конца — служебное.
+	//
+	// Закрытый блок без идентификатора кадра не трогаем: там текста не жалко показать, и
+	// решение «не менять не тот кадр» уже принято (см. parseTextEditBlocks).
+	if pos := strings.Index(out, "```"+textEditFence); pos >= 0 &&
+		!strings.Contains(out[pos:], "\n```") {
+		return strings.TrimSpace(stripBrokenCallBlocks(out[:pos]))
+	}
 	// Недописанный вызов без ограды: всё, что после маркера, — служебное.
 	if pos, marker := indexAny(out, angleToolMarkers); pos >= 0 {
 		return strings.TrimSpace(stripBrokenCallBlocks(out[:pos] + out[pos+len(marker):]))
@@ -564,3 +585,82 @@ func looksLikeCallBody(body string) bool {
 	}
 	return false
 }
+
+// textEditFence — ограда «новый текст кадра целиком» (0.143.0).
+const textEditFence = "skyfraze-text"
+
+// parseTextEditBlocks разбирает блоки нового текста кадра.
+//
+// Формат: ```skyfraze-text id=<uuid> и дальше — обычный текст кадра, без JSON и без
+// экранирования. Идентификатор можно указать и первой строкой тела (`id: <uuid>`): модели
+// спотыкаются на строке-параметре в ограде, и это дешёвая страховка.
+func parseTextEditBlocks(content string) (string, []ai.ToolCall, bool) {
+	var calls []ai.ToolCall
+	remaining := content
+	for {
+		block, ok := findFence(remaining, textEditFence)
+		if !ok {
+			break
+		}
+		info := fenceInfo(remaining, block)
+		id := idFromInfo(info)
+		body := remaining[block.bodyStart:block.bodyEnd]
+		if id == "" {
+			// Идентификатор первой строкой тела: `id: <uuid>` или `frame: <uuid>`.
+			firstLine, rest, _ := strings.Cut(body, "\n")
+			id = idFromInfo(strings.TrimSpace(firstLine))
+			if id != "" {
+				body = rest
+			}
+		}
+		body = strings.TrimSpace(body)
+		if id == "" || body == "" {
+			// Без кадра или без текста блок не применяем: лучше показать текст человеку,
+			// чем изменить не тот кадр.
+			break
+		}
+		calls = append(calls, ai.ToolCall{
+			ID:        fmt.Sprintf("text-edit-%d", len(calls)),
+			Name:      ToolUpdateText,
+			Arguments: map[string]any{"id": id, "body_md": body},
+		})
+		remaining = remaining[:block.start] + remaining[block.end:]
+	}
+	if len(calls) == 0 {
+		return content, nil, false
+	}
+	return strings.TrimSpace(remaining), calls, true
+}
+
+// findFence ищет ограду с указанным именем языка (```skyfraze-text … ```).
+func findFence(content, lang string) (fencedBlock, bool) {
+	for _, block := range fencedBlocks(content) {
+		if strings.HasPrefix(fenceInfo(content, block), lang) {
+			return block, true
+		}
+	}
+	return fencedBlock{}, false
+}
+
+// fenceInfo — строка языка ограды (```ЯЗЫК …). Для однострочной ограды пусто.
+func fenceInfo(content string, block fencedBlock) string {
+	end := block.bodyStart - 1 // перевод строки перед телом
+	if end <= block.start+3 || end > len(content) {
+		return ""
+	}
+	return strings.TrimSpace(content[block.start+3 : end])
+}
+
+// idFromInfo вынимает uuid из строки параметров (`id=<uuid>`, `id: <uuid>`, `frame=<uuid>`).
+func idFromInfo(info string) string {
+	lower := strings.ToLower(info)
+	if !strings.HasPrefix(lower, "id") && !strings.HasPrefix(lower, "frame") &&
+		!strings.Contains(info, "id=") && !strings.Contains(lower, "frame=") {
+		return ""
+	}
+	match := uuidLike.FindString(info)
+	return match
+}
+
+// uuidLike — uuid в тексте (для идентификатора кадра).
+var uuidLike = regexp.MustCompile(`[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`)

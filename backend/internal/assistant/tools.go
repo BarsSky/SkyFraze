@@ -25,6 +25,7 @@ package assistant
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -57,6 +58,10 @@ const (
 	ToolReadEntity = "read_entity"
 	// Предложение карточек мира и связей между ними (0.77.0): создаёт человек, не модель.
 	ToolProposeEntities = "propose_entities"
+	// Абзацы кадра (0.143.0). Читаем и правим по одному абзацу: ответ маленькой модели
+	// должен быть коротким, а контекст она набирает повторными вызовами.
+	ToolReadEventParagraphs = "read_event_paragraphs"
+	ToolUpdateParagraph     = "update_event_paragraph"
 )
 
 // ErrUnknownTool — модель попросила инструмент, которого нет. Это не падение сервера:
@@ -88,6 +93,26 @@ func ToolDefs(caps Capabilities, editing, world, worldWrite bool, entityKinds []
 				"type": "object",
 				"properties": map[string]any{
 					"id": map[string]any{"type": "string", "description": "Идентификатор события из list_events"},
+				},
+				"required": []string{"id"},
+			},
+		},
+		// Абзацами (0.143.0). Почему не только read_event: длинный текст кадра режется
+		// (toolBodyChars), и модель, которой нужен абзац из середины, его просто не видит.
+		// Здесь текст приходит по частям, и модель сама набирает столько, сколько нужно,
+		// чтобы понять идею, — без одного гигантского ответа.
+		{
+			Name: ToolReadEventParagraphs,
+			Description: "Прочитать текст кадра абзацами: номер, текст, всего абзацев. " +
+				"Вызывай, когда текст кадра длинный или правка касается конкретного абзаца: " +
+				"читай по 5 абзацев (count), повторяй с нужного (from), пока не поймёшь, о чём глава " +
+				"и какой абзац править. Номера абзацев нужны для update_event_paragraph.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"id":    map[string]any{"type": "string", "description": "Идентификатор кадра из list_events"},
+					"from":  map[string]any{"type": "number", "description": "С какого абзаца начать (1 — первый; по умолчанию 1)"},
+					"count": map[string]any{"type": "number", "description": "Сколько абзацев вернуть (по умолчанию 5, не больше 20)"},
 				},
 				"required": []string{"id"},
 			},
@@ -238,6 +263,27 @@ func ToolDefs(caps Capabilities, editing, world, worldWrite bool, entityKinds []
 						"reason":  map[string]any{"type": "string", "description": "Коротко, зачем правка: это увидит человек перед подтверждением"},
 					},
 					"required": []string{"id"},
+				},
+			},
+			// Точечная правка абзацем (0.143.0). Почему отдельный инструмент, а не «передай
+			// body_md целиком»: живая gemma на «перепиши главу» пишет всю главу внутрь
+			// JSON-строки с экранированием переводов строк и обрывается на середине — вызов
+			// не разбирается. Здесь ответ — один абзац обычным текстом, экранировать нечего.
+			ai.ToolDef{
+				Name: ToolUpdateParagraph,
+				Description: "Предложить заменить ОДИН абзац кадра. Самый надёжный способ правки: " +
+					"нужно сначала прочитать кадр абзацами (read_event_paragraphs), затем передать номер " +
+					"абзаца и его новый текст — обычным текстом, без JSON-экранирования и без разметки " +
+					"вызова внутри текста. Правку применяет человек — ты только предлагаешь.",
+				Parameters: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"id":        map[string]any{"type": "string", "description": "Идентификатор кадра из list_events"},
+						"paragraph": map[string]any{"type": "number", "description": "Номер абзаца из read_event_paragraphs (1 — первый)"},
+						"text":      map[string]any{"type": "string", "description": "Новый текст этого абзаца (Markdown, без заголовка кадра)"},
+						"reason":    map[string]any{"type": "string", "description": "Коротко, зачем правка: это увидит человек перед подтверждением"},
+					},
+					"required": []string{"id", "paragraph", "text"},
 				},
 			},
 			// Дата кадра (0.106.0): отдельный инструмент, а не поле в update_event_text.
@@ -399,6 +445,106 @@ func ParseUpdate(args map[string]any, limits Limits) (UpdateArgs, error) {
 	}
 	if out.Title == nil && out.Body == nil {
 		return out, errors.New("нечего менять: передай title и/или body_md с новым содержимым")
+	}
+	out.Reason = argString(args, "reason")
+	if len([]rune(out.Reason)) > limits.MaxReasonChars {
+		out.Reason = string([]rune(out.Reason)[:limits.MaxReasonChars])
+	}
+	return out, nil
+}
+
+// ParagraphReadArgs — аргументы чтения кадра абзацами.
+type ParagraphReadArgs struct {
+	// EventID — какой кадр читаем.
+	EventID uuid.UUID
+	// From — с какого абзаца (1-based).
+	From int
+	// Count — сколько абзацев вернуть.
+	Count int
+}
+
+// paragraphPageMax — сколько абзацев отдавать за один вызов.
+//
+// Почему 20: страница должна быть заметно меньше окна модели, иначе возвращается ровно та
+// проблема, ради которой инструмент сделан. Кому нужно больше — читает следующую страницу.
+const paragraphPageMax = 20
+
+// ParseParagraphRead разбирает аргументы read_event_paragraphs.
+//
+// Номера абзацев терпим к тому, что модель присылает строкой («2») или отсутствием поля:
+// это подсказка, а не идентификатор, и отказ из-за неё был бы отказом на ровном месте.
+func ParseParagraphRead(args map[string]any) (ParagraphReadArgs, error) {
+	var out ParagraphReadArgs
+	rawID := argString(args, "id")
+	if rawID == "" {
+		return out, errors.New("не задан id — какой кадр читать (возьми из list_events)")
+	}
+	eventID, err := uuid.Parse(rawID)
+	if err != nil {
+		return out, errors.New("id не похож на идентификатор — возьми его из list_events")
+	}
+	out.EventID = eventID
+	out.From = argInt(args, "from", 1)
+	if out.From < 1 {
+		out.From = 1
+	}
+	out.Count = argInt(args, "count", 5)
+	if out.Count < 1 {
+		out.Count = 5
+	}
+	if out.Count > paragraphPageMax {
+		out.Count = paragraphPageMax
+	}
+	return out, nil
+}
+
+// ParagraphUpdateArgs — аргументы правки одного абзаца.
+type ParagraphUpdateArgs struct {
+	EventID uuid.UUID
+	// Paragraph — номер абзаца (1-based), как его показал read_event_paragraphs.
+	Paragraph int
+	// Text — новый текст абзаца. Пустая строка — законное действие: абзац убирается.
+	Text   string
+	Reason string
+}
+
+// ParseParagraphUpdate разбирает аргументы update_event_paragraph.
+//
+// «Не задано» и «пусто» здесь разные вещи, как и в update_event_text: пустой текст — это
+// удаление абзаца, и оно допустимо, а вот отсутствие поля — ошибка модели.
+func ParseParagraphUpdate(args map[string]any, limits Limits) (ParagraphUpdateArgs, error) {
+	var out ParagraphUpdateArgs
+	rawID := argString(args, "id")
+	if rawID == "" {
+		return out, errors.New("не задан id — какому кадру менять абзац (возьми из list_events)")
+	}
+	eventID, err := uuid.Parse(rawID)
+	if err != nil {
+		return out, errors.New("id не похож на идентификатор — возьми его из list_events")
+	}
+	out.EventID = eventID
+
+	raw, ok := args["paragraph"]
+	if !ok || raw == nil {
+		return out, errors.New("не задан paragraph — номер абзаца из read_event_paragraphs")
+	}
+	out.Paragraph = argInt(args, "paragraph", 0)
+	if out.Paragraph < 1 {
+		return out, errors.New("paragraph — номер абзаца, начиная с 1: возьми его из read_event_paragraphs")
+	}
+
+	value, ok := args["text"]
+	if !ok || value == nil {
+		return out, errors.New("не задан text — новый текст абзаца (пустая строка убирает абзац)")
+	}
+	out.Text = argString(args, "text")
+	if len([]rune(out.Text)) > limits.MaxBodyChars {
+		return out, TooLongError{Field: "text", Limit: limits.MaxBodyChars}
+	}
+	// Маркеры DOCX внутри абзаца — та же беда, что и в целом тексте: склеенный маркер
+	// потеряет оформление молча.
+	if err := checkDocxMarkers(out.Text); err != nil {
+		return out, err
 	}
 	out.Reason = argString(args, "reason")
 	if len([]rune(out.Reason)) > limits.MaxReasonChars {
@@ -709,6 +855,24 @@ func argString(args map[string]any, name string) string {
 	default:
 		return strings.TrimSpace(fmt.Sprint(v))
 	}
+}
+
+// argInt читает числовой аргумент терпимо: модели присылают «5», 5, «5.0» и «пятый».
+// Не разобралось — берём значение по умолчанию: это подсказка, а не идентификатор.
+func argInt(args map[string]any, name string, def int) int {
+	raw := argString(args, name)
+	if raw == "" {
+		return def
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		// «5.0» и «5,0» — типичный вид числа из JSON-строки.
+		if f, ferr := strconv.ParseFloat(strings.ReplaceAll(raw, ",", "."), 64); ferr == nil {
+			return int(f)
+		}
+		return def
+	}
+	return value
 }
 
 // trimFloat печатает число без хвоста «.0»: «2024» вместо «2024.0».

@@ -79,6 +79,10 @@ func (s *Service) execute(
 		return s.toolListEvents(ctx, projectID, call)
 	case ToolReadEvent:
 		return s.toolReadEvent(ctx, projectID, call)
+	case ToolReadEventParagraphs:
+		return s.toolReadEventParagraphs(ctx, projectID, call)
+	case ToolUpdateParagraph:
+		return s.toolUpdateParagraph(ctx, userID, projectID, call)
 	case ToolCreateChapter:
 		return s.toolCreate(ctx, actorID, userID, projectID, call, false)
 	case ToolCreateSub:
@@ -114,7 +118,8 @@ func (s *Service) execute(
 // случайно разрешат там, где проект трогать нельзя.
 func readOnlyTool(name string) bool {
 	switch name {
-	case ToolListEvents, ToolReadEvent, ToolReadComments, ToolListEntities, ToolReadEntity:
+	case ToolListEvents, ToolReadEvent, ToolReadEventParagraphs,
+		ToolReadComments, ToolListEntities, ToolReadEntity:
 		return true
 	default:
 		return false
@@ -864,6 +869,141 @@ func (s *Service) toolReadEvent(ctx context.Context, projectID uuid.UUID, call a
 	}
 	return refusedCall(call, "кадр не найден в этом проекте: "+id.String()+
 		" — возьмите идентификатор из list_events")
+}
+
+// toolReadEventParagraphs отдаёт текст кадра абзацами (0.143.0).
+//
+// Зачем это, если есть read_event. Тот режет текст по toolBodyChars, то есть модель видит
+// только начало главы; а длинный ответ инструмента ещё и съедает окно. Абзацами решается
+// и то, и другое: страница по 5 абзацев влезает в любое окно, а нужный абзац из середины
+// модель дочитывает следующим вызовом. Это же даёт ей «достаточно контекста, чтобы понять
+// идею»: не один гигантский текст, а столько страниц, сколько нужно.
+func (s *Service) toolReadEventParagraphs(
+	ctx context.Context, projectID uuid.UUID, call ai.ToolCall,
+) toolResult {
+	args, err := ParseParagraphRead(call.Arguments)
+	if err != nil {
+		return refusedCall(call, err.Error())
+	}
+	list, err := s.currentEvents(ctx, projectID)
+	if err != nil {
+		return refusedCall(call, "не удалось прочитать проект: "+err.Error())
+	}
+	for _, e := range list {
+		if e.ID != args.EventID {
+			continue
+		}
+		rows, total := paragraphPage(e.Body, args.From, args.Count)
+		if total == 0 {
+			return toolResult{
+				call:   call,
+				report: Call{Name: call.Name, OK: true, Detail: "в кадре нет текста"},
+				payload: map[string]any{
+					"id": e.ID.String(), "title": e.Title, "total": 0,
+					"paragraphs": []any{},
+					"note": "в кадре нет текста — править абзацами нечего; " +
+						"новый текст предлагай через update_event_text (body_md)",
+				},
+			}
+		}
+		if len(rows) == 0 {
+			return refusedCall(call, fmt.Sprintf(
+				"в кадре «%s» нет абзаца №%d: всего %d — начни с from=1", e.Title, args.From, total))
+		}
+		next := args.From + len(rows)
+		note := "номера абзацев — для update_event_paragraph"
+		if next <= total {
+			note = fmt.Sprintf("%s; продолжение — from=%d", note, next)
+		}
+		payload := map[string]any{
+			"id": e.ID.String(), "title": e.Title,
+			"paragraphs": rows, "total": total, "from": args.From, "note": note,
+		}
+		if next <= total {
+			payload["next_from"] = next
+		}
+		return toolResult{
+			call: call,
+			report: Call{Name: call.Name, OK: true,
+				Detail: fmt.Sprintf("прочитал абзацы %d–%d из %d", args.From, next-1, total)},
+			payload: payload,
+		}
+	}
+	return refusedCall(call, "кадр не найден в этом проекте: "+args.EventID.String()+
+		" — возьмите идентификатор из list_events")
+}
+
+// toolUpdateParagraph предлагает заменить один абзац кадра (0.143.0).
+//
+// Почему абзацем, а не кадром целиком. Живая gemma на «перепиши главу» укладывала всю главу
+// в один JSON-аргумент — с экранированием переводов строк — и обрывалась на середине: 3 020
+// знаков, невалидный JSON на позиции 2 718, finish=stop. Дело не в окне (вход был 2 982
+// токена из 16 384), а в ОТВЕТЕ: длинная JSON-строка — самое хрупкое место маленькой модели.
+// Здесь ответ — один абзац обычным текстом, и экранировать нечего.
+//
+// Правка остаётся предложением: сохраняем снимок «до» и «после», применяет человек. Разница
+// с update_event_text только в том, что новое тело кадра собирает сервер — по номеру абзаца.
+func (s *Service) toolUpdateParagraph(
+	ctx context.Context, userID, projectID uuid.UUID, call ai.ToolCall,
+) toolResult {
+	if s.editor == nil {
+		return refusedCall(call, "правка существующих кадров недоступна на этом стенде")
+	}
+	args, err := ParseParagraphUpdate(call.Arguments, s.limits)
+	if err != nil {
+		return refusedCall(call, err.Error())
+	}
+	event, ok := s.findEvent(ctx, projectID, args.EventID)
+	if !ok {
+		return refusedCall(call, "кадр не найден в этом проекте: возьмите идентификатор из list_events")
+	}
+	oldText := ""
+	if paragraphs := splitParagraphs(event.Body); args.Paragraph <= len(paragraphs) {
+		oldText = paragraphs[args.Paragraph-1]
+	}
+	body, found := replaceParagraph(event.Body, args.Paragraph, args.Text)
+	if !found {
+		return refusedCall(call, fmt.Sprintf(
+			"в кадре «%s» нет абзаца №%d: всего %d — прочитай кадр абзацами (read_event_paragraphs) "+
+				"или предложи текст целиком через update_event_text",
+			event.Title, args.Paragraph, len(splitParagraphs(event.Body))))
+	}
+	if body == event.Body {
+		return refusedCall(call, "предлагать нечего: этот абзац уже такой")
+	}
+	if len([]rune(body)) > s.limits.MaxBodyChars {
+		return refusedCall(call, TooLongError{Field: "text", Limit: s.limits.MaxBodyChars}.Error())
+	}
+
+	change, err := s.store.CreateAIChange(ctx, store.AIChange{
+		ProjectID: projectID, UserID: userID,
+		Kind: store.AIChangeUpdateText, EventID: event.ID, EventTitle: event.Title,
+		OldTitle: event.Title, OldBody: event.Body,
+		NewTitle: event.Title,
+		NewBody:  body,
+	})
+	if err != nil {
+		return refusedCall(call, "не удалось сохранить предложение: "+err.Error())
+	}
+	s.logger.Info("ai: предложена правка абзаца",
+		"project", projectID, "user", userID, "event", event.ID,
+		"paragraph", args.Paragraph, "change", change.ID)
+
+	return toolResult{
+		call: call,
+		report: Call{Name: call.Name, OK: true,
+			Detail: fmt.Sprintf("предложил правку абзаца %d в кадре «%s»", args.Paragraph, event.Title)},
+		payload: map[string]any{
+			"proposal_id": change.ID.String(),
+			"event_id":    event.ID.String(),
+			"paragraph":   args.Paragraph,
+			"old_text":    oldText,
+			"new_text":    strings.TrimSpace(args.Text),
+			"status":      "ждёт подтверждения человеком",
+			"note":        proposalNote(store.AIChangeUpdateText),
+		},
+		proposal: change,
+	}
 }
 
 // toolCreate создаёт главу или под-событие.

@@ -121,6 +121,25 @@ func TestStreamGateFlushesShortAnswerAtRoundEnd(t *testing.T) {
 	}
 }
 
+// TestStreamGateHidesTextEditFence — блок нового текста кадра (0.143.0) тоже служебный.
+//
+// ```skyfraze-text — это вызов инструмента, внутри которого лежит весь новый текст главы.
+// Показать его в потоке значит вывалить человеку в беседу килобайты текста, который он
+// ещё не подтверждал.
+func TestStreamGateHidesTextEditFence(t *testing.T) {
+	visible := feedAll(t,
+		"Предлагаю новую редакцию. ",
+		"```skyfraze-text id=17b25a13-1c32-4d15-838f-01da583b2f4a\n",
+		"Жил смотритель у маяка.\n\nОн не любил корабли.\n```",
+	)
+	if visible != "Предлагаю новую редакцию. " {
+		t.Fatalf("показано: %q", visible)
+	}
+	if strings.Contains(visible, "смотритель") {
+		t.Error("новый текст главы попал в поток как ответ")
+	}
+}
+
 func TestStreamGateKeepsVisibleTextForStop(t *testing.T) {
 	gate := newStreamGate(func(string) error { return nil })
 	for _, piece := range []string{"Первая ", "фраза. ", `[{"name":"create_chapter"}]`} {

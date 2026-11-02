@@ -31,6 +31,8 @@ import "strings"
 const (
 	// fenceProtocol — текстовый протокол инструментов.
 	fenceProtocol = "```skyfraze-tools"
+	// textFenceMarker — ограда нового текста кадра (0.143.0): это тоже вызов, а не ответ.
+	textFenceMarker = "```" + textEditFence
 	// thoughtOpen/thoughtClose — служебный канал рассуждений.
 	thoughtOpen  = "<|channel>thought"
 	thoughtClose = "<channel|>"
@@ -196,9 +198,17 @@ func keepTail(g *streamGate, text string) {
 }
 
 // protocolIndex — где в тексте начинается служебный блок (или -1).
+//
+// Ограда нового текста (0.143.0) входит сюда отдельным маркером: она начинается теми же
+// тремя обратными кавычками, что и обычный блок кода, и без явного маркера модель,
+// написавшая «```skyfraze-text» посреди ответа, показала бы человеку весь новый текст
+// главы как часть беседы.
 func protocolIndex(text string) int {
 	best := -1
-	for _, marker := range []string{fenceProtocol, "\n" + arrayStart, arrayStart, "<|tool_call|>", "<|tool_call>"} {
+	for _, marker := range []string{
+		fenceProtocol, textFenceMarker, "\n" + arrayStart, arrayStart,
+		"<|tool_call|>", "<|tool_call>",
+	} {
 		if idx := strings.Index(text, marker); idx >= 0 && (best < 0 || idx < best) {
 			best = idx
 		}

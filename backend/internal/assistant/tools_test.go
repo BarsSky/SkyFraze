@@ -244,11 +244,13 @@ func TestParseTextToolCallsLooseJSONNeedsKnownTool(t *testing.T) {
 // урезанные — отдельным тестом ниже.
 func TestToolDefsAreWellFormed(t *testing.T) {
 	defs := ToolDefs(Capabilities{Text: true, Images: true}, true, true, true, nil, nil)
-	// 12 = чтение дерева и кадра, карточки мира (list_entities и read_entity), предложение карточек
-	// (propose_entities), обсуждение кадров, создание главы и под-события, предложение правки кадра,
-	// правка даты, перенос по дереву, правка фрагмента по замечанию, удаление, иллюстрация.
-	if len(defs) != 14 {
-		t.Fatalf("инструментов %d, ожидалось 14", len(defs))
+	// 16 = чтение дерева, кадра и абзацев кадра (read_event_paragraphs, 0.143.0), карточки
+	// мира (list_entities и read_entity), предложение карточек (propose_entities), обсуждение
+	// кадров, создание главы и под-события, предложение правки кадра, правка абзаца
+	// (update_event_paragraph, 0.143.0), правка даты, перенос по дереву, правка фрагмента по
+	// замечанию, удаление, иллюстрация.
+	if len(defs) != 16 {
+		t.Fatalf("инструментов %d, ожидалось 16", len(defs))
 	}
 	seen := map[string]bool{}
 	for _, def := range defs {
@@ -263,7 +265,7 @@ func TestToolDefsAreWellFormed(t *testing.T) {
 			t.Fatalf("схема %s должна быть объектом: %+v", def.Name, def.Parameters)
 		}
 	}
-	for _, want := range []string{ToolListEvents, ToolReadEvent, ToolCreateChapter, ToolCreateSub, ToolListEntities, ToolReadEntity, ToolProposeEntities} {
+	for _, want := range []string{ToolListEvents, ToolReadEvent, ToolReadEventParagraphs, ToolCreateChapter, ToolCreateSub, ToolListEntities, ToolReadEntity, ToolProposeEntities, ToolUpdateParagraph} {
 		if !seen[want] {
 			t.Fatalf("инструмент %s не объявлен", want)
 		}
@@ -467,5 +469,69 @@ func TestParseTextToolCallsCallIDName(t *testing.T) {
 	}
 	if cleaned != "" {
 		t.Fatalf("вызов остался в тексте: %q", cleaned)
+	}
+}
+
+// TestParseTextEditBlock — «текстовый канал» правки кадра (0.143.0).
+//
+// Маленькая модель не удерживает главу внутри JSON-строки (обрывает на середине). Поэтому
+// новый текст кадра можно отдать блоком ```skyfraze-text id=<uuid> — без экранирования.
+func TestParseTextEditBlock(t *testing.T) {
+	content := "Переписал главу.\n\n```skyfraze-text id=17b25a13-1c32-4d15-838f-01da583b2f4a\n" +
+		"# Описание сцены\n\nПервый абзац с правкой.\n\nВторой абзац.\n```"
+	cleaned, calls := ParseTextToolCalls(content)
+	if len(calls) != 1 || calls[0].Name != ToolUpdateText {
+		t.Fatalf("вызовы: %+v", calls)
+	}
+	if got, _ := calls[0].Arguments["id"].(string); got != "17b25a13-1c32-4d15-838f-01da583b2f4a" {
+		t.Fatalf("id кадра: %+v", calls[0].Arguments)
+	}
+	body, _ := calls[0].Arguments["body_md"].(string)
+	if !strings.Contains(body, "Первый абзац с правкой.") || !strings.HasPrefix(body, "# Описание сцены") {
+		t.Fatalf("текст кадра: %q", body)
+	}
+	if cleaned != "Переписал главу." {
+		t.Fatalf("текст ответа: %q", cleaned)
+	}
+}
+
+// TestParseTextEditBlockIDInBody — идентификатор первой строкой тела.
+func TestParseTextEditBlockIDInBody(t *testing.T) {
+	content := "```skyfraze-text\nid: 17b25a13-1c32-4d15-838f-01da583b2f4a\nНовый текст главы.\n```"
+	_, calls := ParseTextToolCalls(content)
+	if len(calls) != 1 {
+		t.Fatalf("вызовы: %+v", calls)
+	}
+	if body, _ := calls[0].Arguments["body_md"].(string); body != "Новый текст главы." {
+		t.Fatalf("текст: %q", body)
+	}
+}
+
+// TestParseTextEditBlockWithoutID — без идентификатора блок не применяется, текст остаётся.
+func TestParseTextEditBlockWithoutID(t *testing.T) {
+	content := "```skyfraze-text\nНовый текст без кадра.\n```"
+	cleaned, calls := ParseTextToolCalls(content)
+	if len(calls) != 0 {
+		t.Fatalf("без кадра вызов не строится: %+v", calls)
+	}
+	if !strings.Contains(cleaned, "Новый текст без кадра.") {
+		t.Fatalf("текст потерян: %q", cleaned)
+	}
+}
+
+// TestParseTextEditBlockTruncated — оборванный блок нового текста не показывается как ответ.
+//
+// Ровно тот случай, ради которого всё делалось: генерация останавливается на середине абзаца,
+// закрывающей ограды нет. Человек должен увидеть прозу модели до блока, а не недоотданный текст
+// главы с открытой оградой.
+func TestParseTextEditBlockTruncated(t *testing.T) {
+	content := "Предлагаю новую редакцию.\n\n```skyfraze-text id=17b25a13-1c32-4d15-838f-01da583b2f4a\n" +
+		"Жил смотритель у маяка и не любил"
+	cleaned, calls := ParseTextToolCalls(content)
+	if len(calls) != 0 {
+		t.Fatalf("оборванный блок не должен становиться вызовом: %+v", calls)
+	}
+	if cleaned != "Предлагаю новую редакцию." {
+		t.Fatalf("текст ответа: %q", cleaned)
 	}
 }

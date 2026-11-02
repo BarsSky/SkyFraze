@@ -2,6 +2,9 @@
 /vendor/
 /backend/bin/
 /frontend/node_modules/
+# Корневой node_modules: фронтенд ставится в frontend/, но прогон vitest из корня
+# (так тоже бывает) заводит здесь кэш — в репозитории ему делать нечего.
+/node_modules/
 /frontend/dist/
 # Инкрементальный кэш tsc (`tsc -b`): артефакт сборки, а не исходник.
 /frontend/tsconfig.tsbuildinfo
