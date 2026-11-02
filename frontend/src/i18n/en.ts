@@ -1177,6 +1177,10 @@ export const en: Record<Key, string> = {
   'as.stopped': 'Stopped — whatever the model managed to say went into the history.',
   'as.thinking': 'The assistant is thinking…',
   'as.liveCalls': 'Done so far: {count}',
+  'as.draftTitle': 'Draft of the new frame text',
+  'as.draftHint': 'The model is writing it for you — the frame text stays unchanged until you confirm.',
+  'as.draftTruncated':
+    'The draft broke off: the model did not finish it, so it was not applied — try again or edit paragraph by paragraph.',
   'as.changesTitle': 'Changes in the project',
   'as.viewInTree': 'Show in the tree',
   'as.proposalsTitle': 'Suggested edits',

@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   addAIEndpoint,
   applyAIProposal,
@@ -159,6 +159,15 @@ export function AssistantPanel({
    * человек увидел бы текст, которого на сервере нет.
    */
   const [streaming, setStreaming] = useState<string | null>(null)
+  /**
+   * Черновик нового текста кадра (0.144.0). Модель может отдать новый текст главы не
+   * JSON-аргументом, а обычным блоком — и тогда человек видит, как текст пишется. Это
+   * ещё не реплика помощника и не изменённый кадр: пока правка не подтверждена, проект
+   * прежний, поэтому черновик живёт отдельно от переписки.
+   */
+  const [draft, setDraft] = useState('')
+  /** Черновик оборвался (модель не дописала) — такой текст не применяется. */
+  const [draftTruncated, setDraftTruncated] = useState(false)
   /** Живые вызовы инструментов: счётчик того, что помощник успел сделать. */
   const [liveCalls, setLiveCalls] = useState<string[]>([])
   /**
@@ -668,6 +677,8 @@ export function AssistantPanel({
     setConsentNeeded(false)
     setStreaming('')
     setLiveCalls([])
+    setDraft('')
+    setDraftTruncated(false)
     // Вопрос показываем сразу: ждать ответа модели, глядя на пустое поле, — худший
     // вариант, а история всё равно придёт с сервера в следующий раз.
     const pending: AIMessage = {
@@ -685,6 +696,9 @@ export function AssistantPanel({
     const controller = new AbortController()
     abortRef.current = controller
     let answer = ''
+    // Черновик нового текста кадра убираем только при удачном ответе: при ошибке (в том
+    // числе «черновик оборвался») человек должен увидеть то, что уже было написано.
+    let keepDraft = false
     try {
       const turn = await streamAIMessage(projectId, conversationId, question, modelRef, {
         images,
@@ -697,6 +711,10 @@ export function AssistantPanel({
             setStreaming(answer)
           },
           onCall: (call) => setLiveCalls((current) => [...current, call.detail || call.name]),
+          // Черновик нового текста кадра показываем по мере написания: ради этого он и
+          // отдельным событием, а не молчанием до конца генерации.
+          onDraft: (piece) => setDraft((current) => current + piece),
+          onDraftTruncated: () => setDraftTruncated(true),
           onChange: (change) => setChanges((current) => [...current, change]),
           // Предложение показываем сразу, как только оно пришло: пока идёт ответ, оно уже
           // существует на сервере, и человек может применить его, не дожидаясь конца.
@@ -742,6 +760,7 @@ export function AssistantPanel({
       // Ответ пришёл, пока окно закрыто: человек узнает об этом по маркеру на кнопке.
       if (!openRef.current) onUnread()
     } catch (e) {
+      keepDraft = true
       if (isAbort(e)) {
         // Остановили сами: сказанное остаётся в переписке помеченным, а не исчезает.
         setMessages((current) => [
@@ -774,6 +793,13 @@ export function AssistantPanel({
       setStreaming(null)
       setLiveCalls([])
       setSending(false)
+      // Удачный ответ: предложение правки уже в списке, и держать рядом его же черновик
+      // незачем. При ошибке — оставляем: иначе человек потеряет то, что модель успела
+      // написать, и не поймёт, что именно оборвалось.
+      if (!keepDraft) {
+        setDraft('')
+        setDraftTruncated(false)
+      }
     }
   }, [
     text,
@@ -1344,6 +1370,16 @@ export function AssistantPanel({
               </div>
             )}
             {sending && streaming === '' && <p className="ai-thinking">{t('as.thinking')}</p>}
+            {/* Черновик нового текста кадра: модель пишет его для человека, но кадр ещё
+                не изменён и это не реплика помощника. Отдельный блок — потому что
+                перепутать «модель сказала» и «модель предлагает переписать» нельзя. */}
+            {draft !== '' && (
+              <div className="ai-msg ai-msg--assistant ai-msg--draft" data-assistant-draft>
+                <span className="ai-msg__who">{t('as.draftTitle')}</span>
+                <MarkdownBlock source={draft} className="ai-msg__text" />
+                <p className="ai-note">{draftTruncated ? t('as.draftTruncated') : t('as.draftHint')}</p>
+              </div>
+            )}
             {sending && liveCalls.length > 0 && (
               <p className="ai-note ai-note--padded" data-assistant-live-calls>
                 {t('as.liveCalls', { count: liveCalls.length })}

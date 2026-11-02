@@ -669,4 +669,51 @@ describe('streamAIMessage', () => {
       /не прислал итог/,
     )
   })
+
+  it('черновик нового текста кадра идёт на onDraft, а не в текст ответа', async () => {
+    // 0.144.0: модель может отдать новую редакцию блоком, и человек должен видеть, как
+    // она пишется, — но это не реплика помощника.
+    mocks.post.mockResolvedValue(
+      body([
+        'data: {"type":"draft","text":"Новый первый абзац. "}\n\n',
+        'data: {"type":"draft","text":"Новый второй абзац."}\n\n',
+        'data: {"type":"done","turn":{"conversation_id":"c1","answer":"Предлагаю.","model":"m",',
+        '"calls":[],"changes":[],"message":{"id":"m2","role":"assistant","content":"Предлагаю."}}}\n\n',
+      ]),
+    )
+    const drafts: string[] = []
+    const deltas: string[] = []
+    await streamAIMessage('p1', 'new', 'Перепиши главу', 'groq:llama', {
+      handlers: {
+        onDraft: (text) => drafts.push(text),
+        onDelta: (text) => deltas.push(text),
+      },
+    })
+    expect(drafts.join('')).toBe('Новый первый абзац. Новый второй абзац.')
+    expect(deltas).toEqual([])
+  })
+
+  it('оборванный черновик говорит об этом отдельным сигналом', async () => {
+    mocks.post.mockResolvedValue(
+      body([
+        'data: {"type":"draft","text":"Новый первый абзац и вдруг"}\n\n',
+        'data: {"type":"draft","truncated":true}\n\n',
+        'data: {"type":"error","error":"модель не дописала новый текст кадра"}\n\n',
+      ]),
+    )
+    const drafts: string[] = []
+    let truncated = false
+    await expect(
+      streamAIMessage('p1', 'new', 'Перепиши главу', 'groq:llama', {
+        handlers: {
+          onDraft: (text) => drafts.push(text),
+          onDraftTruncated: () => {
+            truncated = true
+          },
+        },
+      }),
+    ).rejects.toThrow(/не дописала/)
+    expect(drafts.join('')).toBe('Новый первый абзац и вдруг')
+    expect(truncated).toBe(true)
+  })
 })

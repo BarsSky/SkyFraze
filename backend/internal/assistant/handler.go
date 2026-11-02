@@ -493,6 +493,10 @@ func (h *Handler) fail(w http.ResponseWriter, op string, err error) {
 	// 502 говорит «проблема на стороне модели», а текст объясняет, что делать.
 	case errors.Is(err, ErrNoAnswer):
 		writeErr(w, http.StatusBadGateway, err.Error())
+	// «Черновик оборвался» (0.144.0) — тоже про модель: человек видел начало нового
+	// текста в потоке, и ему нужно сказать, что правка не сохранена и что делать.
+	case errors.Is(err, ErrDraftTruncated):
+		writeErr(w, http.StatusBadGateway, err.Error())
 	// «Контекст модели меньше запроса» (0.142.1) — тоже состояние провайдера: 502 с
 	// объяснением, что уменьшить (главу) или что сменить (модель с большим контекстом).
 	case errors.Is(err, ai.ErrTooLarge):

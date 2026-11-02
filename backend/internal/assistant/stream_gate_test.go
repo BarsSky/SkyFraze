@@ -121,22 +121,130 @@ func TestStreamGateFlushesShortAnswerAtRoundEnd(t *testing.T) {
 	}
 }
 
-// TestStreamGateHidesTextEditFence — блок нового текста кадра (0.143.0) тоже служебный.
+// TestStreamGateHidesTextEditFence — блок нового текста кадра не попадает в ответ модели.
 //
 // ```skyfraze-text — это вызов инструмента, внутри которого лежит весь новый текст главы.
-// Показать его в потоке значит вывалить человеку в беседу килобайты текста, который он
-// ещё не подтверждал.
+// В РЕПЛИКУ он попадать не должен (0.144.0): текст идёт отдельным событием-черновиком,
+// иначе человек увидел бы его в переписке как слова помощника. Проверяем обе половины:
+// в ответе блока нет, а в черновик он пришёл целиком.
 func TestStreamGateHidesTextEditFence(t *testing.T) {
-	visible := feedAll(t,
-		"Предлагаю новую редакцию. ",
-		"```skyfraze-text id=17b25a13-1c32-4d15-838f-01da583b2f4a\n",
-		"Жил смотритель у маяка.\n\nОн не любил корабли.\n```",
-	)
-	if visible != "Предлагаю новую редакцию. " {
-		t.Fatalf("показано: %q", visible)
+	var draft, answer strings.Builder
+	gate := newStreamGate(func(text string) error {
+		answer.WriteString(text)
+		return nil
+	})
+	gate.useDraft(func(text string) error {
+		draft.WriteString(text)
+		return nil
+	})
+	for _, piece := range []string{
+		"Предлагаю новую редакцию.\n\n```skyfraze-text id=17b25a13-1c32-4d15-838f-01da583b2f4a\n",
+		"Жил смотритель у маяка.\n\n",
+		"Он не любил корабли.\n```",
+	} {
+		if err := gate.feed(piece); err != nil {
+			t.Fatalf("feed(%q): %v", piece, err)
+		}
 	}
-	if strings.Contains(visible, "смотритель") {
-		t.Error("новый текст главы попал в поток как ответ")
+	if err := gate.finish(); err != nil {
+		t.Fatal(err)
+	}
+	got := draft.String()
+	if !strings.Contains(got, "смотритель") || !strings.Contains(got, "корабли") {
+		t.Fatalf("черновик не доехал: %q", got)
+	}
+	if strings.Contains(got, "skyfraze-text") || strings.Contains(got, "id=") {
+		t.Fatalf("в черновик попала строка параметров ограды: %q", got)
+	}
+	// В реплике — только проза модели, ни строки нового текста кадра.
+	if answer.String() != "Предлагаю новую редакцию.\n\n" {
+		t.Fatalf("ответ: %q", answer.String())
+	}
+	if strings.Contains(answer.String(), "смотритель") {
+		t.Fatal("новый текст главы попал в ответ как реплика помощника")
+	}
+	if gate.draftUnfinished() {
+		t.Fatal("черновик закрылся, а шлюз считает его оборванным")
+	}
+}
+
+// TestStreamGateDraftStreamsPieceByPiece — черновик идёт по мере написания, а не одним
+// куском в конце: смысл потокового ответа именно в этом.
+func TestStreamGateDraftStreamsPieceByPiece(t *testing.T) {
+	var draft []string
+	gate := newStreamGate(func(string) error { return nil })
+	gate.useDraft(func(text string) error {
+		draft = append(draft, text)
+		return nil
+	})
+	head := "```skyfraze-text id=17b25a13-1c32-4d15-838f-01da583b2f4a\n"
+	for _, piece := range []string{head, "Первый абзац. ", "Второй абзац."} {
+		if err := gate.feed(piece); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(draft) < 2 {
+		t.Fatalf("черновик пришёл одним куском: %#v", draft)
+	}
+	if strings.Join(draft, "") != "Первый абзац. Второй абзац." {
+		t.Fatalf("черновик: %q", strings.Join(draft, ""))
+	}
+}
+
+// TestStreamGateDraftUnfinished — модель оборвалась на середине нового текста.
+func TestStreamGateDraftUnfinished(t *testing.T) {
+	var draft strings.Builder
+	gate := newStreamGate(func(string) error { return nil })
+	gate.useDraft(func(text string) error {
+		draft.WriteString(text)
+		return nil
+	})
+	for _, piece := range []string{
+		"```skyfraze-text id=17b25a13-1c32-4d15-838f-01da583b2f4a\nЖил смотритель у ",
+		"маяка и не любил",
+	} {
+		if err := gate.feed(piece); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := gate.finish(); err != nil {
+		t.Fatal(err)
+	}
+	if !gate.draftUnfinished() {
+		t.Fatal("оборванный черновик не помечен")
+	}
+	if !strings.Contains(draft.String(), "не любил") {
+		t.Fatalf("сказанное до обрыва потерялось: %q", draft.String())
+	}
+}
+
+// TestStreamGateDraftThenProse — после закрытия блока обычный ответ идёт в реплику.
+func TestStreamGateDraftThenProse(t *testing.T) {
+	var answer, draft strings.Builder
+	gate := newStreamGate(func(text string) error {
+		answer.WriteString(text)
+		return nil
+	})
+	gate.useDraft(func(text string) error {
+		draft.WriteString(text)
+		return nil
+	})
+	for _, piece := range []string{
+		"```skyfraze-text id=17b25a13-1c32-4d15-838f-01da583b2f4a\nНовый текст.\n```",
+		"Готово: предлагаю заменить.",
+	} {
+		if err := gate.feed(piece); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := gate.finish(); err != nil {
+		t.Fatal(err)
+	}
+	if draft.String() != "Новый текст.\n" {
+		t.Fatalf("черновик: %q", draft.String())
+	}
+	if answer.String() != "Готово: предлагаю заменить." {
+		t.Fatalf("ответ: %q", answer.String())
 	}
 }
 

@@ -690,6 +690,11 @@ export interface AIStreamEvent {
   type: string
   conversationId?: string
   text?: string
+  /**
+   * Черновик (тип события `draft`) оборвался: модель не дописала новый текст кадра.
+   * Такой текст правкой не становится — человек должен видеть, что конец не финальный.
+   */
+  truncated?: boolean
   call?: AICall
   change?: AIChange
   /** Пришло предложение правки (тип события `proposal`): проект ещё НЕ изменён. */
@@ -702,6 +707,14 @@ export interface AIStreamEvent {
 export interface AIStreamHandlers {
   onStart?: (conversationId: string) => void
   onDelta?: (text: string) => void
+  /**
+   * Кусок ЧЕРНОВИКА нового текста кадра: модель пишет его для человека, но это ещё не
+   * ответ и не изменённый кадр. Показывать по мере написания — весь смысл: править
+   * главу целиком не нужно, человек видит текст и подтверждает правку.
+   */
+  onDraft?: (text: string) => void
+  /** Черновик оборвался и не применён: конец текста — не финал. */
+  onDraftTruncated?: () => void
   onCall?: (call: AICall) => void
   onChange?: (change: AIChange) => void
   /** Пришло предложение правки: показать его человеку (проект ещё не изменён). */
@@ -759,6 +772,8 @@ function parseStreamEvent(payload: string): AIStreamEvent {
     type: asText(record?.type),
     conversationId: asText(record?.conversation_id) || undefined,
     text: asText(record?.text) || undefined,
+    // Только строго true: «оборван» — это факт от сервера, а не значение по умолчанию.
+    truncated: record?.truncated === true || undefined,
     call: parseCall(record?.call) ?? undefined,
     change: parseChange(record?.change) ?? undefined,
     proposal: parseProposal(record?.proposal) ?? undefined,
@@ -804,6 +819,12 @@ export async function streamAIMessage(
         return null
       case 'delta':
         handlers.onDelta?.(event.text ?? '')
+        return null
+      case 'draft':
+        // Черновик нового текста кадра: показываем по мере написания, но это не реплика
+        // помощника — интерфейс держит его отдельно и убирает, когда появится предложение.
+        if (event.truncated) handlers.onDraftTruncated?.()
+        else handlers.onDraft?.(event.text ?? '')
         return null
       case 'call':
         if (event.call) handlers.onCall?.(event.call)

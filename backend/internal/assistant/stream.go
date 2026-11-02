@@ -35,6 +35,15 @@ const (
 	EventStart = "start"
 	// EventDelta — приращение текста ответа.
 	EventDelta = "delta"
+	// EventDraft — приращение ЧЕРНОВИКА нового текста кадра (0.144.0).
+	//
+	// Зачем отдельное событие, а не delta. Модель, которую просят переписать главу, может
+	// отдать новый текст отдельным блоком (```` ```skyfraze-text id=<uuid> ````) — без JSON
+	// и без экранирования, а значит и без обрыва на середине строки. Такой текст человек
+	// должен видеть ПО МЕРЕ НАПИСАНИЯ, но это ещё не ответ модели и не изменённый кадр:
+	// пока человек не подтвердил, проект прежний. Поэтому это отдельный вид события, и
+	// интерфейс показывает его как черновик, а не как реплику помощника.
+	EventDraft = "draft"
 	// EventCall — один выполненный вызов инструмента.
 	EventCall = "call"
 	// EventChange — одно изменение в проекте.
@@ -54,14 +63,17 @@ const (
 // у change — Change, у done — Turn. Так интерфейсу не нужно разбирать «что именно
 // пришло» по нескольким похожим событиям.
 type Event struct {
-	Type           string    `json:"type"`
-	ConversationID string    `json:"conversation_id,omitempty"`
-	Text           string    `json:"text,omitempty"`
-	Call           *Call     `json:"call,omitempty"`
-	Change         *Change   `json:"change,omitempty"`
-	Proposal       *Proposal `json:"proposal,omitempty"`
-	Turn           *Turn     `json:"turn,omitempty"`
-	Error          string    `json:"error,omitempty"`
+	Type           string `json:"type"`
+	ConversationID string `json:"conversation_id,omitempty"`
+	Text           string `json:"text,omitempty"`
+	// Truncated — черновик (EventDraft) оборвался: модель не дописала текст. Человек
+	// должен знать, что последняя строка черновика — не конец главы (0.144.0).
+	Truncated bool      `json:"truncated,omitempty"`
+	Call      *Call     `json:"call,omitempty"`
+	Change    *Change   `json:"change,omitempty"`
+	Proposal  *Proposal `json:"proposal,omitempty"`
+	Turn      *Turn     `json:"turn,omitempty"`
+	Error     string    `json:"error,omitempty"`
 }
 
 // Emitter отправляет событие человеку. Ошибка означает, что писать больше некуда

@@ -49,6 +49,14 @@ var (
 	// Живой случай: «думающая» gemma ответила пустой оградой ```json``` вместо вызова —
 	// показывать это как ответ или писать «Готово.» было бы обманом.
 	ErrNoAnswer = errors.New("модель не вернула ответ")
+	// ErrDraftTruncated — модель начала писать новый текст кадра и оборвалась на
+	// середине (0.144.0).
+	//
+	// Почему это отдельная ошибка, а не «Готово». Черновик человек уже видел в потоке;
+	// применить его нельзя (в нём нет конца), но и промолчать нельзя: иначе он решит,
+	// что правка сохранена. Текст ошибки говорит, что делать дальше.
+	ErrDraftTruncated = errors.New("модель не дописала новый текст кадра: черновик оборвался " +
+		"на середине и не применён — попробуйте ещё раз или правьте абзацами (read_event_paragraphs)")
 	// ErrConsent — человек ещё не разрешил отправлять текст проекта этому провайдеру.
 	ErrConsent = errors.New("нужно согласие на отправку текста проекта провайдеру модели")
 	// ErrForbidden — у пользователя нет прав менять этот проект.
@@ -951,7 +959,9 @@ func (s *Service) converse(
 
 	// ask — один запрос к модели. Потоком, если события нужны, и обычным запросом,
 	// если нет. Возвращает и то, что уже ушло человеку кусками: при обрыве это
-	// единственный текст, который у него есть, и его надо сохранить.
+	// единственный текст, который у него есть, и его надо сохранить, — и признак того,
+	// что ЧЕРНОВИК нового текста кадра остался недописанным (0.144.0): такой текст
+	// нельзя молча превращать в правку.
 	//
 	// Куски проходят через streamGate: модель может отвечать не текстом, а вызовом
 	// инструмента или рассуждениями в служебном канале, и показывать это человеку
@@ -969,14 +979,22 @@ func (s *Service) converse(
 		}
 		return reply
 	}
-	ask := func(req ai.Request) (ai.Reply, string, error) {
+	ask := func(req ai.Request) (ai.Reply, string, bool, error) {
 		if emit == nil {
 			reply, err := s.models.Chat(ctx, userID, provider, req)
-			return fillTokens(req, reply), "", err
+			return fillTokens(req, reply), "", false, err
 		}
 		gate := newStreamGate(func(text string) error {
 			if err := emit(Event{Type: EventDelta, Text: text}); err != nil {
 				// Писать больше некуда: прекращаем генерацию, а не копим текст в никуда.
+				return errStreamStopped
+			}
+			return nil
+		})
+		// Черновик нового текста кадра (0.144.0) идёт отдельным событием: человек видит,
+		// как пишется глава, но это ещё не ответ модели и не изменённый кадр.
+		gate.useDraft(func(text string) error {
+			if err := emit(Event{Type: EventDraft, Text: text}); err != nil {
 				return errStreamStopped
 			}
 			return nil
@@ -988,7 +1006,14 @@ func (s *Service) converse(
 				err = finishErr
 			}
 		}
-		return fillTokens(req, reply), gate.visibleText(), err
+		truncated := gate.draftUnfinished()
+		if truncated {
+			// Говорим интерфейсу прямо: черновик оборвался, конец текста — не финал.
+			if draftErr := emit(Event{Type: EventDraft, Truncated: true}); draftErr != nil && err == nil {
+				err = errStreamStopped
+			}
+		}
+		return fillTokens(req, reply), gate.visibleText(), truncated, err
 	}
 
 	// Виды карточек — из ТИПОВ ПРОЕКТА (0.81.0): enum инструмента должен совпадать со списком,
@@ -996,7 +1021,7 @@ func (s *Service) converse(
 	entityKinds, entityTitles := s.entityKindOptions(ctx, conversation.ProjectID)
 
 	for round := 0; round < s.limits.MaxRounds; round++ {
-		reply, partial, err := ask(ai.Request{
+		reply, partial, draftCut, err := ask(ai.Request{
 			Model:       model,
 			Messages:    messages,
 			Tools:       ToolDefs(caps, s.editor != nil, s.world != nil, s.worldWrite != nil, entityKinds, entityTitles),
@@ -1010,6 +1035,11 @@ func (s *Service) converse(
 		}
 		tokensIn += reply.TokensIn
 		tokensOut += reply.TokensOut
+		if draftCut {
+			// Модель начала писать новый текст кадра и оборвалась на середине. Применять
+			// недописанное нельзя, а промолчать — тем более: человек видел эти строки.
+			return nil, ErrDraftTruncated
+		}
 
 		content, calls := reply.Content, reply.ToolCalls
 		if len(calls) == 0 {
@@ -1099,7 +1129,7 @@ func (s *Service) converse(
 	if answer == "" {
 		// Раунды кончились на вызовах: просим итог словами, уже без инструментов —
 		// человек должен получить ответ, а не молчание с созданными кадрами.
-		reply, partial, err := ask(ai.Request{Model: model, Messages: messages, Temperature: 0.4})
+		reply, partial, _, err := ask(ai.Request{Model: model, Messages: messages, Temperature: 0.4})
 		if err != nil {
 			if stoppedByClient(err) {
 				return s.finishStopped(ctx, conversation, model, partial, tokensIn, tokensOut)

@@ -253,6 +253,8 @@ func ToolDefs(caps Capabilities, editing, world, worldWrite bool, entityKinds []
 				Name: ToolUpdateText,
 				Description: "Предложить переписать заголовок и/или текст СУЩЕСТВУЮЩЕГО кадра. " +
 					"Прочитай кадр (read_event) и передай новый текст целиком: частичных правок нет. " +
+					"Если новый текст больше трёх абзацев, передавай его блоком skyfraze-text, а не " +
+					"сюда: длинный текст в JSON-аргументе обрывается. " +
 					"Правку применяет человек — ты только предлагаешь.",
 				Parameters: map[string]any{
 					"type": "object",

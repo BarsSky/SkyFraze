@@ -472,6 +472,18 @@
   font-style: italic;
 }
 
+/* Черновик нового текста кадра (0.144.0). Это НЕ реплика помощника: пока правку не
+   подтвердили, текст кадра прежний. Поэтому рамка и подпись, а не вид обычного ответа —
+   иначе человек решит, что глава уже переписана. */
+.ai-msg--draft {
+  padding: 8px 10px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  background: var(--chip-bg);
+}
+.ai-msg--draft .ai-msg__who { color: var(--accent-soft); }
+.ai-msg--draft .ai-msg__text { white-space: normal; }
+
 .ai-note--padded { margin: 0 12px 8px; }
 
 /* Приложенные картинки: превью с крестиком. Размер ограничен, чтобы три картинки не

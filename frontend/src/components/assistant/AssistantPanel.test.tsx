@@ -345,6 +345,49 @@ describe('AssistantPanel', () => {
     expect(await screen.findByText('Создал главу «Пролог».')).toBeTruthy()
   })
 
+  it('показывает черновик нового текста кадра отдельно от реплики', async () => {
+    // 0.144.0: «перепиши главу» приходит не JSON-аргументом, а черновиком по мере
+    // написания. Черновик — не ответ помощника: пока правка не подтверждена, текст кадра
+    // прежний, и путать эти два факта в интерфейсе нельзя.
+    mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
+    let finish: (turn: AITurn) => void = () => {}
+    mocks.stream.mockImplementation(
+      (
+        _projectId: string,
+        _conversationId: string,
+        _text: string,
+        _model: string,
+        options: {
+          handlers?: { onDraft?: (text: string) => void; onDelta?: (text: string) => void }
+        } = {},
+      ) =>
+        new Promise<AITurn>((resolve) => {
+          options.handlers?.onDraft?.('Новый первый абзац. ')
+          options.handlers?.onDraft?.('Новый второй абзац.')
+          finish = resolve
+        }),
+    )
+    renderPanel()
+
+    const input = (await screen.findByLabelText('Сообщение помощнику')) as HTMLTextAreaElement
+    await waitFor(() => expect(input.disabled).toBe(false))
+    fireEvent.change(input, { target: { value: 'Перепиши главу целиком' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Спросить' }))
+
+    await waitFor(() =>
+      expect(document.querySelector('[data-assistant-draft]')?.textContent).toContain(
+        'Новый первый абзац. Новый второй абзац.',
+      ),
+    )
+    // Это не реплика помощника: в потоке ответа черновика нет.
+    expect(document.querySelector('[data-assistant-live]')).toBeNull()
+
+    finish(TURN)
+    // Удачный ответ: черновик убран, его место занимает сообщение из истории.
+    await waitFor(() => expect(document.querySelector('[data-assistant-draft]')).toBeNull())
+    expect(await screen.findByText('Создал главу «Пролог».')).toBeTruthy()
+  })
+
   it('при исчерпанном пределе расхода объясняет это и не даёт отправить', async () => {
     mocks.config.mockResolvedValue({
       ...REMOTE,
