@@ -451,3 +451,21 @@ func TestParseTextToolCallsDropsTruncatedCall(t *testing.T) {
 		t.Fatalf("в ответе остался обломок вызова: %q", cleaned)
 	}
 }
+
+// TestParseTextToolCallsCallIDName — имя инструмента в поле id (0.142.9).
+//
+// Живой ответ gemma: `[{"id":"call_update_event_text","arguments":"{\"body_md\": …}"}]` —
+// отдельного поля name нет, имя спрятано в id, аргументы строкой с JSON внутри.
+func TestParseTextToolCallsCallIDName(t *testing.T) {
+	content := `[{"id":"call_update_event_text","arguments":"{\"id\": \"17b25a13\", \"body_md\": \"Демо-сцена: так лучше.\"}"}]`
+	cleaned, calls := ParseTextToolCalls(content)
+	if len(calls) != 1 || calls[0].Name != ToolUpdateText {
+		t.Fatalf("вызовы: %+v", calls)
+	}
+	if got, _ := calls[0].Arguments["body_md"].(string); got != "Демо-сцена: так лучше." {
+		t.Fatalf("аргументы: %+v", calls[0].Arguments)
+	}
+	if cleaned != "" {
+		t.Fatalf("вызов остался в тексте: %q", cleaned)
+	}
+}

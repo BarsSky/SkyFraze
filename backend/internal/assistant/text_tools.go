@@ -272,6 +272,9 @@ type textCallEnvelope struct {
 
 type textCall struct {
 	Name string `json:"name"`
+	// ID — идентификатор вызова; у gemini-подобных форматов имя инструмента живёт в нём:
+	// `{"id":"call_update_event_text","arguments":"{…}"}` (0.142.9).
+	ID string `json:"id"`
 	// Call — живой случай gemma (0.142.2): {"call":"read_event","args":{…}}.
 	Call string `json:"call"`
 	// Tool — второй возможный ключ имени: модели путают name/tool/function.
@@ -311,6 +314,10 @@ func decodeTextCalls(raw string) []ai.ToolCall {
 	out := make([]ai.ToolCall, 0, len(calls))
 	for i, call := range calls {
 		name := firstNonEmpty(call.Name, call.Tool, call.Call)
+		// Имя может прятаться в id: `call_update_event_text` → `update_event_text`.
+		if name == "" && strings.HasPrefix(call.ID, "call_") {
+			name = strings.TrimPrefix(call.ID, "call_")
+		}
 		args := firstRaw(call.Arguments, call.Args, call.Parameters, call.Input)
 		if call.Function != nil {
 			name = firstNonEmpty(name, call.Function.Name)
