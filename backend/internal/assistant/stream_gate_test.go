@@ -1,4 +1,4 @@
-package assistant
+﻿package assistant
 
 // stream_gate_test.go — что показывается человеку из потока модели.
 //
@@ -215,6 +215,57 @@ func TestStreamGateDraftUnfinished(t *testing.T) {
 	}
 	if !strings.Contains(draft.String(), "не любил") {
 		t.Fatalf("сказанное до обрыва потерялось: %q", draft.String())
+	}
+}
+
+// TestStreamGateDraftNextLineFence — живой вид блока gemma: ограда отдельной строкой,
+// «skyfraze-text» следующей (0.144.1). Плюс проза перед блоком — она остаётся репликой.
+func TestStreamGateDraftNextLineFence(t *testing.T) {
+	var draft, answer strings.Builder
+	gate := newStreamGate(func(text string) error {
+		answer.WriteString(text)
+		return nil
+	})
+	gate.useDraft(func(text string) error {
+		draft.WriteString(text)
+		return nil
+	})
+	for _, piece := range []string{
+		"Сейчас перепишу главу.\n\n",
+		"```\n",
+		"skyfraze-text id=17b25a13-1c32-4d15-838f-01da583b2f4a\n",
+		"Демо-сцена: посадка.\n\n",
+		"Объекты демо-сцены.\n```",
+		"\nПредлагаю сокращённый вариант.",
+	} {
+		if err := gate.feed(piece); err != nil {
+			t.Fatalf("feed(%q): %v", piece, err)
+		}
+	}
+	if err := gate.finish(); err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(draft.String()) != "Демо-сцена: посадка.\n\nОбъекты демо-сцены." {
+		t.Fatalf("черновик: %q", draft.String())
+	}
+	want := "Сейчас перепишу главу.\n\nПредлагаю сокращённый вариант."
+	if answer.String() != want {
+		t.Fatalf("ответ: %q, ожидался %q", answer.String(), want)
+	}
+	if gate.draftUnfinished() {
+		t.Fatal("блок закрылся, а шлюз считает черновик оборванным")
+	}
+}
+
+// TestStreamGateProseCodeBlockStaysVisible — обычный блок кода посреди ответа остаётся
+// видимым: зонд не должен молча съедать кусок ответа.
+func TestStreamGateProseCodeBlockStaysVisible(t *testing.T) {
+	visible := feedAll(t, "Вот пример:\n```json\n{\"a\": 1}\n```\nГотово.")
+	if !strings.Contains(visible, "Вот пример:") || !strings.Contains(visible, "Готово.") {
+		t.Fatalf("ответ потерял куски: %q", visible)
+	}
+	if !strings.Contains(visible, "```json") {
+		t.Fatalf("обычный блок кода пропал из ответа: %q", visible)
 	}
 }
 

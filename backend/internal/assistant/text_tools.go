@@ -543,16 +543,15 @@ func stripBrokenCallBlocks(content string) string {
 			return strings.TrimSpace(stripBrokenCallBlocks(out[:block.start]))
 		}
 	}
-	// Недописанный блок нового текста кадра (0.143.0). Модель, которую просили отдать текст
-	// блоком ```skyfraze-text, может оборваться на середине текста — тогда закрывающей ограды
-	// нет, `fencedBlocks` блока не видит, и в ответ человеку попал бы весь недоотданный текст
-	// с открытой оградой. Всё от маркера до конца — служебное.
+	// Недописанный блок нового текста кадра (0.143.0/0.144.1). Модель, которую просили
+	// отдать текст блоком, может оборваться на середине — тогда закрывающей ограды нет,
+	// `fencedBlocks` блока не видит, и в ответ человеку попал бы весь недоотданный текст.
+	// Всё от начала блока до конца — служебное.
 	//
 	// Закрытый блок без идентификатора кадра не трогаем: там текста не жалко показать, и
 	// решение «не менять не тот кадр» уже принято (см. parseTextEditBlocks).
-	if pos := strings.Index(out, "```"+textEditFence); pos >= 0 &&
-		!strings.Contains(out[pos:], "\n```") {
-		return strings.TrimSpace(stripBrokenCallBlocks(out[:pos]))
+	if start := unclosedTextEditStart(out); start >= 0 {
+		return strings.TrimSpace(stripBrokenCallBlocks(out[:start]))
 	}
 	// Недописанный вызов без ограды: всё, что после маркера, — служебное.
 	if pos, marker := indexAny(out, angleToolMarkers); pos >= 0 {
@@ -564,6 +563,29 @@ func stripBrokenCallBlocks(content string) string {
 		return ""
 	}
 	return out
+}
+
+// textEditLine — строка, с которой начинается блок нового текста кадра: имя языка стоит
+// либо на самой ограде (```skyfraze-text), либо следующей строкой после трёх кавычек.
+var textEditLine = regexp.MustCompile("(?m)^[ \t]*(?:```[ \t]*)?" + textEditFence)
+
+// unclosedTextEditStart — с какого места начинается НЕЗАКРЫТЫЙ блок нового текста кадра
+// (или -1, если такого нет). Нужно, чтобы недоотданный текст не попал в ответ.
+func unclosedTextEditStart(content string) int {
+	loc := textEditLine.FindStringIndex(content)
+	if loc == nil {
+		return -1
+	}
+	if strings.Contains(content[loc[1]:], fence) {
+		return -1 // блок закрыт — его дело разбирать parseTextEditBlocks
+	}
+	start := loc[0]
+	// Ограда могла стоять отдельной строкой перед маркером — начинаем блок с неё.
+	prefix := content[:start]
+	if idx := strings.LastIndex(prefix, fence); idx >= 0 && strings.TrimSpace(prefix[idx+len(fence):]) == "" {
+		start = idx
+	}
+	return start
 }
 
 // looksLikeCallBody — тело вызова, который НЕ ДОПИСАН: массив вызовов без закрытия.
@@ -591,18 +613,22 @@ const textEditFence = "skyfraze-text"
 
 // parseTextEditBlocks разбирает блоки нового текста кадра.
 //
-// Формат: ```skyfraze-text id=<uuid> и дальше — обычный текст кадра, без JSON и без
-// экранирования. Идентификатор можно указать и первой строкой тела (`id: <uuid>`): модели
-// спотыкаются на строке-параметре в ограде, и это дешёвая страховка.
+// Два вида блока, и второй — не прихоть, а живой ответ gemma (0.144.1):
+//
+//	```skyfraze-text id=<uuid>     — имя языка на строке ограды;
+//	```                            — три кавычки отдельной строкой,
+//	skyfraze-text id=<uuid>          а имя языка — следующей строкой.
+//
+// Идентификатор можно указать и первой строкой тела (`id: <uuid>`): модели спотыкаются на
+// строке-параметре, и это дешёвая страховка.
 func parseTextEditBlocks(content string) (string, []ai.ToolCall, bool) {
 	var calls []ai.ToolCall
 	remaining := content
 	for {
-		block, ok := findFence(remaining, textEditFence)
+		block, info, ok := findTextEditBlock(remaining)
 		if !ok {
 			break
 		}
-		info := fenceInfo(remaining, block)
 		id := idFromInfo(info)
 		body := remaining[block.bodyStart:block.bodyEnd]
 		if id == "" {
@@ -632,14 +658,35 @@ func parseTextEditBlocks(content string) (string, []ai.ToolCall, bool) {
 	return strings.TrimSpace(remaining), calls, true
 }
 
-// findFence ищет ограду с указанным именем языка (```skyfraze-text … ```).
-func findFence(content, lang string) (fencedBlock, bool) {
+// findTextEditBlock ищет ограду нового текста кадра в обоих видах (см. parseTextEditBlocks)
+// и возвращает её вместе со строкой параметров и началом тела.
+func findTextEditBlock(content string) (fencedBlock, string, bool) {
 	for _, block := range fencedBlocks(content) {
-		if strings.HasPrefix(fenceInfo(content, block), lang) {
-			return block, true
+		info := fenceInfo(content, block)
+		if strings.HasPrefix(info, textEditFence) {
+			return block, info, true
 		}
+		if info != "" {
+			continue
+		}
+		// Имя языка уехало на следующую строку тела: её и считаем строкой параметров.
+		body := content[block.bodyStart:block.bodyEnd]
+		firstLine := body
+		rest := ""
+		if idx := strings.IndexByte(body, '\n'); idx >= 0 {
+			firstLine, rest = body[:idx], body[idx+1:]
+		}
+		if !strings.HasPrefix(strings.TrimSpace(firstLine), textEditFence) {
+			continue
+		}
+		moved := block
+		moved.bodyStart = block.bodyStart + len(firstLine)
+		if rest != "" {
+			moved.bodyStart++
+		}
+		return moved, strings.TrimSpace(firstLine), true
 	}
-	return fencedBlock{}, false
+	return fencedBlock{}, "", false
 }
 
 // fenceInfo — строка языка ограды (```ЯЗЫК …). Для однострочной ограды пусто.

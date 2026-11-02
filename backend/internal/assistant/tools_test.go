@@ -535,3 +535,49 @@ func TestParseTextEditBlockTruncated(t *testing.T) {
 		t.Fatalf("текст ответа: %q", cleaned)
 	}
 }
+
+// TestParseTextEditBlockNextLine — имя языка следующей строкой (живой ответ gemma, 0.144.1).
+//
+// Модель написала ровно так:
+//
+//	```
+//	skyfraze-text id=17b25a13-…
+//	Демо-сцена: …
+//	```
+//
+// То есть три кавычки отдельной строкой, а «skyfraze-text» — следующей. Раньше такой блок не
+// разбирался вовсе: он оставался текстом ответа, и правка не предлагалась.
+func TestParseTextEditBlockNextLine(t *testing.T) {
+	content := "Сейчас перепишу.\n\n```\nskyfraze-text id=17b25a13-1c32-4d15-838f-01da583b2f4a\n" +
+		"Демо-сцена: посадка корабля.\n\nОбъекты демо-сцены:\n1) корабль\n```"
+	cleaned, calls := ParseTextToolCalls(content)
+	if len(calls) != 1 || calls[0].Name != ToolUpdateText {
+		t.Fatalf("вызовы: %+v", calls)
+	}
+	if got, _ := calls[0].Arguments["id"].(string); got != "17b25a13-1c32-4d15-838f-01da583b2f4a" {
+		t.Fatalf("id кадра: %+v", calls[0].Arguments)
+	}
+	body, _ := calls[0].Arguments["body_md"].(string)
+	if !strings.HasPrefix(body, "Демо-сцена: посадка корабля.") || !strings.Contains(body, "1) корабль") {
+		t.Fatalf("текст кадра: %q", body)
+	}
+	if strings.Contains(body, "skyfraze-text") {
+		t.Fatalf("строка параметров попала в текст кадра: %q", body)
+	}
+	if cleaned != "Сейчас перепишу." {
+		t.Fatalf("текст ответа: %q", cleaned)
+	}
+}
+
+// TestParseTextEditBlockNextLineTruncated — тот же вид блока, но без закрывающей ограды.
+func TestParseTextEditBlockNextLineTruncated(t *testing.T) {
+	content := "Сейчас перепишу.\n\n```\nskyfraze-text id=17b25a13-1c32-4d15-838f-01da583b2f4a\n" +
+		"Демо-сцена: посадка"
+	cleaned, calls := ParseTextToolCalls(content)
+	if len(calls) != 0 {
+		t.Fatalf("оборванный блок не должен становиться вызовом: %+v", calls)
+	}
+	if cleaned != "Сейчас перепишу." {
+		t.Fatalf("текст ответа: %q", cleaned)
+	}
+}

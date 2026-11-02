@@ -71,6 +71,12 @@ type streamGate struct {
 	// оборвалась на середине нового текста (тогда текст не применяется).
 	sawDraft    bool
 	draftClosed bool
+	// probeAtStart — зонд начался в НАЧАЛЕ ответа. Тогда непонятный блок считается
+	// служебным (как раньше), а посреди ответа — обычным кодом, который надо показать.
+	probeAtStart bool
+	// skipNewline — следующий кусок начинается сразу после закрывающей ограды: один
+	// перевод строки там — разметка блока, а не ответ.
+	skipNewline bool
 }
 
 func newStreamGate(emit func(string) error) *streamGate {
@@ -98,8 +104,8 @@ func (g *streamGate) feed(piece string) error {
 		return nil
 	case "thought":
 		return g.feedThought(piece)
-	case "draftHeader":
-		return g.feedDraftHeader(piece)
+	case "fenceProbe":
+		return g.feedFenceProbe(piece)
 	case "draft":
 		return g.feedDraft(piece)
 	default:
@@ -113,7 +119,7 @@ func (g *streamGate) feed(piece string) error {
 // draftUnfinished остаётся: правкой такой текст не станет.
 func (g *streamGate) finish() error {
 	switch g.mode {
-	case "draft", "draftHeader":
+	case "draft":
 		// Модель оборвалась на середине нового текста. Отдаём то, что успело прийти:
 		// человек увидел эти строки по мере генерации, и отнимать их задним числом
 		// странно. Применять такой черновик нельзя — об этом скажет сервис.
@@ -123,6 +129,16 @@ func (g *streamGate) finish() error {
 			return g.draft(held)
 		}
 		return nil
+	case "fenceProbe":
+		// Раунд кончился на огрызке ограды. Показывать «```» незачем, а вот текст, который
+		// не оказался оградой вовсе, терять нельзя.
+		buf := g.held.String()
+		g.held.Reset()
+		if strings.HasPrefix(buf, fence) {
+			return nil
+		}
+		g.mode = "prose"
+		return g.deliver(buf)
 	}
 	if g.mode != "deciding" || g.held.Len() == 0 {
 		return nil
@@ -151,21 +167,16 @@ func (g *streamGate) feedDeciding(piece string) error {
 		g.held.Reset()
 		g.mode = "thought"
 		return g.feedThought(trimmed)
-	case strings.HasPrefix(trimmed, textFenceMarker):
-		// Ограда нового текста кадра (0.144.0): дальше идёт черновик, а не ответ.
+	case trimmed[0] == '`':
+		// Ограда может оказаться вызовом, обычным кодом или черновиком нового текста кадра
+		// (причём имя языка модели пишут и строкой ограды, и следующей строкой). Что именно —
+		// решает зонд, а не догадка.
 		g.held.Reset()
-		g.sawDraft = true
-		g.mode = "draftHeader"
-		return g.feedDraftHeader(trimmed[len(textFenceMarker):])
-	case isTextFencePrefix(trimmed):
-		// Пока это может оказаться оградой skyfraze-text — ждём ещё кусок: отдав его
-		// человеку, мы показали бы «```skyf» в ответе.
-		return nil
-	case strings.HasPrefix(trimmed, fenceProtocol), strings.HasPrefix(trimmed, arrayStart):
-		g.held.Reset()
-		g.mode = "protocol"
-		return nil
-	case strings.HasPrefix(trimmed, fence): // ```json … ``` — тоже вызов, а не ответ (0.142.2)
+		g.probeAtStart = true
+		g.mode = "fenceProbe"
+		g.held.WriteString(trimmed)
+		return g.feedFenceProbe("")
+	case strings.HasPrefix(trimmed, arrayStart):
 		g.held.Reset()
 		g.mode = "protocol"
 		return nil
@@ -187,41 +198,123 @@ func (g *streamGate) feedDeciding(piece string) error {
 	}
 }
 
-// isTextFencePrefix — придержанное может оказаться началом ограды нового текста.
-func isTextFencePrefix(text string) bool {
-	if text == "" || text[0] != '`' {
-		return false
+// isMarkerPrefix — придержанное может оказаться началом одного из маркеров блока.
+func isMarkerPrefix(text string) bool {
+	for _, marker := range []string{textEditFence, strings.TrimPrefix(fenceProtocol, fence)} {
+		if len(text) < len(marker) && strings.HasPrefix(marker, text) {
+			return true
+		}
 	}
-	return len(text) < len(textFenceMarker) && strings.HasPrefix(textFenceMarker, text)
+	return false
 }
 
-// feedDraftHeader читает строку параметров ограды (```skyfraze-text id=<uuid>) и молчит:
-// человеку она не нужна, а телу блока — нужна граница.
-func (g *streamGate) feedDraftHeader(piece string) error {
+// fenceInfoMax — сколько знаков «имени языка» терпим, прежде чем счесть ограду обычным кодом.
+const fenceInfoMax = 80
+
+// feedFenceProbe решает, что за блок начался: вызов инструмента (молчим), черновик нового
+// текста кадра (отдаём человеку) или обычный блок кода в ответе (показываем как текст).
+//
+// Зачем зонд вообще. Живая gemma пишет имя языка НЕ на строке ограды, а следующей строкой:
+//
+//	```
+//	skyfraze-text id=<uuid>
+//	…текст…
+//	```
+//
+// Раньше такой блок считался «оградой без языка» и молчал до конца раунда, а разбор его не
+// узнавал — человек видел в ответе весь текст главы вместо черновика (0.144.1).
+func (g *streamGate) feedFenceProbe(piece string) error {
 	g.held.WriteString(piece)
 	buf := g.held.String()
-	idx := strings.IndexByte(buf, '\n')
-	if idx < 0 {
-		if len(buf) > draftHeaderMax {
-			// Это не строка параметров, а обычный текст (модель начала ответ с ограды и
-			// застряла): показываем как ответ, чтобы ничего не потерялось.
-			g.held.Reset()
-			g.mode = "prose"
-			return g.deliver(textFenceMarker + buf)
+	if !strings.HasPrefix(buf, fence) {
+		// Ограда не сложилась — это обычный текст ответа.
+		g.held.Reset()
+		g.mode = "prose"
+		return g.feedProse(buf)
+	}
+	rest := buf[len(fence):]
+	lineEnd := strings.IndexByte(rest, '\n')
+	if lineEnd < 0 {
+		// Имя языка ещё не кончилось: ждём, но не бесконечно (иначе ответ бы завис).
+		if len(rest) > fenceInfoMax {
+			return g.probeGaveUp()
 		}
 		return nil
 	}
-	body := buf[idx+1:]
+	info := strings.TrimSpace(rest[:lineEnd])
+	if info != "" {
+		if strings.HasPrefix(info, textEditFence) {
+			return g.startDraft(rest[lineEnd+1:])
+		}
+		if strings.HasPrefix(info, strings.TrimPrefix(fenceProtocol, fence)) {
+			g.held.Reset()
+			g.mode = "protocol"
+			return nil
+		}
+		// Имя языка есть, но это не наш блок —```json, ```bash и прочий обычный код.
+		return g.probeGaveUp()
+	}
+	// Строка ограды пустая: имя языка могло уехать на следующую строку.
+	second := rest[lineEnd+1:]
+	line2 := strings.IndexByte(second, '\n')
+	if line2 < 0 {
+		first := strings.TrimSpace(second)
+		if len(second) > fenceInfoMax {
+			return g.probeGaveUp()
+		}
+		// «skyf» — уже похоже на наш маркер: ждём продолжения, а не показываем огрызок.
+		if isMarkerPrefix(first) {
+			return nil
+		}
+		if strings.HasPrefix(first, textEditFence) {
+			// Ограда, имя языка и конец файла: тело пустое, отдавать нечего.
+			g.held.Reset()
+			g.mode = "protocol"
+			return nil
+		}
+		return nil
+	}
+	first := strings.TrimSpace(second[:line2])
+	if strings.HasPrefix(first, textEditFence) {
+		return g.startDraft(second[line2+1:])
+	}
+	if strings.HasPrefix(first, strings.TrimPrefix(fenceProtocol, fence)) {
+		g.held.Reset()
+		g.mode = "protocol"
+		return nil
+	}
+	return g.probeGaveUp()
+}
+
+// probeGaveUp — блок оказался не нашим. В начале ответа это по-прежнему «служебный вызов,
+// который не надо показывать» (так было и раньше), а посреди ответа — обычный код, и его
+// надо отдать человеку, иначе ответ потеряет кусок.
+func (g *streamGate) probeGaveUp() error {
+	buf := g.held.String()
 	g.held.Reset()
+	if g.probeAtStart {
+		g.mode = "protocol"
+		return nil
+	}
+	g.mode = "prose"
+	if err := g.deliver(buf); err != nil {
+		return err
+	}
+	g.tail.Reset()
+	keepTail(g, buf)
+	return nil
+}
+
+// startDraft переводит шлюз в режим черновика и отдаёт всё, что пришло после строки параметров.
+func (g *streamGate) startDraft(body string) error {
+	g.held.Reset()
+	g.sawDraft = true
 	g.mode = "draft"
 	if body == "" {
 		return nil
 	}
 	return g.feedDraft(body)
 }
-
-// draftHeaderMax — сколько знаков строки параметров терпим, прежде чем счесть блок текстом.
-const draftHeaderMax = 200
 
 // feedDraft пишет черновик. Закрывающая ограда кончает черновик и возвращает обычный
 // ответ: после блока модель может сказать «готово» — это уже реплика человеку.
@@ -238,6 +331,10 @@ func (g *streamGate) feedDraft(piece string) error {
 			}
 		}
 		rest := buf[idx+len(fence):]
+		// Перевод строки сразу после закрывающей ограды — разметка блока, а не ответ:
+		// иначе реплика начиналась бы с пустой строки.
+		rest = strings.TrimPrefix(rest, "\n")
+		g.skipNewline = true
 		g.held.Reset()
 		g.draftClosed = true
 		g.mode = "prose"
@@ -302,17 +399,26 @@ func (g *streamGate) feedThought(piece string) error {
 }
 
 func (g *streamGate) feedProse(piece string) error {
+	if g.skipNewline {
+		g.skipNewline = false
+		piece = strings.TrimPrefix(piece, "\n")
+		if piece == "" {
+			return nil
+		}
+	}
 	combined := g.tail.String() + piece
 	protoAt := protocolIndex(combined)
-	draftAt := strings.Index(combined, textFenceMarker)
-	// Что началось раньше — служебный вызов или черновик нового текста кадра? Раньше
-	// в этом месте был один маркер (протокол), и блок skyfraze-text просто прятался;
-	// теперь он показывается человеку черновиком (0.144.0).
+	fenceAt := fenceAtLineStart(combined)
+	tailLen := g.tail.Len()
+	// Ограда, которая уже была отдана человеку как часть хвоста, — не начало блока.
+	if fenceAt >= 0 && fenceAt < tailLen {
+		fenceAt = -1
+	}
 	at := -1
 	mode := ""
 	switch {
-	case draftAt >= 0 && (protoAt < 0 || draftAt < protoAt):
-		at, mode = draftAt, "draftHeader"
+	case fenceAt >= 0 && (protoAt < 0 || fenceAt < protoAt):
+		at, mode = fenceAt, "fenceProbe"
 	case protoAt >= 0:
 		at, mode = protoAt, "protocol"
 	}
@@ -322,22 +428,40 @@ func (g *streamGate) feedProse(piece string) error {
 	// Маркер нашёлся. Всё до него, что человеку ещё НЕ отдано, — конец ответа.
 	// Начало combined — это уже отданный хвост, и второй раз его отдавать нельзя
 	// (иначе текст ответа задвоился бы на стыке кусков).
-	tailLen := g.tail.Len()
 	g.tail.Reset()
 	head := ""
 	if at > tailLen {
 		head = combined[tailLen:at]
 	}
-	if mode == "draftHeader" {
-		g.mode = "draftHeader"
-		g.sawDraft = true
+	if mode == "fenceProbe" {
+		// Что за блок — вызов, код или черновик, — решает зонд. Посреди ответа он не
+		// молчит: обычный ```json в ответе человеку нужен, а проглотить его значило бы
+		// потерять кусок ответа.
+		g.mode = "fenceProbe"
+		g.probeAtStart = false
+		g.held.Reset()
+		g.held.WriteString(combined[at:])
 		if err := g.deliverIfText(head); err != nil {
 			return err
 		}
-		return g.feedDraftHeader(combined[at+len(textFenceMarker):])
+		return g.feedFenceProbe("")
 	}
 	g.mode = "protocol"
 	return g.deliverIfText(head)
+}
+
+// fenceAtLineStart — где начинается ограда, стоящая в начале строки (или текста).
+//
+// Именно так модель начинает блок: три обратные кавычки отдельной строкой. Ограду посреди
+// строки (`текст ``` код`) началом блока не считаем — это обычная проза.
+func fenceAtLineStart(text string) int {
+	if strings.HasPrefix(text, fence) {
+		return 0
+	}
+	if idx := strings.Index(text, "\n"+fence); idx >= 0 {
+		return idx + 1
+	}
+	return -1
 }
 
 // deliverIfText отдаёт человеку кусок, если в нём есть что показывать (пробелы и
