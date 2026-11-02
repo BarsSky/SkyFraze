@@ -278,7 +278,9 @@ func (c *openAIClient) Chat(ctx context.Context, req Request) (Reply, error) {
 		}
 		reply.ToolCalls = append(reply.ToolCalls, ToolCall{ID: id, Name: call.Function.Name, Arguments: args})
 	}
-	if err := thinkingBudgetError(reply, req); err != nil {
+	var warned bool
+	reply.Content, warned = stripProviderWarning(reply.Content)
+	if err := thinkingBudgetError(reply, req, warned); err != nil {
 		return Reply{}, err
 	}
 	return reply, nil
@@ -294,12 +296,12 @@ func (c *openAIClient) Chat(ctx context.Context, req Request) (Reply, error) {
 //
 // Ошибка возвращается только когда видимого ответа НЕТ и модель не попросила инструмент:
 // если инструмент вызван, ответ будет в следующем раунде.
-func thinkingBudgetError(reply Reply, req Request) error {
+func thinkingBudgetError(reply Reply, req Request, warned bool) error {
 	if len(reply.ToolCalls) > 0 {
 		return nil
 	}
 	visible := strings.TrimSpace(reply.Content)
-	if warningText(visible) {
+	if warned {
 		return fmt.Errorf("%w: провайдер израсходовал бюджет ответа на рассуждения "+
 			"(%d символов размышлений, лимит ответа %d) — увеличьте AI_MAX_OUTPUT_TOKENS",
 			ErrUnavailable, reply.ReasoningLen, req.MaxTokens)
@@ -319,6 +321,17 @@ func warningText(text string) bool {
 	}
 	return strings.Contains(text, "только размышления") ||
 		strings.Contains(text, "only reasoning")
+}
+
+// stripProviderWarning убирает предупреждение сервера из текста ответа.
+//
+// Если модель всё-таки вызвала инструмент, ответ будет в следующем раунде, а предупреждение
+// про рассуждения — не ответ: сохранять его в переписку нельзя.
+func stripProviderWarning(content string) (string, bool) {
+	if warningText(content) {
+		return "", true
+	}
+	return content, false
 }
 
 // openAIStreamChunk — одно событие потока. Куски вызова инструмента приходят по
@@ -491,7 +504,9 @@ func (c *openAIClient) ChatStream(ctx context.Context, req Request, onText func(
 		reply.ToolCalls = append(reply.ToolCalls, ToolCall{ID: id, Name: item.name, Arguments: args})
 	}
 	reply.Content = text.String()
-	if err := thinkingBudgetError(reply, req); err != nil {
+	var warned bool
+	reply.Content, warned = stripProviderWarning(reply.Content)
+	if err := thinkingBudgetError(reply, req, warned); err != nil {
 		return Reply{}, err
 	}
 	return reply, nil
@@ -585,4 +600,3 @@ func (c *openAIClient) do(req *http.Request, out any) error {
 	}
 	return nil
 }
-

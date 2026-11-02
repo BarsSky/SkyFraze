@@ -1364,7 +1364,3 @@ func projectIDFromPath(p string) string {
 	}
 	return s
 }
-
-
-
-
