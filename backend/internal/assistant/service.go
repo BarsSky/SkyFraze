@@ -1,4 +1,4 @@
-package assistant
+﻿package assistant
 
 // service.go — беседа с моделью о проекте: контекст, вызовы инструментов, история.
 //
@@ -916,7 +916,7 @@ func (s *Service) history(ctx context.Context, conversationID uuid.UUID) ([]ai.M
 }
 
 // historyMessageChars — сколько знаков одного сообщения истории отдавать модели (0.142.1).
-const historyMessageChars = 4000
+const historyMessageChars = 2000
 
 // truncateRunes обрезает строку по рунам, не разрезая UTF-8.
 func truncateRunes(text string, limit int) string {
@@ -1219,3 +1219,4 @@ func mustJSON(v any) json.RawMessage {
 func depthLimitError() error {
 	return fmt.Errorf("под этот кадр нельзя вложить ещё один: %s (%d)", maxDepthHint(), events.MaxDepth)
 }
+

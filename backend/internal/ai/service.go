@@ -554,6 +554,9 @@ func (s *Service) logRequest(provider Provider, req Request, stream bool) {
 		"provider", provider.ID, "kind", provider.Kind, "model", req.Model,
 		"messages", len(req.Messages), "tools", len(req.Tools),
 		"max_tokens", req.MaxTokens, "temperature", req.Temperature, "stream", stream,
+		// Оценка размера запроса: у локальных моделей окно бывает 16k, и перебор видно ДО
+		// того, как сервер ответит 413 (0.142.3).
+		"approx_in_tokens", EstimateRequestTokens(req),
 		"url", provider.BaseURL,
 	}
 	if s.cfg.DebugPayloads {

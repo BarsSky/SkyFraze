@@ -1,4 +1,4 @@
-package assistant
+﻿package assistant
 
 // exec.go — выполнение инструментов, которые попросила модель.
 //
@@ -668,7 +668,7 @@ func humanSize(bytes int) string {
 
 // toolBodyChars — сколько знаков текста кадра отдавать модели (0.142.1):
 // глава на 20 000 знаков съедала половину окна локальной модели.
-const toolBodyChars = 6000
+const toolBodyChars = 2500
 
 // toolListEvents отдаёт дерево проекта.
 func (s *Service) toolListEvents(ctx context.Context, projectID uuid.UUID, call ai.ToolCall) toolResult {
@@ -1016,3 +1016,4 @@ func createErrorText(err error) string {
 		return err.Error()
 	}
 }
+
