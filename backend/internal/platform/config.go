@@ -125,6 +125,18 @@ type Config struct {
 	AISecretKey string `envconfig:"AI_SECRET_KEY" default:""`
 	// AIDefaultModel — модель по умолчанию в интерфейсе ('provider:model').
 	AIDefaultModel string `envconfig:"AI_DEFAULT_MODEL" default:""`
+	// AIMaxOutputTokens — предел ответа модели в токенах (0 — умолчание провайдера).
+	//
+	// Зачем (0.141.0). «Думающие» модели (gemma, qwen3 и подобные) тратят бюджет на
+	// рассуждения: при малом лимите видимого текста не остаётся, сервер отдаёт
+	// finish_reason=length, и помощник «не может ответить» без внятной причины. 2048 по
+	// умолчанию — с запасом на размышления и обычный ответ главы.
+	AIMaxOutputTokens int `envconfig:"AI_MAX_OUTPUT_TOKENS" default:"2048"`
+	// AIDebug — писать в журнал содержимое запросов и ответов модели (AI_DEBUG=1).
+	//
+	// По умолчанию выключено: в сообщениях текст проекта. Но при разборе «модель не ответила»
+	// без этого видно только факт ошибки, а не что именно вернул провайдер.
+	AIDebug bool `envconfig:"AI_DEBUG" default:"false"`
 	// AIMaxToolCalls — сколько инструментов модель может вызвать за одно сообщение:
 	// защита от модели, которая «зациклилась» и создаёт главы бесконечно.
 	AIMaxToolCalls int `envconfig:"AI_MAX_TOOL_CALLS" default:"10"`

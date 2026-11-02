@@ -130,7 +130,10 @@ type openAIChatRequest struct {
 	Messages    []openAIMessage `json:"messages"`
 	Tools       []openAITool    `json:"tools,omitempty"`
 	Temperature float64         `json:"temperature,omitempty"`
-	Stream      bool            `json:"stream"`
+	// MaxTokens — предел ответа. Без него «думающая» модель тратит бюджет сервера на
+	// reasoning_content и возвращает finish_reason=length без текста (0.141.0).
+	MaxTokens int  `json:"max_tokens,omitempty"`
+	Stream    bool `json:"stream"`
 }
 
 type openAIMessage struct {
@@ -254,10 +257,11 @@ func (c *openAIClient) Chat(ctx context.Context, req Request) (Reply, error) {
 	}
 	choice := out.Choices[0]
 	reply := Reply{
-		Content:   textOf(choice.Message.Content),
-		Model:     firstNonEmpty(out.Model, req.Model),
-		TokensIn:  out.Usage.PromptTokens,
-		TokensOut: out.Usage.CompletionTokens,
+		Content:      textOf(choice.Message.Content),
+		Model:        firstNonEmpty(out.Model, req.Model),
+		TokensIn:     out.Usage.PromptTokens,
+		TokensOut:    out.Usage.CompletionTokens,
+		FinishReason: choice.FinishReason,
 	}
 	for i, call := range choice.Message.ToolCalls {
 		args := map[string]any{}
@@ -274,29 +278,84 @@ func (c *openAIClient) Chat(ctx context.Context, req Request) (Reply, error) {
 		}
 		reply.ToolCalls = append(reply.ToolCalls, ToolCall{ID: id, Name: call.Function.Name, Arguments: args})
 	}
+	if err := thinkingBudgetError(reply, req); err != nil {
+		return Reply{}, err
+	}
 	return reply, nil
+}
+
+// thinkingBudgetError — «модель ответила, но ответа нет» переводим в понятную ошибку (0.141.0).
+//
+// «Думающие» модели (gemma, qwen3 и подобные) тратят бюджет на рассуждения. При малом лимите
+// видимого текста не остаётся: сервер отдаёт finish_reason=length и пустой content, а иные
+// балансеры ещё и подставляют в content предупреждение «Модель сгенерировала только
+// размышления…». Без этой проверки помощник сохранял предупреждение как ответ модели или
+// молча получал пустоту — со стороны это «модель не смогла ответить» без причины.
+//
+// Ошибка возвращается только когда видимого ответа НЕТ и модель не попросила инструмент:
+// если инструмент вызван, ответ будет в следующем раунде.
+func thinkingBudgetError(reply Reply, req Request) error {
+	if len(reply.ToolCalls) > 0 {
+		return nil
+	}
+	visible := strings.TrimSpace(reply.Content)
+	if warningText(visible) {
+		return fmt.Errorf("%w: провайдер израсходовал бюджет ответа на рассуждения "+
+			"(%d символов размышлений, лимит ответа %d) — увеличьте AI_MAX_OUTPUT_TOKENS",
+			ErrUnavailable, reply.ReasoningLen, req.MaxTokens)
+	}
+	if visible == "" && reply.FinishReason == "length" {
+		return fmt.Errorf("%w: ответ оборван по лимиту (%d токенов), а видимого текста нет — "+
+			"модель потратила бюджет на рассуждения; увеличьте AI_MAX_OUTPUT_TOKENS",
+			ErrUnavailable, req.MaxTokens)
+	}
+	return nil
+}
+
+// warningText — это не ответ модели, а предупреждение сервера о пустом ответе.
+func warningText(text string) bool {
+	if text == "" {
+		return false
+	}
+	return strings.Contains(text, "только размышления") ||
+		strings.Contains(text, "only reasoning")
 }
 
 // openAIStreamChunk — одно событие потока. Куски вызова инструмента приходят по
 // частям: имя в одном событии, аргументы (строкой JSON) — в нескольких следующих,
 // и склеивать их нужно по index.
+// openAIStreamDelta — приращение одной реплики в потоке.
+type openAIStreamDelta struct {
+	// Content — строка или массив частей (см. textOf).
+	Content any `json:"content"`
+	// ReasoningContent/Reasoning — рассуждения «думающих» моделей (два имени поля у разных
+	// серверов). Человеку они не нужны, но их длина говорит, куда ушёл бюджет ответа (0.141.0).
+	ReasoningContent string `json:"reasoning_content"`
+	Reasoning        string `json:"reasoning"`
+	ToolCalls        []struct {
+		Index    int    `json:"index"`
+		ID       string `json:"id"`
+		Type     string `json:"type"`
+		Function struct {
+			Name      string `json:"name"`
+			Arguments string `json:"arguments"`
+		} `json:"function"`
+	} `json:"tool_calls"`
+}
+
+// reasoningOf — служебные рассуждения из приращения потока.
+func reasoningOf(delta openAIStreamDelta) string {
+	if delta.ReasoningContent != "" {
+		return delta.ReasoningContent
+	}
+	return delta.Reasoning
+}
+
 type openAIStreamChunk struct {
 	Model   string `json:"model"`
 	Choices []struct {
-		Delta struct {
-			// Content — строка или массив частей (см. textOf).
-			Content   any `json:"content"`
-			ToolCalls []struct {
-				Index    int    `json:"index"`
-				ID       string `json:"id"`
-				Type     string `json:"type"`
-				Function struct {
-					Name      string `json:"name"`
-					Arguments string `json:"arguments"`
-				} `json:"function"`
-			} `json:"tool_calls"`
-		} `json:"delta"`
-		FinishReason string `json:"finish_reason"`
+		Delta        openAIStreamDelta `json:"delta"`
+		FinishReason string            `json:"finish_reason"`
 	} `json:"choices"`
 	Usage *struct {
 		PromptTokens     int `json:"prompt_tokens"`
@@ -374,7 +433,14 @@ func (c *openAIClient) ChatStream(ctx context.Context, req Request, onText func(
 		if len(chunk.Choices) == 0 {
 			return nil
 		}
+		if chunk.Choices[0].FinishReason != "" {
+			reply.FinishReason = chunk.Choices[0].FinishReason
+		}
 		delta := chunk.Choices[0].Delta
+		// Рассуждения считаем, но человеку не отдаём: это служебный текст модели.
+		if piece := reasoningOf(delta); piece != "" {
+			reply.ReasoningLen += len([]rune(piece))
+		}
 		if piece := textOf(delta.Content); piece != "" {
 			text.WriteString(piece)
 			if onText != nil {
@@ -425,13 +491,16 @@ func (c *openAIClient) ChatStream(ctx context.Context, req Request, onText func(
 		reply.ToolCalls = append(reply.ToolCalls, ToolCall{ID: id, Name: item.name, Arguments: args})
 	}
 	reply.Content = text.String()
+	if err := thinkingBudgetError(reply, req); err != nil {
+		return Reply{}, err
+	}
 	return reply, nil
 }
 
 // chatBody собирает тело запроса к /chat/completions — общее для обычного и потокового
 // вариантов, чтобы поля не разъезжались между ними.
 func (c *openAIClient) chatBody(req Request) openAIChatRequest {
-	body := openAIChatRequest{Model: req.Model, Temperature: req.Temperature}
+	body := openAIChatRequest{Model: req.Model, Temperature: req.Temperature, MaxTokens: req.MaxTokens}
 	for _, m := range req.Messages {
 		msg := openAIMessage{
 			Role:       m.Role,
@@ -516,3 +585,4 @@ func (c *openAIClient) do(req *http.Request, out any) error {
 	}
 	return nil
 }
+

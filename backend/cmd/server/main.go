@@ -276,6 +276,10 @@ func main() {
 		MaxToolCalls:      cfg.AIMaxToolCalls,
 		TimeoutSeconds:    cfg.AITimeoutSeconds,
 		TokensPerDay:      cfg.AITokensPerDay,
+		// Предел ответа и диагностика (0.141.0): «думающие» модели иначе тратят весь бюджет
+		// на рассуждения, и помощник «не отвечает» без причины.
+		MaxOutputTokens: cfg.AIMaxOutputTokens,
+		DebugPayloads:   cfg.AIDebug,
 		// Генерация изображений — отдельный сервис со своим железом (A1111-совместимый).
 		ImageURL:            cfg.AIImageURL,
 		ImageTimeoutSeconds: cfg.AIImageTimeoutSeconds,

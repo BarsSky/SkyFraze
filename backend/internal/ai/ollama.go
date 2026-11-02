@@ -314,6 +314,14 @@ func (c *ollamaClient) chatBody(req Request) ollamaChatRequest {
 	if req.Temperature > 0 {
 		body.Options = map[string]any{"temperature": req.Temperature}
 	}
+	// Предел ответа (0.141.0): у «думающих» моделей рассуждения тратят тот же бюджет, что и
+	// ответ, и без явного num_predict работает умолчание сервера — часто слишком маленькое.
+	if req.MaxTokens > 0 {
+		if body.Options == nil {
+			body.Options = map[string]any{}
+		}
+		body.Options["num_predict"] = req.MaxTokens
+	}
 	// Явный размер контекста (AI_OLLAMA_NUM_CTX). Нужен llama.cpp-подобным серверам:
 	// без него они решают, что запросу нужен большой контекст, уходят в автоперезагрузку
 	// модели и отвечают «retry in 30s» на каждый запрос.

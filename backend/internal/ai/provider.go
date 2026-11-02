@@ -232,6 +232,11 @@ type Request struct {
 	Tools    []ToolDef
 	// Temperature — по умолчанию 0.4 (нужна аккуратность, но и живость текста).
 	Temperature float64
+	// MaxTokens — сколько токенов ответа разрешить (0 — решает провайдер).
+	//
+	// Нужен «думающим» моделям: рассуждения тратят тот же бюджет, что и ответ, и при малом
+	// лимите видимого текста не остаётся (0.141.0, см. Config.MaxOutputTokens).
+	MaxTokens int
 }
 
 // Reply — ответ модели.
@@ -241,6 +246,12 @@ type Reply struct {
 	Model     string
 	TokensIn  int
 	TokensOut int
+	// FinishReason — почему генерация закончилась (`stop`, `length`, `tool_calls`, …).
+	// `length` при пустом Content — это «бюджет кончился», а не «модель промолчала».
+	FinishReason string
+	// ReasoningLen — сколько символов модели ушло в рассуждения (`reasoning_content`).
+	// Для диагностики: если ответа нет, а здесь сотни символов, бюджет съели размышления.
+	ReasoningLen int
 }
 
 // Client — то, что умеет любой провайдер.

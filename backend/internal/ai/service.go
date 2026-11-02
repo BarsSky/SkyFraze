@@ -62,6 +62,20 @@ type Config struct {
 	ImageAutoLoad bool
 	// ImageNegative — негативный промпт стенда: то, чего на иллюстрациях быть не должно.
 	ImageNegative string
+
+	// MaxOutputTokens — сколько токенов ответа разрешать модели (0 — не ограничивать самим).
+	//
+	// Зачем параметр (0.141.0). «Думающие» модели (gemma, qwen3 и подобные) тратят бюджет на
+	// reasoning_content, и при маленьком лимите ответа видимого текста не остаётся: сервер
+	// отдаёт finish_reason=length без content. Именно так помощник «не мог ответить» на запрос
+	// правки главы: наш клиент лимит не присылал вовсе, и работал предел сервера. Теперь предел
+	// задаёт стенд (AI_MAX_OUTPUT_TOKENS), а диагностика видна в логе (см. logReply).
+	MaxOutputTokens int
+	// DebugPayloads — писать в лог содержимое запросов и ответов модели (AI_DEBUG=1).
+	//
+	// По умолчанию выключено: в сообщениях лежит текст проекта, и лить его в журнал без
+	// просьбы нельзя. Зато при разборе «модель не ответила» без этого видно только факт.
+	DebugPayloads bool
 }
 
 // Service — доступные модели и ключи пользователей.
@@ -465,7 +479,12 @@ func (s *Service) Chat(ctx context.Context, userID uuid.UUID, providerID string,
 	if req.Temperature == 0 {
 		req.Temperature = 0.4
 	}
-	return client.Chat(ctx, req)
+	s.applyDefaults(&req)
+	s.logRequest(provider, req, false)
+	started := time.Now()
+	reply, err := client.Chat(ctx, req)
+	s.logReply(provider, req, reply, time.Since(started), err)
+	return reply, err
 }
 
 // StreamChat — то же, что Chat, но текст ответа отдаётся по мере генерации.
@@ -491,10 +510,16 @@ func (s *Service) StreamChat(
 	if req.Temperature == 0 {
 		req.Temperature = 0.4
 	}
+	s.applyDefaults(&req)
+	s.logRequest(provider, req, true)
+	started := time.Now()
 	if streamer, ok := client.(Streamer); ok {
-		return streamer.ChatStream(ctx, req, onText)
+		reply, err := streamer.ChatStream(ctx, req, onText)
+		s.logReply(provider, req, reply, time.Since(started), err)
+		return reply, err
 	}
 	reply, err := client.Chat(ctx, req)
+	s.logReply(provider, req, reply, time.Since(started), err)
 	if err != nil {
 		return Reply{}, err
 	}
@@ -504,6 +529,97 @@ func (s *Service) StreamChat(
 		}
 	}
 	return reply, nil
+}
+
+// applyDefaults — значения, которые стенд задаёт сам: предел ответа модели.
+//
+// Без него «думающая» модель тратит на reasoning_content умолчание сервера и возвращает
+// пустой ответ (0.141.0). Вызывающий может задать свой предел — он важнее.
+func (s *Service) applyDefaults(req *Request) {
+	if req.MaxTokens <= 0 {
+		req.MaxTokens = s.cfg.MaxOutputTokens
+	}
+}
+
+// logRequest — что уходит модели: провайдер, модель, размеры и лимит ответа.
+//
+// Содержимое сообщений — только при AI_DEBUG=1: в них текст проекта, и лить его в журнал без
+// просьбы нельзя. Метаданных достаточно, чтобы увидеть «запрос ушёл не туда» и «лимит мал».
+func (s *Service) logRequest(provider Provider, req Request, stream bool) {
+	level := slog.LevelDebug
+	if s.cfg.DebugPayloads {
+		level = slog.LevelInfo
+	}
+	args := []any{
+		"provider", provider.ID, "kind", provider.Kind, "model", req.Model,
+		"messages", len(req.Messages), "tools", len(req.Tools),
+		"max_tokens", req.MaxTokens, "temperature", req.Temperature, "stream", stream,
+		"url", provider.BaseURL,
+	}
+	if s.cfg.DebugPayloads {
+		args = append(args, "request", truncate(requestPreview(req), 4000))
+	}
+	s.logger.Log(context.Background(), level, "ai: запрос к модели", args...)
+}
+
+// logReply — что вернула модель и сколько это заняло.
+//
+// Ошибки пишутся всегда (Warn): «модель не ответила» без строки в журнале — это ровно тот
+// случай, ради которого этот лог и появился. Успех — Debug, а при AI_DEBUG=1 — Info.
+func (s *Service) logReply(provider Provider, req Request, reply Reply, took time.Duration, err error) {
+	base := []any{
+		"provider", provider.ID, "model", req.Model, "took", took.Round(time.Millisecond),
+	}
+	if err != nil {
+		args := append(base, "err", truncate(err.Error(), 2000),
+			"reasoning_len", reply.ReasoningLen, "finish", reply.FinishReason,
+			"content_len", len([]rune(reply.Content)), "tool_calls", len(reply.ToolCalls))
+		if s.cfg.DebugPayloads {
+			args = append(args, "content", truncate(reply.Content, 2000))
+		}
+		s.logger.Warn("ai: модель не ответила", args...)
+		return
+	}
+	level := slog.LevelDebug
+	if s.cfg.DebugPayloads {
+		level = slog.LevelInfo
+	}
+	names := make([]string, 0, len(reply.ToolCalls))
+	for _, call := range reply.ToolCalls {
+		names = append(names, call.Name)
+	}
+	args := append(base,
+		"finish", reply.FinishReason,
+		"content_len", len([]rune(reply.Content)),
+		"reasoning_len", reply.ReasoningLen,
+		"tool_calls", strings.Join(names, ","),
+		"tokens_in", reply.TokensIn, "tokens_out", reply.TokensOut,
+	)
+	if s.cfg.DebugPayloads {
+		args = append(args, "content", truncate(reply.Content, 2000))
+	}
+	s.logger.Log(context.Background(), level, "ai: ответ модели", args...)
+}
+
+// requestPreview — короткая выжимка запроса для журнала при AI_DEBUG=1.
+func requestPreview(req Request) string {
+	var b strings.Builder
+	for _, m := range req.Messages {
+		if m.Role == "system" {
+			continue // системная инструкция длинная и повторяется в каждом запросе
+		}
+		fmt.Fprintf(&b, "%s: %s\n", m.Role, truncate(m.Content, 400))
+	}
+	return b.String()
+}
+
+// truncate — обрезать строку по РУНАМ, чтобы не разрезать UTF-8.
+func truncate(text string, limit int) string {
+	runes := []rune(text)
+	if len(runes) <= limit {
+		return text
+	}
+	return string(runes[:limit]) + "…"
 }
 
 // clientFor выбирает ключ: свой → ключ стенда → ошибка «нужен ключ».
