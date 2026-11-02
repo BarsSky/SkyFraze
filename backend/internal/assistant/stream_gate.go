@@ -114,6 +114,10 @@ func (g *streamGate) feedDeciding(piece string) error {
 		g.held.Reset()
 		g.mode = "protocol"
 		return nil
+	case strings.HasPrefix(trimmed, fence): // ```json … ``` — тоже вызов, а не ответ (0.142.2)
+		g.held.Reset()
+		g.mode = "protocol"
+		return nil
 	case couldBeProtocolStart(trimmed):
 		// Данных мало: ждём ещё кусок, чтобы не показать человеку первый символ
 		// служебного JSON.

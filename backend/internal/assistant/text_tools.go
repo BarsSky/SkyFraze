@@ -237,6 +237,8 @@ type textCallEnvelope struct {
 
 type textCall struct {
 	Name string `json:"name"`
+	// Call — живой случай gemma (0.142.2): {"call":"read_event","args":{…}}.
+	Call string `json:"call"`
 	// Tool — второй возможный ключ имени: модели путают name/tool/function.
 	Tool string `json:"tool"`
 	// Function — форма как у OpenAI: {"function":{"name":...,"arguments":...}}.
@@ -246,6 +248,10 @@ type textCall struct {
 	} `json:"function"`
 	// Arguments — объект или строка с JSON внутри.
 	Arguments json.RawMessage `json:"arguments"`
+	// Args/Parameters/Input — другие имена того же поля: модели выбирают их свободно.
+	Args       json.RawMessage `json:"args"`
+	Parameters json.RawMessage `json:"parameters"`
+	Input      json.RawMessage `json:"input"`
 }
 
 // decodeTextCalls разбирает содержимое блока: массив вызовов или {"calls": [...]}.
@@ -269,8 +275,8 @@ func decodeTextCalls(raw string) []ai.ToolCall {
 
 	out := make([]ai.ToolCall, 0, len(calls))
 	for i, call := range calls {
-		name := firstNonEmpty(call.Name, call.Tool)
-		args := call.Arguments
+		name := firstNonEmpty(call.Name, call.Tool, call.Call)
+		args := firstRaw(call.Arguments, call.Args, call.Parameters, call.Input)
 		if call.Function != nil {
 			name = firstNonEmpty(name, call.Function.Name)
 			if len(call.Function.Arguments) > 0 {
@@ -310,6 +316,16 @@ func decodeArguments(raw json.RawMessage) map[string]any {
 		}
 	}
 	return map[string]any{"_raw": string(raw)}
+}
+
+// firstRaw — первые непустые аргументы (модели называют поле args, parameters, input…).
+func firstRaw(values ...json.RawMessage) json.RawMessage {
+	for _, raw := range values {
+		if len(raw) > 0 && strings.TrimSpace(string(raw)) != "" {
+			return raw
+		}
+	}
+	return nil
 }
 
 func firstNonEmpty(values ...string) string {

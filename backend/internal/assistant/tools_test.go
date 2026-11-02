@@ -341,3 +341,42 @@ func TestParseTextToolCallsEmptyFence(t *testing.T) {
 		t.Fatalf("пустая ограда осталась в ответе: %q", cleaned)
 	}
 }
+
+// TestParseTextToolCallsGemmaCallArgs — живой формат gemma (0.142.2).
+//
+// Так модель ответила на «поправь орфографию первой главы»: вызов текстом, в ограде ```json,
+// с ключами "call"/"args". Раньше такой ответ оставался текстом, и человек видел JSON вместо
+// правки проекта.
+func TestParseTextToolCallsGemmaCallArgs(t *testing.T) {
+	content := "```json\n[\n  {\n    \"call\": \"read_event\",\n    \"args\": {\n      \"id\": \"17b25a13-1c32-4d15-838f-01da583b2f4a\"\n    }\n  }\n]\n```"
+	cleaned, calls := ParseTextToolCalls(content)
+	if len(calls) != 1 || calls[0].Name != ToolReadEvent {
+		t.Fatalf("вызовы: %+v", calls)
+	}
+	if got, _ := calls[0].Arguments["id"].(string); got != "17b25a13-1c32-4d15-838f-01da583b2f4a" {
+		t.Fatalf("аргументы: %+v", calls[0].Arguments)
+	}
+	if cleaned != "" {
+		t.Fatalf("текст вызова остался в ответе: %q", cleaned)
+	}
+}
+
+// TestStreamGateHidesFencedCall — ограда с вызовом не показывается человеку в потоке.
+func TestStreamGateHidesFencedCall(t *testing.T) {
+	var shown strings.Builder
+	gate := newStreamGate(func(text string) error {
+		shown.WriteString(text)
+		return nil
+	})
+	for _, piece := range []string{"```json\n[{\"call\":\"read_event\"", ",\"args\":{}}]\n```"} {
+		if err := gate.feed(piece); err != nil {
+			t.Fatalf("поток: %v", err)
+		}
+	}
+	if err := gate.finish(); err != nil {
+		t.Fatalf("финал: %v", err)
+	}
+	if shown.Len() != 0 {
+		t.Fatalf("человеку показали служебный блок: %q", shown.String())
+	}
+}
