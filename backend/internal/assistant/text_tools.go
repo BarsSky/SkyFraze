@@ -530,6 +530,11 @@ func stripBrokenCallBlocks(content string) string {
 	if pos, marker := indexAny(out, angleToolMarkers); pos >= 0 {
 		return strings.TrimSpace(stripBrokenCallBlocks(out[:pos] + out[pos+len(marker):]))
 	}
+	// Ответ целиком — недописанный массив вызовов без ограды (0.142.8): так gemma выдала
+	// вызов правки после «ответь словами», и человек видел обломок JSON.
+	if looksLikeCallBody(out) {
+		return ""
+	}
 	return out
 }
 
