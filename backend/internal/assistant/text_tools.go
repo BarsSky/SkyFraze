@@ -72,7 +72,13 @@ func ParseTextToolCalls(content string) (string, []ai.ToolCall) {
 	if cleaned, calls := ParseAngleToolCalls(stripEmptyFences(content)); len(calls) > 0 {
 		return cleaned, calls
 	}
-	return parseLooseToolCalls(stripEmptyFences(content))
+	if cleaned, calls := parseLooseToolCalls(stripEmptyFences(content)); len(calls) > 0 {
+		return cleaned, calls
+	}
+	// Неразобранный (обрезанный) вызов не показываем человеку как текст ответа (0.142.7):
+	// живая gemma выдавала «Предлагаю переписать…» и следом обрезанный JSON вызова — в таком
+	// виде это мусор, а не ответ.
+	return stripBrokenCallBlocks(stripEmptyFences(content)), nil
 }
 
 // stripEmptyFences убирает пустые ограды (0.141.1).
@@ -506,4 +512,43 @@ func quoteBareKeys(raw string) string {
 		out.WriteByte(c)
 	}
 	return out.String()
+}
+
+// stripBrokenCallBlocks убирает из текста недописанные блоки вызова инструмента (0.142.7).
+//
+// Режем только то, что явно начинается как вызов (в ограде или после маркера `<|tool_call|>`):
+// обычный код в ответе модели остаётся.
+func stripBrokenCallBlocks(content string) string {
+	out := content
+	for _, block := range fencedBlocks(out) {
+		body := out[block.bodyStart:block.bodyEnd]
+		if looksLikeCallBody(body) {
+			return strings.TrimSpace(stripBrokenCallBlocks(out[:block.start]))
+		}
+	}
+	// Недописанный вызов без ограды: всё, что после маркера, — служебное.
+	if pos, marker := indexAny(out, angleToolMarkers); pos >= 0 {
+		return strings.TrimSpace(stripBrokenCallBlocks(out[:pos] + out[pos+len(marker):]))
+	}
+	return out
+}
+
+// looksLikeCallBody — тело вызова, который НЕ ДОПИСАН: массив вызовов без закрытия.
+//
+// Обычный пример кода в ответе модели (объект, закрытый JSON) под это не подпадает: его видно
+// человеку, и это правильно (0.142.7 и тест «чужие блоки»).
+func looksLikeCallBody(body string) bool {
+	trimmed := strings.TrimSpace(body)
+	if !strings.HasPrefix(trimmed, "[{") {
+		return false
+	}
+	if strings.HasSuffix(trimmed, "]}") || strings.HasSuffix(trimmed, "}]") {
+		return false // закрытый массив — это не обрывок
+	}
+	for name := range knownToolNames {
+		if strings.Contains(trimmed, `"`+name+`"`) {
+			return true
+		}
+	}
+	return false
 }

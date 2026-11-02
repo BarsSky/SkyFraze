@@ -434,3 +434,20 @@ func TestParseTextToolCallsUnknownFencedToolStaysText(t *testing.T) {
 		t.Fatalf("текст потерян: %q", cleaned)
 	}
 }
+
+// TestParseTextToolCallsDropsTruncatedCall — обрезанный вызов не показывается как ответ (0.142.7).
+//
+// Живой случай: модель написала «Предлагаю переписать…» и следом — массив вызова, оборванный
+// на середине строки. JSON не разбирается, вызова нет, и человек видел обломок JSON.
+func TestParseTextToolCallsDropsTruncatedCall(t *testing.T) {
+	content := "Предлагаю переписать текст главы.\n\n```json\n" +
+		`[{"name": "update_event_text", "arguments": {"id": "17b25a13", "body_md": "# Описание` +
+		"\n```"
+	cleaned, calls := ParseTextToolCalls(content)
+	if len(calls) != 0 {
+		t.Fatalf("обрезанный вызов принят: %+v", calls)
+	}
+	if cleaned != "Предлагаю переписать текст главы." {
+		t.Fatalf("в ответе остался обломок вызова: %q", cleaned)
+	}
+}

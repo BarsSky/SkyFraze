@@ -613,8 +613,12 @@ func DefaultLimits(maxToolCalls int) Limits {
 		maxToolCalls = 10
 	}
 	return Limits{
-		MaxToolCalls:        maxToolCalls,
-		MaxRounds:           3,
+		MaxToolCalls: maxToolCalls,
+		// Пять раундов, а не три (0.142.7): живой прогон показал, что помощнику не хватало
+		// ровно одного раунда — он прочитал кадр, ошибся с id, прочитал дерево и хотел применить
+		// правку, а лимит уже кончился, и финальный запрос «ответь словами» модель выполнила
+		// вызовом инструмента текстом (обрезанный JSON в ответе).
+		MaxRounds:           5,
 		MaxTitleChars:       200,
 		MaxBodyChars:        20000,
 		MaxEventsInPrompt:   200,
