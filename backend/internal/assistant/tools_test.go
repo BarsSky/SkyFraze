@@ -309,3 +309,35 @@ func TestDefaultLimitsAreSane(t *testing.T) {
 		t.Fatalf("переданный предел потерян: %+v", got)
 	}
 }
+
+// TestParseTextToolCallsFencedJSON — вызов в обычной ограде ```json (0.141.1).
+//
+// Так gemma отвечает, когда не может позвать инструмент нативно: JSON-вызов текстом в
+// блоке кода. Раньше такой ответ оставался текстом, и человек видел вызов инструмента
+// вместо правки проекта.
+func TestParseTextToolCallsFencedJSON(t *testing.T) {
+	content := "Сейчас поправлю.\n\n```json\n" +
+		`[{"name":"read_event","arguments":{"id":"e1"}}]` + "\n```\n"
+	cleaned, calls := ParseTextToolCalls(content)
+	if len(calls) != 1 || calls[0].Name != ToolReadEvent {
+		t.Fatalf("вызовы: %+v", calls)
+	}
+	if cleaned != "Сейчас поправлю." {
+		t.Fatalf("текст: %q", cleaned)
+	}
+}
+
+// TestParseTextToolCallsEmptyFence — пустая ограда вместо ответа (0.141.1).
+//
+// Живой случай: на «поправь главу» модель вернула ровно «```json```». Это не ответ, и
+// показывать его как текст модели нельзя — после очистки текста нет, и помощник честно
+// сообщает, что ответа не было.
+func TestParseTextToolCallsEmptyFence(t *testing.T) {
+	cleaned, calls := ParseTextToolCalls("```json```")
+	if len(calls) != 0 {
+		t.Fatalf("вызовы: %+v", calls)
+	}
+	if cleaned != "" {
+		t.Fatalf("пустая ограда осталась в ответе: %q", cleaned)
+	}
+}

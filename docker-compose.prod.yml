@@ -1,4 +1,4 @@
-# SkyFraze — конфигурация для сервера (production-like).
+﻿# SkyFraze — конфигурация для сервера (production-like).
 #
 # Отличия от docker-compose.yml (который рассчитан на локальную разработку):
 #   * Postgres НЕ публикуется наружу. На сервере 5432 уже может быть занят
@@ -96,6 +96,10 @@ services:
       AI_SECRET_KEY: ${AI_SECRET_KEY:-}
       AI_DEFAULT_MODEL: ${AI_DEFAULT_MODEL:-}
       AI_MAX_TOOL_CALLS: ${AI_MAX_TOOL_CALLS:-10}
+      # Предел ответа модели и журнал провайдера (0.141.0): «думающие» модели иначе тратят весь
+      # бюджет на reasoning_content, и помощник «не отвечает» без причины.
+      AI_MAX_OUTPUT_TOKENS: ${AI_MAX_OUTPUT_TOKENS:-2048}
+      AI_DEBUG: ${AI_DEBUG:-false}
       AI_TIMEOUT_SECONDS: ${AI_TIMEOUT_SECONDS:-120}
       AI_TOKENS_PER_DAY: ${AI_TOKENS_PER_DAY:-0}
       # Генерация изображений: A1111-совместимый сервер (Automatic1111, Forge, SD.Next).
@@ -188,3 +192,4 @@ volumes:
 networks:
   skyfraze-net:
     driver: bridge
+

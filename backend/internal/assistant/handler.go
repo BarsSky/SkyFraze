@@ -489,6 +489,10 @@ func (h *Handler) fail(w http.ResponseWriter, op string, err error) {
 		writeErr(w, http.StatusConflict, err.Error())
 	case errors.Is(err, ErrModelRequired):
 		writeErr(w, http.StatusBadRequest, err.Error())
+	// «Модель не вернула ответ» (0.141.1) — состояние провайдера, а не ошибка запроса:
+	// 502 говорит «проблема на стороне модели», а текст объясняет, что делать.
+	case errors.Is(err, ErrNoAnswer):
+		writeErr(w, http.StatusBadGateway, err.Error())
 	case errors.Is(err, ai.ErrNoKey):
 		writeErr(w, http.StatusPreconditionRequired,
 			"для этой модели нужен ключ провайдера — добавьте свой в настройках помощника")

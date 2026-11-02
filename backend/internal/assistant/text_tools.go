@@ -55,16 +55,105 @@ type toolBlock struct {
 // ответ модели, и человек должен увидеть её текст, а не пятисотую ошибку. Поэтому
 // неразобранный блок просто остаётся в тексте (его видно), а вызовов нет.
 func ParseTextToolCalls(content string) (string, []ai.ToolCall) {
-	block, ok := findToolBlock(content)
-	if !ok {
-		return parseLooseToolCalls(content)
+	if block, ok := findToolBlock(content); ok {
+		calls := decodeTextCalls(content[block.bodyStart:block.bodyEnd])
+		if len(calls) > 0 {
+			return strings.TrimSpace(content[:block.start] + content[block.end:]), calls
+		}
+		// Блок наш, но внутри не вызов: пробуем другие блоки, а если их нет — оставляем
+		// текст как есть (человек увидит, что ответил модель).
 	}
-	calls := decodeTextCalls(content[block.bodyStart:block.bodyEnd])
-	if len(calls) == 0 {
-		return content, nil
+	// Второй частый случай на живых моделях (0.141.1): вызов завёрнут в обычную ограду
+	// ```json или ``` — так gemma отвечает, когда не может позвать инструмент нативно.
+	if cleaned, calls, ok := parseFencedToolCalls(content); ok {
+		return cleaned, calls
 	}
-	cleaned := strings.TrimSpace(content[:block.start] + content[block.end:])
-	return cleaned, calls
+	return parseLooseToolCalls(stripEmptyFences(content))
+}
+
+// stripEmptyFences убирает пустые ограды (0.141.1).
+//
+// Живая gemma на запрос правки главы вернула ровно «```json```» — пустой блок вместо
+// вызова инструмента. Показывать это человеку как ответ модели нельзя: это не ответ.
+// После очистки текст становится пустым, и вызывающий честно говорит, что ответа нет.
+func stripEmptyFences(content string) string {
+	cleaned := content
+	for _, block := range fencedBlocks(content) {
+		if strings.TrimSpace(content[block.bodyStart:block.bodyEnd]) != "" {
+			continue
+		}
+		cleaned = strings.Replace(cleaned, content[block.start:block.end], "", 1)
+	}
+	return strings.TrimSpace(cleaned)
+}
+
+// fencedBlock — ограда ```lang … ``` с телом.
+type fencedBlock struct {
+	start     int
+	bodyStart int
+	bodyEnd   int
+	end       int
+}
+
+// parseFencedToolCalls ищет вызовы в обычных оградах (```json, ```JSON, ``` без языка).
+//
+// Принимаем, только если внутри есть ХОТЯ БЫ ОДИН известный инструмент: иначе любой
+// пример кода в ответе модели превращался бы в попытку что-то создать.
+func parseFencedToolCalls(content string) (string, []ai.ToolCall, bool) {
+	for _, block := range fencedBlocks(content) {
+		calls := decodeTextCalls(content[block.bodyStart:block.bodyEnd])
+		if !hasKnownTool(calls) {
+			continue
+		}
+		return strings.TrimSpace(content[:block.start] + content[block.end:]), calls, true
+	}
+	return "", nil, false
+}
+
+// fencedBlocks перечисляет все ограды в тексте (без разбора языка).
+//
+// Позиции считаем по исходной строке, а не по приведённой к нижнему регистру: приведение
+// регистра меняет длину не-ASCII символов, и позиции разъехались бы с текстом (он русский).
+func fencedBlocks(content string) []fencedBlock {
+	blocks := make([]fencedBlock, 0, 2)
+	searchFrom := 0
+	for {
+		rel := strings.Index(content[searchFrom:], "```")
+		if rel < 0 {
+			return blocks
+		}
+		start := searchFrom + rel
+		rest := content[start+3:]
+		lineEnd := strings.IndexByte(rest, '\n')
+		// Однострочная ограда (```json```): закрывающая идёт раньше перевода строки или её
+		// нет вовсе. Живая gemma отвечает именно так, когда «не смогла» позвать инструмент.
+		if firstClose := strings.Index(rest, "```"); firstClose >= 0 && (lineEnd < 0 || firstClose < lineEnd) {
+			bodyStart := start + 3 + firstClose
+			blocks = append(blocks, fencedBlock{
+				start:     start,
+				bodyStart: bodyStart,
+				bodyEnd:   bodyStart,
+				end:       bodyStart + 3,
+			})
+			searchFrom = bodyStart + 3
+			continue
+		}
+		if lineEnd < 0 {
+			return blocks
+		}
+		bodyStart := start + 3 + lineEnd + 1
+		closeRel := strings.Index(content[bodyStart:], "```")
+		if closeRel < 0 {
+			return blocks
+		}
+		blocks = append(blocks, fencedBlock{
+			start:     start,
+			bodyStart: bodyStart,
+			bodyEnd:   bodyStart + closeRel,
+			end:       bodyStart + closeRel + 3,
+		})
+		searchFrom = bodyStart + closeRel + 3
+	}
 }
 
 // parseLooseToolCalls разбирает ответ, целиком состоящий из JSON-вызовов.
