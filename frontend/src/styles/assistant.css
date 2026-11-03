@@ -39,6 +39,10 @@
      целиком, и окно теряет высоту (правило проекта — основное на vh, апгрейд в @supports). */
   height: min(620px, calc(100vh - 140px));
   max-height: calc(100vh - 96px);
+  /* min-height: 0 — иначе как flex-элемент окно растягивается по СОДЕРЖИМОМУ и игнорирует
+     height/max-height: живой замер на телефоне дал 820px вместо 620 (0.146.1). Внутри всё
+     равно скроллится: переписка и карточки имеют свои ограничители. */
+  min-height: 0;
   overflow: hidden;
   background: var(--bg-elev);
   border: 1px solid var(--border);
@@ -70,6 +74,10 @@
   justify-content: center;
   width: 34px;
   height: 34px;
+  /* padding: 0 обязателен: у кнопки по умолчанию есть внутренние отступы браузера, и при
+     фиксированной ширине 34px содержимое сжимается до нуля — иконка становится невидимой
+     (проверено живым замером: svg 0×18). */
+  padding: 0;
   margin: 0 0 0 auto;
   border: 1px solid transparent;
   border-radius: 8px;
@@ -77,6 +85,9 @@
   color: var(--fg-muted);
   cursor: pointer;
 }
+/* Размер иконки задан правилом, а не только атрибутами: как flex-элемент svg сжимается,
+   если ему не хватило места. */
+.ai-window__close svg { flex: 0 0 auto; width: 18px; height: 18px; }
 .ai-window__close:hover {
   color: var(--fg);
   border-color: var(--border);

@@ -69,10 +69,20 @@ async function main() {
     await page.waitForTimeout(3500)
   }
 
-  // Открываем окно: кнопка в доке.
+  // Открываем окно: кнопка в доке. Если окно уже открыто (или кнопки нет), ждём панель и,
+  // если она не появилась, перезагружаем страницу один раз — сессия могла не успеть примениться.
   const openButton = page.getByRole('button', { name: 'Открыть помощника' })
   if (await openButton.count()) await openButton.click()
-  await page.waitForTimeout(1200)
+  try {
+    await page.locator('[data-assistant-panel]').waitFor({ state: 'visible', timeout: 10_000 })
+  } catch {
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    await page.waitForTimeout(3500)
+    const retry = page.getByRole('button', { name: 'Открыть помощника' })
+    if (await retry.count()) await retry.click()
+    await page.locator('[data-assistant-panel]').waitFor({ state: 'visible', timeout: 15_000 })
+  }
+  await page.waitForTimeout(800)
   const windowBox = await page.locator('[data-assistant-panel]').boundingBox()
 
   // ── 1. Крестик: один, крупный, закрывает окно с вкладки чата ─────────────
@@ -83,6 +93,16 @@ async function main() {
       add('error', `крестик окна мелкий: ${Math.round(closeBox.width)}×${Math.round(closeBox.height)}`)
     } else add('info', `крестик окна: ${Math.round(closeBox.width)}×${Math.round(closeBox.height)}`)
   }
+  // Иконка внутри кнопки: кнопка может быть нужного размера и при этом не рисовать крестик
+  // (0.146.1 — svg сжимался до нуля из-за padding браузера). Проверяем именно svg.
+  const closeIcon = await page.evaluate(() => {
+    const svg = document.querySelector('[data-dock-close] svg')
+    const r = svg ? svg.getBoundingClientRect() : null
+    return r ? { w: Math.round(r.width), h: Math.round(r.height) } : null
+  })
+  if (!closeIcon || closeIcon.w < 14 || closeIcon.h < 14) {
+    add('error', `иконка крестика не рисуется: ${JSON.stringify(closeIcon)}`)
+  } else add('info', `иконка крестика: ${closeIcon.w}×${closeIcon.h}`)
   await page.getByRole('tab', { name: 'Чат проекта' }).click()
   await page.waitForTimeout(800)
   const closeOnChat = await page.locator('[data-dock-close]').boundingBox()
@@ -108,6 +128,7 @@ async function main() {
       return {
         typing: typing ? (typing.textContent ?? '').trim() : '',
         typingIsBubble: typing ? typing.className.includes('ai-msg') : false,
+        typingAuthor: typing ? (typing.querySelector('.ai-msg__who')?.textContent ?? '').trim() : '',
         live: live ? (live.textContent ?? '').length : 0,
         cards: cards.map((card) => ({
           tag: card.tagName,
@@ -122,8 +143,10 @@ async function main() {
       if (!sawTyping) {
         sawTyping = true
         if (!state.typingIsBubble) add('error', '«печатает…» показано не репликой, а строкой')
-        if (!state.typing.includes('Нестор')) add('warning', `в «печатает…» нет имени автора: «${state.typing}»`)
-        else add('info', `«печатает…» в переписке: «${state.typing.slice(0, 40)}»`)
+        // Имя автора приходит из настроек проекта и до их загрузки может быть «Агент» —
+        // важно, что подпись автора есть, а не конкретное имя.
+        if (!state.typingAuthor) add('warning', `у «печатает…» нет подписи автора: «${state.typing}»`)
+        else add('info', `«печатает…»: автор «${state.typingAuthor}», текст «${state.typing.slice(0, 40)}»`)
       }
     }
     if (state.cards.length > 0) {
