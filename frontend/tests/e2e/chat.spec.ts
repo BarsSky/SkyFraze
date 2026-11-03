@@ -85,10 +85,11 @@ test('чат проекта: сообщение переживает перез�
   panel = await openChat()
   const chipAfterReload = panel.locator('[data-chat-message]').last().locator('[data-chat-reaction$=":todo"]')
   await expect(chipAfterReload).toHaveAttribute('aria-pressed', 'true', { timeout: 20_000 })
-  // Снимаем отметку тоже из меню.
+  // Снимаем отметку тоже из меню. Нулевые отметки плашками не показываются (0.146.0):
+  // после снятия плашки нет вовсе — это и есть «снято».
   await panel.locator('[data-chat-message]').last().locator('[data-chat-menu-button]').click()
   await panel.locator('[data-chat-message]').last().locator('[data-chat-menu-reaction$=":todo"]').click()
-  await expect(chipAfterReload).toHaveAttribute('aria-pressed', 'false', { timeout: 15_000 })
+  await expect(chipAfterReload).toHaveCount(0, { timeout: 15_000 })
 
   // Уборка: проект свой, удаляем окончательно (как остальные сценарии с созданными проектами).
   await page.request.delete(`/api/projects/${projectId}`, { headers })
