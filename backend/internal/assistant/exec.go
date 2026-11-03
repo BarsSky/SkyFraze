@@ -46,6 +46,10 @@ type toolResult struct {
 	change         *Change
 	proposal       *store.AIChange
 	entityProposal *store.EntityProposal
+	// knowledge — знания, сохранённые этим вызовом (0.149.0). Отдельным полем, а не в
+	// payload: payload уходит модели, а карточки нужны интерфейсу, и разбирать JSON
+	// инструмента ради них интерфейсу не придётся.
+	knowledge []KnowledgeView
 }
 
 // refusedCall — вызов, который не выполнялся (кончился лимит изменений).
@@ -107,6 +111,12 @@ func (s *Service) execute(
 		return s.toolProposeFragmentEdit(ctx, userID, projectID, call)
 	case ToolGenerateImage:
 		return s.toolGenerateImage(ctx, actorID, userID, projectID, call, caps)
+	case ToolSaveKnowledge:
+		return s.toolSaveKnowledge(ctx, userID, projectID, call)
+	case ToolListKnowledge:
+		return s.toolListKnowledge(ctx, userID, projectID, call)
+	case ToolReadKnowledge:
+		return s.toolReadKnowledge(ctx, userID, projectID, call)
 	default:
 		return refusedCall(call, fmt.Sprintf("%v: %s", ErrUnknownTool, call.Name))
 	}
@@ -119,7 +129,10 @@ func (s *Service) execute(
 func readOnlyTool(name string) bool {
 	switch name {
 	case ToolListEvents, ToolReadEvent, ToolReadEventParagraphs,
-		ToolReadComments, ToolListEntities, ToolReadEntity:
+		ToolReadComments, ToolListEntities, ToolReadEntity,
+		// Знания читаются и в общем чате проекта: обсуждение опирается на сохранённые
+		// решения, и запрещать их цитировать значило бы отвечать по памяти, которой у бота нет.
+		ToolListKnowledge, ToolReadKnowledge:
 		return true
 	default:
 		return false

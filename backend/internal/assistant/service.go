@@ -347,6 +347,10 @@ type Settings struct {
 	// ImageAvailable/ImageNote — состояние генератора на стенде (для строки «что умеет»).
 	ImageAvailable bool   `json:"image_available"`
 	ImageNote      string `json:"image_note"`
+	// RetentionDays — срок хранения бесед проекта (0 — не удалять). Здесь, а не в
+	// отдельной ручке: срок — часть «как ведёт себя помощник в этой истории», и второе
+	// окно настроек ради одного числа только запутало бы.
+	RetentionDays int `json:"retention_days"`
 }
 
 // GenerationOption — один режим генерации для интерфейса.
@@ -501,6 +505,7 @@ func (s *Service) ProjectSettings(ctx context.Context, userID, projectID uuid.UU
 		Generations:    s.generationOptions(ctx),
 		ImageAvailable: imageAvailable,
 		ImageNote:      imageNote,
+		RetentionDays:  stored.RetentionDays,
 	}
 	if preset, ok := ai.AgentRoleByID(stored.Role); ok {
 		out.RoleTitle = preset.Title
@@ -657,6 +662,10 @@ type Turn struct {
 	// Отдельным полем, а не внутри Proposals: там правка кадра, здесь пачка новых карточек, и
 	// общих полей у них нет ни одного.
 	EntityProposals []EntityProposalView `json:"entity_proposals,omitempty"`
+	// Knowledge — знания проекта, сохранённые в этом ходе (0.149.0). Интерфейс показывает
+	// их карточками сразу: «сохранил» должно быть видно, а не подтверждаться только словами
+	// модели в ответе.
+	Knowledge []KnowledgeView `json:"knowledge,omitempty"`
 }
 
 // Send отправляет вопрос модели и выполняет то, что она попросила.
@@ -691,7 +700,19 @@ func (s *Service) SendStreamImages(
 	ctx context.Context, userID, projectID, conversationID uuid.UUID, modelRef, text string,
 	images []string, emit Emitter,
 ) (*Turn, error) {
-	return s.send(ctx, userID, projectID, conversationID, modelRef, text, images, emit, nil)
+	return s.send(ctx, userID, projectID, conversationID, modelRef, text, images, emit, nil, nil)
+}
+
+// SendStreamKnowledge — тот же вопрос, но с приложенными знаниями проекта (0.149.0).
+//
+// Отдельным методом по той же причине, что и картинки: приложенные знания — не часть
+// обычного пути, и тащить аргумент через все вызовы (включая тесты) ради одного сценария
+// значит усложнить тот путь, которым пользуются каждый день.
+func (s *Service) SendStreamKnowledge(
+	ctx context.Context, userID, projectID, conversationID uuid.UUID, modelRef, text string,
+	knowledge []uuid.UUID, images []string, emit Emitter,
+) (*Turn, error) {
+	return s.send(ctx, userID, projectID, conversationID, modelRef, text, images, emit, nil, knowledge)
 }
 
 // Answer — короткий ответ текстом для общего чата проекта (0.95.0).
@@ -704,7 +725,8 @@ func (s *Service) SendStreamImages(
 // Своя беседа на каждый вопрос: чат — это разговор участников, и подмешивать в него историю
 // помощника из его окна значило бы отвечать то, что обсуждали в другом месте.
 func (s *Service) Answer(ctx context.Context, userID, projectID uuid.UUID, question string) (string, error) {
-	turn, err := s.send(ctx, userID, projectID, uuid.Nil, "", question, nil, nil, &Capabilities{ReadOnly: true})
+	turn, err := s.send(ctx, userID, projectID, uuid.Nil, "", question, nil, nil,
+		&Capabilities{ReadOnly: true}, nil)
 	if err != nil {
 		return "", err
 	}
@@ -715,7 +737,7 @@ func (s *Service) Answer(ctx context.Context, userID, projectID uuid.UUID, quest
 // получает «только чтение», не заводя вторую копию цикла «спросили → выполнили → спросили снова».
 func (s *Service) send(
 	ctx context.Context, userID, projectID, conversationID uuid.UUID, modelRef, text string,
-	images []string, emit Emitter, override *Capabilities,
+	images []string, emit Emitter, override *Capabilities, knowledge []uuid.UUID,
 ) (*Turn, error) {
 	if !s.Enabled() {
 		return nil, ErrDisabled
@@ -820,10 +842,23 @@ func (s *Service) send(
 		return nil, err
 	}
 
+	// Знания, приложенные к вопросу (0.149.0): проверяем ДО записи вопроса — если человек
+	// выбрал знание из чужого проекта (или его успели удалить), в истории не должно
+	// остаться вопроса без ответа.
+	attached, attachRefs, err := s.knowledgeForAttach(ctx, projectID, knowledge)
+	if err != nil {
+		return nil, err
+	}
+	var attachJSON json.RawMessage
+	if len(attachRefs) > 0 {
+		attachJSON = mustJSON(attachRefs)
+	}
+
 	// Вопрос записываем ДО ответа: если провайдер не ответит, история всё равно
 	// покажет, что человек спрашивал (иначе вопрос исчез бы вместе с ошибкой).
 	if _, err := s.store.AppendAIMessage(ctx, store.AIMessage{
 		ConversationID: conversation.ID, Role: "user", Content: text,
+		Knowledge: attachJSON,
 	}); err != nil {
 		return nil, err
 	}
@@ -853,7 +888,11 @@ func (s *Service) send(
 	messages = append(messages, history...)
 	// Картинки идут с вопросом человека и только с ним: в историю они не пишутся (см.
 	// SendStreamImages), а в этом запросе модель должна их видеть.
-	messages = append(messages, ai.Message{Role: "user", Content: text, Images: images})
+	// Знания — там же: блок прикладывается к вопросу, а не к системе, потому что это
+	// ДОВОД человека в этом разговоре, а не общие правила проекта.
+	messages = append(messages, ai.Message{
+		Role: "user", Content: text + KnowledgeBlock(attached), Images: images,
+	})
 
 	// Кадры помощник создаёт САМ: автором правок становится агент, а не человек,
 	// который нажал «спросить» (права при этом проверяются по человеку).
@@ -947,7 +986,11 @@ func (s *Service) history(ctx context.Context, conversationID uuid.UUID) ([]ai.M
 		content := truncateRunes(m.Content, historyMessageChars)
 		switch m.Role {
 		case "user":
-			out = append(out, ai.Message{Role: "user", Content: content})
+			// Приложенные знания (0.149.0) в историю ТЕКСТОМ не тащим — они могут быть
+			// длиннее самой переписки, а в этом разговоре уже не нужны. Но и совсем
+			// промолчать нельзя: через пять сообщений модель должна знать, что человек эти
+			// знания прикладывал, и уметь перечитать их инструментом.
+			out = append(out, ai.Message{Role: "user", Content: content + knowledgeNote(m.Knowledge)})
 		case "assistant":
 			if strings.TrimSpace(content) == "" {
 				continue
@@ -956,6 +999,31 @@ func (s *Service) history(ctx context.Context, conversationID uuid.UUID) ([]ai.M
 		}
 	}
 	return out, nil
+}
+
+// knowledgeNote — строка про знания, приложенные к прошлому вопросу (0.149.0).
+//
+// Ключи и подсказка вместо тел: полный текст возвращает read_knowledge. Так история
+// остаётся историей, а не второй копией всех приложенных знаний.
+func knowledgeNote(raw json.RawMessage) string {
+	if len(raw) == 0 || !json.Valid(raw) {
+		return ""
+	}
+	var refs []KnowledgeRef
+	if err := json.Unmarshal(raw, &refs); err != nil || len(refs) == 0 {
+		return ""
+	}
+	titles := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		if strings.TrimSpace(ref.Title) != "" {
+			titles = append(titles, ref.Title)
+		}
+	}
+	if len(titles) == 0 {
+		return ""
+	}
+	return "\n[к этому вопросу были приложены знания проекта: " + strings.Join(titles, "; ") +
+		" — полный текст можно прочитать инструментом read_knowledge]"
 }
 
 // historyMessageChars — сколько знаков одного сообщения истории отдавать модели (0.142.1).
@@ -1119,6 +1187,9 @@ func (s *Service) converse(
 			}
 			if res.entityProposal != nil {
 				turn.EntityProposals = append(turn.EntityProposals, EntityProposalDTO(*res.entityProposal))
+			}
+			if len(res.knowledge) > 0 {
+				turn.Knowledge = append(turn.Knowledge, res.knowledge...)
 			}
 			payload = append(payload, toolPayload{
 				ToolCallID: res.call.ID, Name: res.call.Name, Result: res.payload,

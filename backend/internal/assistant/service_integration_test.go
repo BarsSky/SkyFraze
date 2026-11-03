@@ -345,7 +345,8 @@ func setup(t *testing.T, replies ...ai.Reply) *env {
 	t.Helper()
 	pool := testdb.Setup(t, "assistant")
 	testdb.Truncate(t, pool,
-		"ai_messages", "ai_conversations", "ai_consents", "ai_user_keys", "project_ai_settings",
+		"ai_messages", "ai_conversations", "ai_knowledge", "ai_consents", "ai_user_keys",
+		"project_ai_settings",
 		"project_ratings", "project_views", "registration_requests", "app_settings",
 		"project_event_state", "sessions", "invitations", "event_assets", "assets",
 		"events", "team_memberships", "projects", "users")
@@ -556,11 +557,13 @@ func TestSendCreatesChapterInProjectionAndDocument(t *testing.T) {
 	// Запрос к модели: правила, оглавление проекта и инструменты. Смотрим ПЕРВЫЙ
 	// запрос: в последнем уже лежат результаты вызовов, а не вопрос человека.
 	req := e.stub.firstRequest()
-	// 12 = прежние 10 + абзацы кадра (read_event_paragraphs и update_event_paragraph, 0.143.0).
-	if len(req.Tools) != 12 {
-		t.Errorf("модели передано инструментов %d, ожидалось 12 (чтение дерева, кадра и абзацев, "+
+	// 15 = прежние 12 + знания (0.149.0): save_knowledge, list_knowledge, read_knowledge.
+	// Сохранение знаний — «меняющий» инструмент, и в этом тесте помощник работает не в
+	// режиме «только чтение», поэтому предложены все три.
+	if len(req.Tools) != 15 {
+		t.Errorf("модели передано инструментов %d, ожидалось 15 (чтение дерева, кадра и абзацев, "+
 			"обсуждение, создание, правка кадра и абзаца, правка даты, перенос по дереву, "+
-			"правка фрагмента, удаление)", len(req.Tools))
+			"правка фрагмента, удаление, знания)", len(req.Tools))
 	}
 	if !strings.Contains(req.Messages[0].Content, "Глава 1") {
 		t.Errorf("в контексте нет дерева проекта: %q", req.Messages[0].Content)

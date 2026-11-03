@@ -14,6 +14,8 @@ import {
 } from '../../api/chat'
 import { listEventRows } from '../../api/events'
 import { serverErrorMessage } from '../../api/client'
+import { KnowledgePicker, MAX_KNOWLEDGE_ATTACH } from '../assistant/KnowledgePicker'
+import type { AIKnowledgeBrief } from '../../api/assistant'
 import { copyText } from '../../lib/clipboard'
 import { onChatChanged } from '../../lib/chatEvents'
 import { useAuthStore } from '../../store/auth'
@@ -119,6 +121,14 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread, prefill
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [bot, setBot] = useState<ChatBotInfo>({ name: t('chat.botName'), available: false })
   const [text, setText] = useState('')
+  /**
+   * Знания проекта, приложенные к следующему сообщению (0.149.0).
+   *
+   * Зачем в общем чате: разговор участников часто идёт о том, «что мы решили раньше».
+   * Приложенное знание даёт Нестору эти решения текстом, а не пересказом в сообщении.
+   */
+  const [knowledge, setKnowledge] = useState<AIKnowledgeBrief[]>([])
+  const [knowledgePicker, setKnowledgePicker] = useState(false)
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
   const [askBot, setAskBot] = useState(false)
   const [linkId, setLinkId] = useState('')
@@ -420,6 +430,7 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread, prefill
     setBusy(true)
     setError(null)
     setNote(null)
+    const knowledgeToSend = knowledge
     try {
       const result = await postChat(projectId, {
         body,
@@ -427,19 +438,23 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread, prefill
         quote: quote.trim() || undefined,
         askBot,
         replyTo: replyTo?.id,
+        knowledge: knowledgeToSend.map((item) => item.id),
       })
       const added = result.reply ? [result.message, result.reply] : [result.message]
       setMessages((current) => [...current, ...added])
       lastIdRef.current = added[added.length - 1].id
       setText('')
       setReplyTo(null)
+      setKnowledge([])
       if (result.note) setNote(result.note)
     } catch (e) {
+      // Вложения возвращаем: сообщение не ушло, и выбирать знания заново никто не должен.
+      setKnowledge(knowledgeToSend)
       setError(await explain(e))
     } finally {
       setBusy(false)
     }
-  }, [askBot, busy, linkId, projectId, quote, replyTo, text])
+  }, [askBot, busy, knowledge, linkId, projectId, quote, replyTo, text])
 
   return (
     <div className="chat" data-project-chat>
@@ -551,6 +566,17 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread, prefill
               </div>
             ) : (
               <p className="chat__body">{message.body}</p>
+            )}
+            {/* Приложенные знания (0.149.0): карточки под текстом. Заголовок — снимок из
+                сообщения, поэтому карточка читается и после удаления знания. */}
+            {(message.knowledge?.length ?? 0) > 0 && (
+              <div className="chat__knowledge" data-chat-knowledge={message.id}>
+                {message.knowledge?.map((item) => (
+                  <span className="ai-knowledge-chip" key={item.id} title={item.title}>
+                    <span className="ai-knowledge-chip__title">{item.title}</span>
+                  </span>
+                ))}
+              </div>
             )}
             {message.event_id !== undefined && (
               <button
@@ -763,8 +789,50 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread, prefill
           <button type="button" onClick={() => void send()} disabled={busy || text.trim() === ''} data-chat-send>
             {busy ? t('chat.sending') : t('chat.send')}
           </button>
+          {/* Знания проекта (0.149.0): приложить выводы к сообщению — Нестор ответит по ним,
+              а не по пересказу в тексте. */}
+          <button
+            type="button"
+            className="secondary"
+            onClick={() => setKnowledgePicker(true)}
+            disabled={busy || knowledge.length >= MAX_KNOWLEDGE_ATTACH}
+            title={t('chat.knowledgeTitle')}
+            data-chat-knowledge-button
+          >
+            {t('chat.knowledgeButton')}
+            {knowledge.length > 0 && <span className="ai-history__count">{knowledge.length}</span>}
+          </button>
         </div>
+        {knowledge.length > 0 && (
+          <div className="ai-attach ai-attach--knowledge" data-chat-knowledge-attach>
+            {knowledge.map((item) => (
+              <span className="ai-knowledge-chip" key={item.id}>
+                <span className="ai-knowledge-chip__title">{item.title}</span>
+                <button
+                  type="button"
+                  className="ai-attach__remove"
+                  aria-label={t('as.removeKnowledge', { title: item.title })}
+                  onClick={() =>
+                    setKnowledge((current) => current.filter((known) => known.id !== item.id))
+                  }
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
       </div>
+      <KnowledgePicker
+        projectId={projectId}
+        open={knowledgePicker}
+        onClose={() => setKnowledgePicker(false)}
+        selected={knowledge}
+        onConfirm={(items) => {
+          setKnowledge(items)
+          setKnowledgePicker(false)
+        }}
+      />
     </div>
   )
 }

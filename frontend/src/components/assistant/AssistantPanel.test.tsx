@@ -42,6 +42,8 @@ const mocks = vi.hoisted(() => ({
   /** Удаление беседы и очистка истории (0.148.0). */
   deleteConversation: vi.fn(),
   clearConversations: vi.fn(),
+  /** Знания проекта (0.149.0): список для окна выбора. */
+  listKnowledge: vi.fn(),
   discardProposal: vi.fn(),
 }))
 
@@ -69,6 +71,7 @@ vi.mock('../../api/assistant', async () => {
     getAIConversation: mocks.conversation,
     deleteAIConversation: mocks.deleteConversation,
     clearAIConversations: mocks.clearConversations,
+    listAIKnowledge: mocks.listKnowledge,
     listAIEndpoints: mocks.endpoints,
     addAIEndpoint: mocks.addEndpoint,
     deleteAIEndpoint: mocks.deleteEndpoint,
@@ -174,6 +177,7 @@ const AGENT: AISettings = {
   ],
   imageAvailable: false,
   imageNote: 'генератор изображений не настроен (AI_IMAGE_URL)',
+  retentionDays: 0,
 }
 
 /** Панель всегда живёт внутри окна: по умолчанию считаем его открытым. */
@@ -221,6 +225,7 @@ beforeEach(() => {
   mocks.discardProposal.mockResolvedValue(undefined)
   mocks.addEndpoint.mockResolvedValue(null)
   mocks.deleteEndpoint.mockResolvedValue(undefined)
+  mocks.listKnowledge.mockResolvedValue([])
 })
 
 afterEach(() => cleanup())
@@ -650,6 +655,79 @@ describe('AssistantPanel', () => {
     })
     // После отправки превью исчезает: картинка была для одного вопроса, а не «навсегда».
     await waitFor(() => expect(document.querySelector('[data-assistant-attach]')).toBeNull())
+  })
+
+  /**
+   * Знания проекта (0.149.0).
+   *
+   * Проверяем главное: приложенное знание уходит с вопросом ТОЛЬКО идентификатором (тела
+   * знает сервер), его состав виден до отправки, а сохранённое помощником знание показано
+   * карточкой, а не спрятано в тексте ответа.
+   */
+  it('прикладывает знание к вопросу и показывает его состав', async () => {
+    mocks.config.mockResolvedValue(LOCAL)
+    mocks.models.mockResolvedValue([
+      { id: 'qwen2.5:7b', ref: 'ollama:qwen2.5:7b', provider: 'ollama', title: 'qwen2.5:7b', free: true, local: true, tools: true },
+    ])
+    mocks.listKnowledge.mockResolvedValue([
+      {
+        id: 'k1',
+        title: 'Решения по миру',
+        summary: 'драконы спят',
+        chars: 13,
+        authorName: 'Автор',
+        createdAt: '2026-01-01T00:00:00Z',
+        updatedAt: '2026-01-01T00:00:00Z',
+      },
+    ])
+    mocks.stream.mockResolvedValue(TURN)
+    renderPanel()
+
+    const input = (await screen.findByLabelText('Сообщение помощнику')) as HTMLTextAreaElement
+    await waitFor(() => expect(input.disabled).toBe(false))
+
+    fireEvent.click(screen.getByRole('button', { name: /Знания/ }))
+    const checkbox = (await waitFor(() => {
+      const found = document.querySelector('[data-knowledge-picker-item="k1"]') as HTMLInputElement | null
+      expect(found).not.toBeNull()
+      return found as HTMLInputElement
+    })) as HTMLInputElement
+    fireEvent.click(checkbox)
+    fireEvent.click(screen.getByRole('button', { name: 'Приложить' }))
+
+    // Состав виден до отправки: «какие выводы уйдут модели» — не догадка.
+    expect(await screen.findByText('Решения по миру')).toBeTruthy()
+    fireEvent.change(input, { target: { value: 'Что решили в марте?' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Спросить' }))
+
+    await waitFor(() => {
+      const options = mocks.stream.mock.calls[0]?.[4] as { knowledge?: string[] } | undefined
+      expect(options?.knowledge).toEqual(['k1'])
+    })
+    // После отправки вложения очищаются: они относились к этому вопросу.
+    await waitFor(() => expect(document.querySelector('[data-assistant-knowledge]')).toBeNull())
+  })
+
+  it('показывает сохранённое помощником знание карточкой', async () => {
+    mocks.config.mockResolvedValue(LOCAL)
+    mocks.models.mockResolvedValue([
+      { id: 'qwen2.5:7b', ref: 'ollama:qwen2.5:7b', provider: 'ollama', title: 'qwen2.5:7b', free: true, local: true, tools: true },
+    ])
+    mocks.stream.mockResolvedValue({
+      ...TURN,
+      knowledge: [{ id: 'k9', title: 'Выводы беседы', summary: 'главное', chars: 42, createdAt: '' }],
+    })
+    renderPanel()
+
+    const input = (await screen.findByLabelText('Сообщение помощнику')) as HTMLTextAreaElement
+    await waitFor(() => expect(input.disabled).toBe(false))
+    fireEvent.change(input, { target: { value: 'Сохрани выводы' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Спросить' }))
+
+    expect(await screen.findByText('Сохранено в знания')).toBeTruthy()
+    const card = document.querySelector('[data-assistant-knowledge-saved]')
+    expect(card).not.toBeNull()
+    expect(card?.textContent).toContain('Выводы беседы')
   })
 
   it('объясняет, почему файл не прикрепился', async () => {

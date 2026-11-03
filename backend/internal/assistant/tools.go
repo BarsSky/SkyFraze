@@ -62,6 +62,14 @@ const (
 	// должен быть коротким, а контекст она набирает повторными вызовами.
 	ToolReadEventParagraphs = "read_event_paragraphs"
 	ToolUpdateParagraph     = "update_event_paragraph"
+
+	// Знания проекта (0.149.0). save_knowledge — то, ради чего беседу можно удалять:
+	// модель укладывает выводы в знание (или несколько, если в предел не влезло), и оно
+	// остаётся у проекта, пока беседа стареет. list/read — чтобы знаниями можно было
+	// пользоваться в следующих вопросах, не пересказывая их человеку заново.
+	ToolSaveKnowledge = "save_knowledge"
+	ToolListKnowledge = "list_knowledge"
+	ToolReadKnowledge = "read_knowledge"
 )
 
 // ErrUnknownTool — модель попросила инструмент, которого нет. Это не падение сервера:
@@ -391,6 +399,68 @@ func ToolDefs(caps Capabilities, editing, world, worldWrite bool, entityKinds []
 					},
 				},
 				"required": []string{"event_id", "prompt"},
+			},
+		})
+	}
+
+	// Знания проекта (0.149.0). Чтение доступно всегда — оно не меняет ни проект, ни
+	// знания; сохранение только там, где человек вообще может писать. В общем чате
+	// проекта (`caps.ReadOnly`) агент знаниями пользуется, но не создаёт: участники
+	// обсуждают, а «Нестор по пути завёл знание» — такая же неожиданность, как правка
+	// главы из обсуждения.
+	defs = append(defs, ai.ToolDef{
+		Name: ToolListKnowledge,
+		Description: "Показать сохранённые знания проекта: заголовок, пометку «о чём это», " +
+			"размер и дату. Вызывай, когда человек ссылается на «то, что мы решили раньше», " +
+			"или ПЕРЕД сохранением нового знания — чтобы не завести дубль.",
+		Parameters: map[string]any{
+			"type":       "object",
+			"properties": map[string]any{},
+		},
+	}, ai.ToolDef{
+		Name: ToolReadKnowledge,
+		Description: "Прочитать знание проекта целиком по идентификатору из list_knowledge. " +
+			"Приложенные к вопросу знания уже видны в тексте вопроса — их читать не нужно.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"id": map[string]any{"type": "string", "description": "Идентификатор знания из list_knowledge"},
+			},
+			"required": []string{"id"},
+		},
+	})
+	if !caps.ReadOnly && caps.Text {
+		defs = append(defs, ai.ToolDef{
+			Name: ToolSaveKnowledge,
+			Description: fmt.Sprintf("Сохранить выводы беседы как знание проекта. Вызывай, когда человек "+
+				"просит сохранить итоги, решения, договорённости — то, что должно остаться после "+
+				"удаления переписки. Уложи в тезисы: что решили, что выяснили, что важно помнить. "+
+				"Предел одного знания — %d знаков. Если всё не влезает, разбей на несколько знаний "+
+				"по группам (темам, главам, линиям героев) и передай их одной пачкой: не начинай "+
+				"второй разговор ради второй части. Заголовок — короткая строка, summary — одна-две "+
+				"строки о содержании: по ним человек ищет знания в списке.", MaxKnowledgeChars),
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"entries": map[string]any{
+						"type":        "array",
+						"description": fmt.Sprintf("Знания, которые нужно сохранить (не больше %d)", MaxKnowledgeEntries),
+						"items": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"title": map[string]any{"type": "string", "description": fmt.Sprintf(
+									"Заголовок знания: о чём оно, до %d знаков", MaxKnowledgeTitle)},
+								"summary": map[string]any{"type": "string", "description": fmt.Sprintf(
+									"Пометка для списка: одна-две строки о содержании, до %d знаков",
+									MaxKnowledgeSummary)},
+								"body": map[string]any{"type": "string", "description": fmt.Sprintf(
+									"Тезисы в Markdown, до %d знаков", MaxKnowledgeChars)},
+							},
+							"required": []string{"title", "body"},
+						},
+					},
+				},
+				"required": []string{"entries"},
 			},
 		})
 	}
@@ -751,6 +821,11 @@ type Limits struct {
 	// MaxReasonChars — предел на «зачем эта правка»: это подпись для человека, а не
 	// место для рассуждений модели.
 	MaxReasonChars int
+	// KnowledgeChars — предел знаков одного знания (0 — MaxKnowledgeChars). Отдельным
+	// полем, чтобы тесты проверяли разбиение на коротком пределе, а не на 4 000 знаков.
+	KnowledgeChars int
+	// KnowledgeEntries — сколько знаний можно сохранить одной пачкой.
+	KnowledgeEntries int
 }
 
 // DefaultLimits — пределы по умолчанию. Значения подобраны так, чтобы помощник был
@@ -773,6 +848,8 @@ func DefaultLimits(maxToolCalls int) Limits {
 		MaxHistory:          20,
 		MaxImagePromptChars: 2000,
 		MaxReasonChars:      200,
+		KnowledgeChars:      MaxKnowledgeChars,
+		KnowledgeEntries:    MaxKnowledgeEntries,
 	}
 }
 
@@ -1010,6 +1087,52 @@ func ParseEntityProposal(args map[string]any) (EntityProposalArgs, error) {
 	}
 	out.Note = strings.TrimSpace(argString(args, "note"))
 	return out, nil
+}
+
+// ParseSaveKnowledge разбирает аргументы save_knowledge.
+//
+// Терпимость к форме здесь намеренная. Маленькие модели (gemma E4B) при вызове с массивом
+// регулярно присылают либо один объект вместо массива, либо один объект в корне без
+// `entries` — и «нужен список» в ответ на «сохрани выводы» выглядит как отказ, хотя
+// человек попросил понятную вещь. Принимаем все три формы, а предел знака проверяет
+// сервис — разбор только структура.
+func ParseSaveKnowledge(args map[string]any) ([]KnowledgeInput, error) {
+	entries := make([]KnowledgeInput, 0, 4)
+	appendEntry := func(item map[string]any) {
+		entries = append(entries, KnowledgeInput{
+			Title:   argString(item, "title"),
+			Summary: argString(item, "summary"),
+			Body:    argString(item, "body"),
+		})
+	}
+	raw, has := args["entries"]
+	switch value := raw.(type) {
+	case []any:
+		if len(value) == 0 {
+			return nil, errors.New("entries пуст — сохранять нечего")
+		}
+		for index, item := range value {
+			entry, isEntry := item.(map[string]any)
+			if !isEntry {
+				return nil, fmt.Errorf("знание №%d: ожидался объект с полями title, summary, body", index+1)
+			}
+			appendEntry(entry)
+		}
+	case map[string]any:
+		// Один объект вместо пачки — частая ошибка, и она безвредна.
+		appendEntry(value)
+	default:
+		if !has {
+			// Ещё одна форма: title/body прямо в корне.
+			appendEntry(args)
+		} else {
+			return nil, errors.New("entries должен быть списком знаний")
+		}
+	}
+	if len(entries) == 0 {
+		return nil, errors.New("не передано ни одного знания")
+	}
+	return entries, nil
 }
 
 // argStrings читает массив строк из аргументов инструмента. Не-строки пропускаются: модель

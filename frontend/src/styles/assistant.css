@@ -34,6 +34,9 @@
 .ai-window {
   display: flex;
   flex-direction: column;
+  /* position: relative — точка отсчёта для окна выбора знаний (0.149.0): оно лежит поверх
+     окна помощника, а не поверх всей страницы. */
+  position: relative;
   width: min(420px, calc(100vw - 32px));
   /* vh, а не dvh: в браузерах без динамических единиц объявление с dvh отбрасывается
      целиком, и окно теряет высоту (правило проекта — основное на vh, апгрейд в @supports). */
@@ -61,6 +64,9 @@
   display: flex;
   align-items: center;
   gap: 4px;
+  /* Три вкладки + «шире» + крестик уже не помещаются в 320px одной строкой: разрешаем
+     перенос, иначе крестик уезжал бы за край (0.149.0). */
+  flex-wrap: wrap;
   padding: 6px 8px 0;
   border-bottom: 1px solid var(--border);
   background: color-mix(in srgb, var(--bg-elev) 92%, var(--accent) 8%);
@@ -1078,3 +1084,303 @@
   .ai-fab:hover { transform: none; }
   .ai-fab__pulse { animation: none; }
 }
+
+/* ── Знания проекта (0.149.0) ──────────────────────────────────────────────
+   Знание — то, что остаётся после беседы. Поэтому у него отдельная вкладка, свой
+   список и свои карточки, а не «длинное сообщение в переписке». */
+
+/* Широкое окно: на большом экране 420px тесны для переписки и карточек. Кнопка
+   переключения есть только там, где есть куда расширяться (см. медиазапрос ниже). */
+.ai-window--wide {
+  width: min(680px, calc(100vw - 48px));
+  height: min(760px, calc(100vh - 120px));
+}
+
+.ai-window__wide {
+  margin: 0 4px 0 auto;
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.ai-window__wide:hover { color: var(--fg); border-color: var(--border); background: var(--chip-bg); }
+.ai-window__wide:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* На телефоне расширять нечего: окно и так почти во всю ширину. */
+@media (max-width: 720px) {
+  .ai-window__wide { display: none; }
+}
+
+.knowledge {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 10px;
+  overflow-y: auto;
+}
+
+.knowledge__head {
+  display: flex;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.knowledge__search {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 13px;
+}
+
+.knowledge__retention {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--chip-bg);
+}
+
+.knowledge__retention-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--fg);
+}
+
+.knowledge__retention-label select {
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 12px;
+}
+
+.knowledge__hint { font-size: 11px; color: var(--fg-muted); }
+
+.knowledge__form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.knowledge__form input,
+.knowledge__form textarea {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-elev);
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+}
+
+.knowledge__form textarea { resize: vertical; min-height: 90px; }
+
+.knowledge__form-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.knowledge__counter { font-size: 11px; color: var(--fg-muted); }
+.knowledge__counter.is-over { color: var(--danger, #d9534f); }
+
+.knowledge__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.knowledge__item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev);
+}
+
+.knowledge__open {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--fg);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.knowledge__open:hover { color: var(--accent); }
+.knowledge__open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+
+.knowledge__summary {
+  margin: 0;
+  font-size: 12px;
+  color: var(--fg-muted);
+  /* Пометка — две строки: список должен оставаться списком, а не разворотом знаний. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.knowledge__meta { font-size: 11px; color: var(--fg-muted); }
+
+.knowledge__actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+
+.knowledge__view {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--bg);
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.knowledge__view-title { margin: 0; font-size: 15px; }
+.knowledge__view-summary { margin: 0; font-size: 12px; color: var(--fg-muted); }
+.knowledge__view-body { font-size: 13px; }
+.knowledge__view-foot { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+/* Карточки приложенных знаний — в поле ввода и под сообщением. */
+.ai-attach--knowledge { align-items: center; }
+.ai-attach__caption { font-size: 11px; color: var(--fg-muted); }
+
+.ai-knowledge-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 2px 4px 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--chip-bg);
+  font-size: 12px;
+  color: var(--fg);
+}
+
+.ai-knowledge-chip__title {
+  max-width: 190px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ai-msg__knowledge { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+
+.ai-knowledge-saved__title { font-size: 13px; }
+.ai-knowledge-saved__meta { font-size: 11px; color: var(--fg-muted); margin-left: 6px; }
+
+.chat__knowledge { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+
+/* Выбор знаний: окно поверх окна. На телефоне список прокручивается, кнопки — внизу. */
+.knowledge-picker {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.knowledge-picker__box {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: min(440px, 100%);
+  max-height: 100%;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-elev);
+  min-height: 0;
+}
+
+.knowledge-picker__head { display: flex; align-items: center; gap: 6px; }
+.knowledge-picker__title { margin: 0; font-size: 14px; flex: 1 1 auto; }
+
+.knowledge-picker__close {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.knowledge-picker__close:hover { color: var(--fg); border-color: var(--border); }
+
+.knowledge-picker__box input[type='search'] {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 13px;
+}
+
+.knowledge-picker__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow-y: auto;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.knowledge-picker__row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.knowledge-picker__row.is-picked { border-color: var(--accent); background: var(--chip-bg); }
+.knowledge-picker__text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.knowledge-picker__name { font-size: 13px; }
+.knowledge-picker__summary { font-size: 11px; color: var(--fg-muted); }
+.knowledge-picker__foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }

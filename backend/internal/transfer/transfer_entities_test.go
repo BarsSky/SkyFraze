@@ -38,6 +38,7 @@ func setupTransfer(t *testing.T) *transferEnv {
 		"project_entities", "login_audit", "webauthn_challenges", "user_webauthn_credentials",
 		"user_recovery_codes", "user_totp", "comment_notifications", "comment_views",
 		"event_comments", "project_revisions", "ai_changes", "ai_messages", "ai_conversations",
+		"ai_knowledge",
 		"project_event_state", "project_ratings", "project_views", "sessions",
 		"invitations", "event_assets", "assets", "events", "team_memberships",
 		"projects", "users")

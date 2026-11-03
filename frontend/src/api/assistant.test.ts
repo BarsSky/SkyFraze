@@ -8,23 +8,30 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
  * согласие требуется только для НЕлокального провайдера, а «что изменилось» берётся
  * из `changes` сервера, а не из текста модели.
  */
-const mocks = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), del: vi.fn() }))
+const mocks = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), put: vi.fn(), del: vi.fn() }))
 
-vi.mock('./client', () => ({ http: { get: mocks.get, post: mocks.post, delete: mocks.del } }))
+vi.mock('./client', () => ({
+  http: { get: mocks.get, post: mocks.post, put: mocks.put, delete: mocks.del },
+}))
 
 import {
   addAIEndpoint,
   applyAIEntityProposal,
   applyAIProposal,
   changeLabel,
+  createAIKnowledge,
   deleteAIConsent,
   deleteAIEndpoint,
+  deleteAIKnowledge,
   discardAIEntityProposal,
   discardAIProposal,
   getAIConfig,
+  getAIKnowledge,
   isCloudModelRef,
+  keepAIConversation,
   listAIEndpoints,
   listAIEntityProposals,
+  listAIKnowledge,
   listAIModels,
   listAIProposals,
   needsConsent,
@@ -39,7 +46,9 @@ import {
   saveAIKey,
   sendAIMessage,
   setAIConsent,
+  setAIRetention,
   streamAIMessage,
+  updateAIKnowledge,
   type AIConfig,
 } from './assistant'
 
@@ -50,6 +59,7 @@ function reply(body: unknown, headers: Record<string, string> = {}) {
 beforeEach(() => {
   mocks.get.mockReset()
   mocks.post.mockReset()
+  mocks.put.mockReset()
   mocks.del.mockReset()
 })
 
@@ -447,7 +457,9 @@ describe('запросы', () => {
     mocks.post.mockReturnValueOnce(reply({ answer: 'готово', conversation_id: 'c9' }))
     const turn = await sendAIMessage('p1', 'new', 'Привет', 'groq:llama')
     expect(mocks.post).toHaveBeenCalledWith('projects/p1/ai/conversations/new/messages', {
-      json: { text: 'Привет', model: 'groq:llama' },
+      // knowledge: [] — «вложений нет» явным пустым списком (0.149.0): сервер не должен
+      // различать «поля нет» и «ничего не приложено».
+      json: { text: 'Привет', model: 'groq:llama', knowledge: [] },
       timeout: 300000,
     })
     expect(turn.answer).toBe('готово')
@@ -741,5 +753,133 @@ describe('streamAIMessage', () => {
     ).rejects.toThrow(/не дописала/)
     expect(drafts.join('')).toBe('Новый первый абзац и вдруг')
     expect(truncated).toBe(true)
+  })
+})
+
+/**
+ * Знания проекта (0.149.0).
+ *
+ * Запросы отдельные, потому что знания живут дольше беседы: их список, поиск, правка и
+ * срок хранения — своя ручка, и «сохранить в знание» не должно идти через беседу.
+ */
+describe('знания проекта', () => {
+  const brief = {
+    id: 'k1',
+    title: 'Решения по миру',
+    summary: 'драконы спят',
+    chars: 120,
+    author_name: 'Нестор',
+    created_at: '2026-03-01T10:00:00Z',
+    updated_at: '2026-03-01T10:00:00Z',
+  }
+
+  it('поиск знаний уходит на сервер параметром q', async () => {
+    mocks.get.mockReturnValueOnce(reply({ knowledge: [brief] }))
+    const list = await listAIKnowledge('p1', ' драконы ')
+    expect(mocks.get).toHaveBeenCalledWith('projects/p1/ai/knowledge?q=%D0%B4%D1%80%D0%B0%D0%BA%D0%BE%D0%BD%D1%8B')
+    expect(list).toHaveLength(1)
+    expect(list[0].title).toBe('Решения по миру')
+    expect(list[0].chars).toBe(120)
+    // Тела в списке нет: его читают при открытии.
+    expect((list[0] as unknown as { body?: string }).body).toBeUndefined()
+  })
+
+  it('одно знание читается с телом, а правка и удаление — своими методами', async () => {
+    mocks.get.mockReturnValueOnce(reply({ ...brief, body: 'драконы спят до весны' }))
+    const item = await getAIKnowledge('p1', 'k1')
+    expect(mocks.get).toHaveBeenCalledWith('projects/p1/ai/knowledge/k1')
+    expect(item.body).toBe('драконы спят до весны')
+
+    mocks.post.mockReturnValueOnce(reply(brief))
+    await createAIKnowledge('p1', { title: 'Решения по миру', summary: 'драконы спят', body: 'текст' })
+    expect(mocks.post).toHaveBeenCalledWith('projects/p1/ai/knowledge', {
+      json: { title: 'Решения по миру', summary: 'драконы спят', body: 'текст' },
+    })
+
+    mocks.put.mockReturnValueOnce(reply({ ...brief, title: 'Новое' }))
+    const updated = await updateAIKnowledge('p1', 'k1', { title: 'Новое', summary: '', body: 'т' })
+    expect(mocks.put).toHaveBeenCalledWith('projects/p1/ai/knowledge/k1', {
+      json: { title: 'Новое', summary: '', body: 'т' },
+    })
+    expect(updated.title).toBe('Новое')
+
+    mocks.del.mockReturnValueOnce(reply({}))
+    await deleteAIKnowledge('p1', 'k1')
+    expect(mocks.del).toHaveBeenCalledWith('projects/p1/ai/knowledge/k1')
+  })
+
+  it('срок хранения и «не удалять беседу» — свои ручки', async () => {
+    mocks.put.mockReturnValueOnce(
+      reply({
+        agent_name: 'Нестор',
+        agent_id: 'a1',
+        role: '',
+        role_title: '',
+        role_hint: '',
+        instructions: '',
+        enabled: true,
+        can_edit: true,
+        member: true,
+        roles: [],
+        generation: 'auto',
+        image_style: '',
+        image_negative: '',
+        retention_days: 30,
+        capabilities: { text: true, images: false, generation: 'auto', image_note: '' },
+        generations: [],
+        image_available: false,
+        image_note: '',
+      }),
+    )
+    const settings = await setAIRetention('p1', 30)
+    expect(mocks.put).toHaveBeenCalledWith('projects/p1/ai/retention', { json: { days: 30 } })
+    expect(settings.retentionDays).toBe(30)
+
+    mocks.post.mockReturnValueOnce(reply({}))
+    await keepAIConversation('p1', 'c1', true)
+    expect(mocks.post).toHaveBeenCalledWith('projects/p1/ai/conversations/c1/keep', {
+      json: { kept: true },
+    })
+  })
+
+  it('вложения знаний разбираются в сообщении и в итоге ответа', () => {
+    const turn = parseAITurn({
+      conversation_id: 'c1',
+      answer: 'готово',
+      model: 'llama',
+      message: {
+        id: 'm2',
+        role: 'user',
+        content: 'вопрос',
+        created_at: '',
+        knowledge: [{ id: 'k1', title: 'Решения по миру' }],
+      },
+      knowledge: [{ id: 'k9', title: 'Выводы', summary: 'главное', chars: 42, created_at: '' }],
+    })
+    expect(turn.message.knowledge).toEqual([{ id: 'k1', title: 'Решения по миру' }])
+    expect(turn.knowledge?.[0].id).toBe('k9')
+    expect(turn.knowledge?.[0].chars).toBe(42)
+  })
+
+  it('поток несёт приложенные знания идентификаторами', async () => {
+    const encoder = new TextEncoder()
+    let served = false
+    mocks.post.mockReturnValueOnce({
+      body: {
+        getReader: () => ({
+          read: async () => {
+            if (served) return { done: true, value: undefined }
+            served = true
+            return {
+              done: false,
+              value: encoder.encode('data: {"type":"done","turn":{"answer":"ок","conversation_id":"c1"}}\n\n'),
+            }
+          },
+        }),
+      },
+    })
+    await streamAIMessage('p1', 'new', 'Что решили?', 'groq:llama', { knowledge: ['k1', 'k2'] })
+    const options = mocks.post.mock.calls[0]?.[1] as { json?: { knowledge?: string[] } }
+    expect(options.json?.knowledge).toEqual(['k1', 'k2'])
   })
 })

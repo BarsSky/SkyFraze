@@ -81,6 +81,9 @@ type AIConversation struct {
 	UserID    uuid.UUID `db:"user_id" json:"user_id"`
 	Title     string    `db:"title" json:"title"`
 	Model     string    `db:"model" json:"model"`
+	// Kept — «не удалять эту беседу» (0.149.0). Автоочистка по сроку хранения обходит
+	// такие беседы: человек уже сказал, что они ему нужны.
+	Kept      bool      `db:"kept" json:"kept"`
 	CreatedAt time.Time `db:"created_at" json:"created_at"`
 	UpdatedAt time.Time `db:"updated_at" json:"updated_at"`
 }
@@ -105,12 +108,16 @@ type AIMessage struct {
 	// Stopped — ответ оборван человеком (кнопка «стоп»). Отдельным полем, а не
 	// пометкой в тексте: история уходит модели, и служебная приписка в ней выглядела
 	// бы как часть ответа. Интерфейс по этому признаку говорит «остановлено».
-	Stopped   bool      `db:"stopped" json:"stopped"`
-	CreatedAt time.Time `db:"created_at" json:"created_at"`
+	Stopped bool `db:"stopped" json:"stopped"`
+	// Knowledge — знания проекта, приложенные к реплике (0.149.0):
+	// [{"id": "...", "title": "..."}]. Это снимок, а не ссылка: знание могут переименовать
+	// или удалить, а сообщение обязано остаться читаемым и не превращаться в пустую карточку.
+	Knowledge json.RawMessage `db:"knowledge" json:"knowledge"`
+	CreatedAt time.Time       `db:"created_at" json:"created_at"`
 }
 
 const aiMessageColumns = `id, conversation_id, role, content, tool_calls, tool_results,
-	model, tokens_in, tokens_out, stopped, created_at`
+	model, tokens_in, tokens_out, stopped, knowledge, created_at`
 
 // CreateAIConversation заводит беседу. Пустой заголовок — нормально: его поставит
 // первый вопрос человека (обрезанный), чтобы список бесед не был списком «Новая беседа».
@@ -120,7 +127,7 @@ func (s *Store) CreateAIConversation(
 	return qOne[AIConversation](ctx, s.Pool,
 		`INSERT INTO ai_conversations (project_id, user_id, title, model)
 		 VALUES ($1, $2, $3, $4)
-		 RETURNING id, project_id, user_id, title, model, created_at, updated_at`,
+		 RETURNING id, project_id, user_id, title, model, kept, created_at, updated_at`,
 		projectID, userID, strings.TrimSpace(title), strings.TrimSpace(model))
 }
 
@@ -129,7 +136,7 @@ func (s *Store) ListAIConversations(
 	ctx context.Context, projectID, userID uuid.UUID,
 ) ([]AIConversation, error) {
 	return qAll[AIConversation](ctx, s.Pool,
-		`SELECT id, project_id, user_id, title, model, created_at, updated_at
+		`SELECT id, project_id, user_id, title, model, kept, created_at, updated_at
 		   FROM ai_conversations
 		  WHERE project_id=$1 AND user_id=$2
 		  ORDER BY updated_at DESC`, projectID, userID)
@@ -141,7 +148,7 @@ func (s *Store) AIConversationByID(
 	ctx context.Context, id, userID uuid.UUID,
 ) (*AIConversation, error) {
 	return qOne[AIConversation](ctx, s.Pool,
-		`SELECT id, project_id, user_id, title, model, created_at, updated_at
+		`SELECT id, project_id, user_id, title, model, kept, created_at, updated_at
 		   FROM ai_conversations WHERE id=$1 AND user_id=$2`, id, userID)
 }
 
@@ -197,13 +204,15 @@ func (s *Store) RenameAIConversation(ctx context.Context, id uuid.UUID, title st
 func (s *Store) AppendAIMessage(ctx context.Context, m AIMessage) (*AIMessage, error) {
 	toolCalls := rawJSONOrEmpty(m.ToolCalls)
 	toolResults := rawJSONOrEmpty(m.ToolResults)
+	knowledge := rawJSONOrEmpty(m.Knowledge)
 	return qOne[AIMessage](ctx, s.Pool,
 		`INSERT INTO ai_messages
-		   (conversation_id, role, content, tool_calls, tool_results, model, tokens_in, tokens_out, stopped)
-		 VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7, $8, $9)
+		   (conversation_id, role, content, tool_calls, tool_results, model, tokens_in, tokens_out,
+		    stopped, knowledge)
+		 VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7, $8, $9, $10::jsonb)
 		 RETURNING `+aiMessageColumns,
 		m.ConversationID, m.Role, m.Content, string(toolCalls), string(toolResults),
-		m.Model, m.TokensIn, m.TokensOut, m.Stopped)
+		m.Model, m.TokensIn, m.TokensOut, m.Stopped, string(knowledge))
 }
 
 // ListAIMessages — история беседы по порядку. limit ограничивает выборку с конца:
@@ -313,7 +322,11 @@ type ProjectAISettings struct {
 	// Почему это настройка ПРОЕКТА, а не стенда: «текст и водяные знаки» — общее правило, но
 	// «современная одежда», «люди вообще», «оружие» — часть замысла книги. Админ стенда о нём
 	// не знает, а автор меняет его по ходу работы.
-	ImageNegative string     `db:"image_negative" json:"image_negative"`
+	ImageNegative string `db:"image_negative" json:"image_negative"`
+	// RetentionDays — сколько дней хранить беседы проекта (0 — не удалять). 0.149.0:
+	// история растёт быстрее, чем её читают, и срок удаления — настройка ВЛАДЕЛЬЦА
+	// истории, а не личная: беседы соавторов по одному проекту стареют вместе.
+	RetentionDays int        `db:"retention_days" json:"retention_days"`
 	UpdatedAt     time.Time  `db:"updated_at" json:"updated_at"`
 	UpdatedBy     *uuid.UUID `db:"updated_by" json:"updated_by,omitempty"`
 }
@@ -324,7 +337,7 @@ type ProjectAISettings struct {
 func (s *Store) AISettingsForProject(ctx context.Context, projectID uuid.UUID) (*ProjectAISettings, error) {
 	settings, err := qOne[ProjectAISettings](ctx, s.Pool,
 		`SELECT project_id, role, instructions, enabled, generation, image_style, image_negative,
-		        updated_at, updated_by
+		        retention_days, updated_at, updated_by
 		   FROM project_ai_settings WHERE project_id=$1`, projectID)
 	if errors.Is(err, ErrNotFound) {
 		return &ProjectAISettings{
@@ -381,6 +394,6 @@ func (s *Store) SaveAISettings(
 		        updated_at = now(),
 		        updated_by = EXCLUDED.updated_by
 		 RETURNING project_id, role, instructions, enabled, generation, image_style, image_negative,
-		           updated_at, updated_by`,
+		           retention_days, updated_at, updated_by`,
 		projectID, role, instructions, enabled, generation, imageStyle, imageNegative, by)
 }

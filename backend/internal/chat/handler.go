@@ -108,6 +108,9 @@ type postInput struct {
 	Quote   string  `json:"quote"`
 	AskBot  bool    `json:"ask_bot"`
 	ReplyTo string  `json:"reply_to"`
+	// Knowledge — знания проекта, приложенные к сообщению (0.149.0): идентификаторы из
+	// списка знаний. Тела достаёт сервер — они нужны боту, а не интерфейсу.
+	Knowledge []string `json:"knowledge"`
 }
 
 // Post — POST /chat/messages.
@@ -137,6 +140,18 @@ func (h *Handler) Post(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		in.EventID = &id
+	}
+	for _, raw := range body.Knowledge {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid knowledge id")
+			return
+		}
+		in.Knowledge = append(in.Knowledge, id)
 	}
 	answer, err := h.svc.Post(r.Context(), userID, projectID, in)
 	if err != nil {
@@ -269,6 +284,10 @@ func (h *Handler) fail(w http.ResponseWriter, err error, where string) {
 	case errors.Is(err, ErrMessageNotFound):
 		writeErr(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, ErrReactionKind):
+		writeErr(w, http.StatusBadRequest, err.Error())
+	// Приложенное знание не из этого проекта (0.149.0): 400, а не 404 — сообщение не
+	// создано, и человеку надо поправить выбор, а не искать «что пропало».
+	case errors.Is(err, ErrKnowledgeNotFound):
 		writeErr(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, projects.ErrForbidden):
 		writeErr(w, http.StatusForbidden, "forbidden")

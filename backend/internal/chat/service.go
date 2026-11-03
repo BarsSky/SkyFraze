@@ -17,6 +17,7 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -59,7 +60,10 @@ var (
 	// docs/project-chat.md §2.5.
 	ErrReactionKind = errors.New("неизвестный вид отметки")
 	// ErrBotDisabled — Нестор выключен на стенде или в проекте.
+	// ErrBotDisabled — бот выключен: сообщение сохраняется, ответа не будет.
 	ErrBotDisabled = errors.New("Нестор выключен — сообщение сохранено, ответа не будет")
+	// ErrKnowledgeNotFound — приложенное знание не из этого проекта (0.149.0).
+	ErrKnowledgeNotFound = errors.New("приложенное знание не найдено в этом проекте")
 )
 
 // ProjectAccess — права на проект (реализует projects.Service).
@@ -302,6 +306,9 @@ type Input struct {
 	// ReplyTo — сообщение, на которое это ответ (0.96.0). Ветки не строим: в ленте проекта
 	// цитата-ссылка читается лучше лесенки.
 	ReplyTo *uuid.UUID
+	// Knowledge — знания проекта, приложенные к сообщению (0.149.0). Тела достаёт сервер:
+	// интерфейс присылает только идентификаторы, а бот получает текст в вопросе.
+	Knowledge []uuid.UUID
 }
 
 // frame — кадр «как его видят редакторы» (0.139.0): из документа живой комнаты, если она есть,
@@ -380,10 +387,17 @@ func (s *Service) Post(
 			return nil, ErrReplyTarget
 		}
 	}
+	// Приложенные знания (0.149.0): достаём ДО вставки — сообщение со ссылкой на чужое
+	// знание выглядело бы нормальным, а текст к нему не нашёлся бы.
+	attached, err := s.attachedKnowledge(ctx, projectID, in.Knowledge)
+	if err != nil {
+		return nil, err
+	}
 	saved := store.ChatMessage{
 		ProjectID: projectID, AuthorID: &userID, AuthorName: author,
 		Kind: store.ChatKindUser, Body: body, EventID: in.EventID, Quote: quote,
-		ReplyTo: in.ReplyTo,
+		ReplyTo:   in.ReplyTo,
+		Knowledge: knowledgeRefsJSON(attached),
 	}
 	if err := s.store.AppendChatMessage(ctx, &saved); err != nil {
 		return nil, err
@@ -405,7 +419,7 @@ func (s *Service) Post(
 		out.Note = ErrBotDisabled.Error()
 		return out, nil
 	}
-	reply, note := s.askBot(ctx, userID, projectID, in, frame, author)
+	reply, note := s.askBot(ctx, userID, projectID, in, frame, author, attached)
 	if reply != nil {
 		out.Reply = reply
 	}
@@ -418,12 +432,13 @@ func (s *Service) Post(
 // askBot спрашивает Нестора и сохраняет его ответ сообщением чата.
 func (s *Service) askBot(
 	ctx context.Context, userID, projectID uuid.UUID, in Input, frame *store.Event, author string,
+	knowledge []store.AIKnowledge,
 ) (*store.ChatMessage, string) {
 	// Последние сообщения чата — контекст разговора (0.96.0). Без него бот отвечает на реплику вне
 	// обсуждения: «а как же второе?» для него пустой вопрос. Берём немного и только текст: длинная
 	// лента съела бы запрос.
 	history := s.recentTranscript(ctx, projectID)
-	question := botQuestion(in.Body, in.Quote, frame, author, history)
+	question := botQuestion(in.Body, in.Quote, frame, author, history, knowledge)
 	answer, err := s.bot.Answer(ctx, userID, projectID, question)
 	if err != nil {
 		// Ошибку не выдаём 500-й: сообщение участника уже сохранено, и потерять его из-за
@@ -440,6 +455,9 @@ func (s *Service) askBot(
 	reply := store.ChatMessage{
 		ProjectID: projectID, AuthorName: s.botName,
 		Kind: store.ChatKindBot, Body: answer, EventID: in.EventID,
+		// Те же знания, что у вопроса: ответ опирался на них, и карточка под ответом
+		// объясняет человеку, откуда взят текст.
+		Knowledge: knowledgeRefsJSON(knowledge),
 	}
 	if err := s.store.AppendChatMessage(ctx, &reply); err != nil {
 		return nil, "ответ Нестора не сохранился: " + err.Error()
@@ -452,7 +470,10 @@ func (s *Service) askBot(
 //
 // Почему текстом, а не отдельными полями: у модели один вход — сообщения, и «вопрос из чата» с
 // ссылкой надо объяснить словами, иначе она не поймёт, о каком кадре речь.
-func botQuestion(body, quote string, frame *store.Event, author string, history []string) string {
+func botQuestion(
+	body, quote string, frame *store.Event, author string, history []string,
+	knowledge []store.AIKnowledge,
+) string {
 	var b strings.Builder
 	b.WriteString("Вопрос из общего чата проекта (отвечай коротко, по делу и по-русски).\n")
 	if len(history) > 0 {
@@ -475,11 +496,85 @@ func botQuestion(body, quote string, frame *store.Event, author string, history 
 			fmt.Fprintf(&b, "Текст кадра:\n%s\n", text)
 		}
 	}
+	if len(knowledge) > 0 {
+		// Приложенные знания (0.149.0) — выводы проекта, а не текст кадров. Общий предел:
+		// к сообщению можно приложить до десяти знаний, и все вместе они не должны
+		// превратить вопрос в запрос на весь контекст модели.
+		b.WriteString("Приложенные знания проекта (сохранённые выводы, считай их известными):\n")
+		spent := 0
+		for i, k := range knowledge {
+			room := knowledgeChars - spent
+			if room <= 0 {
+				fmt.Fprintf(&b, "[ещё знаний: %d]\n", len(knowledge)-i)
+				break
+			}
+			text := k.Body
+			if runes := []rune(text); len(runes) > room {
+				text = string(runes[:room]) + "…"
+			}
+			spent += utf8.RuneCountInString(text)
+			fmt.Fprintf(&b, "### %s\n%s\n", k.Title, text)
+		}
+	}
 	if author != "" {
 		fmt.Fprintf(&b, "Автор вопроса: %s.\n", author)
 	}
 	fmt.Fprintf(&b, "\nВопрос: %s", body)
 	return b.String()
+}
+
+// knowledgeChars — сколько знаков знаний попадает в вопрос боту из общего чата.
+const knowledgeChars = 6000
+
+// attachedKnowledge достаёт знания из базы в порядке, в котором их приложили.
+//
+// Отсутствие в проекте — ошибка, а не «пропустим»: человек выбрал знание в списке, и
+// ответ без него был бы ответом не по тому тексту.
+func (s *Service) attachedKnowledge(
+	ctx context.Context, projectID uuid.UUID, ids []uuid.UUID,
+) ([]store.AIKnowledge, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	rows, err := s.store.AIKnowledgeByIDs(ctx, projectID, ids)
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[uuid.UUID]store.AIKnowledge, len(rows))
+	for _, k := range rows {
+		byID[k.ID] = k
+	}
+	out := make([]store.AIKnowledge, 0, len(ids))
+	seen := make(map[uuid.UUID]bool, len(ids))
+	for _, id := range ids {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		k, ok := byID[id]
+		if !ok {
+			return nil, ErrKnowledgeNotFound
+		}
+		out = append(out, k)
+	}
+	return out, nil
+}
+
+// knowledgeRefsJSON — снимок вложений [{"id","title"}] для колонки knowledge.
+func knowledgeRefsJSON(items []store.AIKnowledge) json.RawMessage {
+	if len(items) == 0 {
+		return nil
+	}
+	refs := make([]map[string]string, 0, len(items))
+	for _, k := range items {
+		refs = append(refs, map[string]string{"id": k.ID.String(), "title": k.Title})
+	}
+	raw, err := json.Marshal(refs)
+	if err != nil {
+		// Недостижимо: строки всегда маршалятся. Пустой список — честный ответ «вложений нет».
+		return nil
+	}
+	return raw
 }
 
 // botErrorText переводит ошибку бота в человеческое объяснение.

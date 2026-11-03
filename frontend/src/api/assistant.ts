@@ -133,6 +133,8 @@ export interface AIMessage {
   /** Расход этого сообщения: по нему интерфейс обновляет счётчик без лишнего запроса. */
   tokensIn?: number
   tokensOut?: number
+  /** Знания, приложенные к реплике (0.149.0): карточки под текстом сообщения. */
+  knowledge?: AIKnowledgeRef[]
 }
 
 export interface AIConversation {
@@ -140,6 +142,47 @@ export interface AIConversation {
   title: string
   model: string
   updatedAt: string
+  /**
+   * «Не удалять эту беседу» (0.149.0). Автоочистка по сроку хранения такие беседы обходит:
+   * человек уже сказал, что они ему нужны.
+   */
+  kept?: boolean
+}
+
+/**
+ * Вложение к сообщению: знание проекта (0.149.0).
+ *
+ * Заголовок — снимок, а не ссылка: знание могут переименовать или удалить, а сообщение
+ * обязано остаться читаемым. Поэтому карточка рисуется по этим двум полям, без запроса.
+ */
+export interface AIKnowledgeRef {
+  id: string
+  title: string
+}
+
+/** Знание в списке: без тела — его читают при открытии, а не при листании. */
+export interface AIKnowledgeBrief {
+  id: string
+  title: string
+  summary: string
+  chars: number
+  authorName: string
+  createdAt: string
+  updatedAt: string
+}
+
+/** Знание целиком. */
+export interface AIKnowledge extends AIKnowledgeBrief {
+  body: string
+}
+
+/** Знание, сохранённое помощником в этом ходе: карточка в ответе. */
+export interface AIKnowledgeView {
+  id: string
+  title: string
+  summary: string
+  chars: number
+  createdAt: string
 }
 
 export interface AITurn {
@@ -165,6 +208,11 @@ export interface AITurn {
    * отличие от `changes`.
    */
   entityProposals?: AIEntityProposal[]
+  /**
+   * Знания, сохранённые в этом ходе (0.149.0). Отдельно от `changes`: проект в тексте не
+   * менялся, а карточка знания — то, что человек должен увидеть и проверить.
+   */
+  knowledge?: AIKnowledgeView[]
 }
 
 /**
@@ -316,6 +364,11 @@ export interface AISettings {
   /** Доступен ли генератор изображений на стенде и что об этом сказать. */
   imageAvailable: boolean
   imageNote: string
+  /**
+   * Срок хранения бесед проекта в днях (0.149.0): 0 — не удалять. Ставит владелец, потому
+   * что срок касается бесед всех соавторов.
+   */
+  retentionDays: number
 }
 
 /** Роль и поведение агента в проекте. */
@@ -380,6 +433,7 @@ export function parseAISettings(raw: unknown): AISettings {
     generation: asText(record?.generation) || 'auto',
     imageStyle: asText(record?.image_style),
     imageNegative: asText(record?.image_negative),
+    retentionDays: asWhole(record?.retention_days),
     capabilities: {
       text: capabilities?.text !== false,
       images: capabilities?.images === true,
@@ -676,6 +730,79 @@ export async function clearAIConversations(projectId: string): Promise<number> {
 }
 
 /**
+ * Знания проекта (0.149.0).
+ *
+ * Беседы стареют и удаляются по сроку хранения; знания остаются. Поэтому у них отдельные
+ * ручки, а не «поле в беседе»: знание принадлежит проекту, его читают все участники и его
+ * прикладывают к вопросу.
+ */
+export async function listAIKnowledge(projectId: string, query = ''): Promise<AIKnowledgeBrief[]> {
+  const search = query.trim() ? `?q=${encodeURIComponent(query.trim())}` : ''
+  const raw = await http
+    .get(`projects/${encodeURIComponent(projectId)}/ai/knowledge${search}`)
+    .json<unknown>()
+  const record = asRecord(raw)
+  return parseAIKnowledgeBriefs(record?.knowledge)
+}
+
+/** Одно знание целиком — с телом (список тел не отдаёт намеренно). */
+export async function getAIKnowledge(projectId: string, id: string): Promise<AIKnowledge> {
+  const raw = await http
+    .get(`projects/${encodeURIComponent(projectId)}/ai/knowledge/${encodeURIComponent(id)}`)
+    .json<unknown>()
+  return parseAIKnowledge(raw)
+}
+
+export async function createAIKnowledge(
+  projectId: string,
+  input: { title: string; summary: string; body: string },
+): Promise<AIKnowledge> {
+  const raw = await http
+    .post(`projects/${encodeURIComponent(projectId)}/ai/knowledge`, { json: input })
+    .json<unknown>()
+  return parseAIKnowledge(raw)
+}
+
+export async function updateAIKnowledge(
+  projectId: string,
+  id: string,
+  input: { title: string; summary: string; body: string },
+): Promise<AIKnowledge> {
+  const raw = await http
+    .put(`projects/${encodeURIComponent(projectId)}/ai/knowledge/${encodeURIComponent(id)}`, {
+      json: input,
+    })
+    .json<unknown>()
+  return parseAIKnowledge(raw)
+}
+
+export async function deleteAIKnowledge(projectId: string, id: string): Promise<void> {
+  await http.delete(
+    `projects/${encodeURIComponent(projectId)}/ai/knowledge/${encodeURIComponent(id)}`,
+  )
+}
+
+/** Срок хранения бесед (0.149.0): 0 — не удалять. Ответ — настройки проекта целиком. */
+export async function setAIRetention(projectId: string, days: number): Promise<AISettings> {
+  const raw = await http
+    .put(`projects/${encodeURIComponent(projectId)}/ai/retention`, { json: { days } })
+    .json<unknown>()
+  return parseAISettings(raw)
+}
+
+/** «Не удалять эту беседу»: автоочистка обходит помеченные. */
+export async function keepAIConversation(
+  projectId: string,
+  conversationId: string,
+  kept: boolean,
+): Promise<void> {
+  await http.post(
+    `projects/${encodeURIComponent(projectId)}/ai/conversations/${encodeURIComponent(conversationId)}/keep`,
+    { json: { kept } },
+  )
+}
+
+/**
  * Отправляет вопрос помощнику.
  *
  * `conversationId` может быть `new` — тогда беседа заводится этим же запросом: интерфейс новый
@@ -686,12 +813,13 @@ export async function sendAIMessage(
   conversationId: string,
   text: string,
   model: string,
+  knowledge: string[] = [],
 ): Promise<AITurn> {
   const raw = await http
     .post(
       `projects/${encodeURIComponent(projectId)}/ai/conversations/${encodeURIComponent(conversationId)}/messages`,
       {
-        json: { text, model },
+        json: { text, model, knowledge },
         // Модель думает и вызывает инструменты: это самый долгий запрос в приложении.
         timeout: 300000,
       },
@@ -742,7 +870,7 @@ export interface AIStreamHandlers {
   onProposal?: (proposal: AIProposal) => void
 }
 
-/** Необязательная часть вопроса: картинки, обработчики событий и «стоп». */
+/** Необязательная часть вопроса: картинки, знания, обработчики событий и «стоп». */
 export interface AIAskOptions {
   /**
    * Картинки в виде data URL. Единый вид с сервером: он сам переводит их в то, что
@@ -750,6 +878,11 @@ export interface AIAskOptions {
    * контента).
    */
   images?: string[]
+  /**
+   * Знания проекта, приложенные к вопросу (0.149.0). Только идентификаторы: тела читает
+   * сервер, и гонять 40 000 знаков туда-обратно интерфейсу незачем.
+   */
+  knowledge?: string[]
   handlers?: AIStreamHandlers
   signal?: AbortSignal
 }
@@ -833,7 +966,7 @@ export async function streamAIMessage(
   model: string,
   options: AIAskOptions = {},
 ): Promise<AITurn> {
-  const { images = [], handlers = {}, signal } = options
+  const { images = [], knowledge = [], handlers = {}, signal } = options
   // `timeout: false` — принципиально (0.145.1).
   //
   // У ky таймаут по умолчанию 10 секунд, и он действует на ВЕСЬ запрос, включая чтение
@@ -845,7 +978,7 @@ export async function streamAIMessage(
   // AI_LOAD_WAIT_SECONDS, AI_STREAM_IDLE_SECONDS), а не клиент.
   const response = await http.post(
     `projects/${encodeURIComponent(projectId)}/ai/conversations/${encodeURIComponent(conversationId)}/stream`,
-    { json: { text, model, images }, signal, timeout: false },
+    { json: { text, model, images, knowledge }, signal, timeout: false },
   )
   const reader = response.body?.getReader()
   if (!reader) {
@@ -1089,6 +1222,67 @@ export function parseAITurn(raw: unknown): AITurn {
           .map(parseEntityProposal)
           .filter((item): item is AIEntityProposal => item !== null)
       : [],
+    knowledge: Array.isArray(record?.knowledge)
+      ? record.knowledge.map(parseKnowledgeView).filter((item): item is AIKnowledgeView => item !== null)
+      : [],
+  }
+}
+
+/** Разбор ссылки на знание в сообщении. */
+export function parseKnowledgeRef(raw: unknown): AIKnowledgeRef | null {
+  const record = asRecord(raw)
+  const id = asText(record?.id)
+  if (!id) return null
+  return { id, title: asText(record?.title) }
+}
+
+/** Разбор карточки знания, которую сохранил помощник. */
+export function parseKnowledgeView(raw: unknown): AIKnowledgeView | null {
+  const record = asRecord(raw)
+  const id = asText(record?.id)
+  if (!id) return null
+  return {
+    id,
+    title: asText(record?.title),
+    summary: asText(record?.summary),
+    chars: asWhole(record?.chars),
+    createdAt: asText(record?.created_at),
+  }
+}
+
+/** Разбор списка знаний. */
+export function parseAIKnowledgeBriefs(raw: unknown): AIKnowledgeBrief[] {
+  if (!Array.isArray(raw)) return []
+  const out: AIKnowledgeBrief[] = []
+  for (const item of raw) {
+    const record = asRecord(item)
+    const id = asText(record?.id)
+    if (!id) continue
+    out.push({
+      id,
+      title: asText(record?.title),
+      summary: asText(record?.summary),
+      chars: asWhole(record?.chars),
+      authorName: asText(record?.author_name),
+      createdAt: asText(record?.created_at),
+      updatedAt: asText(record?.updated_at),
+    })
+  }
+  return out
+}
+
+/** Разбор знания целиком. */
+export function parseAIKnowledge(raw: unknown): AIKnowledge {
+  const record = asRecord(raw)
+  return {
+    id: asText(record?.id),
+    title: asText(record?.title),
+    summary: asText(record?.summary),
+    chars: asWhole(record?.chars),
+    authorName: asText(record?.author_name),
+    createdAt: asText(record?.created_at),
+    updatedAt: asText(record?.updated_at),
+    body: asText(record?.body),
   }
 }
 
@@ -1276,6 +1470,9 @@ function parseMessage(raw: unknown): AIMessage | null {
     stopped: record.stopped === true,
     tokensIn: asWhole(record.tokens_in),
     tokensOut: asWhole(record.tokens_out),
+    knowledge: Array.isArray(record.knowledge)
+      ? record.knowledge.map(parseKnowledgeRef).filter((item): item is AIKnowledgeRef => item !== null)
+      : [],
   }
 }
 

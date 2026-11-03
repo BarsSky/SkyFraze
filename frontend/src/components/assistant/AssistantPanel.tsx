@@ -28,6 +28,8 @@ import {
   type AIChange,
   type AIConversation,
   type AIEndpoint,
+  type AIKnowledgeBrief,
+  type AIKnowledgeView,
   type AIProposal,
   type AISuggestion,
   type AIMessage,
@@ -39,6 +41,7 @@ import { serverErrorMessage } from '../../api/client'
 import { MarkdownBlock } from '../MarkdownBlock'
 import { EntityProposals } from '../entities/EntityProposals'
 import { MAX_IMAGES, imageFileError, readImageFile } from './imageAttach'
+import { KnowledgePicker, MAX_KNOWLEDGE_ATTACH } from './KnowledgePicker'
 import { promptHints } from './promptHints'
 import { tStatic, useT } from '../../i18n'
 import { useLang } from '../../store/lang'
@@ -253,6 +256,19 @@ export function AssistantPanel({
    */
   const [images, setImages] = useState<string[]>([])
   const [attachError, setAttachError] = useState<string | null>(null)
+  /**
+   * Знания, приложенные к следующему вопросу (0.149.0).
+   *
+   * Живут до отправки и уходят только идентификаторами: тела читает сервер (знания — это
+   * тысячи знаков, и гонять их туда-обратно ради того, что сервер и так знает, незачем).
+   */
+  const [attachedKnowledge, setAttachedKnowledge] = useState<AIKnowledgeBrief[]>([])
+  const [knowledgePicker, setKnowledgePicker] = useState(false)
+  /**
+   * Что помощник сохранил в знания в последнем ходе. Отдельно от `changes`: текст проекта
+   * не менялся, а карточка знания — то, что человек должен увидеть и проверить.
+   */
+  const [savedKnowledge, setSavedKnowledge] = useState<AIKnowledgeView[]>([])
 
   // Цитата из показа проекта (0.132.0): подставляем готовый вопрос про фрагмент. Не отправляем:
   // человек дописывает, что именно хочет узнать, — так же, как с подсказками в пустом чате.
@@ -913,6 +929,11 @@ export function AssistantPanel({
     setLiveCalls([])
     setDraft('')
     setDraftTruncated(false)
+    setSavedKnowledge([])
+    // Состав вложений фиксируем ДО отправки: после неё поле очищается, а при ошибке
+    // человеку нужно вернуть именно то, что он приложил, а не пустой список.
+    const knowledgeToSend = attachedKnowledge
+    const knowledgeIDs = knowledgeToSend.map((item) => item.id)
     // Вопрос показываем сразу: ждать ответа модели, глядя на пустое поле, — худший
     // вариант, а история всё равно придёт с сервера в следующий раз.
     const pending: AIMessage = {
@@ -920,9 +941,11 @@ export function AssistantPanel({
       role: 'user',
       content: question,
       createdAt: new Date().toISOString(),
+      knowledge: knowledgeToSend.map((item) => ({ id: item.id, title: item.title })),
     }
     setMessages((current) => [...current, pending])
     setText('')
+    setAttachedKnowledge([])
     // Картинки уходят с вопросом и после отправки не нужны: в истории их нет, и держать
     // их в поле значило бы отправить ту же картинку со следующим вопросом «за компанию».
     setImages([])
@@ -945,6 +968,7 @@ export function AssistantPanel({
     try {
       const turn = await streamAIMessage(projectId, conversationId, question, modelRef, {
         images,
+        knowledge: knowledgeIDs,
         // Беседа могла быть только что создана: её идентификатор нужен сразу, иначе
         // остановленный ответ остался бы в беседе, о которой интерфейс не знает.
         handlers: {
@@ -990,6 +1014,9 @@ export function AssistantPanel({
       ])
       setChanges(turn.changes)
       setSuggestions(turn.suggestions ?? [])
+      // Знания, сохранённые помощником: показываем карточками, а не только словами в
+      // ответе — «сохранил» должно быть видно и проверяемо.
+      setSavedKnowledge(turn.knowledge ?? [])
       // Предложения из итога — на случай, если потоковое событие не доехало (обрыв
       // соединения ровно между вызовом инструмента и его событием).
       if (turn.proposals !== undefined && turn.proposals.length > 0) {
@@ -1036,6 +1063,8 @@ export function AssistantPanel({
         setConsentNeeded(consentRequired)
         setMessages((current) => current.filter((m) => m.id !== pending.id))
         setText(question)
+        // Вложения возвращаем: вопрос не ушёл, и человеку не нужно выбирать знания заново.
+        setAttachedKnowledge(knowledgeToSend)
         // Порядок важен: сначала то, что объяснил сервер. Текст сервера приходит и обычным
         // ответом с ошибкой, и событием потока — во втором случае HTTP-ответа нет, поэтому
         // раньше человек видел общее «Помощник не ответил» вместо причины (0.145.1).
@@ -1612,6 +1641,17 @@ export function AssistantPanel({
                     )}
                   </>
                 )}
+                {/* Приложенные знания (0.149.0): карточки под репликой. Заголовок — снимок
+                    из сообщения, поэтому карточка читается и после удаления знания. */}
+                {(message.knowledge?.length ?? 0) > 0 && (
+                  <div className="ai-msg__knowledge" data-assistant-msg-knowledge>
+                    {message.knowledge?.map((item) => (
+                      <span className="ai-msg__knowledge-item" key={item.id} title={item.title}>
+                        {item.title}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
             {/* Текст, который модель пишет прямо сейчас. Отдельным блоком, а не
@@ -1775,6 +1815,31 @@ export function AssistantPanel({
             </p>
           )}
 
+          {/* Сохранённые знания (0.149.0): карточки с заголовком и размером. Именно они —
+              то, что останется после удаления беседы, поэтому «сохранил» видно не только
+              словами модели в ответе. */}
+          {savedKnowledge.length > 0 && (
+            <details className="ai-card ai-card--knowledge" data-assistant-knowledge-saved open>
+              <summary className="ai-card__head">
+                {t('as.knowledgeSaved')}
+                <span className="ai-card__count">{savedKnowledge.length}</span>
+              </summary>
+              <div className="ai-card__body">
+                <ul>
+                  {savedKnowledge.map((item) => (
+                    <li key={item.id} data-knowledge-saved-id={item.id}>
+                      <span className="ai-knowledge-saved__title">{item.title}</span>
+                      <span className="ai-knowledge-saved__meta">
+                        {t('as.knowledgeSavedChars', { chars: item.chars })}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                <p className="ai-note">{t('as.knowledgeSavedHint')}</p>
+              </div>
+            </details>
+          )}
+
           {/* Что дальше — предложения сервера. Нажатие ПОДСТАВЛЯЕТ текст в поле ввода
               (как подсказки в пустом чате): человек видит, что уйдёт модели, и может
               поправить формулировку до отправки. */}
@@ -1841,6 +1906,30 @@ export function AssistantPanel({
               </div>
             )}
             {attachError != null && <p className="ai-error ai-error--padded">{attachError}</p>}
+            {/* Приложенные знания (0.149.0): состав видно до отправки — «какие выводы
+                уйдут модели» человек должен понимать, а не догадываться. */}
+            {attachedKnowledge.length > 0 && (
+              <div className="ai-attach ai-attach--knowledge" data-assistant-knowledge>
+                <span className="ai-attach__caption">{t('as.knowledgeAttached')}</span>
+                {attachedKnowledge.map((item) => (
+                  <span className="ai-knowledge-chip" key={item.id}>
+                    <span className="ai-knowledge-chip__title">{item.title}</span>
+                    <button
+                      type="button"
+                      className="ai-attach__remove"
+                      aria-label={t('as.removeKnowledge', { title: item.title })}
+                      onClick={() =>
+                        setAttachedKnowledge((current) =>
+                          current.filter((known) => known.id !== item.id),
+                        )
+                      }
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
             <textarea
               ref={inputRef}
               value={text}
@@ -1911,6 +2000,28 @@ export function AssistantPanel({
                   </button>
                 </>
               )}
+              {/* Знания проекта (0.149.0): приложить выводы к вопросу. Кнопка есть всегда —
+                  знания не зависят от того, умеет ли модель смотреть картинки. */}
+              <button
+                type="button"
+                className="secondary"
+                onClick={() => setKnowledgePicker(true)}
+                disabled={sending || attachedKnowledge.length >= MAX_KNOWLEDGE_ATTACH}
+                title={
+                  attachedKnowledge.length >= MAX_KNOWLEDGE_ATTACH
+                    ? t('kn.pick.limit', {
+                        count: attachedKnowledge.length,
+                        limit: MAX_KNOWLEDGE_ATTACH,
+                      })
+                    : t('as.knowledgeTitle')
+                }
+                data-assistant-knowledge-button
+              >
+                {t('as.knowledgeButton')}
+                {attachedKnowledge.length > 0 && (
+                  <span className="ai-history__count">{attachedKnowledge.length}</span>
+                )}
+              </button>
               {/* История бесед проекта (0.147.0): разговоры с Нестором хранятся на сервере
                   вместе с проектом, и к любому можно вернуться — не только к последнему. */}
               {conversations.length > 0 && (
@@ -2012,6 +2123,18 @@ export function AssistantPanel({
           </footer>
         </>
       )}
+      {/* Выбор знаний — поверх окна и вне ветки настроек: окно выбора не должно исчезать,
+          если человек переключил вид на «Настройки» и вернулся. */}
+      <KnowledgePicker
+        projectId={projectId}
+        open={knowledgePicker}
+        onClose={() => setKnowledgePicker(false)}
+        selected={attachedKnowledge}
+        onConfirm={(items) => {
+          setAttachedKnowledge(items)
+          setKnowledgePicker(false)
+        }}
+      />
     </>
   )
 }

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useT } from '../../i18n'
 import type { DockPrefill } from '../chat/ProjectChat'
 import { AssistantPanel } from './AssistantPanel'
+import { KnowledgeTab } from './KnowledgeTab'
 import { ProjectChat } from '../chat/ProjectChat'
 
 /**
@@ -48,7 +49,30 @@ interface Props {
  * который открыл её, обычно хочет либо спросить Нестора, либо написать людям — и переключение
  * вкладкой дешевле, чем второе плавающее окно поверх первого.
  */
-type DockTab = 'assistant' | 'chat'
+type DockTab = 'assistant' | 'chat' | 'knowledge'
+
+/**
+ * Широкое окно (0.149.0) — по просьбе людей с большим экраном: переписка, карточки знаний
+ * и настройки в 420px читаются тесно. Выбор запоминаем: это настройка «как я работаю», а не
+ * разовое действие, и возвращаться к ней после каждой перезагрузки было бы наказанием.
+ */
+const WIDE_KEY = 'sf-ai-wide'
+
+function readWide(): boolean {
+  try {
+    return localStorage.getItem(WIDE_KEY) === '1'
+  } catch {
+    return false // приватный режим: окно обычной ширины, это рабочее состояние
+  }
+}
+
+function writeWide(wide: boolean): void {
+  try {
+    localStorage.setItem(WIDE_KEY, wide ? '1' : '0')
+  } catch {
+    // Приватный режим: выбор просто не запомнится.
+  }
+}
 
 export function AssistantDock({
   projectId,
@@ -64,6 +88,14 @@ export function AssistantDock({
   const [unread, setUnread] = useState(0)
   const [chatUnread, setChatUnread] = useState(0)
   const [tab, setTab] = useState<DockTab>('assistant')
+  const [wide, setWide] = useState(readWide)
+
+  const toggleWide = useCallback(() => {
+    setWide((current) => {
+      writeWide(!current)
+      return !current
+    })
+  }, [])
 
   // Цитату принесли из показа проекта: открываем нужную вкладку сами, чтобы человек не искал
   // её вкладкой после действия (0.132.0).
@@ -104,12 +136,13 @@ export function AssistantDock({
   return (
     <div className={`ai-dock${open ? ' ai-dock--open' : ''}`} data-assistant-dock>
       <div
-        className="ai-window"
+        className={`ai-window${wide ? ' ai-window--wide' : ''}`}
         ref={windowRef}
         hidden={!open}
         role="dialog"
         aria-label={t('dock.aria')}
         data-assistant-panel
+        data-dock-wide-state={wide ? 'on' : 'off'}
       >
         {/* Вкладки окна (0.95.0): помощник и общий чат проекта в одном месте. */}
         <div className="ai-window__tabs" role="tablist" aria-label={t('dock.tabsAria')}>
@@ -137,6 +170,31 @@ export function AssistantDock({
                 {chatUnread > 9 ? '9+' : chatUnread}
               </span>
             )}
+          </button>
+          {/* Третья вкладка (0.149.0): знания проекта. На телефоне она и есть «ещё одна
+              вкладка в чате»: окно узкое, и знания рядом с перепиской не помещаются. */}
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === 'knowledge'}
+            className={tab === 'knowledge' ? 'ai-window__tab is-active' : 'ai-window__tab'}
+            onClick={() => setTab('knowledge')}
+            data-dock-tab="knowledge"
+          >
+            {t('dock.knowledge')}
+          </button>
+          {/* Широкая ширина (0.149.0): на большом экране 420px тесны, но на телефоне
+              кнопка бесполезна — CSS её там скрывает. */}
+          <button
+            type="button"
+            className="ai-window__wide"
+            aria-pressed={wide}
+            aria-label={wide ? t('dock.narrowTitle') : t('dock.wideTitle')}
+            title={wide ? t('dock.narrowTitle') : t('dock.wideTitle')}
+            onClick={toggleWide}
+            data-dock-wide
+          >
+            {wide ? t('dock.narrow') : t('dock.wide')}
           </button>
           {/* Один крестик на всё окно (0.146.0). Раньше он был только в шапке помощника, и на
               вкладке «Чат проекта» закрыть окно было нечем — приходилось переключаться на
@@ -174,6 +232,11 @@ export function AssistantDock({
             onUnread={setChatUnread}
             prefill={prefill}
           />
+        </div>
+        {/* Знания держим в своей панели и не размонтируем: набранное знание не должно
+            исчезать от переключения вкладки. */}
+        <div className="ai-window__pane" hidden={tab !== 'knowledge'}>
+          <KnowledgeTab projectId={projectId} visible={open && tab === 'knowledge'} />
         </div>
       </div>
 

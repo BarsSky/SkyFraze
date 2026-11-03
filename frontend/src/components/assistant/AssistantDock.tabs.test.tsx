@@ -36,6 +36,14 @@ vi.mock('../chat/ProjectChat', () => ({
   ),
 }))
 
+vi.mock('./KnowledgeTab', () => ({
+  KnowledgeTab: ({ visible }: { visible: boolean }) => (
+    <div data-testid="knowledge-pane" data-visible={String(visible)}>
+      знания
+    </div>
+  ),
+}))
+
 afterEach(() => cleanup())
 
 const renderDock = (open = true) =>
@@ -50,13 +58,31 @@ const renderDock = (open = true) =>
   )
 
 describe('AssistantDock — вкладки', () => {
-  it('по умолчанию открыт помощник, чат — вторая вкладка', () => {
+  it('по умолчанию открыт помощник, чат — вторая вкладка, знания — третья', () => {
     renderDock()
     const tabs = screen.getAllByRole('tab')
-    expect(tabs.map((tab) => tab.textContent)).toEqual(['Помощник', 'Чат проекта'])
+    expect(tabs.map((tab) => tab.textContent)).toEqual(['Помощник', 'Чат проекта', 'Знания'])
     expect(tabs[0].getAttribute('aria-selected')).toBe('true')
     expect(screen.getByTestId('assistant-pane').getAttribute('data-open')).toBe('true')
     expect(screen.getByTestId('chat-pane').getAttribute('data-visible')).toBe('false')
+  })
+
+  it('вкладка знаний открывает знания и не трогает чат', () => {
+    renderDock()
+    fireEvent.click(screen.getByRole('tab', { name: /Знания/ }))
+    expect(screen.getByRole('tab', { name: /Знания/ }).getAttribute('aria-selected')).toBe('true')
+    expect(screen.getByTestId('assistant-pane').getAttribute('data-open')).toBe('false')
+    expect(screen.getByTestId('chat-pane').getAttribute('data-visible')).toBe('false')
+  })
+
+  it('кнопка «Шире» расширяет окно и помнит выбор', () => {
+    renderDock()
+    const wide = screen.getByRole('button', { name: /Развернуть окно шире/i })
+    expect(screen.getByRole('dialog').getAttribute('data-dock-wide-state')).toBe('off')
+    fireEvent.click(wide)
+    expect(screen.getByRole('dialog').getAttribute('data-dock-wide-state')).toBe('on')
+    fireEvent.click(screen.getByRole('button', { name: /Вернуть обычную ширину/i }))
+    expect(screen.getByRole('dialog').getAttribute('data-dock-wide-state')).toBe('off')
   })
 
   it('переключение на чат не размонтирует помощника и меняет видимость', () => {

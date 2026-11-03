@@ -7,6 +7,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -35,20 +36,26 @@ type ChatMessage struct {
 	// ReplyTo — сообщение, на которое это ответ (0.96.0). Может пропасть вместе с исходным.
 	ReplyTo *uuid.UUID `db:"reply_to" json:"reply_to,omitempty"`
 	// EditedAt — когда правили после отправки. Пусто — не правили.
-	EditedAt  *time.Time `db:"edited_at" json:"edited_at,omitempty"`
-	CreatedAt time.Time  `db:"created_at" json:"created_at"`
+	EditedAt *time.Time `db:"edited_at" json:"edited_at,omitempty"`
+	// Knowledge — знания проекта, приложенные к сообщению (0.149.0):
+	// [{"id": "...", "title": "..."}]. Снимок заголовка, а не ссылка: знание могут
+	// переименовать или удалить, а сообщение должно остаться читаемым.
+	Knowledge json.RawMessage `db:"knowledge" json:"knowledge"`
+	CreatedAt time.Time       `db:"created_at" json:"created_at"`
 }
 
-const chatColumns = `id, project_id, author_id, author_name, kind, body, event_id, quote, reply_to, edited_at, created_at`
+const chatColumns = `id, project_id, author_id, author_name, kind, body, event_id, quote, reply_to,
+	edited_at, knowledge, created_at`
 
 // AppendChatMessage добавляет сообщение и возвращает его с назначенными id и временем.
 func (s *Store) AppendChatMessage(ctx context.Context, m *ChatMessage) error {
 	return s.Pool.QueryRow(ctx,
 		`INSERT INTO project_chat_messages
-		   (project_id, author_id, author_name, kind, body, event_id, quote, reply_to)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+		   (project_id, author_id, author_name, kind, body, event_id, quote, reply_to, knowledge)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)
 		 RETURNING id, created_at`,
 		m.ProjectID, m.AuthorID, m.AuthorName, m.Kind, m.Body, m.EventID, m.Quote, m.ReplyTo,
+		string(rawJSONOrEmpty(m.Knowledge)),
 	).Scan(&m.ID, &m.CreatedAt)
 }
 

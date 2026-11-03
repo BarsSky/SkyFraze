@@ -45,6 +45,11 @@ export interface ChatMessage {
   edited_at?: string
   /** Отметки (0.98.0). Пустые — если никто ничего не ставил. */
   reactions: ChatReactions
+  /**
+   * Приложенные знания проекта (0.149.0). Заголовок — снимок: знание могут переименовать
+   * или удалить, а сообщение обязано остаться читаемым.
+   */
+  knowledge?: Array<{ id: string; title: string }>
   created_at: string
 }
 
@@ -72,6 +77,8 @@ export interface ChatPostInput {
   quote?: string
   askBot?: boolean
   replyTo?: string
+  /** Знания проекта, приложенные к сообщению (0.149.0): только идентификаторы. */
+  knowledge?: string[]
 }
 
 /** Непрочитанное в чате по проектам — для колокольчика (0.97.0). */
@@ -151,6 +158,7 @@ export async function postChat(projectId: string, input: ChatPostInput): Promise
         quote: input.quote ?? '',
         ask_bot: input.askBot === true,
         reply_to: input.replyTo ?? '',
+        knowledge: input.knowledge ?? [],
       },
       // Ответ Нестора — это обращение к модели: даём время, как у окна помощника.
       timeout: 180_000,
@@ -230,6 +238,14 @@ function readMessage(raw: unknown): ChatMessage | null {
     reply_to: typeof record.reply_to === 'string' && record.reply_to ? record.reply_to : undefined,
     edited_at: typeof record.edited_at === 'string' && record.edited_at ? record.edited_at : undefined,
     reactions: readReactions(record.reactions),
+    knowledge: Array.isArray(record.knowledge)
+      ? record.knowledge.flatMap((item) => {
+          const ref = (typeof item === 'object' && item !== null ? item : {}) as Record<string, unknown>
+          const id = typeof ref.id === 'string' ? ref.id : ''
+          if (!id) return []
+          return [{ id, title: typeof ref.title === 'string' ? ref.title : '' }]
+        })
+      : [],
     created_at: typeof record.created_at === 'string' ? record.created_at : '',
   }
 }

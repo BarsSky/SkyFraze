@@ -53,6 +53,10 @@ const (
 	// разговоры в архив попадать не должны. Старые сборки файл не читают, новые читают
 	// необязательным: архивы до 0.148.0 его не содержат, и это не ошибка.
 	conversationsFile = "ai-history.json"
+	// knowledgeFile — знания проекта (0.149.0). В отличие от истории бесед это СОДЕРЖИМОЕ
+	// проекта, а не личные заметки: в архив попадают знания всех авторов, и импорт
+	// восстанавливает их с исходными датами — «когда это придумали» часть работы.
+	knowledgeFile = "ai-knowledge.json"
 
 	// MaxBundleSize — потолок размера архива (nginx пускает столько же).
 	MaxBundleSize = 200 << 20 // 200 MB
@@ -65,6 +69,9 @@ const (
 	// бесед: переписка не должна превращать архив в бомбу.
 	maxConversations           = 200
 	maxMessagesPerConversation = 1000
+	// maxKnowledge — тот же предохранитель для знаний: их число не должно превращать
+	// архив в бомбу. Пятьсот знаний — это книга тезисов целиком.
+	maxKnowledge = 500
 )
 
 var (
@@ -165,6 +172,25 @@ type MessageRecord struct {
 	Stopped bool `json:"stopped,omitempty"`
 }
 
+// KnowledgeFile — знания проекта в архиве (0.149.0).
+type KnowledgeFile struct {
+	Knowledge []KnowledgeRecord `json:"knowledge"`
+}
+
+// KnowledgeRecord — одно знание в архиве.
+//
+// Автор и дата — часть содержания: через год должно быть видно, что «решили в марте»,
+// а не «импортировано вчера». Автора храним именем (снимком), потому что учётной записи
+// из старой базы в новой может не быть.
+type KnowledgeRecord struct {
+	Title     string    `json:"title"`
+	Summary   string    `json:"summary,omitempty"`
+	Body      string    `json:"body"`
+	Chars     int       `json:"chars,omitempty"`
+	Author    string    `json:"author,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 // ExportInfo — что получилось выгрузить (для заголовков ответа и лога).
 type ExportInfo struct {
 	Title    string
@@ -186,6 +212,8 @@ type Result struct {
 	// Conversations — сколько бесед с помощником перенесено (0.148.0). Нет файла в
 	// архиве — ноль и никакой ошибки: старые архивы его не содержат.
 	Conversations int `json:"conversations"`
+	// Knowledge — сколько знаний проекта перенесено (0.149.0).
+	Knowledge int `json:"knowledge"`
 	// Template — что принёс шаблон проекта (0.85.0): типы карточек и настройки помощника.
 	// Нет в архиве шаблона — поля нет, и это не ошибка: старые архивы его не содержат.
 	Template *projecttemplate.Report `json:"template,omitempty"`
@@ -362,6 +390,12 @@ func (s *Service) Export(ctx context.Context, userID, projectID uuid.UUID, w io.
 	if err != nil {
 		return nil, err
 	}
+	// Знания проекта (0.149.0) — там же и по той же причине. Знаний у проекта может не
+	// быть: тогда файла в архиве нет вовсе.
+	knowledgeBytes, err := s.buildKnowledge(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
 
 	manifestBytes, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
@@ -377,6 +411,11 @@ func (s *Service) Export(ctx context.Context, userID, projectID uuid.UUID, w io.
 	}
 	if conversationsBytes != nil {
 		if err := writeZipFile(zw, conversationsFile, conversationsBytes); err != nil {
+			return nil, err
+		}
+	}
+	if knowledgeBytes != nil {
+		if err := writeZipFile(zw, knowledgeFile, knowledgeBytes); err != nil {
 			return nil, err
 		}
 	}
@@ -474,6 +513,37 @@ func (s *Service) buildConversations(
 	return json.MarshalIndent(ConversationsFile{Conversations: records}, "", "  ")
 }
 
+// buildKnowledge собирает файл знаний проекта для архива (0.149.0).
+//
+// Знания — содержимое проекта, поэтому едут ВСЕ, а не только свои (в отличие от истории
+// бесед). Тела берём по одному запросу на знание: список отдаёт их без тела намеренно, и
+// «загрузить все тела одним запросом» здесь стоило бы отдельного метода в базе ради
+// одного места — выгрузки, которая и так читает весь проект.
+func (s *Service) buildKnowledge(ctx context.Context, projectID uuid.UUID) ([]byte, error) {
+	list, err := s.store.ListAIKnowledge(ctx, projectID, "", maxKnowledge)
+	if err != nil {
+		return nil, err
+	}
+	records := make([]KnowledgeRecord, 0, len(list))
+	for _, brief := range list {
+		full, kerr := s.store.AIKnowledgeByID(ctx, projectID, brief.ID)
+		if kerr != nil {
+			continue
+		}
+		records = append(records, KnowledgeRecord{
+			Title: full.Title, Summary: full.Summary, Body: full.Body, Chars: full.Chars,
+			Author: full.AuthorName, CreatedAt: full.CreatedAt,
+		})
+		if len(records) >= maxKnowledge {
+			break
+		}
+	}
+	if len(records) == 0 {
+		return nil, nil
+	}
+	return json.MarshalIndent(KnowledgeFile{Knowledge: records}, "", "  ")
+}
+
 // ParsedBundle — разобранный архив, готовый к переносу в базу.
 type ParsedBundle struct {
 	Manifest Manifest
@@ -484,6 +554,8 @@ type ParsedBundle struct {
 	// Conversations — история бесед с помощником (0.148.0). nil — файла нет (архивы до
 	// 0.148.0), и это тоже нормальный случай.
 	Conversations *ConversationsFile
+	// Knowledge — знания проекта (0.149.0). nil — файла нет: архивы до 0.149.0.
+	Knowledge *KnowledgeFile
 	// AssetFiles — содержимое вложений по id (читается лениво из zip.Reader).
 	zip *zip.Reader
 }
@@ -548,6 +620,18 @@ func ParseBundle(r io.ReaderAt, size int64) (*ParsedBundle, error) {
 				continue
 			}
 			b.Conversations = &history
+		case knowledgeFile:
+			// Битый файл знаний НЕ отменяет импорт — по той же причине, что и история
+			// бесед: текст проекта важнее вспомогательной части архива.
+			data, err := readZipFile(f, 64<<20)
+			if err != nil {
+				continue
+			}
+			var knowledge KnowledgeFile
+			if err := json.Unmarshal(data, &knowledge); err != nil {
+				continue
+			}
+			b.Knowledge = &knowledge
 		}
 	}
 
@@ -770,9 +854,39 @@ func (s *Service) Import(ctx context.Context, userID uuid.UUID, b *ParsedBundle)
 		}
 	}
 
+	// 10. Знания проекта (0.149.0). Автор и дата сохраняются как в архиве: «когда это
+	//     придумали» — часть содержания. Ошибка записи знаний не отменяет импорт: текст
+	//     проекта уже перенесён, а знания — то, что можно завести заново.
+	importedKnowledge := 0
+	if knowledge := b.Knowledge; knowledge != nil {
+		records := make([]store.AIKnowledgeImport, 0, len(knowledge.Knowledge))
+		for _, record := range knowledge.Knowledge {
+			if strings.TrimSpace(record.Title) == "" || strings.TrimSpace(record.Body) == "" {
+				continue
+			}
+			chars := record.Chars
+			if chars <= 0 {
+				chars = len([]rune(record.Body))
+			}
+			records = append(records, store.AIKnowledgeImport{
+				Title: record.Title, Summary: record.Summary, Body: record.Body, Chars: chars,
+				AuthorName: record.Author, CreatedAt: record.CreatedAt,
+			})
+			if len(records) >= maxKnowledge {
+				break
+			}
+		}
+		if len(records) > 0 {
+			if done, kerr := s.store.ImportAIKnowledge(ctx, p.ID, records); kerr == nil {
+				importedKnowledge = done
+			}
+		}
+	}
+
 	return &Result{
 		Project: p, Events: len(rows), Assets: len(m.Assets), HasState: hasState,
-		Entities: importedEntities, Conversations: importedConversations, Template: templateReport,
+		Entities: importedEntities, Conversations: importedConversations,
+		Knowledge: importedKnowledge, Template: templateReport,
 	}, nil
 }
 

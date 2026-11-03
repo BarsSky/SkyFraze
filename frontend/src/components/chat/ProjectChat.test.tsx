@@ -18,8 +18,14 @@ const postChat = vi.fn()
 const editChat = vi.fn()
 const listEventRows = vi.fn()
 const toggleChatReaction = vi.fn()
+/** Знания проекта (0.149.0): список для окна выбора. */
+const listAIKnowledge = vi.fn()
 
 const markChatSeen = vi.fn().mockResolvedValue(undefined)
+
+vi.mock('../../api/assistant', () => ({
+  listAIKnowledge: (...args: unknown[]) => listAIKnowledge(...args),
+}))
 
 vi.mock('../../api/chat', () => ({
   listChat: (...args: unknown[]) => listChat(...args),
@@ -82,8 +88,7 @@ async function openMessageMenu(id: string) {
 }
 
 describe('ProjectChat', () => {
-  it('показывает сообщения с автором и ссылкой на кадр', async () => {
-    listChat.mockResolvedValue({
+  it('показывает сообщения с автором и ссылкой на кадр', async () => {    listChat.mockResolvedValue({
       messages: [
         message(),
         message({ id: 'm2', author_name: 'Нестор', kind: 'bot', body: 'Сцена держит внимание.' }),
@@ -598,6 +603,66 @@ describe('ProjectChat', () => {
       expect(
         (screen.getByLabelText('Сообщение в чат проекта') as HTMLTextAreaElement).value,
       ).toContain('дом на холме'),
+    )
+  })
+
+  /**
+   * Знания к сообщению (0.149.0).
+   *
+   * Проверяем то, ради чего они в чате: разговор о «что мы решили раньше» получает решения
+   * ТЕКСТОМ от проекта, а не пересказом участника. Уходит только идентификатор — тела знает
+   * сервер, он же передаёт их боту.
+   */
+  it('прикладывает знание к сообщению и показывает его под текстом', async () => {
+    listAIKnowledge.mockResolvedValue([
+      {
+        id: 'k1',
+        title: 'Решения по миру',
+        summary: 'драконы спят',
+        chars: 13,
+        authorName: 'Нестор',
+        createdAt: '2026-03-01T10:00:00Z',
+        updatedAt: '2026-03-01T10:00:00Z',
+      },
+    ])
+    listChat.mockResolvedValue({ messages: [], bot: { name: 'Нестор', available: false } })
+    listEventRows.mockResolvedValue([])
+    postChat.mockResolvedValue({
+      message: message({
+        id: 'm5',
+        body: 'Что решили про драконов?',
+        knowledge: [{ id: 'k1', title: 'Решения по миру' }],
+      }),
+    })
+
+    render(<ProjectChat {...base} />)
+    const input = (await screen.findByLabelText('Сообщение в чат проекта')) as HTMLTextAreaElement
+
+    fireEvent.click(screen.getByRole('button', { name: /Знания/ }))
+    const checkbox = (await waitFor(() => {
+      const found = document.querySelector('[data-knowledge-picker-item="k1"]') as HTMLInputElement | null
+      expect(found).not.toBeNull()
+      return found as HTMLInputElement
+    })) as HTMLInputElement
+    fireEvent.click(checkbox)
+    fireEvent.click(screen.getByRole('button', { name: 'Приложить' }))
+
+    // Состав виден до отправки.
+    expect(await screen.findByText('Решения по миру')).toBeTruthy()
+    fireEvent.change(input, { target: { value: 'Что решили про драконов?' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Отправить' }))
+
+    await waitFor(() =>
+      expect(postChat).toHaveBeenCalledWith(
+        'p1',
+        expect.objectContaining({ knowledge: ['k1'] }),
+      ),
+    )
+    // Под сообщением — карточка знания из СНИМКА ответа сервера.
+    await waitFor(() =>
+      expect(document.querySelector('[data-chat-knowledge="m5"]')?.textContent).toContain(
+        'Решения по миру',
+      ),
     )
   })
 })

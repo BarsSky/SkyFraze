@@ -46,11 +46,22 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Delete("/ai/conversations/{cid}", h.DeleteConversation)
 	r.Delete("/ai/conversations", h.ClearConversations)
 	r.Post("/ai/conversations/{cid}/messages", h.SendMessage)
+	// «Не удалять эту беседу» (0.149.0): автоочистка обходит помеченные беседы.
+	r.Post("/ai/conversations/{cid}/keep", h.KeepConversation)
 	// Тот же вопрос, но ответ приходит потоком: текст по кускам и события по ходу дела.
 	r.Post("/ai/conversations/{cid}/stream", h.StreamMessage)
 	// Роль и поведение агента: читает участник проекта, меняет только владелец.
 	r.Get("/ai/settings", h.GetSettings)
 	r.Put("/ai/settings", h.SaveSettings)
+
+	// Знания проекта (0.149.0) — содержимое проекта, а не личные заметки: читают все
+	// участники, меняют редакторы. Срок хранения бесед — решение владельца.
+	r.Get("/ai/knowledge", h.ListKnowledge)
+	r.Post("/ai/knowledge", h.CreateKnowledge)
+	r.Get("/ai/knowledge/{kid}", h.GetKnowledge)
+	r.Put("/ai/knowledge/{kid}", h.UpdateKnowledge)
+	r.Delete("/ai/knowledge/{kid}", h.DeleteKnowledge)
+	r.Put("/ai/retention", h.SetRetention)
 
 	// Правки существующих кадров: агент их предлагает, применяет человек.
 	r.Get("/ai/proposals", h.ListProposals)
@@ -271,7 +282,12 @@ func (h *Handler) SendMessage(w http.ResponseWriter, r *http.Request) {
 	if err := decodeLargeJSON(w, r, &body); err != nil {
 		return
 	}
-	turn, err := h.svc.SendStreamImages(r.Context(), uid, pid, cid, body.Model, body.Text, body.Images, nil)
+	knowledge, ok := h.knowledgeIDs(w, body.Knowledge)
+	if !ok {
+		return
+	}
+	turn, err := h.svc.SendStreamKnowledge(r.Context(), uid, pid, cid, body.Model, body.Text,
+		knowledge, body.Images, nil)
 	if err != nil {
 		h.fail(w, "send message", err)
 		return
@@ -279,12 +295,39 @@ func (h *Handler) SendMessage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, turn)
 }
 
-// messageBody — тело запроса на вопрос помощнику. Картинки необязательны.
+// messageBody — тело запроса на вопрос помощнику. Картинки и знания необязательны.
 type messageBody struct {
 	Text  string `json:"text"`
 	Model string `json:"model"`
 	// Images — картинки в виде data URL (`data:image/png;base64,…`).
 	Images []string `json:"images"`
+	// Knowledge — знания проекта, приложенные к вопросу (0.149.0): идентификаторы из
+	// списка знаний. Тела достаёт сервер: интерфейсу незачем гонять 40 000 знаков туда-обратно.
+	Knowledge []string `json:"knowledge"`
+}
+
+// knowledgeIDs переводит строки из запроса в идентификаторы знаний.
+//
+// Битый идентификатор — 400, а не «пропустим»: человек выбрал знание в списке проекта, и
+// молча выкинуть его значит ответить не по тому тексту, который он приложил.
+func (h *Handler) knowledgeIDs(w http.ResponseWriter, raw []string) ([]uuid.UUID, bool) {
+	if len(raw) == 0 {
+		return nil, true
+	}
+	out := make([]uuid.UUID, 0, len(raw))
+	for _, item := range raw {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		id, err := uuid.Parse(item)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid knowledge id")
+			return nil, false
+		}
+		out = append(out, id)
+	}
+	return out, true
 }
 
 // StreamMessage — POST .../ai/conversations/{cid}/stream: тот же вопрос, но ответ
@@ -306,12 +349,17 @@ func (h *Handler) StreamMessage(w http.ResponseWriter, r *http.Request) {
 	if err := decodeLargeJSON(w, r, &body); err != nil {
 		return
 	}
+	knowledge, ok := h.knowledgeIDs(w, body.Knowledge)
+	if !ok {
+		return
+	}
 
 	stream := newSSEStream(w)
 	defer stream.close()
 	go stream.ping(r.Context(), ssePingEvery)
 
-	turn, err := h.svc.SendStreamImages(r.Context(), uid, pid, cid, body.Model, body.Text, body.Images, stream.send)
+	turn, err := h.svc.SendStreamKnowledge(r.Context(), uid, pid, cid, body.Model, body.Text,
+		knowledge, body.Images, stream.send)
 	if err != nil {
 		if !stream.startedNow() {
 			h.fail(w, "stream message", err)
