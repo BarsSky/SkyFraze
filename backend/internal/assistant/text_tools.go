@@ -224,6 +224,14 @@ var knownToolNames = map[string]bool{
 	// так же, как остальные, иначе он останется текстом в ответе — та самая ошибка списка.
 	ToolReadEventParagraphs: true,
 	ToolUpdateParagraph:     true,
+	// Знания (0.151.1). Тот же класс ошибки, что и в 0.142.5: инструменты добавили, а список
+	// не обновили — и текстовый вызов `[{"name":"save_knowledge",…}]` оставался текстом в
+	// ответе. Живой прогон на стенде это и показал: Qwen вместо native-call прислал
+	// ```json-блок, человек увидел сырой JSON и «знание сохранено», а знания не было.
+	// Теперь за этим следит тест: каждый инструмент из ToolDefs обязан быть в этом списке.
+	ToolSaveKnowledge: true,
+	ToolListKnowledge: true,
+	ToolReadKnowledge: true,
 }
 
 // hasKnownTool — есть ли среди вызовов инструмент, который мы действительно умеем
@@ -319,6 +327,29 @@ func decodeTextCalls(raw string) []ai.ToolCall {
 			return nil
 		}
 		calls = envelope.Calls
+		// Одиночный вызов без обёртки (0.151.1): `{"name": "list_knowledge", "arguments": {}}`.
+		// Модели присылают и так; без этого вызов оставался текстом в ответе.
+		//
+		// Требуем НАЛИЧИЕ аргументов: `{"name":"create_chapter"}` без `arguments` — это пример
+		// в объяснении модели, а не вызов, и принимать его за действие нельзя (на этом стоял
+		// тест «чужой блок не разбирается»).
+		if len(calls) == 0 {
+			var single textCall
+			if err := json.Unmarshal([]byte(trimmed), &single); err == nil {
+				args := firstRaw(single.Arguments, single.Args, single.Parameters, single.Input)
+				if single.Function != nil && len(single.Function.Arguments) > 0 {
+					args = single.Function.Arguments
+				}
+				name := firstNonEmpty(single.Name, single.Tool, single.Call)
+				if single.Function != nil {
+					name = firstNonEmpty(name, single.Function.Name)
+				}
+				hasArguments := len(args) > 0 && strings.TrimSpace(string(args)) != "null"
+				if name != "" && hasArguments {
+					calls = []textCall{single}
+				}
+			}
+		}
 	}
 
 	out := make([]ai.ToolCall, 0, len(calls))
