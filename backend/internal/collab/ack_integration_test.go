@@ -220,4 +220,3 @@ func TestHubDoesNotAckReadOnlyClient(t *testing.T) {
 		t.Fatalf("апдейт наблюдателя попал в документ комнаты: %q", body)
 	}
 }
-

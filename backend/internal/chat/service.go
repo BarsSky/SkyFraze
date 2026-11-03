@@ -64,6 +64,9 @@ var (
 	ErrBotDisabled = errors.New("Нестор выключен — сообщение сохранено, ответа не будет")
 	// ErrKnowledgeNotFound — приложенное знание не из этого проекта (0.149.0).
 	ErrKnowledgeNotFound = errors.New("приложенное знание не найдено в этом проекте")
+	// ErrKnowledgeForbidden — знания прикладывает только соавтор (0.150.0): читатель
+	// проекта видит опубликованное, а не черновые исследования.
+	ErrKnowledgeForbidden = errors.New("знания к сообщению прикладывают соавторы проекта")
 )
 
 // ProjectAccess — права на проект (реализует projects.Service).
@@ -124,7 +127,20 @@ type Service struct {
 	// live — документ живой комнаты проекта: по нему проверяется цитата (0.139.0).
 	// Может быть nil — тогда работает проекция.
 	live livedoc.Live
+	// roles — роль участника в проекте (0.150.0). Нужна знаниям: прикладывать их к
+	// сообщению может соавтор, читателю черновые исследования не показываем.
+	// Необязателен: без него ограничение не применяется (тесты и встраивание).
+	roles RoleReader
 }
+
+// RoleReader — роль участника в проекте (реализуется projects.Service).
+type RoleReader interface {
+	Role(ctx context.Context, userID, projectID uuid.UUID) (store.Role, error)
+}
+
+// UseRoles подключает чтение роли: без него знания к сообщению может приложить любой
+// участник, с ним — только соавтор (владелец или редактор).
+func (s *Service) UseRoles(roles RoleReader) { s.roles = roles }
 
 // New собирает сервис чата.
 func New(st *store.Store, proj ProjectAccess) *Service {
@@ -389,6 +405,17 @@ func (s *Service) Post(
 	}
 	// Приложенные знания (0.149.0): достаём ДО вставки — сообщение со ссылкой на чужое
 	// знание выглядело бы нормальным, а текст к нему не нашёлся бы.
+	// Прикладывать знания может только соавтор (0.150.0): читателю проекта черновые
+	// исследования соавторов не показываем.
+	if len(in.Knowledge) > 0 && s.roles != nil {
+		role, roleErr := s.roles.Role(ctx, userID, projectID)
+		if roleErr != nil {
+			return nil, roleErr
+		}
+		if role == store.RoleViewer {
+			return nil, ErrKnowledgeForbidden
+		}
+	}
 	attached, err := s.attachedKnowledge(ctx, projectID, in.Knowledge)
 	if err != nil {
 		return nil, err

@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
@@ -76,7 +77,10 @@ type KnowledgeView struct {
 // Проверки нарочно строгие и с числами в тексте: сообщение читает модель, и «слишком
 // длинно» без числа не подсказывает, на сколько сократить.
 func ValidateKnowledge(in KnowledgeInput, maxChars int) (store.KnowledgeInput, error) {
-	title := strings.TrimSpace(in.Title)
+	// Заголовок чистим от обрамляющих кавычек и решёток: живой прогон на стенде (0.149.1)
+	// дал «Проверка инструмента знаний« — модель обрамила им же придуманный заголовок.
+	// Это не ошибка данных, но в списке знаний такие кавычки читаются как дефект.
+	title := sanitizeKnowledgeTitle(in.Title)
 	summary := strings.TrimSpace(in.Summary)
 	body := strings.TrimSpace(in.Body)
 	if title == "" {
@@ -105,6 +109,25 @@ func ValidateKnowledge(in KnowledgeInput, maxChars int) (store.KnowledgeInput, e
 	return store.KnowledgeInput{Title: title, Summary: summary, Body: body, Chars: chars}, nil
 }
 
+// knowledgeTitleTrim — что снимаем с краёв заголовка: кавычки всех видов и markdown-решётки.
+const knowledgeTitleTrim = " \t\n\r«»\"'`„“”‘’#*_"
+
+// sanitizeKnowledgeTitle снимает обрамляющие кавычки и украшения.
+//
+// Внутренние кавычки НЕ трогаем: «„Анна“ и „дом“» — законный заголовок, и вычищать из
+// него всё, что похоже на кавычку, значило бы портить смысл.
+func sanitizeKnowledgeTitle(title string) string {
+	out := strings.TrimSpace(title)
+	for {
+		trimmed := strings.Trim(out, knowledgeTitleTrim)
+		trimmed = strings.TrimSpace(trimmed)
+		if trimmed == out {
+			return out
+		}
+		out = trimmed
+	}
+}
+
 // knowledgeLimit — предел знака для этого сервиса (тесты уменьшают).
 func (s *Service) knowledgeLimit() int {
 	if s.limits.KnowledgeChars > 0 {
@@ -121,12 +144,16 @@ func (s *Service) knowledgeEntriesLimit() int {
 	return MaxKnowledgeEntries
 }
 
-// KnowledgeList — знания проекта для списка и поиска. Читает любой участник: в отличие
-// от беседы это содержимое проекта, а не личные заметки.
+// KnowledgeList — знания проекта для списка и поиска (0.150.0: только соавторам).
+//
+// Почему редактор+, а не «любой участник». Знание — черновые исследования соавторов:
+// модель укладывает туда «что решили» и «что выяснили» до того, как это стало текстом.
+// Приглашённый читатель видит опубликованное, а не рабочие заметки, поэтому чтение
+// знаний требует права писать.
 func (s *Service) KnowledgeList(
 	ctx context.Context, userID, projectID uuid.UUID, query string,
 ) ([]store.AIKnowledgeBrief, error) {
-	if err := s.RequireProject(ctx, userID, projectID, false); err != nil {
+	if err := s.requireKnowledge(ctx, userID, projectID); err != nil {
 		return nil, err
 	}
 	return s.store.ListAIKnowledge(ctx, projectID, query, 0)
@@ -136,10 +163,23 @@ func (s *Service) KnowledgeList(
 func (s *Service) KnowledgeGet(
 	ctx context.Context, userID, projectID, id uuid.UUID,
 ) (*store.AIKnowledge, error) {
-	if err := s.RequireProject(ctx, userID, projectID, false); err != nil {
+	if err := s.requireKnowledge(ctx, userID, projectID); err != nil {
 		return nil, err
 	}
 	return s.store.AIKnowledgeByID(ctx, projectID, id)
+}
+
+// requireKnowledge — доступ к знаниям: только соавторы (владелец и редакторы).
+func (s *Service) requireKnowledge(ctx context.Context, userID, projectID uuid.UUID) error {
+	if err := s.RequireProject(ctx, userID, projectID, true); err != nil {
+		if errors.Is(err, ErrForbidden) {
+			// Объяснение важнее кода: «forbidden» на вкладке знаний читается как поломка,
+			// а «знания доступны соавторам» — как правило проекта.
+			return fmt.Errorf("%w: знания проекта доступны соавторам", ErrForbidden)
+		}
+		return err
+	}
+	return nil
 }
 
 // KnowledgeCreate — знание, написанное человеком руками.
@@ -214,6 +254,116 @@ func (s *Service) SaveKnowledgeEntries(
 		checked = append(checked, item)
 	}
 	return s.store.CreateAIKnowledgeBatch(ctx, projectID, userID, checked, source)
+}
+
+// FilterKnowledgeDuplicates отсеивает знания, похожие на уже сохранённые (0.150.0).
+//
+// Зачем: модель, укладывая беседу, часто заводит «Решения по миру» поверх уже
+// существующего «Решения по миру проекта». Дубли в списке хуже, чем чуть более строгое
+// сохранение: человек ищет знания глазами, и две почти одинаковые строки — это шум.
+//
+// Возвращаем то, что можно записывать, и то, что пропущено, — модель должна сказать
+// человеку «это уже есть», а не молча проглотить просьбу.
+func (s *Service) FilterKnowledgeDuplicates(
+	ctx context.Context, projectID uuid.UUID, entries []KnowledgeInput,
+) ([]KnowledgeInput, []KnowledgeDuplicate, error) {
+	if len(entries) == 0 {
+		return nil, nil, nil
+	}
+	existing, err := s.store.FindSimilarKnowledge(ctx, projectID, 500)
+	if err != nil {
+		return nil, nil, err
+	}
+	kept := make([]KnowledgeInput, 0, len(entries))
+	skipped := make([]KnowledgeDuplicate, 0)
+	for _, item := range entries {
+		var match *store.AIKnowledgeBrief
+		for i := range existing {
+			if similarKnowledgeTitle(item.Title, existing[i].Title) {
+				match = &existing[i]
+				break
+			}
+		}
+		if match == nil {
+			kept = append(kept, item)
+			continue
+		}
+		skipped = append(skipped, KnowledgeDuplicate{
+			Title: item.Title, ExistingID: match.ID, ExistingTitle: match.Title,
+		})
+	}
+	return kept, skipped, nil
+}
+
+// KnowledgeDuplicate — знание, которое не записали: похожее уже есть.
+type KnowledgeDuplicate struct {
+	Title         string    `json:"title"`
+	ExistingID    uuid.UUID `json:"existing_id"`
+	ExistingTitle string    `json:"existing_title"`
+}
+
+// similarKnowledgeTitle — «похоже ли» два заголовка.
+//
+// Три правила, и все три дешёвые: равные после нормализации, вложенные друг в друга (от
+// десяти знаков — иначе «Мир» и «Мир и война» считались бы одним знанием) и совпадение
+// слов на 75% (короткий пересказ заголовка).
+func similarKnowledgeTitle(a, b string) bool {
+	left := normalizeKnowledgeTitle(a)
+	right := normalizeKnowledgeTitle(b)
+	if left == "" || right == "" {
+		return false
+	}
+	if left == right {
+		return true
+	}
+	longest := len([]rune(left))
+	if len([]rune(right)) > longest {
+		longest = len([]rune(right))
+	}
+	if longest >= 10 && (strings.Contains(left, right) || strings.Contains(right, left)) {
+		return true
+	}
+	leftWords := knowledgeTitleWords(left)
+	rightWords := knowledgeTitleWords(right)
+	if len(leftWords) < 2 || len(rightWords) < 2 {
+		return false
+	}
+	common := 0
+	for word := range leftWords {
+		if rightWords[word] {
+			common++
+		}
+	}
+	union := len(leftWords) + len(rightWords) - common
+	return union > 0 && float64(common)/float64(union) >= 0.75
+}
+
+// knowledgeTitleWords — слова заголовка без однобуквенных частиц.
+func knowledgeTitleWords(normalized string) map[string]bool {
+	words := make(map[string]bool)
+	for _, word := range strings.Fields(normalized) {
+		if len([]rune(word)) >= 2 {
+			words[word] = true
+		}
+	}
+	return words
+}
+
+// normalizeKnowledgeTitle приводит заголовок к сравнимому виду: нижний регистр, ё→е,
+// без пунктуации и лишних пробелов. Ровно то, что не меняет смысл заголовка.
+func normalizeKnowledgeTitle(title string) string {
+	var b strings.Builder
+	for _, symbol := range strings.ToLower(strings.TrimSpace(title)) {
+		switch {
+		case symbol == 'ё':
+			b.WriteRune('е')
+		case unicode.IsLetter(symbol), unicode.IsDigit(symbol):
+			b.WriteRune(symbol)
+		default:
+			b.WriteRune(' ')
+		}
+	}
+	return strings.Join(strings.Fields(b.String()), " ")
 }
 
 // knowledgeForAttach готовит вложения к сообщению: сами знания (для запроса к модели) и

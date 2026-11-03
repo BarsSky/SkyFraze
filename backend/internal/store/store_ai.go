@@ -132,6 +132,10 @@ func (s *Store) CreateAIConversation(
 }
 
 // ListAIConversations — беседы этого пользователя в этом проекте (свежие сверху).
+//
+// Предел 200 (0.150.1): без него проект с сотнями разговоров тянул их целиком на каждое
+// открытие «Истории». Двести — вчетверо больше, чем реально листают, и при этом
+// ограниченный ответ; старые беседы никуда не деваются, а автоочистка по сроку их убирает.
 func (s *Store) ListAIConversations(
 	ctx context.Context, projectID, userID uuid.UUID,
 ) ([]AIConversation, error) {
@@ -139,7 +143,8 @@ func (s *Store) ListAIConversations(
 		`SELECT id, project_id, user_id, title, model, kept, created_at, updated_at
 		   FROM ai_conversations
 		  WHERE project_id=$1 AND user_id=$2
-		  ORDER BY updated_at DESC`, projectID, userID)
+		  ORDER BY updated_at DESC
+		  LIMIT 200`, projectID, userID)
 }
 
 // AIConversationByID — беседа пользователя. Чужая беседа неотличима от несуществующей

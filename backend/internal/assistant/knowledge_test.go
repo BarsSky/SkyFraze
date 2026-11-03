@@ -107,3 +107,42 @@ func TestValidateKnowledgeRejectsEmptyFields(t *testing.T) {
 		t.Fatalf("знаков %d", ok.Chars)
 	}
 }
+
+// Заголовок чистится от обрамляющих кавычек (0.150.0): живой прогон дал ««Проверка…«».
+func TestValidateKnowledgeTrimsTitleQuotes(t *testing.T) {
+	cases := map[string]string{
+		"«Проверка инструмента знаний«": "Проверка инструмента знаний",
+		"„Канон мира“":                  "Канон мира",
+		"\"Драконы\"":                   "Драконы",
+		"## Пролог":                     "Пролог",
+		"  Канон  ":                     "Канон",
+	}
+	for input, want := range cases {
+		got, err := assistant.ValidateKnowledge(
+			assistant.KnowledgeInput{Title: input, Body: "тезис"}, 100)
+		if err != nil {
+			t.Fatalf("%q: %v", input, err)
+		}
+		if got.Title != want {
+			t.Errorf("%q → %q, ожидалось %q", input, got.Title, want)
+		}
+	}
+	// Одна пара обрамляющих кавычек снимается целиком.
+	got, err := assistant.ValidateKnowledge(
+		assistant.KnowledgeInput{Title: "«Анна и дом»", Body: "тезис"}, 100)
+	if err != nil {
+		t.Fatalf("пара кавычек: %v", err)
+	}
+	if got.Title != "Анна и дом" {
+		t.Errorf("пара кавычек → %q", got.Title)
+	}
+	// Внутренние кавычки не трогаем: «Анна» и «дом» — законный заголовок.
+	got, err = assistant.ValidateKnowledge(
+		assistant.KnowledgeInput{Title: "«Анна» и «дом»", Body: "тезис"}, 100)
+	if err != nil {
+		t.Fatalf("внутренние кавычки: %v", err)
+	}
+	if got.Title != "Анна» и «дом" {
+		t.Errorf("внутренние кавычки → %q", got.Title)
+	}
+}

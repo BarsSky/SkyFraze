@@ -14,7 +14,6 @@ import (
 	"github.com/skyfraze/backend/internal/ratelimit"
 )
 
-
 func TestLimitBlocksAfterThreshold(t *testing.T) {
 	limiter := ratelimit.New(ratelimit.Limit{PerWindow: 3, Window: time.Minute}, ratelimit.Limit{})
 	makeRequest := func() bool {

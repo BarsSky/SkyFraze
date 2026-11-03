@@ -657,3 +657,35 @@ func ids(messages []chat.MessageView) []uuid.UUID {
 	}
 	return out
 }
+
+// Знания к сообщению прикладывает только соавтор (0.150.0): читатель проекта видит
+// опубликованное, а не черновые исследования. Снимок заголовка при этом сохраняется в
+// сообщении — карточка под текстом читается и после удаления знания.
+func TestChatKnowledgeAttachRequiresCoauthor(t *testing.T) {
+	e := setupChat(t)
+	ctx := context.Background()
+	// Роль нужна ограничению: без UseRoles знания прикладывал бы любой участник.
+	e.svc.UseRoles(e.proj)
+
+	knowledge, err := e.st.CreateAIKnowledge(ctx, e.project, e.owner,
+		store.KnowledgeInput{Title: "Черновые выводы", Body: "решили так", Chars: 10}, nil)
+	if err != nil {
+		t.Fatalf("знание: %v", err)
+	}
+
+	if _, err := e.svc.Post(ctx, e.viewer, e.project, chat.Input{
+		Body: "Читатель пробует приложить", Knowledge: []uuid.UUID{knowledge.ID},
+	}); !errors.Is(err, chat.ErrKnowledgeForbidden) {
+		t.Fatalf("читатель приложил знание: %v", err)
+	}
+
+	answer, err := e.svc.Post(ctx, e.owner, e.project, chat.Input{
+		Body: "Соавтор прикладывает", Knowledge: []uuid.UUID{knowledge.ID},
+	})
+	if err != nil {
+		t.Fatalf("соавтор не смог: %v", err)
+	}
+	if !strings.Contains(string(answer.Message.Knowledge), "Черновые выводы") {
+		t.Fatalf("снимок вложения не сохранился: %s", answer.Message.Knowledge)
+	}
+}

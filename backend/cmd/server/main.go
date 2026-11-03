@@ -284,6 +284,9 @@ func main() {
 		// на рассуждения, и помощник «не отвечает» без причины.
 		MaxOutputTokens: cfg.AIMaxOutputTokens,
 		DebugPayloads:   cfg.AIDebug,
+		// Метаданные модели — отдельно от содержимого (0.150.1): числа о запросе нужны
+		// и тогда, когда текст проекта в журнал не пишется.
+		LogMeta: cfg.AIMetaLog,
 		// Генерация изображений — отдельный сервис со своим железом (A1111-совместимый).
 		ImageURL:            cfg.AIImageURL,
 		ImageTimeoutSeconds: cfg.AIImageTimeoutSeconds,
@@ -356,6 +359,9 @@ func main() {
 	// сервис собирается ПОСЛЕ хаба.
 	chatSvc := chat.New(st, projSvc)
 	chatSvc.UseBot(assistant.NewChatBot(assistantSvc), ai.AgentName)
+	// Роль участника нужна знаниям (0.150.0): прикладывать черновые исследования к
+	// сообщению может соавтор, читателю проекта — нет.
+	chatSvc.UseRoles(projSvc)
 	chatH := chat.NewHandler(chatSvc, logger)
 
 	collabHub := collab.NewHub(logger, cfg.JWTSecret, evSvc, cfg.CORSOrigins)

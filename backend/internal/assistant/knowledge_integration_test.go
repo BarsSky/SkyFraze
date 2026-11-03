@@ -230,6 +230,138 @@ func TestSaveKnowledgeToolToleratesModelFieldNames(t *testing.T) {
 	}
 }
 
+// Знания — черновые исследования соавторов (0.150.0): читатель проекта их не видит.
+func TestKnowledgeHiddenFromViewer(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	owner := e.user(t, "owner@example.com")
+	projectID, _, _ := e.seedProject(t, owner)
+	viewer := e.user(t, "viewer@example.com")
+	if err := e.st.AddMembership(ctx, projectID, viewer, store.RoleViewer); err != nil {
+		t.Fatalf("участие: %v", err)
+	}
+	item := saveKnowledge(t, e, ctx, projectID, owner, "Черновые выводы")
+
+	if _, err := e.asst.KnowledgeList(ctx, viewer, projectID, ""); !errors.Is(err, assistant.ErrForbidden) {
+		t.Fatalf("читатель увидел список знаний: %v", err)
+	}
+	if _, err := e.asst.KnowledgeGet(ctx, viewer, projectID, item.ID); !errors.Is(err, assistant.ErrForbidden) {
+		t.Fatalf("читатель прочитал знание: %v", err)
+	}
+	// А соавтор-редактор — видит.
+	editor := e.user(t, "editor@example.com")
+	if err := e.st.AddMembership(ctx, projectID, editor, store.RoleEditor); err != nil {
+		t.Fatalf("участие редактора: %v", err)
+	}
+	if _, err := e.asst.KnowledgeList(ctx, editor, projectID, ""); err != nil {
+		t.Fatalf("редактор не увидел знания: %v", err)
+	}
+	// Признак для интерфейса: у читателя false, у редактора true.
+	viewerSettings, err := e.asst.ProjectSettings(ctx, viewer, projectID)
+	if err != nil {
+		t.Fatalf("настройки читателя: %v", err)
+	}
+	if viewerSettings.CanUseKnowledge {
+		t.Fatal("читателю разрешены знания")
+	}
+	editorSettings, err := e.asst.ProjectSettings(ctx, editor, projectID)
+	if err != nil {
+		t.Fatalf("настройки редактора: %v", err)
+	}
+	if !editorSettings.CanUseKnowledge {
+		t.Fatal("редактору знания запрещены")
+	}
+}
+
+// Дубли (0.150.0): «Решения по миру» поверх «Решения по миру проекта» — шум в списке.
+func TestSaveKnowledgeToolSkipsDuplicates(t *testing.T) {
+	e := setup(t,
+		ai.Reply{ToolCalls: []ai.ToolCall{{
+			ID:   "call-1",
+			Name: assistant.ToolSaveKnowledge,
+			Arguments: map[string]any{"entries": []any{
+				map[string]any{"title": "Решения по миру проекта", "body": "почти то же"},
+				map[string]any{"title": "Новое про героев", "body": "отдельное знание"},
+			}},
+		}}},
+		ai.Reply{Content: "Одно знание уже было."},
+	)
+	ctx := context.Background()
+	owner := e.user(t, "owner@example.com")
+	projectID, _, _ := e.seedProject(t, owner)
+	saveKnowledge(t, e, ctx, projectID, owner, "Решения по миру")
+
+	turn, err := e.asst.Send(ctx, owner, projectID, uuid.Nil, "stub:1", "Сохрани выводы")
+	if err != nil {
+		t.Fatalf("вопрос: %v", err)
+	}
+	// Похожее знание не записано, новое — записано.
+	if len(turn.Knowledge) != 1 || turn.Knowledge[0].Title != "Новое про героев" {
+		t.Fatalf("сохранено: %+v", turn.Knowledge)
+	}
+	list, err := e.asst.KnowledgeList(ctx, owner, projectID, "")
+	if err != nil {
+		t.Fatalf("список: %v", err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("знаний %d, ожидалось 2", len(list))
+	}
+
+	// Пачка ТОЛЬКО из дублей — отказ с объяснением, а не тихое «сохранено».
+	e.stub.setReplies(
+		ai.Reply{ToolCalls: []ai.ToolCall{{
+			ID:   "call-2",
+			Name: assistant.ToolSaveKnowledge,
+			Arguments: map[string]any{"entries": []any{
+				map[string]any{"title": "Решения по миру", "body": "дубль"},
+			}},
+		}}},
+		ai.Reply{Content: "Такое знание уже есть."},
+	)
+	turn, err = e.asst.Send(ctx, owner, projectID, uuid.Nil, "stub:1", "Сохрани ещё раз")
+	if err != nil {
+		t.Fatalf("второй вопрос: %v", err)
+	}
+	if len(turn.Knowledge) != 0 {
+		t.Fatalf("дубль записался: %+v", turn.Knowledge)
+	}
+	if len(turn.Calls) == 0 || turn.Calls[0].OK {
+		t.Fatalf("вызов не отмечен как отказ: %+v", turn.Calls)
+	}
+	if !strings.Contains(turn.Calls[0].Error, "уже есть") {
+		t.Fatalf("модели не объяснили причину: %q", turn.Calls[0].Error)
+	}
+}
+
+// Предупреждение автоочистки (0.150.0): сколько бесед уже за пределами срока.
+func TestRetentionPreviewCountsDue(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	owner := e.user(t, "owner@example.com")
+	projectID, _, _ := e.seedProject(t, owner)
+
+	ownConversation(t, e, ctx, projectID, owner, "Свежая")
+	old := ownConversation(t, e, ctx, projectID, owner, "Старая")
+	if _, err := e.st.Pool.Exec(ctx,
+		`UPDATE ai_conversations SET updated_at = now() - interval '9 days' WHERE id = $1`, old.ID); err != nil {
+		t.Fatalf("старение: %v", err)
+	}
+	if _, err := e.asst.SetRetention(ctx, owner, projectID, 7); err != nil {
+		t.Fatalf("срок: %v", err)
+	}
+	settings, err := e.asst.ProjectSettings(ctx, owner, projectID)
+	if err != nil {
+		t.Fatalf("настройки: %v", err)
+	}
+	if settings.RetentionDue != 1 {
+		t.Fatalf("за пределами срока %d бесед, ожидалась 1", settings.RetentionDue)
+	}
+	// Ближайшая (свежая) удалится не сразу: ей ещё жить почти весь срок.
+	if settings.RetentionNextDays < 6 {
+		t.Fatalf("до ближайшего удаления %d дней, ожидалось около 7", settings.RetentionNextDays)
+	}
+}
+
 func TestRetentionOwnerOnlyAndCleanupHonoursKept(t *testing.T) {
 	e := setup(t)
 	ctx := context.Background()

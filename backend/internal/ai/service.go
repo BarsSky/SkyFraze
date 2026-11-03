@@ -85,6 +85,11 @@ type Config struct {
 	// По умолчанию выключено: в сообщениях лежит текст проекта, и лить его в журнал без
 	// просьбы нельзя. Зато при разборе «модель не ответила» без этого видно только факт.
 	DebugPayloads bool
+	// LogMeta — писать в лог метаданные запроса и ответа (AI_LOG_META, по умолчанию да):
+	// провайдер, модель, размеры, оценка токенов, время, лимит ответа. Содержимого здесь
+	// нет, поэтому это можно держать включённым всегда — и именно этих чисел не хватало,
+	// когда AI_DEBUG выключили ради приватности (0.150.1).
+	LogMeta bool
 }
 
 // Service — доступные модели и ключи пользователей.
@@ -574,8 +579,10 @@ func (s *Service) applyDefaults(req *Request) {
 // Содержимое сообщений — только при AI_DEBUG=1: в них текст проекта, и лить его в журнал без
 // просьбы нельзя. Метаданных достаточно, чтобы увидеть «запрос ушёл не туда» и «лимит мал».
 func (s *Service) logRequest(provider Provider, req Request, stream bool) {
+	// Метаданные — на уровне Info при AI_LOG_META (0.150.1): числа о запросе нужны без
+	// содержимого, и они не должны зависеть от флага, который включает текст проекта.
 	level := slog.LevelDebug
-	if s.cfg.DebugPayloads {
+	if s.cfg.DebugPayloads || s.cfg.LogMeta {
 		level = slog.LevelInfo
 	}
 	args := []any{
@@ -611,8 +618,10 @@ func (s *Service) logReply(provider Provider, req Request, reply Reply, took tim
 		s.logger.Warn("ai: модель не ответила", args...)
 		return
 	}
+	// Метаданные — на уровне Info при AI_LOG_META (0.150.1): числа о запросе нужны без
+	// содержимого, и они не должны зависеть от флага, который включает текст проекта.
 	level := slog.LevelDebug
-	if s.cfg.DebugPayloads {
+	if s.cfg.DebugPayloads || s.cfg.LogMeta {
 		level = slog.LevelInfo
 	}
 	names := make([]string, 0, len(reply.ToolCalls))

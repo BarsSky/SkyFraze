@@ -15,7 +15,7 @@ import {
 import { listEventRows } from '../../api/events'
 import { serverErrorMessage } from '../../api/client'
 import { KnowledgePicker, MAX_KNOWLEDGE_ATTACH } from '../assistant/KnowledgePicker'
-import type { AIKnowledgeBrief } from '../../api/assistant'
+import { getAISettings, type AIKnowledgeBrief } from '../../api/assistant'
 import { copyText } from '../../lib/clipboard'
 import { onChatChanged } from '../../lib/chatEvents'
 import { useAuthStore } from '../../store/auth'
@@ -129,6 +129,14 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread, prefill
    */
   const [knowledge, setKnowledge] = useState<AIKnowledgeBrief[]>([])
   const [knowledgePicker, setKnowledgePicker] = useState(false)
+  /**
+   * Может ли этот человек прикладывать знания (0.150.0).
+   *
+   * Знания — черновые исследования соавторов, читателю проекта они недоступны. Роль
+   * приходит в настройках помощника; сервер всё равно откажет, но кнопка, которая заведомо
+   * ведёт к отказу, — это интерфейс, который врёт.
+   */
+  const [canUseKnowledge, setCanUseKnowledge] = useState(true)
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
   const [askBot, setAskBot] = useState(false)
   const [linkId, setLinkId] = useState('')
@@ -338,6 +346,22 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread, prefill
       alive = false
     }
   }, [frames, projectId, visible])
+
+  // Право на знания (0.150.0) — один запрос при открытии вкладки, как и кадры.
+  useEffect(() => {
+    if (!visible) return
+    let alive = true
+    getAISettings(projectId)
+      .then((settings) => {
+        if (alive) setCanUseKnowledge(settings.canUseKnowledge)
+      })
+      .catch(() => {
+        // Настройки не прочитались — кнопку оставляем: сервер всё равно проверит роль.
+      })
+    return () => {
+      alive = false
+    }
+  }, [projectId, visible])
 
   // Прочитано: вкладка открыта — отмечаем последнее сообщение и гасим маркер.
   //
@@ -790,18 +814,20 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread, prefill
             {busy ? t('chat.sending') : t('chat.send')}
           </button>
           {/* Знания проекта (0.149.0): приложить выводы к сообщению — Нестор ответит по ним,
-              а не по пересказу в тексте. */}
-          <button
-            type="button"
-            className="secondary"
-            onClick={() => setKnowledgePicker(true)}
-            disabled={busy || knowledge.length >= MAX_KNOWLEDGE_ATTACH}
-            title={t('chat.knowledgeTitle')}
-            data-chat-knowledge-button
-          >
-            {t('chat.knowledgeButton')}
-            {knowledge.length > 0 && <span className="ai-history__count">{knowledge.length}</span>}
-          </button>
+              а не по пересказу в тексте. Читателю проекта кнопки нет (0.150.0). */}
+          {canUseKnowledge && (
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => setKnowledgePicker(true)}
+              disabled={busy || knowledge.length >= MAX_KNOWLEDGE_ATTACH}
+              title={t('chat.knowledgeTitle')}
+              data-chat-knowledge-button
+            >
+              {t('chat.knowledgeButton')}
+              {knowledge.length > 0 && <span className="ai-history__count">{knowledge.length}</span>}
+            </button>
+          )}
         </div>
         {knowledge.length > 0 && (
           <div className="ai-attach ai-attach--knowledge" data-chat-knowledge-attach>

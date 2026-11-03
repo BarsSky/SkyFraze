@@ -303,6 +303,72 @@ func (s *Store) SetAIRetention(
 		projectID, days)
 }
 
+// AIRetentionPreview — что автоочистка сделает по нынешнему сроку (0.150.0).
+//
+// Зачем: без предупреждения «включил срок — история удалилась молча» выглядит как потеря
+// данных. Считаем на сервере, а не в интерфейсе, потому что ответ нужен один и по всему
+// проекту: беседы соавторов стареют вместе.
+type AIRetentionPreview struct {
+	// Total — сколько бесед проекта (не помеченных «не удалять») вообще участвует.
+	Total int
+	// Due — сколько из них старше срока и удалится на следующем проходе.
+	Due int
+	// NextDays — через сколько дней удалится ближайшая (0 — уже за пределами срока).
+	NextDays int
+}
+
+// AIRetentionPreview считает предупреждение для владельца проекта.
+//
+// Один запрос, а не «выбрать беседы и посчитать в Go»: важно только «сколько старых» и
+// «когда ближайшая», и база отвечает на это без пересылки строк.
+func (s *Store) AIRetentionPreview(
+	ctx context.Context, projectID uuid.UUID, days int,
+) (AIRetentionPreview, error) {
+	var out AIRetentionPreview
+	if days <= 0 {
+		return out, nil
+	}
+	var due int
+	var oldestDays float64
+	err := s.Pool.QueryRow(ctx,
+		`SELECT count(*)::int,
+		        count(*) FILTER (WHERE updated_at < now() - make_interval(days => $2))::int,
+		        COALESCE(EXTRACT(EPOCH FROM now() - max(updated_at)) / 86400, 0)::float8
+		   FROM ai_conversations
+		  WHERE project_id = $1 AND kept = false`, projectID, days).Scan(&out.Total, &due, &oldestDays)
+	if err != nil {
+		return out, err
+	}
+	out.Due = due
+	if out.Total > 0 {
+		next := days - int(oldestDays)
+		if next < 0 {
+			next = 0
+		}
+		out.NextDays = next
+	}
+	return out, nil
+}
+
+// FindSimilarKnowledge отдаёт знания проекта для поиска дублей (0.150.0).
+//
+// Сравнение — на стороне Go, без pg_trgm: расширение пришлось бы ставить на каждую базу
+// (включая тестовую), а знаний у проекта сотни, не миллионы — загрузить заголовки и
+// пометки дешевле, чем тянуть зависимость ради одного сравнения.
+func (s *Store) FindSimilarKnowledge(
+	ctx context.Context, projectID uuid.UUID, limit int,
+) ([]AIKnowledgeBrief, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	return qAll[AIKnowledgeBrief](ctx, s.Pool,
+		`SELECT `+aiKnowledgeBriefColumns+`
+		   FROM ai_knowledge
+		  WHERE project_id = $1
+		  ORDER BY created_at DESC
+		  LIMIT $2`, projectID, limit)
+}
+
 // CleanupAIConversations удаляет беседы, которые старше срока хранения проекта.
 //
 // Одним запросом, а не «выбрать проекты и удалять по одному»: срок живёт в настройках

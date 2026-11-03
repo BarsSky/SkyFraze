@@ -123,6 +123,39 @@ async function desktop() {
   if ((await retention.count()) === 0) add('error', 'нет выбора срока хранения бесед')
   else if (await retention.isDisabled()) add('warning', 'срок хранения недоступен (пользователь не владелец?)')
   else add('info', 'срок хранения доступен владельцу')
+  // Предупреждение автоочистки (0.150.0): при сроке 0 его нет, при сроке > 0 — есть.
+  const warningBox = page.locator('[data-knowledge-retention-warning]')
+  const warning =
+    (await warningBox.count()) > 0 ? ((await warningBox.innerText()) ?? '').trim() : ''
+  add('info', `предупреждение автоочистки: ${warning || 'скрыто (срок 0)'}`)
+
+  // Булавка «не удалять эту беседу» (0.150.0): в «Истории» помощника. Два нажатия —
+  // помечаем и снимаем, чтобы не менять проект.
+  await page.locator('[data-dock-tab="assistant"]').click()
+  const historyButton = page.locator('[data-assistant-history-button]')
+  if ((await historyButton.count()) === 0) {
+    add('warning', 'нет истории бесед: булавку не проверить')
+  } else {
+    await historyButton.click()
+    const pin = page.locator('[data-assistant-keep-conversation]').first()
+    if ((await pin.count()) === 0) {
+      add('error', 'в истории нет кнопки «не удалять эту беседу»')
+    } else {
+      const before = await pin.getAttribute('aria-pressed')
+      await pin.click()
+      await page.waitForTimeout(700)
+      const after = await pin.getAttribute('aria-pressed')
+      await pin.click()
+      await page.waitForTimeout(700)
+      add(
+        before !== after && before === 'false' && after === 'true' ? 'info' : 'warning',
+        `булавка «не удалять»: ${before} → ${after}`,
+      )
+    }
+    // Возвращаемся на вкладку знаний: удаление проверяем там.
+    await page.locator('[data-dock-tab="knowledge"]').click()
+    await page.locator('[data-knowledge-tab]').waitFor({ state: 'visible', timeout: 5_000 })
+  }
 
   // Удаление: первое нажатие только спрашивает, второе удаляет.
   const deleteButton = item.locator('[data-knowledge-delete]')

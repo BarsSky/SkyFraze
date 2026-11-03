@@ -289,6 +289,10 @@ func (h *Handler) fail(w http.ResponseWriter, err error, where string) {
 	// создано, и человеку надо поправить выбор, а не искать «что пропало».
 	case errors.Is(err, ErrKnowledgeNotFound):
 		writeErr(w, http.StatusBadRequest, err.Error())
+	// Знания прикладывает только соавтор (0.150.0): это 403, а не 400 — дело в правах,
+	// а не в запросе.
+	case errors.Is(err, ErrKnowledgeForbidden):
+		writeErr(w, http.StatusForbidden, err.Error())
 	case errors.Is(err, projects.ErrForbidden):
 		writeErr(w, http.StatusForbidden, "forbidden")
 	case errors.Is(err, store.ErrNotFound), errors.Is(err, projects.ErrNotFound):

@@ -196,7 +196,6 @@ func truncateRunes(value string, limit int) string {
 	return string(runes[:limit])
 }
 
-
 // PrepareCard проверяет и нормализует поля карточки, НЕ создавая её.
 //
 // Зачем отдельной функцией. У помощника появилось предложение карточек (propose_entities,

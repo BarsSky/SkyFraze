@@ -369,6 +369,14 @@ export interface AISettings {
    * что срок касается бесед всех соавторов.
    */
   retentionDays: number
+  /**
+   * Может ли спрашивающий читать знания (0.150.0). Знания — черновые исследования
+   * соавторов: их видят владелец и редакторы, но не приглашённый читатель.
+   */
+  canUseKnowledge: boolean
+  /** Предупреждение автоочистки: сколько бесед уже старше срока и через сколько дней уйдёт ближайшая. */
+  retentionDue: number
+  retentionNextDays: number
 }
 
 /** Роль и поведение агента в проекте. */
@@ -434,6 +442,9 @@ export function parseAISettings(raw: unknown): AISettings {
     imageStyle: asText(record?.image_style),
     imageNegative: asText(record?.image_negative),
     retentionDays: asWhole(record?.retention_days),
+    canUseKnowledge: record?.can_use_knowledge !== false,
+    retentionDue: asWhole(record?.retention_due),
+    retentionNextDays: asWhole(record?.retention_next_days),
     capabilities: {
       text: capabilities?.text !== false,
       images: capabilities?.images === true,
@@ -1449,6 +1460,8 @@ function parseAIConversation(raw: unknown): AIConversation | null {
     title: asText(record?.title),
     model: asText(record?.model),
     updatedAt: asText(record?.updated_at),
+    // «Не удалять эту беседу» (0.150.0): очистка по сроку такие беседы обходит.
+    kept: record?.kept === true,
   }
 }
 

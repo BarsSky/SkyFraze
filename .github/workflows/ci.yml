@@ -33,6 +33,17 @@ jobs:
         with: { go-version: '1.26', cache-dependency-path: backend/go.sum }
       - run: cd backend && go mod download
       - run: cd backend && go vet ./...
+      # Форматирование — проверкой, а не обещанием (0.150.1): 9 файлов разъехались
+      # незаметно, потому что gofmt никто не запускал. Список в выводе говорит, что чинить.
+      - name: Форматирование Go
+        run: |
+          cd backend
+          files=$(gofmt -l .)
+          if [ -n "$files" ]; then
+            echo "gofmt нужен этим файлам:"
+            echo "$files"
+            exit 1
+          fi
       - run: cd backend && go test ./...
       # Ротация копий удаляет данные — проверка не требует базы и docker'а, зато ловит
       # ошибку в шаблонах имён до того, как она съест реальные копии на стенде.

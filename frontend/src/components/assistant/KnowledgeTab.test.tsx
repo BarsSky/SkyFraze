@@ -69,6 +69,9 @@ const SETTINGS = {
   imageAvailable: false,
   imageNote: '',
   retentionDays: 0,
+  canUseKnowledge: true,
+  retentionDue: 0,
+  retentionNextDays: 0,
 }
 
 beforeEach(() => {
@@ -159,5 +162,33 @@ describe('KnowledgeTab', () => {
     expect(del.textContent).toContain('Точно удалить?')
     fireEvent.click(del)
     await waitFor(() => expect(mocks.remove).toHaveBeenCalledWith('p1', 'k1'))
+  })
+
+  /**
+   * Знания — черновые исследования соавторов (0.150.0). Читатель проекта их не видит, и
+   * вкладка обязана это сказать, а не показать пустой список или ошибку 403.
+   */
+  it('читателю проекта знания не показывает и не грузит', async () => {
+    mocks.settings.mockResolvedValue({ ...SETTINGS, canUseKnowledge: false })
+    render(<KnowledgeTab projectId="p1" visible />)
+    expect(await screen.findByText(/только соавторы/)).toBeTruthy()
+    expect(mocks.list).not.toHaveBeenCalled()
+    expect(document.querySelector('[data-knowledge-retention]')).toBeNull()
+  })
+
+  it('предупреждает, сколько бесед удалит автоочистка', async () => {
+    mocks.settings.mockResolvedValue({
+      ...SETTINGS,
+      retentionDays: 90,
+      retentionDue: 4,
+      retentionNextDays: 3,
+    })
+    render(<KnowledgeTab projectId="p1" visible />)
+    const warning = await waitFor(() => {
+      const found = document.querySelector('[data-knowledge-retention-warning]')
+      expect(found).not.toBeNull()
+      return found as HTMLElement
+    })
+    expect(warning.textContent).toContain('4')
   })
 })

@@ -42,11 +42,11 @@ import (
 // из них: «пропал тон фона» или «сбросилась дата создания» — тихая потеря данных, которую
 // заметят уже после того, как старые версии уйдут по удержанию.
 type EventFull struct {
-	ID        string `json:"id"`
-	ParentID  string `json:"parent_id"`
-	Title     string `json:"title"`
-	Body      string `json:"body"`
-	EventDate string `json:"event_date"`
+	ID        string   `json:"id"`
+	ParentID  string   `json:"parent_id"`
+	Title     string   `json:"title"`
+	Body      string   `json:"body"`
+	EventDate string   `json:"event_date"`
 	Assets    []string `json:"assets"`
 	// BackgroundKind — inherit | tone | asset (как у BackgroundKind в интерфейсе).
 	BackgroundKind string `json:"bg_kind"`

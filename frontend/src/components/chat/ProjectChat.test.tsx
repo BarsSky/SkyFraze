@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { ProjectChat } from './ProjectChat'
 import { notifyChatChanged } from '../../lib/chatEvents'
@@ -20,11 +20,14 @@ const listEventRows = vi.fn()
 const toggleChatReaction = vi.fn()
 /** Знания проекта (0.149.0): список для окна выбора. */
 const listAIKnowledge = vi.fn()
+/** Настройки — из них чат узнаёт, может ли человек прикладывать знания (0.150.0). */
+const getAISettings = vi.fn()
 
 const markChatSeen = vi.fn().mockResolvedValue(undefined)
 
 vi.mock('../../api/assistant', () => ({
   listAIKnowledge: (...args: unknown[]) => listAIKnowledge(...args),
+  getAISettings: (...args: unknown[]) => getAISettings(...args),
 }))
 
 vi.mock('../../api/chat', () => ({
@@ -68,6 +71,15 @@ afterEach(() => {
   cleanup()
   vi.clearAllMocks()
   localStorage.clear()
+})
+
+/** Настройки по умолчанию: соавтор может прикладывать знания. */
+function canKnowledge(canUseKnowledge: boolean) {
+  getAISettings.mockResolvedValue({ canUseKnowledge })
+}
+
+beforeEach(() => {
+  canKnowledge(true)
 })
 
 const base = { projectId: 'p1', visible: true }
@@ -664,5 +676,18 @@ describe('ProjectChat', () => {
         'Решения по миру',
       ),
     )
+  })
+
+  /**
+   * Читатель проекта знаний не прикладывает (0.150.0): это черновые исследования
+   * соавторов, и кнопка, ведущая к 403, — интерфейс, который врёт.
+   */
+  it('читателю проекта кнопки знаний нет', async () => {
+    canKnowledge(false)
+    listChat.mockResolvedValue({ messages: [], bot: { name: 'Нестор', available: false } })
+    listEventRows.mockResolvedValue([])
+    render(<ProjectChat {...base} />)
+    await waitFor(() => expect(getAISettings).toHaveBeenCalledWith('p1'))
+    expect(document.querySelector('[data-chat-knowledge-button]')).toBeNull()
   })
 })

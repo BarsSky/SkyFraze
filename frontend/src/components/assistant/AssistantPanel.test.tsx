@@ -44,6 +44,8 @@ const mocks = vi.hoisted(() => ({
   clearConversations: vi.fn(),
   /** Знания проекта (0.149.0): список для окна выбора. */
   listKnowledge: vi.fn(),
+  /** «Не удалять эту беседу» (0.150.0). */
+  keepConversation: vi.fn(),
   discardProposal: vi.fn(),
 }))
 
@@ -71,6 +73,7 @@ vi.mock('../../api/assistant', async () => {
     getAIConversation: mocks.conversation,
     deleteAIConversation: mocks.deleteConversation,
     clearAIConversations: mocks.clearConversations,
+    keepAIConversation: mocks.keepConversation,
     listAIKnowledge: mocks.listKnowledge,
     listAIEndpoints: mocks.endpoints,
     addAIEndpoint: mocks.addEndpoint,
@@ -178,6 +181,9 @@ const AGENT: AISettings = {
   imageAvailable: false,
   imageNote: 'генератор изображений не настроен (AI_IMAGE_URL)',
   retentionDays: 0,
+  canUseKnowledge: true,
+  retentionDue: 0,
+  retentionNextDays: 0,
 }
 
 /** Панель всегда живёт внутри окна: по умолчанию считаем его открытым. */
@@ -226,6 +232,7 @@ beforeEach(() => {
   mocks.addEndpoint.mockResolvedValue(null)
   mocks.deleteEndpoint.mockResolvedValue(undefined)
   mocks.listKnowledge.mockResolvedValue([])
+  mocks.keepConversation.mockResolvedValue(undefined)
 })
 
 afterEach(() => cleanup())
@@ -728,6 +735,53 @@ describe('AssistantPanel', () => {
     const card = document.querySelector('[data-assistant-knowledge-saved]')
     expect(card).not.toBeNull()
     expect(card?.textContent).toContain('Выводы беседы')
+  })
+
+  /**
+   * Читателю проекта знания недоступны (0.150.0): это черновые исследования соавторов.
+   * Кнопки прикрепления у него быть не должно — сервер всё равно откажет, но кнопка,
+   * ведущая к отказу, врёт о возможностях.
+   */
+  it('читателю проекта кнопки знаний нет', async () => {
+    mocks.config.mockResolvedValue(LOCAL)
+    mocks.models.mockResolvedValue([
+      { id: 'qwen2.5:7b', ref: 'ollama:qwen2.5:7b', provider: 'ollama', title: 'qwen2.5:7b', free: true, local: true, tools: true },
+    ])
+    mocks.settings.mockResolvedValue({ ...AGENT, canUseKnowledge: false })
+    renderPanel()
+
+    const input = (await screen.findByLabelText('Сообщение помощнику')) as HTMLTextAreaElement
+    await waitFor(() => expect(input.disabled).toBe(false))
+    expect(document.querySelector('[data-assistant-knowledge-button]')).toBeNull()
+  })
+
+  it('помечает беседу «не удалять» и снимает пометку', async () => {
+    mocks.config.mockResolvedValue(LOCAL)
+    mocks.models.mockResolvedValue([
+      { id: 'qwen2.5:7b', ref: 'ollama:qwen2.5:7b', provider: 'ollama', title: 'qwen2.5:7b', free: true, local: true, tools: true },
+    ])
+    mocks.conversations.mockResolvedValue([
+      { id: 'c1', title: 'Длинный разбор', model: 'm', updatedAt: '', kept: false },
+    ])
+    mocks.conversation.mockResolvedValue({ conversation: null, messages: [] })
+    renderPanel()
+
+    fireEvent.click(await screen.findByRole('button', { name: /История/ }))
+    const pin = (await waitFor(() => {
+      const found = document.querySelector('[data-assistant-keep-conversation="c1"]') as HTMLButtonElement | null
+      expect(found).not.toBeNull()
+      return found as HTMLButtonElement
+    })) as HTMLButtonElement
+    expect(pin.getAttribute('aria-pressed')).toBe('false')
+    fireEvent.click(pin)
+    await waitFor(() =>
+      expect(mocks.keepConversation).toHaveBeenCalledWith('p1', 'c1', true),
+    )
+    await waitFor(() => expect(pin.getAttribute('aria-pressed')).toBe('true'))
+    fireEvent.click(pin)
+    await waitFor(() =>
+      expect(mocks.keepConversation).toHaveBeenCalledWith('p1', 'c1', false),
+    )
   })
 
   it('объясняет, почему файл не прикрепился', async () => {

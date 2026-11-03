@@ -170,6 +170,16 @@ type MessageRecord struct {
 	Content string `json:"content"`
 	// Stopped — ответ оборван человеком: пометка «остановлено» должна пережить перенос.
 	Stopped bool `json:"stopped,omitempty"`
+	// Knowledge — знания, приложенные к реплике (0.150.0). Снимок заголовка, а не ссылка:
+	// после импорта у знаний новые идентификаторы, но карточка под сообщением должна
+	// остаться читаемой — по этому снимку она и рисуется.
+	Knowledge []KnowledgeRefRecord `json:"knowledge,omitempty"`
+}
+
+// KnowledgeRefRecord — вложение к реплике в архиве.
+type KnowledgeRefRecord struct {
+	ID    uuid.UUID `json:"id"`
+	Title string    `json:"title"`
 }
 
 // KnowledgeFile — знания проекта в архиве (0.149.0).
@@ -497,6 +507,7 @@ func (s *Service) buildConversations(
 			}
 			record.Messages = append(record.Messages, MessageRecord{
 				Role: message.Role, Content: message.Content, Stopped: message.Stopped,
+				Knowledge: decodeKnowledgeRefs(message.Knowledge),
 			})
 		}
 		if len(record.Messages) == 0 {
@@ -511,6 +522,33 @@ func (s *Service) buildConversations(
 		return nil, nil
 	}
 	return json.MarshalIndent(ConversationsFile{Conversations: records}, "", "  ")
+}
+
+// decodeKnowledgeRefs разбирает jsonb вложений сообщения в записи архива.
+//
+// Битый JSON — не ошибка архива: вложения вспомогательные, и терять из-за них переписку
+// нельзя. Просто не переносим их.
+func decodeKnowledgeRefs(raw json.RawMessage) []KnowledgeRefRecord {
+	if len(raw) == 0 {
+		return nil
+	}
+	var refs []KnowledgeRefRecord
+	if err := json.Unmarshal(raw, &refs); err != nil {
+		return nil
+	}
+	return refs
+}
+
+// encodeKnowledgeRefs — обратно в jsonb при импорте.
+func encodeKnowledgeRefs(refs []KnowledgeRefRecord) json.RawMessage {
+	if len(refs) == 0 {
+		return nil
+	}
+	raw, err := json.Marshal(refs)
+	if err != nil {
+		return nil
+	}
+	return raw
 }
 
 // buildKnowledge собирает файл знаний проекта для архива (0.149.0).
@@ -839,6 +877,7 @@ func (s *Service) Import(ctx context.Context, userID uuid.UUID, b *ParsedBundle)
 				if _, merr := s.store.AppendAIMessage(ctx, store.AIMessage{
 					ConversationID: conversation.ID, Role: message.Role,
 					Content: message.Content, Stopped: message.Stopped,
+					Knowledge: encodeKnowledgeRefs(message.Knowledge),
 				}); merr != nil {
 					ok = false
 					break

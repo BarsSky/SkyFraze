@@ -31,8 +31,8 @@ func localStore(t *testing.T) *storage.LocalStore {
 	}
 	ctx := context.Background()
 	for key, body := range map[string]string{
-		"p1/a.webp":       "первый",
-		"p1/b.webp":       "второй",
+		"p1/a.webp":        "первый",
+		"p1/b.webp":        "второй",
 		"p2/nested/c.webp": "третий",
 	} {
 		if err := store.Put(ctx, key, "image/webp", strings.NewReader(body), int64(len(body))); err != nil {

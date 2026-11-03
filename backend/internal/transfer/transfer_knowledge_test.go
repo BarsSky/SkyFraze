@@ -15,10 +15,12 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 
 	"github.com/skyfraze/backend/internal/auth"
 	"github.com/skyfraze/backend/internal/store"
@@ -149,6 +151,76 @@ func TestImportRestoresKnowledgeWithDateAndAuthor(t *testing.T) {
 	if restored.AuthorName != "Перенос" {
 		t.Errorf("автор не сохранился: %q", restored.AuthorName)
 	}
+}
+
+// Вложения знаний к репликам переносятся снимком (0.150.0): после импорта у знаний новые
+// идентификаторы, но карточка под сообщением должна остаться читаемой — по заголовку.
+func TestArchiveCarriesMessageKnowledgeRefs(t *testing.T) {
+	e := setupTransfer(t)
+	ctx := context.Background()
+	project, err := e.proj.Create(ctx, e.user, "Роман", "")
+	if err != nil {
+		t.Fatalf("проект: %v", err)
+	}
+	conversation, err := e.st.CreateAIConversation(ctx, project.ID, e.user, "Беседа о мире", "stub:1")
+	if err != nil {
+		t.Fatalf("беседа: %v", err)
+	}
+	refs := `[{"id":"11111111-1111-1111-1111-111111111111","title":"Решения по миру"}]`
+	if _, err := e.st.AppendAIMessage(ctx, store.AIMessage{
+		ConversationID: conversation.ID, Role: "user", Content: "Что решили?",
+		Knowledge: []byte(refs),
+	}); err != nil {
+		t.Fatalf("сообщение: %v", err)
+	}
+
+	files := exportArchive(t, e, project.ID)
+	var history transfer.ConversationsFile
+	if err := json.Unmarshal(files["ai-history.json"], &history); err != nil {
+		t.Fatalf("ai-history.json: %v", err)
+	}
+	if len(history.Conversations) != 1 || len(history.Conversations[0].Messages) != 1 {
+		t.Fatalf("история: %+v", history)
+	}
+	message := history.Conversations[0].Messages[0]
+	if len(message.Knowledge) != 1 || message.Knowledge[0].Title != "Решения по миру" {
+		t.Fatalf("снимок вложения не попал в архив: %+v", message.Knowledge)
+	}
+
+	archive := mustArchive(t, e, project.ID)
+	bundle, err := transfer.ParseBundle(bytes.NewReader(archive.Bytes()), int64(archive.Len()))
+	if err != nil {
+		t.Fatalf("разбор архива: %v", err)
+	}
+	importer, err := e.st.CreateUser(ctx, "importer@example.com", "$2a$10$notarealhash", "Импортёр")
+	if err != nil {
+		t.Fatalf("импортёр: %v", err)
+	}
+	result, err := e.svc.Import(ctx, importer.ID, bundle)
+	if err != nil {
+		t.Fatalf("импорт: %v", err)
+	}
+	list, err := e.st.ListAIConversations(ctx, result.Project.ID, importer.ID)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("беседы нового проекта: %v, %d", err, len(list))
+	}
+	messages, err := e.st.ListAIMessages(ctx, list[0].ID, 10)
+	if err != nil || len(messages) == 0 {
+		t.Fatalf("реплики: %v, %d", err, len(messages))
+	}
+	if !strings.Contains(string(messages[0].Knowledge), "Решения по миру") {
+		t.Fatalf("вложение не восстановилось: %s", messages[0].Knowledge)
+	}
+}
+
+// mustArchive — тот же экспорт, что в exportArchive, но байтами.
+func mustArchive(t *testing.T, e *transferEnv, projectID uuid.UUID) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	if _, err := e.svc.Export(context.Background(), e.user, projectID, &buf); err != nil {
+		t.Fatalf("экспорт: %v", err)
+	}
+	return &buf
 }
 
 // Ответ импорта — часть контракта интерфейса (0.149.0): число знаний в JSON.

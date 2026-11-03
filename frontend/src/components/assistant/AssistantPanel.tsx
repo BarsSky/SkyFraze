@@ -8,6 +8,7 @@ import {
   deleteAIKey,
   clearAIConversations,
   deleteAIConversation,
+  keepAIConversation,
   discardAIProposal,
   getAIConfig,
   getAIConversation,
@@ -822,6 +823,27 @@ export function AssistantPanel({
       }
     },
     [projectId, conversationId],
+  )
+
+  /**
+   * «Не удалять эту беседу» (0.150.0). Автоочистка по сроку обходит помеченные: переписка
+   * с черновиками и отказами модели иногда дороже выводов, и человек вправе оставить
+   * именно её, а не только знание.
+   */
+  const toggleKept = useCallback(
+    async (conversation: AIConversation) => {
+      const next = conversation.kept !== true
+      setHistoryError(null)
+      try {
+        await keepAIConversation(projectId, conversation.id, next)
+        setConversations((current) =>
+          current.map((item) => (item.id === conversation.id ? { ...item, kept: next } : item)),
+        )
+      } catch (e) {
+        setHistoryError((await serverErrorMessage(e)) ?? tStatic('as.keepConversationError'))
+      }
+    },
+    [projectId],
   )
 
   /**
@@ -2001,27 +2023,31 @@ export function AssistantPanel({
                 </>
               )}
               {/* Знания проекта (0.149.0): приложить выводы к вопросу. Кнопка есть всегда —
-                  знания не зависят от того, умеет ли модель смотреть картинки. */}
-              <button
-                type="button"
-                className="secondary"
-                onClick={() => setKnowledgePicker(true)}
-                disabled={sending || attachedKnowledge.length >= MAX_KNOWLEDGE_ATTACH}
-                title={
-                  attachedKnowledge.length >= MAX_KNOWLEDGE_ATTACH
-                    ? t('kn.pick.limit', {
-                        count: attachedKnowledge.length,
-                        limit: MAX_KNOWLEDGE_ATTACH,
-                      })
-                    : t('as.knowledgeTitle')
-                }
-                data-assistant-knowledge-button
-              >
-                {t('as.knowledgeButton')}
-                {attachedKnowledge.length > 0 && (
-                  <span className="ai-history__count">{attachedKnowledge.length}</span>
-                )}
-              </button>
+                  знания не зависят от того, умеет ли модель смотреть картинки. Читателю
+                  проекта (0.150.0) кнопку не показываем: знания — черновые исследования
+                  соавторов, и сервер ему ответит отказом. */}
+              {agent?.canUseKnowledge !== false && (
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => setKnowledgePicker(true)}
+                  disabled={sending || attachedKnowledge.length >= MAX_KNOWLEDGE_ATTACH}
+                  title={
+                    attachedKnowledge.length >= MAX_KNOWLEDGE_ATTACH
+                      ? t('kn.pick.limit', {
+                          count: attachedKnowledge.length,
+                          limit: MAX_KNOWLEDGE_ATTACH,
+                        })
+                      : t('as.knowledgeTitle')
+                  }
+                  data-assistant-knowledge-button
+                >
+                  {t('as.knowledgeButton')}
+                  {attachedKnowledge.length > 0 && (
+                    <span className="ai-history__count">{attachedKnowledge.length}</span>
+                  )}
+                </button>
+              )}
               {/* История бесед проекта (0.147.0): разговоры с Нестором хранятся на сервере
                   вместе с проектом, и к любому можно вернуться — не только к последнему. */}
               {conversations.length > 0 && (
@@ -2060,6 +2086,26 @@ export function AssistantPanel({
                               {conversation.title || t('as.historyUntitled')}
                             </span>
                             <span className="ai-history__time">{shortTime(conversation.updatedAt)}</span>
+                          </button>
+                          {/* «Не удалять эту беседу» (0.150.0): очистка по сроку обходит
+                              помеченные. Здесь же, где удаление, — иначе флаг недостижим. */}
+                          <button
+                            type="button"
+                            className={
+                              conversation.kept ? 'ai-history__keep is-on' : 'ai-history__keep'
+                            }
+                            aria-pressed={conversation.kept === true}
+                            aria-label={t(
+                              conversation.kept ? 'as.keepOff' : 'as.keepOn',
+                              { title: conversation.title || t('as.historyUntitled') },
+                            )}
+                            title={t(
+                              conversation.kept ? 'as.keepOffTitle' : 'as.keepOnTitle',
+                            )}
+                            data-assistant-keep-conversation={conversation.id}
+                            onClick={() => void toggleKept(conversation)}
+                          >
+                            <PinIcon filled={conversation.kept === true} />
                           </button>
                           {/* Удалить беседу можно прямо здесь (0.148.0): история копится, и
                               убирать её надо там, где её видно. */}
@@ -2272,6 +2318,25 @@ function GearIcon() {
       <path
         fill="currentColor"
         d="m19.6 12.7-.1.9 1.2 1.6-1.4 2.4-2-.5-.8.6-1.5 1v2.1h-2.8v-2.1l-1.5-1-.8-.6-2 .5-1.4-2.4 1.2-1.6-.1-.9.1-.9L6.4 10l1.4-2.4 2 .5.8-.6 1.5-1V4.4h2.8v2.1l1.5 1 .8.6 2-.5 1.4 2.4-1.2 1.6.1.9ZM12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"
+      />
+    </svg>
+  )
+}
+
+/**
+ * Кнопка «не удалять эту беседу» (0.150.0): закрашенная булавка — помечена, контурная —
+ * нет. Символ, а не текст: в строке истории уже есть заголовок, время и крестик.
+ */
+function PinIcon({ filled }: { filled: boolean }) {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" focusable="false">
+      <path
+        fill={filled ? 'currentColor' : 'none'}
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M9 4h6l-1 5 3 3v2H7v-2l3-3-1-5Zm3 10v6"
       />
     </svg>
   )

@@ -88,12 +88,13 @@ export function KnowledgeTab({ projectId, visible }: Props) {
     [projectId],
   )
 
-  // Первая загрузка — когда вкладку открыли впервые. Список знаний проекта маленький, но
-  // тянуть его при каждом открытии окна помощника незачем: это ещё один запрос на старте.
+  // Первая загрузка — когда вкладку открыли впервые и роль уже известна. Список знаний
+  // проекта маленький, но тянуть его при каждом открытии окна помощника незачем: это ещё
+  // один запрос на старте. Читателю проекта (viewer) знания не грузим вовсе.
   useEffect(() => {
-    if (!visible || loaded) return
+    if (!visible || loaded || settings === null || settings.canUseKnowledge === false) return
     void load('')
-  }, [visible, loaded, load])
+  }, [visible, loaded, load, settings])
 
   // Настройки нужны ради одного: может ли этот человек менять срок хранения. Тянем один раз.
   useEffect(() => {
@@ -201,8 +202,26 @@ export function KnowledgeTab({ projectId, visible }: Props) {
 
   const retention = settings?.retentionDays ?? 0
   const canEditRetention = settings?.canEdit === true
+  // Знания — черновые исследования соавторов (0.150.0): читатель проекта их не видит.
+  // Пока настройки не пришли, не показываем ни списка, ни ошибки: иначе вкладка мигала
+  // бы отказом на каждом открытии.
+  const canUseKnowledge = settings?.canUseKnowledge !== false
+  const knowledgeAllowed = settings === null || canUseKnowledge
   const bodyChars = draft ? draft.body.trim().length : 0
   const tooLong = bodyChars > KNOWLEDGE_MAX_CHARS
+
+  const retentionWarning = useMemo(() => {
+    if (retention <= 0 || !settings) return ''
+    if (settings.retentionDue > 0) {
+      return t('kn.retentionDue', {
+        due: formatNumber(settings.retentionDue, lang),
+        days: formatNumber(retention, lang),
+      })
+    }
+    return t('kn.retentionNext', {
+      days: formatNumber(settings.retentionNextDays, lang),
+    })
+  }, [retention, settings, lang, t])
 
   const retentionLabel = useMemo(() => {
     if (retention === 0) return t('kn.retentionOff')
@@ -211,7 +230,15 @@ export function KnowledgeTab({ projectId, visible }: Props) {
 
   return (
     <div className="knowledge" data-knowledge-tab>
-      <div className="knowledge__head">
+      {/* Знания — черновые исследования соавторов (0.150.0). Читателю проекта здесь нечего
+          делать: он видит опубликованное, а не рабочие заметки. */}
+      {!knowledgeAllowed ? (
+        <p className="ai-note ai-note--padded" data-knowledge-viewer-note>
+          {t('kn.viewerNote')}
+        </p>
+      ) : (
+        <>
+          <div className="knowledge__head">
         <input
           ref={searchRef}
           type="search"
@@ -262,6 +289,13 @@ export function KnowledgeTab({ projectId, visible }: Props) {
         <span className="knowledge__hint">
           {canEditRetention ? t('kn.retentionHint') : t('kn.retentionOwner')}
         </span>
+        {/* Предупреждение автоочистки (0.150.0): «включил срок — удалилось молча» выглядит
+            как потеря данных. Показываем, сколько бесед уже за пределами срока. */}
+        {retentionWarning !== '' && (
+          <span className="knowledge__warning" data-knowledge-retention-warning>
+            {retentionWarning}
+          </span>
+        )}
       </div>
 
       {error != null && (
@@ -410,7 +444,9 @@ export function KnowledgeTab({ projectId, visible }: Props) {
               </span>
             </li>
           ))}
-        </ul>
+            </ul>
+          )}
+        </>
       )}
     </div>
   )

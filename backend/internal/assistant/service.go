@@ -351,6 +351,17 @@ type Settings struct {
 	// отдельной ручке: срок — часть «как ведёт себя помощник в этой истории», и второе
 	// окно настроек ради одного числа только запутало бы.
 	RetentionDays int `json:"retention_days"`
+	// CanUseKnowledge — может ли спрашивающий читать знания проекта (0.150.0).
+	//
+	// Знания — черновые исследования соавторов, а не опубликованный текст: их видят
+	// владелец и редакторы, но не приглашённый читатель. Признак считается по роли, а не
+	// по `can_edit` (там только владелец): редактор знаний не настраивает, но читает.
+	CanUseKnowledge bool `json:"can_use_knowledge"`
+	// RetentionDue / RetentionNextDays — предупреждение автоочистки (0.150.0): сколько
+	// бесед проекта старше срока и через сколько дней удалится ближайшая. Считать на
+	// сервере, а не в интерфейсе: без этого «включил срок» = «удалилось молча».
+	RetentionDue      int `json:"retention_due"`
+	RetentionNextDays int `json:"retention_next_days"`
 }
 
 // GenerationOption — один режим генерации для интерфейса.
@@ -506,6 +517,15 @@ func (s *Service) ProjectSettings(ctx context.Context, userID, projectID uuid.UU
 		ImageAvailable: imageAvailable,
 		ImageNote:      imageNote,
 		RetentionDays:  stored.RetentionDays,
+		// Знания — для соавторов: владелец и редакторы. Читатель проекта знания не видит,
+		// и это решение, а не недосмотр (0.150.0).
+		CanUseKnowledge: role == store.RoleOwner || role == store.RoleEditor,
+	}
+	if stored.RetentionDays > 0 {
+		if preview, perr := s.store.AIRetentionPreview(ctx, projectID, stored.RetentionDays); perr == nil {
+			out.RetentionDue = preview.Due
+			out.RetentionNextDays = preview.NextDays
+		}
 	}
 	if preset, ok := ai.AgentRoleByID(stored.Role); ok {
 		out.RoleTitle = preset.Title

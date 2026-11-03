@@ -1,4 +1,4 @@
-﻿package feed_test
+package feed_test
 
 import (
 	"bytes"

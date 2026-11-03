@@ -119,10 +119,10 @@ func (h *Handler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u, err := h.svc.UpdateProfile(r.Context(), uid, ProfileUpdate{
-		DisplayName:  req.DisplayName,
-		Username:     req.Username,
-		Bio:          req.Bio,
-		Crafts:       req.Crafts,
+		DisplayName:    req.DisplayName,
+		Username:       req.Username,
+		Bio:            req.Bio,
+		Crafts:         req.Crafts,
 		Discoverable:   req.Discoverable,
 		NotifyComments: req.NotifyComments,
 	})

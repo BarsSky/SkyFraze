@@ -186,7 +186,6 @@ func (e *notifyEnv) seedProject(t *testing.T) (uuid.UUID, uuid.UUID) {
 	return p.ID, eventID
 }
 
-
 // Одно письмо на человека, даже если замечаний несколько; автор письма не получает.
 func TestFlushGroupsCommentsPerPerson(t *testing.T) {
 	e := setupNotify(t)

@@ -46,6 +46,22 @@ func (s *Service) toolSaveKnowledge(
 			entries[i].Title = titleFromKnowledgeBody(entries[i].Body)
 		}
 	}
+	// Дубли (0.150.0): «Решения по миру» поверх уже сохранённого «Решения по миру
+	// проекта» — это шум в списке знаний. Похожие пропускаем и говорим об этом модели,
+	// чтобы она сказала человеку «это уже есть», а не молча проглотила просьбу.
+	entries, duplicates, err := s.FilterKnowledgeDuplicates(ctx, projectID, entries)
+	if err != nil {
+		return refusedCall(call, "не удалось проверить знания на дубли: "+err.Error())
+	}
+	if len(entries) == 0 {
+		titles := make([]string, 0, len(duplicates))
+		for _, duplicate := range duplicates {
+			titles = append(titles, "«"+duplicate.ExistingTitle+"»")
+		}
+		return refusedCall(call, "такие знания уже есть: "+strings.Join(titles, ", ")+
+			" — не завожу дубли. Если это другое знание, измени заголовок; если то же самое — "+
+			"скажи человеку, что оно уже сохранено")
+	}
 	saved, err := s.SaveKnowledgeEntries(ctx, userID, projectID, nil, entries)
 	if err != nil {
 		// Ошибка проверки (знание длиннее предела, пустой заголовок) возвращается МОДЕЛИ:
@@ -69,16 +85,22 @@ func (s *Service) toolSaveKnowledge(
 		})
 	}
 	detail := fmt.Sprintf("сохранил знаний: %d", len(saved))
+	payload := map[string]any{
+		"created":     created,
+		"total_chars": total,
+		"note": "знания сохранены в проект: их увидят все соавторы, и они останутся " +
+			"после удаления беседы. Скажи человеку, что именно сохранено.",
+	}
+	if len(duplicates) > 0 {
+		payload["skipped"] = duplicates
+		payload["skipped_note"] = "похожие знания уже есть в проекте — они не записаны повторно; " +
+			"скажи человеку, какие именно, чтобы он не искал их заново"
+	}
 	return toolResult{
 		call:      call,
 		report:    Call{Name: call.Name, OK: true, Detail: detail},
 		knowledge: views,
-		payload: map[string]any{
-			"created":     created,
-			"total_chars": total,
-			"note": "знания сохранены в проект: их увидят все соавторы, и они останутся " +
-				"после удаления беседы. Скажи человеку, что именно сохранено.",
-		},
+		payload:   payload,
 	}
 }
 
