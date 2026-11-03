@@ -36,6 +36,9 @@ const mocks = vi.hoisted(() => ({
   proposals: vi.fn(),
   applyProposal: vi.fn(),
   revertProposal: vi.fn(),
+  /** Беседы проекта (0.147.0): список для «Истории» и восстановление последней. */
+  conversations: vi.fn(),
+  conversation: vi.fn(),
   discardProposal: vi.fn(),
 }))
 
@@ -59,7 +62,8 @@ vi.mock('../../api/assistant', async () => {
     saveAIKey: mocks.saveKey,
     deleteAIKey: mocks.deleteKey,
     readAIError: mocks.error,
-    getAIConversation: vi.fn(),
+    listAIConversations: mocks.conversations,
+    getAIConversation: mocks.conversation,
     listAIEndpoints: mocks.endpoints,
     addAIEndpoint: mocks.addEndpoint,
     deleteAIEndpoint: mocks.deleteEndpoint,
@@ -187,6 +191,8 @@ function renderPanel(props: Partial<Parameters<typeof AssistantPanel>[0]> = {}) 
 
 beforeEach(() => {
   setLang('ru')
+  // Окно помнит последнюю беседу проекта в localStorage (0.147.0) — в тестах начинаем с чистого листа.
+  localStorage.clear()
   for (const fn of Object.values(mocks)) fn.mockReset()
   mocks.error.mockResolvedValue({ message: null, consentRequired: false })
   mocks.models.mockResolvedValue(MODELS)
@@ -196,6 +202,10 @@ beforeEach(() => {
   mocks.saveSettings.mockResolvedValue({ ...AGENT, role: 'chronicler', roleTitle: 'Летописец' })
   mocks.endpoints.mockResolvedValue([])
   mocks.proposals.mockResolvedValue([])
+  // По умолчанию истории нет: панель открывается в новом разговоре. Сценарии, которым нужна
+  // беседа проекта, подставляют её сами (0.147.0).
+  mocks.conversations.mockResolvedValue([])
+  mocks.conversation.mockResolvedValue({ conversation: null, messages: [] })
   mocks.applyProposal.mockResolvedValue({ proposal: null, warning: '' })
   mocks.revertProposal.mockResolvedValue({ proposal: null, warning: '' })
   mocks.discardProposal.mockResolvedValue(undefined)
@@ -1553,5 +1563,106 @@ describe('AssistantPanel', () => {
     })
     const input = (await screen.findByLabelText('Сообщение помощнику')) as HTMLTextAreaElement
     expect(input.value).toBe('')
+  })
+
+  /**
+   * 0.147.0: беседы с помощником — часть проекта, они лежат на сервере и переживают закрытие
+   * страницы. Окно при открытии возвращает человека в ту беседу, которую он смотрел последней.
+   */
+  const savedConversation = (projectId: string, conversationId: string) =>
+    localStorage.setItem(`sf-ai-last:${projectId}`, conversationId)
+
+  it('восстанавливает последнюю беседу проекта после перезагрузки (0.147.0)', async () => {
+    mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
+    savedConversation('p1', 'c2')
+    mocks.conversations.mockResolvedValue([
+      { id: 'c2', title: 'Правки главы', model: 'm', updatedAt: '2026-11-03T10:00:00Z' },
+      { id: 'c1', title: 'Старая беседа', model: 'm', updatedAt: '2026-11-02T10:00:00Z' },
+    ])
+    mocks.conversation.mockResolvedValue({
+      conversation: null,
+      messages: [
+        { id: 'm1', role: 'user', content: 'Поправь второй абзац', createdAt: '2026-11-03T09:59:00Z' },
+        { id: 'm2', role: 'assistant', content: 'Предлагаю правку второго абзаца.', createdAt: '2026-11-03T10:00:00Z' },
+        // Служебные строки в переписке не показываются: это результаты инструментов.
+        { id: 'm3', role: 'tool', content: '{"events":[]}', createdAt: '2026-11-03T10:00:01Z' },
+        { id: 'm4', role: 'assistant', content: '', createdAt: '2026-11-03T10:00:02Z' },
+      ],
+    })
+    renderPanel()
+
+    // Человек видит продолжение того разговора, а не пустое окно.
+    expect(await screen.findByText('Предлагаю правку второго абзаца.')).toBeTruthy()
+    expect(screen.getByText('Поправь второй абзац')).toBeTruthy()
+    expect(mocks.conversation).toHaveBeenCalledWith('p1', 'c2')
+    // Служебное не попало в переписку: плашек ровно две.
+    expect(document.querySelectorAll('[data-assistant-log] .ai-msg').length).toBe(2)
+    // Вопрос можно продолжать: окно не в состоянии «новый разговор».
+    expect((screen.getByLabelText('Сообщение помощнику') as HTMLTextAreaElement).disabled).toBe(false)
+  })
+
+  it('без подсказки открывает самую свежую беседу проекта (0.147.0)', async () => {
+    mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
+    mocks.conversations.mockResolvedValue([
+      { id: 'c9', title: 'Свежая', model: 'm', updatedAt: '2026-11-03T10:00:00Z' },
+      { id: 'c8', title: 'Прежняя', model: 'm', updatedAt: '2026-11-01T10:00:00Z' },
+    ])
+    mocks.conversation.mockResolvedValue({
+      conversation: null,
+      messages: [{ id: 'm1', role: 'assistant', content: 'Продолжаем с этого места.', createdAt: '' }],
+    })
+    renderPanel()
+
+    expect(await screen.findByText('Продолжаем с этого места.')).toBeTruthy()
+    expect(mocks.conversation).toHaveBeenCalledWith('p1', 'c9')
+  })
+
+  it('«История» открывает другую беседу проекта (0.147.0)', async () => {
+    mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
+    mocks.conversations.mockResolvedValue([
+      { id: 'c2', title: 'Правки главы', model: 'm', updatedAt: '2026-11-03T10:00:00Z' },
+      { id: 'c1', title: 'Старая беседа', model: 'm', updatedAt: '2026-11-02T10:00:00Z' },
+    ])
+    mocks.conversation.mockResolvedValue({
+      conversation: null,
+      messages: [{ id: 'm1', role: 'assistant', content: 'Ответ из свежей беседы.', createdAt: '' }],
+    })
+    renderPanel()
+    await screen.findByText('Ответ из свежей беседы.')
+
+    fireEvent.click(screen.getByRole('button', { name: /История/ }))
+    const item = await screen.findByRole('menuitem', { name: /Старая беседа/ })
+    mocks.conversation.mockResolvedValue({
+      conversation: null,
+      messages: [{ id: 'm7', role: 'assistant', content: 'Ответ из старой беседы.', createdAt: '' }],
+    })
+    fireEvent.click(item)
+
+    expect(await screen.findByText('Ответ из старой беседы.')).toBeTruthy()
+    expect(mocks.conversation).toHaveBeenLastCalledWith('p1', 'c1')
+    // Подсказка «последняя беседа» переключилась на выбранную.
+    expect(localStorage.getItem('sf-ai-last:p1')).toBe('c1')
+  })
+
+  it('«Новый» начинает разговор заново и забывает прежнюю беседу (0.147.0)', async () => {
+    mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
+    savedConversation('p1', 'c2')
+    mocks.conversations.mockResolvedValue([
+      { id: 'c2', title: 'Правки главы', model: 'm', updatedAt: '2026-11-03T10:00:00Z' },
+    ])
+    mocks.conversation.mockResolvedValue({
+      conversation: null,
+      messages: [
+        { id: 'm1', role: 'user', content: 'Поправь второй абзац', createdAt: '' },
+        { id: 'm2', role: 'assistant', content: 'Предлагаю правку.', createdAt: '' },
+      ],
+    })
+    renderPanel()
+    await screen.findByText('Предлагаю правку.')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Новый' }))
+    await waitFor(() => expect(screen.queryByText('Предлагаю правку.')).toBeNull())
+    // Подсказки больше нет: следующее открытие проекта начнётся с чистого окна.
+    expect(localStorage.getItem('sf-ai-last:p1')).toBeNull()
   })
 })

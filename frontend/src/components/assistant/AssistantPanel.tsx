@@ -8,9 +8,11 @@ import {
   deleteAIKey,
   discardAIProposal,
   getAIConfig,
+  getAIConversation,
   getAISettings,
   isCloudModelRef,
   listAIEndpoints,
+  listAIConversations,
   listAIModels,
   listAIProposals,
   needsConsent,
@@ -22,6 +24,7 @@ import {
   setAIConsent,
   type AIConfig,
   type AIChange,
+  type AIConversation,
   type AIEndpoint,
   type AIProposal,
   type AISuggestion,
@@ -94,6 +97,50 @@ interface Props {
 
 type View = 'chat' | 'settings'
 
+/**
+ * Ключ «последняя беседа» в localStorage (0.147.0).
+ *
+ * Зачем и сервер, и localStorage. Сами беседы хранятся на сервере в привязке к проекту
+ * (`ai_conversations.project_id`) — это и есть хранилище проекта: они переживают
+ * перезагрузку, закрытие вкладки и уход в другой проект. А вот КАКУЮ из них человек
+ * открывал последней, сервер не знает: без подсказки окно после перезагрузки начинало
+ * новый разговор, и работа «терялась» с точки зрения человека, хотя лежала рядом.
+ */
+function lastConversationKey(projectId: string): string {
+  return `sf-ai-last:${projectId}`
+}
+
+function readLastConversation(projectId: string): string {
+  try {
+    return localStorage.getItem(lastConversationKey(projectId)) ?? ''
+  } catch {
+    return '' // приватный режим: подсказки нет, восстановим по списку с сервера
+  }
+}
+
+function writeLastConversation(projectId: string, conversationId: string): void {
+  try {
+    if (conversationId && conversationId !== 'new') {
+      localStorage.setItem(lastConversationKey(projectId), conversationId)
+    } else {
+      localStorage.removeItem(lastConversationKey(projectId))
+    }
+  } catch {
+    /* приватный режим — просто не запоминаем */
+  }
+}
+
+/** Когда беседа обновлялась: сегодня — часы и минуты, иначе — дата. */
+function shortTime(iso: string): string {
+  if (!iso) return ''
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return ''
+  const sameDay = date.toDateString() === new Date().toDateString()
+  return sameDay
+    ? date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+    : date.toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' })
+}
+
 export function AssistantPanel({
   projectId,
   open,
@@ -150,6 +197,23 @@ export function AssistantPanel({
    */
   const [entitiesRefresh, setEntitiesRefresh] = useState(0)
   const [conversationId, setConversationId] = useState('new')
+  /**
+   * Беседы этого проекта (0.147.0): список для «Истории» и для восстановления последней.
+   *
+   * Данные берём с сервера, а не из состояния окна: беседа — часть проекта, и её должно
+   * быть видно после перезагрузки страницы, ухода в другой проект и возврата.
+   */
+  const [conversations, setConversations] = useState<AIConversation[]>([])
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [historyBusy, setHistoryBusy] = useState(false)
+  const [historyError, setHistoryError] = useState<string | null>(null)
+  /**
+   * Человек уже начал работать в этом окне (отправил вопрос или сам выбрал беседу).
+   *
+   * Нужен, чтобы восстановление «последней беседы» не перебило начатую работу: список
+   * бесед и история приходят по сети и могут опоздать на пару секунд.
+   */
+  const startedRef = useRef(false)
   const [messages, setMessages] = useState<AIMessage[]>([])
   const [changes, setChanges] = useState<AIChange[]>([])
   /** Что сервер предлагает сделать дальше (считается по состоянию проекта). */
@@ -637,7 +701,10 @@ export function AssistantPanel({
     setMessages([])
     setChanges([])
     setSendError(null)
-  }, [])
+    setHistoryOpen(false)
+    // Подсказку «последняя беседа» снимаем: человек сам выбрал начать заново (0.147.0).
+    writeLastConversation(projectId, 'new')
+  }, [projectId])
 
   /**
    * Сохранить роль и поведение агента (владелец проекта).
@@ -665,6 +732,96 @@ export function AssistantPanel({
   }, [projectId, agentDraft])
 
   /**
+   * Загрузить беседу с сервера и показать её в окне (0.147.0).
+   *
+   * Беседа — часть проекта: она лежит в базе (`ai_conversations`, `ai_messages`) и
+   * переживает перезагрузку страницы. Окно только показывает её: историю берём целиком,
+   * а не «дописываем» к тому, что уже на экране.
+   */
+  const loadConversation = useCallback(
+    async (id: string, options: { silent?: boolean } = {}) => {
+      if (!id || id === 'new') return
+      // Восстановление не должно перебивать работу: если человек уже отправил вопрос
+      // (или листает историю сам), пришедший позже ответ списка бесед ничего не меняет.
+      if (options.silent && startedRef.current) return
+      setHistoryBusy(true)
+      setHistoryError(null)
+      try {
+        const { messages: history } = await getAIConversation(projectId, id)
+        // В историю пишутся и служебные строки (role=tool — результат инструмента) и
+        // пустые ответы-вызовы: человеку их показывать нечего, а пустые плашки мешали бы.
+        setMessages(
+          history.filter(
+            (message) =>
+              (message.role === 'user' || message.role === 'assistant') &&
+              message.content.trim() !== '',
+          ),
+        )
+        setConversationId(id)
+        setChanges([])
+        setSendError(null)
+        writeLastConversation(projectId, id)
+        setHistoryOpen(false)
+      } catch (e) {
+        if (!options.silent) {
+          setHistoryError((await serverErrorMessage(e)) ?? tStatic('as.historyError'))
+        }
+      } finally {
+        setHistoryBusy(false)
+      }
+    },
+    [projectId],
+  )
+
+  /**
+   * Восстановление разговора при открытии проекта (0.147.0).
+   *
+   * Сначала — подсказка из localStorage (та беседа, которую человек смотрел последней),
+   * иначе — самая свежая беседа проекта. Нет ни одной — работаем как раньше: новый разговор.
+   * Ошибка сети не блокирует поле ввода: беседы — удобство, а не условие работы.
+   */
+  useEffect(() => {
+    let cancelled = false
+    const restore = async () => {
+      let list: AIConversation[] = []
+      try {
+        list = await listAIConversations(projectId)
+      } catch {
+        // Список не пришёл — окно всё равно должно работать (новый разговор).
+      }
+      if (cancelled) return
+      setConversations(list)
+      const saved = readLastConversation(projectId)
+      const target = saved && list.some((item) => item.id === saved) ? saved : list[0]?.id
+      if (target) await loadConversation(target, { silent: true })
+    }
+    void restore()
+    return () => {
+      cancelled = true
+    }
+  }, [projectId, loadConversation])
+
+  useEffect(() => {
+    if (!historyOpen) return undefined
+    const onDown = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null
+      if (target?.closest('[data-assistant-history]') || target?.closest('[data-assistant-history-button]')) {
+        return
+      }
+      setHistoryOpen(false)
+    }
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setHistoryOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [historyOpen])
+
+  /**
    * Отправка вопроса. Ответ читается ПОТОКОМ: пока модель пишет, текст появляется на
    * глазах, а не после минутной тишины.
    *
@@ -676,6 +833,7 @@ export function AssistantPanel({
   const ask = useCallback(async () => {
     const question = text.trim()
     if (!question || sending) return
+    startedRef.current = true
     if (!modelRef) {
       setSendError(t('as.errNoModel'))
       return
@@ -756,6 +914,11 @@ export function AssistantPanel({
         signal: controller.signal,
       })
       setConversationId(turn.conversationId || conversationId)
+      // Запоминаем беседу: при следующем открытии проекта человек вернётся в неё, а не в
+      // новый разговор (0.147.0). Список обновляем тем же ответом сервера — без лишнего запроса
+      // он всё равно нужен был бы для «Истории».
+      writeLastConversation(projectId, turn.conversationId || conversationId)
+      void listAIConversations(projectId).then(setConversations).catch(() => {})
       setMessages((current) => [
         ...current.filter((m) => m.id !== pending.id),
         { ...pending, id: `${pending.id}-sent` },
@@ -1685,6 +1848,50 @@ export function AssistantPanel({
                     {t('as.image')}
                   </button>
                 </>
+              )}
+              {/* История бесед проекта (0.147.0): разговоры с Нестором хранятся на сервере
+                  вместе с проектом, и к любому можно вернуться — не только к последнему. */}
+              {conversations.length > 0 && (
+                <div className="ai-history">
+                  <button
+                    type="button"
+                    className="secondary"
+                    aria-haspopup="menu"
+                    aria-expanded={historyOpen}
+                    title={t('as.historyTitle')}
+                    data-assistant-history-button
+                    onClick={() => setHistoryOpen((current) => !current)}
+                  >
+                    {t('as.history')}
+                    <span className="ai-history__count">{conversations.length}</span>
+                  </button>
+                  {historyOpen && (
+                    <div className="ai-history__menu" role="menu" data-assistant-history>
+                      {historyError != null && <p className="ai-error ai-error--padded">{historyError}</p>}
+                      {conversations.map((conversation) => (
+                        <button
+                          key={conversation.id}
+                          type="button"
+                          role="menuitem"
+                          className={
+                            conversation.id === conversationId
+                              ? 'ai-history__item is-current'
+                              : 'ai-history__item'
+                          }
+                          aria-current={conversation.id === conversationId}
+                          disabled={historyBusy}
+                          data-assistant-conversation={conversation.id}
+                          onClick={() => void loadConversation(conversation.id)}
+                        >
+                          <span className="ai-history__title">
+                            {conversation.title || t('as.historyUntitled')}
+                          </span>
+                          <span className="ai-history__time">{shortTime(conversation.updatedAt)}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               )}
               <button
                 type="button"
