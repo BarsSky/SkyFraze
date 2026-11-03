@@ -766,6 +766,19 @@ export function parseSSEBuffer(buffer: string): { events: AIStreamEvent[]; rest:
   return { events, rest }
 }
 
+/**
+ * Ошибка с текстом от сервера, пришедшим событием потока (0.145.1).
+ *
+ * Зачем поле, а не только message. `Error(message)` выглядит как обычная ошибка сети, и
+ * вызывающий (`AssistantPanel`) не может отличить «сервер объяснил причину» от «соединение
+ * пропало». Отдельное поле говорит: это текст сервера, его можно показывать как есть.
+ */
+function withServerMessage(error: Error, serverMessage?: string): Error {
+  const message = (serverMessage ?? '').trim()
+  if (message) (error as Error & { serverMessage?: string }).serverMessage = message
+  return error
+}
+
 function parseStreamEvent(payload: string): AIStreamEvent {
   const record = asRecord(JSON.parse(payload))
   return {
@@ -800,9 +813,18 @@ export async function streamAIMessage(
   options: AIAskOptions = {},
 ): Promise<AITurn> {
   const { images = [], handlers = {}, signal } = options
+  // `timeout: false` — принципиально (0.145.1).
+  //
+  // У ky таймаут по умолчанию 10 секунд, и он действует на ВЕСЬ запрос, включая чтение
+  // потока. Пока модель думает (локальная — десятки секунд, а после простоя ещё и грузится
+  // минутами), ky обрывал соединение: в браузере это `net::ERR_ABORTED`, на сервере —
+  // «context canceled», а человек видел «Помощник не ответил. Проверьте связь и модель.».
+  // Именно так выглядели все «помощник не отвечает» на стенде: сервер работал, ответ
+  // приходил позже десяти секунд. Пределы ожидания задаёт сервер (AI_TIMEOUT_SECONDS,
+  // AI_LOAD_WAIT_SECONDS, AI_STREAM_IDLE_SECONDS), а не клиент.
   const response = await http.post(
     `projects/${encodeURIComponent(projectId)}/ai/conversations/${encodeURIComponent(conversationId)}/stream`,
-    { json: { text, model, images }, signal },
+    { json: { text, model, images }, signal, timeout: false },
   )
   const reader = response.body?.getReader()
   if (!reader) {
@@ -839,7 +861,11 @@ export async function streamAIMessage(
       case 'done':
         return event.turn ?? null
       case 'error':
-        throw new Error(event.error || tStatic('ai.errNoAnswer'))
+        // Текст пришёл от сервера — он и должен дойти до человека (0.145.1): раньше любое
+        // объяснение сервера («модель загружается», «контекст модели меньше запроса»)
+        // превращалось в общее «Помощник не ответил», потому что у такой ошибки нет
+        // HTTP-ответа, из которого интерфейс умеет читать текст.
+        throw withServerMessage(new Error(event.error || tStatic('ai.errNoAnswer')), event.error)
       default:
         // Незнакомое событие — не повод рвать ответ: сервер может научиться присылать
         // новое, а старый интерфейс просто его не покажет.

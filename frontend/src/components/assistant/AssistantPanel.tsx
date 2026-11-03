@@ -811,8 +811,12 @@ export function AssistantPanel({
         setConsentNeeded(consentRequired)
         setMessages((current) => current.filter((m) => m.id !== pending.id))
         setText(question)
+        // Порядок важен: сначала то, что объяснил сервер. Текст сервера приходит и обычным
+        // ответом с ошибкой, и событием потока — во втором случае HTTP-ответа нет, поэтому
+        // раньше человек видел общее «Помощник не ответил» вместо причины (0.145.1).
         setSendError(
           message ??
+            (e as { serverMessage?: string } | null)?.serverMessage ??
             (await serverErrorMessage(e)) ??
             t('as.errNoAnswer'),
         )

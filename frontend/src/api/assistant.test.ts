@@ -693,6 +693,32 @@ describe('streamAIMessage', () => {
     expect(deltas).toEqual([])
   })
 
+  it('поток запрашивается без клиентского таймаута', async () => {
+    // 0.145.1: у ky таймаут по умолчанию 10 секунд и он действует на весь запрос, включая
+    // чтение потока. Из-за этого браузер обрывал ответ помощника (`net::ERR_ABORTED`),
+    // хотя сервер продолжал работать, — человек видел «Помощник не ответил».
+    mocks.post.mockResolvedValue(
+      body([
+        'data: {"type":"done","turn":{"conversation_id":"c1","answer":"Готово.","model":"m",' +
+          '"calls":[],"changes":[],"message":{"id":"m2","role":"assistant","content":"Готово."}}}\n\n',
+      ]),
+    )
+    await streamAIMessage('p1', 'new', 'вопрос', 'groq:llama', {})
+    const options = mocks.post.mock.calls[0]?.[1] as { timeout?: unknown }
+    expect(options?.timeout).toBe(false)
+  })
+
+  it('текст ошибки сервера из потока доходит до вызывающего', async () => {
+    // Обычная ошибка сети не должна подменять объяснение сервера: интерфейс показывает
+    // именно его (0.145.1).
+    mocks.post.mockResolvedValue(
+      body(['data: {"type":"error","error":"модель загружается: повторите через минуту"}\n\n']),
+    )
+    await expect(streamAIMessage('p1', 'new', 'вопрос', 'groq:llama', {})).rejects.toMatchObject({
+      serverMessage: 'модель загружается: повторите через минуту',
+    })
+  })
+
   it('оборванный черновик говорит об этом отдельным сигналом', async () => {
     mocks.post.mockResolvedValue(
       body([

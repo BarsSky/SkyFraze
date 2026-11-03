@@ -645,6 +645,27 @@ describe('AssistantPanel', () => {
     expect(await screen.findByRole('button', { name: 'Спросить' })).toBeTruthy()
   })
 
+  it('показывает объяснение сервера, а не общее «Помощник не ответил»', async () => {
+    // 0.145.1: текст ошибки приходит событием потока — у такой ошибки нет HTTP-ответа, и
+    // раньше любое объяснение сервера превращалось в «Помощник не ответил. Проверьте связь
+    // и модель.» Человек не узнавал ни про загрузку модели, ни про размер контекста.
+    mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
+    mocks.stream.mockRejectedValue(
+      Object.assign(new Error('модель не начала отвечать'), {
+        serverMessage: 'модель не начала отвечать за 4 мин — вероятно, она загружается',
+      }),
+    )
+    renderPanel()
+
+    const input = (await screen.findByLabelText('Сообщение помощнику')) as HTMLTextAreaElement
+    await waitFor(() => expect(input.disabled).toBe(false))
+    fireEvent.change(input, { target: { value: 'Помоги с орфографией' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Спросить' }))
+
+    expect(await screen.findByText(/вероятно, она загружается/)).toBeTruthy()
+    expect(screen.queryByText('Помощник не ответил. Проверьте связь и модель.')).toBeNull()
+  })
+
   it('ответ при закрытом окне отмечается как непрочитанный', async () => {
     mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
     // Запрос «висит»: человек закрывает окно, ответ приходит уже без него.
