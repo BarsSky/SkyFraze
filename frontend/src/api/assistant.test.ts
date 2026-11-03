@@ -882,4 +882,36 @@ describe('знания проекта', () => {
     const options = mocks.post.mock.calls[0]?.[1] as { json?: { knowledge?: string[] } }
     expect(options.json?.knowledge).toEqual(['k1', 'k2'])
   })
+
+  /**
+   * Сторож мёртвого потока (0.151.0).
+   *
+   * `reader.read()` без ответа — это не «модель думает», а обрыв: без сторожа человек ждал
+   * бы до серверного таймаута и увидел ошибку без причины. Проверяем, что поток рвётся
+   * сам, читатель освобождается, а текст ошибки называет связь, а не «не ответил».
+   */
+  it('обрывает поток, который молчит дольше сторожа', async () => {
+    vi.useFakeTimers()
+    let cancelled = false
+    try {
+      mocks.post.mockReturnValueOnce({
+        body: {
+          getReader: () => ({
+            // Никогда не разрешается: соединение «живо» только на бумаге.
+            read: () => new Promise(() => {}),
+            cancel: async () => {
+              cancelled = true
+            },
+          }),
+        },
+      })
+      const promise = streamAIMessage('p1', 'new', 'вопрос', 'groq:llama', { idleMs: 1000 })
+      const assertion = expect(promise).rejects.toThrow(/связь/)
+      await vi.advanceTimersByTimeAsync(1500)
+      await assertion
+      expect(cancelled).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

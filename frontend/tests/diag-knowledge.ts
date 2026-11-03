@@ -132,6 +132,8 @@ async function desktop() {
   // Булавка «не удалять эту беседу» (0.150.0): в «Истории» помощника. Два нажатия —
   // помечаем и снимаем, чтобы не менять проект.
   await page.locator('[data-dock-tab="assistant"]').click()
+  // Список бесед приходит с сервера, кнопка «История» появляется не сразу.
+  await page.waitForTimeout(1800)
   const historyButton = page.locator('[data-assistant-history-button]')
   if ((await historyButton.count()) === 0) {
     add('warning', 'нет истории бесед: булавку не проверить')
@@ -152,10 +154,10 @@ async function desktop() {
         `булавка «не удалять»: ${before} → ${after}`,
       )
     }
-    // Возвращаемся на вкладку знаний: удаление проверяем там.
-    await page.locator('[data-dock-tab="knowledge"]').click()
-    await page.locator('[data-knowledge-tab]').waitFor({ state: 'visible', timeout: 5_000 })
   }
+  // Возвращаемся на вкладку знаний в любом случае: удаление проверяем там.
+  await page.locator('[data-dock-tab="knowledge"]').click()
+  await page.locator('[data-knowledge-tab]').waitFor({ state: 'visible', timeout: 5_000 })
 
   // Удаление: первое нажатие только спрашивает, второе удаляет.
   const deleteButton = item.locator('[data-knowledge-delete]')

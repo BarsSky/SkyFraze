@@ -1087,6 +1087,7 @@ export const en: Record<Key, string> = {
   'ai.errNoStream': 'the server did not provide an answer stream',
   'ai.errNoAnswer': 'the assistant could not answer',
   'ai.errNoResult': 'the assistant did not send a result — try again',
+  'ai.errStreamStalled': 'the connection to the assistant was lost: no reply for too long — check the network and repeat the question',
   'ai.changeChapter': 'chapter "{title}" created',
   'ai.changeSubEvent': 'sub-event "{title}" created',
   'ai.changeImage': 'an illustration for the frame "{title}" was drawn',

@@ -894,6 +894,15 @@ export interface AIAskOptions {
    * сервер, и гонять 40 000 знаков туда-обратно интерфейсу незачем.
    */
   knowledge?: string[]
+  /**
+   * Через сколько миллисекунд тишины в потоке считать соединение мёртвым (0.151.0).
+   *
+   * Сервер шлёт пинг каждые 5 секунд, поэтому 90 секунд молчания — это не «модель
+   * думает», а обрыв: прокси копит ответ, сеть пропала или сервер завис. Без сторожа
+   * человек ждал бы до `AI_TIMEOUT_SECONDS` (300 с) и увидел ошибку без объяснения.
+   * 0 — выключить (тесты и отладка).
+   */
+  idleMs?: number
   handlers?: AIStreamHandlers
   signal?: AbortSignal
 }
@@ -977,7 +986,7 @@ export async function streamAIMessage(
   model: string,
   options: AIAskOptions = {},
 ): Promise<AITurn> {
-  const { images = [], knowledge = [], handlers = {}, signal } = options
+  const { images = [], knowledge = [], handlers = {}, signal, idleMs = 90_000 } = options
   // `timeout: false` — принципиально (0.145.1).
   //
   // У ky таймаут по умолчанию 10 секунд, и он действует на ВЕСЬ запрос, включая чтение
@@ -1038,8 +1047,35 @@ export async function streamAIMessage(
     }
   }
 
+  // Сторож мёртвого потока (0.151.0).
+  //
+  // `reader.read()` может не разрешиться никогда: сеть пропала, прокси копит SSE, сервер
+  // завис на генерации. Сервер шлёт пинг каждые 5 секунд, поэтому тишина дольше idleMs —
+  // это обрыв, а не размышление модели. Ошибка называет причину и не притворяется сетевой:
+  // человеку нужно понять, что повторить запрос, а не ждать.
+  const readWithWatchdog = async (): Promise<ReadableStreamReadResult<Uint8Array>> => {
+    if (!idleMs || idleMs <= 0) return reader.read()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const stalled = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(tStatic('ai.errStreamStalled'))), idleMs)
+    })
+    try {
+      return await Promise.race([reader.read(), stalled])
+    } finally {
+      if (timer !== undefined) clearTimeout(timer)
+    }
+  }
+
   for (;;) {
-    const { value, done } = await reader.read()
+    let chunk: ReadableStreamReadResult<Uint8Array>
+    try {
+      chunk = await readWithWatchdog()
+    } catch (error) {
+      // Соединение признано мёртвым: освобождаем читателя, иначе браузер держит сокет.
+      await reader.cancel().catch(() => undefined)
+      throw error
+    }
+    const { value, done } = chunk
     if (done) break
     buffer += decoder.decode(value, { stream: true })
     const parsed = parseSSEBuffer(buffer)
