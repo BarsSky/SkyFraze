@@ -17,6 +17,7 @@ package assistant
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/google/uuid"
@@ -32,11 +33,27 @@ func (s *Service) toolSaveKnowledge(
 	if err != nil {
 		return refusedCall(call, err.Error())
 	}
+	// Восстановление формы (0.149.1): если модель положила тезисы в `summary`, а тело
+	// оставила пустым — сохраняем саммари как знание, а не отказываем. Знание без
+	// заголовка получает заголовок из первой строки текста: «безымянное» знание в списке
+	// не найти, и это хуже, чем заголовок, придуманный из текста.
+	for i := range entries {
+		if strings.TrimSpace(entries[i].Body) == "" && strings.TrimSpace(entries[i].Summary) != "" {
+			entries[i].Body = entries[i].Summary
+			entries[i].Summary = ""
+		}
+		if strings.TrimSpace(entries[i].Title) == "" {
+			entries[i].Title = titleFromKnowledgeBody(entries[i].Body)
+		}
+	}
 	saved, err := s.SaveKnowledgeEntries(ctx, userID, projectID, nil, entries)
 	if err != nil {
 		// Ошибка проверки (знание длиннее предела, пустой заголовок) возвращается МОДЕЛИ:
 		// она должна увидеть число и разбить текст на несколько знаний, а не человек —
-		// разбираться, почему «сохрани» не сработало.
+		// разбираться, почему «сохрани» не сработало. В журнал пишем только ИМЕНА полей:
+		// в них лежит текст проекта, и лить его в журнал без просьбы нельзя.
+		s.logger.Warn("ai: save_knowledge отклонён",
+			"reason", err.Error(), "fields", argumentKeys(call.Arguments))
 		return refusedCall(call, err.Error())
 	}
 	created := make([]map[string]any, 0, len(saved))
@@ -63,6 +80,32 @@ func (s *Service) toolSaveKnowledge(
 				"после удаления беседы. Скажи человеку, что именно сохранено.",
 		},
 	}
+}
+
+// titleFromKnowledgeBody — заголовок знания из первой строки текста.
+//
+// Зачем: модель может не дать заголовок, а знание без заголовка невозможно найти в списке.
+// Первая строка — единственное, что у нас есть, и она обычно и есть тезис.
+func titleFromKnowledgeBody(body string) string {
+	first := strings.SplitN(strings.TrimSpace(body), "\n", 2)[0]
+	first = strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(first), "#>*- "))
+	if first == "" {
+		return "Знание"
+	}
+	if runes := []rune(first); len(runes) > MaxKnowledgeTitle {
+		first = string(runes[:MaxKnowledgeTitle])
+	}
+	return first
+}
+
+// argumentKeys — имена полей аргументов (без содержимого) для журнала.
+func argumentKeys(args map[string]any) []string {
+	keys := make([]string, 0, len(args))
+	for key := range args {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // toolListKnowledge показывает сохранённые знания.

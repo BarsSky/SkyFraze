@@ -91,9 +91,18 @@ async function desktop() {
     'Тезис 1. Тезис 2. Это знание создано живой проверкой и будет удалено в конце.',
   )
   await page.locator('[data-knowledge-save]').click()
-  await page.waitForTimeout(1200)
+  await page.waitForTimeout(2000)
+  const state = await page.evaluate(() => ({
+    error: (document.querySelector('[data-knowledge-error]')?.textContent ?? '').trim(),
+    items: document.querySelectorAll('[data-knowledge-item]').length,
+    empty: (document.querySelector('[data-knowledge-empty]')?.textContent ?? '').trim().slice(0, 80),
+    formOpen: document.querySelector('[data-knowledge-form]') !== null,
+    list: (document.querySelector('[data-knowledge-list]')?.textContent ?? '').slice(0, 160),
+  }))
+  add('info', `после сохранения: ${JSON.stringify(state)}`)
+  await page.screenshot({ path: `${SHOTS}\\knowledge-after-save.png` })
 
-  const listText = (await page.locator('[data-knowledge-list]').innerText()) ?? ''
+  const listText = state.list
   if (!listText.includes(TITLE)) add('error', `новое знание не появилось в списке: ${listText.slice(0, 120)}`)
   else add('info', 'знание создано и видно в списке')
   const item = page.locator(`[data-knowledge-item]`, { hasText: TITLE }).first()
@@ -121,11 +130,12 @@ async function desktop() {
   await page.waitForTimeout(600)
   const armed = (await deleteButton.innerText()) ?? ''
   if (!armed.includes('Точно удалить?')) add('warning', `первое нажатие не спрашивает: ${armed}`)
-  const afterFirst = (await page.locator('[data-knowledge-list]').innerText()) ?? ''
+  const afterFirst = (await page.locator('[data-knowledge-tab]').innerText()) ?? ''
   if (!afterFirst.includes(TITLE)) add('error', 'знание удалилось с первого нажатия (не должно)')
   await deleteButton.click()
   await page.waitForTimeout(1200)
-  const afterSecond = (await page.locator('[data-knowledge-list]').innerText()) ?? ''
+  // Список после последнего удаления исчезает вместе с элементом — читаем вкладку целиком.
+  const afterSecond = (await page.locator('[data-knowledge-tab]').innerText()) ?? ''
   if (afterSecond.includes(TITLE)) add('error', 'знание не удалилось со второго нажатия')
   else add('info', 'знание удалено в два нажатия')
 
@@ -179,13 +189,40 @@ async function main() {
     console.error('нужны TOKEN, REFRESH и PROJECT_ID')
     process.exit(1)
   }
-  await desktop()
-  await phone()
+  try {
+    await desktop()
+    await phone()
+  } catch (e) {
+    // Сценарий упал на шаге — это тоже находка: печатаем то, что уже успели увидеть.
+    add('error', `сценарий упал: ${(e as Error).message.split('\n')[0]}`)
+  }
+  // Убираем диагностические знания, даже если сценарий сорвался посередине: в чужом
+  // демо-проекте не должно оставаться мусора от проверки.
+  await cleanupDiagnostics()
 
   const errors = findings.filter((item) => item.level === 'error')
   for (const item of findings) console.log(`${item.level.toUpperCase()}: ${item.what}`)
   console.log(`\nошибок: ${errors.length}, предупреждений: ${findings.filter((f) => f.level === 'warning').length}`)
   process.exit(errors.length > 0 ? 1 : 0)
+}
+
+/** Удалить знания, созданные прошлыми прогонами проверки (по префиксу заголовка). */
+async function cleanupDiagnostics() {
+  try {
+    const headers = { authorization: `Bearer ${TOKEN}` }
+    const response = await fetch(`${BASE}/api/projects/${PROJECT_ID}/ai/knowledge`, { headers })
+    if (!response.ok) return
+    const payload = (await response.json()) as { knowledge?: Array<{ id: string; title: string }> }
+    for (const item of payload.knowledge ?? []) {
+      if (!item.title.startsWith('Диагностика знаний')) continue
+      await fetch(`${BASE}/api/projects/${PROJECT_ID}/ai/knowledge/${item.id}`, {
+        method: 'DELETE',
+        headers,
+      })
+    }
+  } catch {
+    // Уборка — не часть проверки: если сеть недоступна, об этом уже сказал сценарий.
+  }
 }
 
 void main()

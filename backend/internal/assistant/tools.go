@@ -23,6 +23,7 @@ package assistant
 // это фактический стандарт, его понимают и облачные провайдеры, и Ollama.
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -1100,12 +1101,25 @@ func ParseSaveKnowledge(args map[string]any) ([]KnowledgeInput, error) {
 	entries := make([]KnowledgeInput, 0, 4)
 	appendEntry := func(item map[string]any) {
 		entries = append(entries, KnowledgeInput{
-			Title:   argString(item, "title"),
-			Summary: argString(item, "summary"),
-			Body:    argString(item, "body"),
+			// Синонимы — не «на всякий случай», а по живому прогону (0.149.1): gemma E4B
+			// прислала выводы в поле `content`, а `body` оставила пустым, и знание
+			// отклонилось как «без текста». Поля, которые модель путает, принимаем все.
+			Title:   argStringAny(item, "title", "name"),
+			Summary: argStringAny(item, "summary", "note"),
+			Body:    argStringAny(item, "body", "text", "content", "body_md", "knowledge"),
 		})
 	}
 	raw, has := args["entries"]
+	// Ещё одна живая форма: `entries` пришёл СТРОКОЙ с JSON внутри (маленькие модели
+	// сериализуют аргумент дважды). Разбираем, а не отказываем.
+	if text, isString := raw.(string); isString {
+		var decoded map[string]any
+		if err := json.Unmarshal([]byte(text), &decoded); err == nil {
+			if inner, ok := decoded["entries"]; ok {
+				raw = inner
+			}
+		}
+	}
 	switch value := raw.(type) {
 	case []any:
 		if len(value) == 0 {
@@ -1133,6 +1147,20 @@ func ParseSaveKnowledge(args map[string]any) ([]KnowledgeInput, error) {
 		return nil, errors.New("не передано ни одного знания")
 	}
 	return entries, nil
+}
+
+// argStringAny читает первую непустую строку из перечисленных полей.
+//
+// Синонимы нужны из-за живой модели (0.149.1): gemma E4B положила тезисы в `content`, а
+// `body` оставила пустым. Схема инструмента описывает одно имя, но модель — не компилятор,
+// и отказ «нет текста» на просьбу «сохрани выводы» выглядит как поломка помощника.
+func argStringAny(args map[string]any, names ...string) string {
+	for _, name := range names {
+		if value := argString(args, name); strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // argStrings читает массив строк из аргументов инструмента. Не-строки пропускаются: модель

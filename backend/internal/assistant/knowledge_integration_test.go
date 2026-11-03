@@ -187,6 +187,49 @@ func TestAttachedKnowledgeFromAnotherProjectIsRejected(t *testing.T) {
 	}
 }
 
+// Живой прогон на стенде (0.149.1) показал: настоящая gemma E4B положила тезисы в
+// `content`, а `body` оставила пустым — и знание отклонилось как «без текста». Тест
+// закрепляет терпимость к этой форме: от «сохрани выводы» человек должен получить знание,
+// а не объяснение, что модель перепутала поле.
+func TestSaveKnowledgeToolToleratesModelFieldNames(t *testing.T) {
+	e := setup(t,
+		ai.Reply{ToolCalls: []ai.ToolCall{{
+			ID:   "call-1",
+			Name: assistant.ToolSaveKnowledge,
+			Arguments: map[string]any{"entries": []any{map[string]any{
+				"name":    "Канон мира",
+				"content": "Драконы спят до весны.",
+			}}},
+		}}},
+		ai.Reply{Content: "Сохранил в знания."},
+	)
+	ctx := context.Background()
+	owner := e.user(t, "owner@example.com")
+	projectID, _, _ := e.seedProject(t, owner)
+
+	turn, err := e.asst.Send(ctx, owner, projectID, uuid.Nil, "stub:1", "Сохрани выводы")
+	if err != nil {
+		t.Fatalf("вопрос: %v", err)
+	}
+	if len(turn.Knowledge) != 1 {
+		t.Fatalf("сохранено знаний %d, ожидалось 1 (ответ: %+v)", len(turn.Knowledge), turn.Calls)
+	}
+	if turn.Knowledge[0].Title != "Канон мира" {
+		t.Errorf("заголовок: %q", turn.Knowledge[0].Title)
+	}
+	list, err := e.asst.KnowledgeList(ctx, owner, projectID, "")
+	if err != nil || len(list) != 1 {
+		t.Fatalf("список знаний: %v, %d", err, len(list))
+	}
+	item, err := e.asst.KnowledgeGet(ctx, owner, projectID, list[0].ID)
+	if err != nil {
+		t.Fatalf("знание: %v", err)
+	}
+	if item.Body != "Драконы спят до весны." {
+		t.Errorf("тело знания: %q", item.Body)
+	}
+}
+
 func TestRetentionOwnerOnlyAndCleanupHonoursKept(t *testing.T) {
 	e := setup(t)
 	ctx := context.Background()

@@ -17,6 +17,7 @@ func TestParseSaveKnowledgeAcceptsModelForms(t *testing.T) {
 		name   string
 		args   map[string]any
 		titles []string
+		bodies []string
 	}{
 		{
 			name: "массив",
@@ -36,6 +37,20 @@ func TestParseSaveKnowledgeAcceptsModelForms(t *testing.T) {
 			args:   map[string]any{"title": "В корне", "body": "тезис"},
 			titles: []string{"В корне"},
 		},
+		{
+			// Живой прогон на стенде (0.149.1): gemma E4B назвала поля name/content.
+			name: "синонимы полей от живой модели",
+			args: map[string]any{"entries": []any{
+				map[string]any{"name": "Канон", "content": "Драконы спят до весны"},
+			}},
+			titles: []string{"Канон"},
+			bodies: []string{"Драконы спят до весны"},
+		},
+		{
+			name:   "entries пришёл строкой с JSON",
+			args:   map[string]any{"entries": `{"entries":[{"title":"Из строки","body":"тезис"}]}`},
+			titles: []string{"Из строки"},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -49,6 +64,11 @@ func TestParseSaveKnowledgeAcceptsModelForms(t *testing.T) {
 			for i, title := range tc.titles {
 				if got[i].Title != title {
 					t.Fatalf("знание №%d: заголовок %q, ожидался %q", i+1, got[i].Title, title)
+				}
+			}
+			for i, body := range tc.bodies {
+				if got[i].Body != body {
+					t.Fatalf("знание №%d: тело %q, ожидалось %q", i+1, got[i].Body, body)
 				}
 			}
 		})
