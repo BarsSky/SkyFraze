@@ -1065,8 +1065,6 @@ export function AssistantPanel({
     onThinkingChange(sending)
   }, [sending, onThinkingChange])
 
-  const hasAnswer = messages.some((m) => m.role === 'assistant')
-  /** Имя агента: зашито на сервере, в интерфейсе — как имя соавтора. */
   const agentName = agent?.agentName || t('ai.agentName')
   /**
    * Исчерпан ли предел расхода за сутки.
@@ -1897,7 +1895,10 @@ export function AssistantPanel({
                 type="button"
                 className="secondary"
                 onClick={startNewConversation}
-                disabled={sending || !hasAnswer}
+                // Кнопка про то, что видно в окне: очищать нечего — нечего и нажимать.
+                // Привязка к «есть ответ помощника» мешала восстановленной беседе, где
+                // человек успел задать вопрос, а ответа ещё нет (0.147.0).
+                disabled={sending || messages.length === 0}
                 title={t('as.newConversationTitle')}
               >
                 {t('as.newConversation')}
