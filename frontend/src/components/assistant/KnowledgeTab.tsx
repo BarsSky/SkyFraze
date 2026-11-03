@@ -1,14 +1,16 @@
-﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   createAIKnowledge,
   deleteAIKnowledge,
   getAIKnowledge,
   getAISettings,
   listAIKnowledge,
+  listAIKnowledgeTags,
   setAIRetention,
   updateAIKnowledge,
   type AIKnowledge,
   type AIKnowledgeBrief,
+  type AIKnowledgeTag,
   type AISettings,
 } from '../../api/assistant'
 import { serverErrorMessage } from '../../api/client'
@@ -65,6 +67,8 @@ export function KnowledgeTab({ projectId, visible }: Props) {
   const t = useT()
   const [lang] = useLang()
   const [items, setItems] = useState<AIKnowledgeBrief[]>([])
+  /** Метки проекта для автодополнения (0.153.0): единый словарь внутри проекта. */
+  const [tagOptions, setTagOptions] = useState<AIKnowledgeTag[]>([])
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -87,6 +91,11 @@ export function KnowledgeTab({ projectId, visible }: Props) {
         const list = await listAIKnowledge(projectId, text)
         setItems(list)
         setLoaded(true)
+        // Метки проекта — для подсказки в форме (0.153.0). Ошибку не показываем: без
+        // подсказок форма работает, это удобство, а не данные.
+        void listAIKnowledgeTags(projectId)
+          .then(setTagOptions)
+          .catch(() => undefined)
       } catch (e) {
         setError((await serverErrorMessage(e)) ?? t('kn.errLoad'))
       } finally {
@@ -353,8 +362,17 @@ export function KnowledgeTab({ projectId, visible }: Props) {
             onChange={(e) => setDraft({ ...draft, tags: e.target.value })}
             placeholder={t('kn.tagsPlaceholder')}
             aria-label={t('kn.tagsField')}
+            list="knowledge-tag-options"
             data-knowledge-tags
           />
+          {/* Подсказка из меток проекта: единый словарь вместо «канон/Канон/каноны». */}
+          <datalist id="knowledge-tag-options" data-knowledge-tag-options>
+            {tagOptions.map((option) => (
+              <option key={option.tag} value={option.tag}>
+                {option.count}
+              </option>
+            ))}
+          </datalist>
           <textarea
             value={draft.body}
             onChange={(e) => setDraft({ ...draft, body: e.target.value })}

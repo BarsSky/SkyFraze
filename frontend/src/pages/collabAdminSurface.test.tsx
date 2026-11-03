@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+﻿import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { CoauthorsPage } from './CoauthorsPage'
@@ -72,7 +72,7 @@ beforeEach(() => {
 describe('соавторы, хранилище и уведомления — язык', () => {
   it('соавторы по-русски: заголовок и поиск', async () => {
     render(
-      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      <MemoryRouter>
         <CoauthorsPage />
       </MemoryRouter>,
     )
@@ -83,7 +83,7 @@ describe('соавторы, хранилище и уведомления — я�
   it('соавторы по-английски: подписи и пустое состояние', async () => {
     setLang('en')
     render(
-      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      <MemoryRouter>
         <CoauthorsPage />
       </MemoryRouter>,
     )
@@ -105,7 +105,7 @@ describe('соавторы, хранилище и уведомления — я�
   it('уведомления по-английски: пустое состояние', async () => {
     setLang('en')
     render(
-      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      <MemoryRouter>
         <NotificationBell />
       </MemoryRouter>,
     )

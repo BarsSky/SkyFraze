@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { tStatic, useT, type Key } from '../../i18n'
 import { useLang } from '../../store/lang'
 import {
@@ -598,6 +598,11 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread, prefill
                 {message.knowledge?.map((item) => (
                   <span className="ai-knowledge-chip" key={item.id} title={item.title}>
                     <span className="ai-knowledge-chip__title">{item.title}</span>
+                    {(item.tags ?? []).map((tag) => (
+                      <span className="knowledge__tag" key={tag}>
+                        {tag}
+                      </span>
+                    ))}
                   </span>
                 ))}
               </div>

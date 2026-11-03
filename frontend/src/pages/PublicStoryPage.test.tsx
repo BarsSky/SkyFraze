@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+﻿import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { PublicStoryPage } from './PublicStoryPage'
@@ -61,7 +61,7 @@ const renderAt = (path: string) =>
   render(
     <MemoryRouter
       initialEntries={[path]}
-      future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+     
     >
       <Routes>
         <Route path="/s/:slug" element={<PublicStoryPage />} />

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+﻿import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { PeoplePage } from './PeoplePage'
@@ -22,7 +22,7 @@ vi.mock('../api/coauthors', () => ({ inviteCoauthor: mocks.invite }))
 
 const page = () =>
   render(
-    <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+    <MemoryRouter>
       <PeoplePage />
     </MemoryRouter>,
   )

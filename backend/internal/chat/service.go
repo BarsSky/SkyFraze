@@ -592,9 +592,14 @@ func knowledgeRefsJSON(items []store.AIKnowledge) json.RawMessage {
 	if len(items) == 0 {
 		return nil
 	}
-	refs := make([]map[string]string, 0, len(items))
+	refs := make([]map[string]any, 0, len(items))
 	for _, k := range items {
-		refs = append(refs, map[string]string{"id": k.ID.String(), "title": k.Title})
+		ref := map[string]any{"id": k.ID.String(), "title": k.Title}
+		// Метки (0.153.0): карточка под сообщением показывает, о чём знание, без открытия.
+		if len(k.Tags) > 0 {
+			ref["tags"] = k.Tags
+		}
+		refs = append(refs, ref)
 	}
 	raw, err := json.Marshal(refs)
 	if err != nil {

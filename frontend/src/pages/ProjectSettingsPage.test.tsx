@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+﻿import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { ProjectSettingsPage } from './ProjectSettingsPage'
@@ -79,7 +79,7 @@ vi.mock('../store/auth', () => ({
 
 function show() {
   return render(
-    <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+    <MemoryRouter>
       <ProjectSettingsPage />
     </MemoryRouter>,
   )

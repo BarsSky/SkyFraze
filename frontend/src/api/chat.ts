@@ -1,4 +1,4 @@
-import { http } from './client'
+﻿import { http } from './client'
 import { tStatic } from '../i18n'
 
 /**
@@ -49,7 +49,7 @@ export interface ChatMessage {
    * Приложенные знания проекта (0.149.0). Заголовок — снимок: знание могут переименовать
    * или удалить, а сообщение обязано остаться читаемым.
    */
-  knowledge?: Array<{ id: string; title: string }>
+  knowledge?: Array<{ id: string; title: string; tags?: string[] }>
   created_at: string
 }
 
@@ -243,7 +243,10 @@ function readMessage(raw: unknown): ChatMessage | null {
           const ref = (typeof item === 'object' && item !== null ? item : {}) as Record<string, unknown>
           const id = typeof ref.id === 'string' ? ref.id : ''
           if (!id) return []
-          return [{ id, title: typeof ref.title === 'string' ? ref.title : '' }]
+          const tags = Array.isArray(ref.tags)
+            ? ref.tags.flatMap((tag) => (typeof tag === 'string' && tag.trim() ? [tag.trim()] : []))
+            : []
+          return [{ id, title: typeof ref.title === 'string' ? ref.title : '', tags }]
         })
       : [],
     created_at: typeof record.created_at === 'string' ? record.created_at : '',

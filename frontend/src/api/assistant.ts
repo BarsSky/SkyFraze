@@ -158,6 +158,8 @@ export interface AIConversation {
 export interface AIKnowledgeRef {
   id: string
   title: string
+  /** Снимок меток (0.153.0): по ним видно, о чём знание, не открывая его. */
+  tags?: string[]
 }
 
 /** Знание в списке: без тела — его читают при открытии, а не при листании. */
@@ -759,6 +761,29 @@ export async function listAIKnowledge(projectId: string, query = ''): Promise<AI
   return parseAIKnowledgeBriefs(record?.knowledge)
 }
 
+/** Метка проекта для автодополнения (0.153.0). */
+export interface AIKnowledgeTag {
+  tag: string
+  count: number
+}
+
+/** Метки, которые уже используются в проекте: частые сверху. */
+export async function listAIKnowledgeTags(projectId: string): Promise<AIKnowledgeTag[]> {
+  const raw = await http
+    .get(`projects/${encodeURIComponent(projectId)}/ai/knowledge/tags`)
+    .json<unknown>()
+  const record = asRecord(raw)
+  if (!Array.isArray(record?.tags)) return []
+  const out: AIKnowledgeTag[] = []
+  for (const item of record.tags) {
+    const entry = asRecord(item)
+    const tag = asText(entry?.tag).trim()
+    if (tag === '') continue
+    out.push({ tag, count: asWhole(entry?.count) })
+  }
+  return out
+}
+
 /** Одно знание целиком — с телом (список тел не отдаёт намеренно). */
 export async function getAIKnowledge(projectId: string, id: string): Promise<AIKnowledge> {
   const raw = await http
@@ -1283,7 +1308,11 @@ export function parseKnowledgeRef(raw: unknown): AIKnowledgeRef | null {
   const record = asRecord(raw)
   const id = asText(record?.id)
   if (!id) return null
-  return { id, title: asText(record?.title) }
+  const tags = readTags(record?.tags)
+  // Пустой список меток не тащим: у старых снимков его просто нет.
+  return tags.length > 0
+    ? { id, title: asText(record?.title), tags }
+    : { id, title: asText(record?.title) }
 }
 
 /** Разбор карточки знания, которую сохранил помощник. */

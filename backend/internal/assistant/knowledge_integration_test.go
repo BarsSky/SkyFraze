@@ -421,6 +421,52 @@ func TestKnowledgeSearchRanksAndFindsByTag(t *testing.T) {
 	}
 }
 
+// Морфология и подсказки меток (0.153.0): словарь russian приводит словоформы к одной
+// основе, а метки проекта подсказываются в форме.
+func TestKnowledgeSearchHandlesMorphology(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	owner := e.user(t, "owner@example.com")
+	projectID, _, _ := e.seedProject(t, owner)
+
+	if _, err := e.asst.SaveKnowledgeEntries(ctx, owner, projectID, nil, []assistant.KnowledgeInput{{
+		Title: "Канон мира", Body: "Драконы спят до весны", Tags: []string{"канон", "драконы"},
+	}}); err != nil {
+		t.Fatalf("знание: %v", err)
+	}
+	// Словоформа из другого падежа: триграммы это почти не ловят, стеммер — ловит.
+	for _, query := range []string{"драконами", "драконы", "дракон"} {
+		found, err := e.asst.KnowledgeList(ctx, owner, projectID, query)
+		if err != nil {
+			t.Fatalf("поиск %q: %v", query, err)
+		}
+		if len(found) == 0 {
+			t.Fatalf("поиск %q ничего не нашёл — морфология не работает", query)
+		}
+	}
+	// Слово, которого нет ни в одной форме, не находится.
+	empty, err := e.asst.KnowledgeList(ctx, owner, projectID, "единорогами")
+	if err != nil {
+		t.Fatalf("поиск мусора: %v", err)
+	}
+	if len(empty) != 0 {
+		t.Fatalf("нашлось по слову, которого нет: %+v", empty)
+	}
+
+	tags, err := e.asst.KnowledgeTags(ctx, owner, projectID)
+	if err != nil {
+		t.Fatalf("метки: %v", err)
+	}
+	if len(tags) != 2 {
+		t.Fatalf("меток %d, ожидалось 2: %+v", len(tags), tags)
+	}
+	for _, item := range tags {
+		if item.Count != 1 {
+			t.Fatalf("счётчик метки %q: %d", item.Tag, item.Count)
+		}
+	}
+}
+
 func TestRetentionOwnerOnlyAndCleanupHonoursKept(t *testing.T) {
 	e := setup(t)
 	ctx := context.Background()

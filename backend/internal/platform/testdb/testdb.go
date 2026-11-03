@@ -191,6 +191,9 @@ var schemaSteps = []struct{ probe, file string }{
 	                  WHERE table_schema='public' AND table_name='ai_knowledge'
 	                    AND column_name='tags')`,
 		"0046_ai_knowledge_search.up.sql"},
+	{`SELECT EXISTS (SELECT 1 FROM pg_indexes
+	                  WHERE schemaname='public' AND indexname='ai_knowledge_fts_idx')`,
+		"0047_ai_knowledge_fts.up.sql"},
 }
 
 // Setup открывает отдельную БД для пакета (suffix), применяет миграции и

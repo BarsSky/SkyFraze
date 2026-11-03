@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+﻿import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { PeoplePage } from './PeoplePage'
@@ -60,7 +60,7 @@ beforeEach(() => {
 describe('профиль и резиденты — язык', () => {
   it('резиденты по-русски: заголовок, поиск и счётчик', async () => {
     render(
-      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      <MemoryRouter>
         <PeoplePage />
       </MemoryRouter>,
     )
@@ -72,7 +72,7 @@ describe('профиль и резиденты — язык', () => {
   it('резиденты по-английски: подписи, счётчик и форма с числом', async () => {
     setLang('en')
     render(
-      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      <MemoryRouter>
         <PeoplePage />
       </MemoryRouter>,
     )
@@ -89,7 +89,7 @@ describe('профиль и резиденты — язык', () => {
   it('карточка профиля по-английски', async () => {
     setLang('en')
     render(
-      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      <MemoryRouter>
         <ProfileCard />
       </MemoryRouter>,
     )

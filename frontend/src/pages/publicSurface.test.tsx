@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+﻿import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { FeedPage } from './FeedPage'
@@ -51,7 +51,7 @@ beforeEach(() => {
 describe('публичный контур — язык', () => {
   it('лента по-русски: порядок сортировки и подписи', async () => {
     render(
-      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      <MemoryRouter>
         <FeedPage />
       </MemoryRouter>,
     )
@@ -63,7 +63,7 @@ describe('публичный контур — язык', () => {
   it('лента по-английски: сортировка, пустое описание и данные автора', async () => {
     setLang('en')
     render(
-      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      <MemoryRouter>
         <FeedPage />
       </MemoryRouter>,
     )

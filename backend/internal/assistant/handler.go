@@ -57,6 +57,9 @@ func (h *Handler) Routes(r chi.Router) {
 	// Знания проекта (0.149.0) — содержимое проекта, а не личные заметки: читают все
 	// участники, меняют редакторы. Срок хранения бесед — решение владельца.
 	r.Get("/ai/knowledge", h.ListKnowledge)
+	// Метки проекта для автодополнения (0.153.0). Статический путь объявлен раньше {kid}:
+	// chi выбирает точное совпадение, но порядок чтения это подчёркивает.
+	r.Get("/ai/knowledge/tags", h.ListKnowledgeTags)
 	r.Post("/ai/knowledge", h.CreateKnowledge)
 	r.Get("/ai/knowledge/{kid}", h.GetKnowledge)
 	r.Put("/ai/knowledge/{kid}", h.UpdateKnowledge)

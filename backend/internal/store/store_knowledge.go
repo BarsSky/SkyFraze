@@ -177,32 +177,68 @@ func (s *Store) ListAIKnowledge(
 			  LIMIT $2`, projectID, limit)
 	}
 	return qAll[AIKnowledgeBrief](ctx, s.Pool,
-		`SELECT id, project_id, created_by, author_name, title, summary, tags, chars,
+		`WITH search AS (
+		   SELECT plainto_tsquery('russian', $2) AS query
+		 )
+		 SELECT id, project_id, created_by, author_name, title, summary, tags, chars,
 		        source_conversation_id, created_at, updated_at
 		   FROM (
-		     SELECT id, project_id, created_by, author_name, title, summary, tags, chars,
-		            source_conversation_id, created_at, updated_at,
-		            (3.0 * similarity(replace(lower(title), 'ё', 'е'), $2)
-		             + 2.0 * similarity(replace(lower(summary), 'ё', 'е'), $2)
-		             + word_similarity($2, replace(lower(body), 'ё', 'е'))
-		             + 1.5 * CASE WHEN EXISTS (
-		                 SELECT 1 FROM unnest(tags) AS tag
-		                  WHERE replace(lower(tag), 'ё', 'е') LIKE '%' || $2 || '%'
-		               ) THEN 1 ELSE 0 END) AS score,
-		            replace(lower(body), 'ё', 'е') LIKE '%' || $2 || '%' AS body_hit
-		       FROM ai_knowledge
-		      WHERE project_id = $1
+		     SELECT k.id, k.project_id, k.created_by, k.author_name, k.title, k.summary,
+		            k.tags, k.chars, k.source_conversation_id, k.created_at, k.updated_at,
+		            -- Морфология (0.153.0): словарь russian приводит «дракон» и «драконами» к
+		            -- одной основе. Вес 10 — полнотекстовое совпадение важнее похожести.
+		            10.0 * ts_rank(
+		              to_tsvector('russian',
+		                k.title || ' ' || k.summary || ' ' || k.body || ' ' ||
+		                sf_tags_text(k.tags)),
+		              search.query)
+		            + 3.0 * similarity(replace(lower(k.title), 'ё', 'е'), $2)
+		            + 2.0 * similarity(replace(lower(k.summary), 'ё', 'е'), $2)
+		            + 1.5 * CASE WHEN EXISTS (
+		                SELECT 1 FROM unnest(k.tags) AS tag
+		                 WHERE replace(lower(tag), 'ё', 'е') LIKE '%' || $2 || '%'
+		              ) THEN 1 ELSE 0 END AS score,
+		            search.query @@ to_tsvector('russian',
+		              k.title || ' ' || k.summary || ' ' || k.body || ' ' ||
+		              sf_tags_text(k.tags)) AS fts_hit
+		       FROM ai_knowledge k, search
+		      WHERE k.project_id = $1
 		   ) ranked
 		  WHERE score > 0.05
+		     OR fts_hit
 		     OR replace(lower(title), 'ё', 'е') LIKE '%' || $2 || '%'
 		     OR replace(lower(summary), 'ё', 'е') LIKE '%' || $2 || '%'
-		     OR body_hit
 		     OR EXISTS (
 		          SELECT 1 FROM unnest(tags) AS tag
 		           WHERE replace(lower(tag), 'ё', 'е') LIKE '%' || $2 || '%'
 		        )
 		  ORDER BY score DESC, created_at DESC
 		  LIMIT $3`, projectID, q, limit)
+}
+
+// AIKnowledgeTag — метка и сколько знаний её используют (0.153.0).
+type AIKnowledgeTag struct {
+	Tag   string `db:"tag" json:"tag"`
+	Count int    `db:"count" json:"count"`
+}
+
+// ListAIKnowledgeTags отдаёт метки проекта для автодополнения, частые сверху.
+//
+// Почему счётчик, а не просто список: человеку полезнее видеть «канон (12)», чем
+// алфавитный перечень, и это же подсказывает единый словарь меток внутри проекта.
+func (s *Store) ListAIKnowledgeTags(
+	ctx context.Context, projectID uuid.UUID, limit int,
+) ([]AIKnowledgeTag, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	return qAll[AIKnowledgeTag](ctx, s.Pool,
+		`SELECT tag, count(*)::int
+		   FROM ai_knowledge k, unnest(k.tags) AS tag
+		  WHERE k.project_id = $1
+		  GROUP BY tag
+		  ORDER BY count(*) DESC, tag
+		  LIMIT $2`, projectID, limit)
 }
 
 // normalizeSearchText приводит запрос к виду хранения: нижний регистр, ё→е, без

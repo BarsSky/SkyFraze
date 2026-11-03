@@ -1,4 +1,4 @@
-# ИИ-помощник в проекте: API, чат и инструменты
+﻿# ИИ-помощник в проекте: API, чат и инструменты
 
 План, а не отчёт. Правило проекта то же, что в `docs/storage-compression.md`: сначала
 измерение и решение, потом код. Здесь собрано, что именно просят, на что в проекте можно
@@ -366,8 +366,9 @@ POST   /api/projects/{id}/ai/conversations/{cid}/stream
                                                        change, proposal, done, error
 GET    /api/projects/{id}/ai/settings                  имя агента, роль, указания, права
 PUT    /api/projects/{id}/ai/settings                  {role, instructions, enabled} — владелец
-GET    /api/projects/{id}/ai/knowledge?q=              знания проекта (без тел), поиск по title/summary/body
+GET    /api/projects/{id}/ai/knowledge?q=              знания проекта (без тел), поиск по словарю «russian» + триграммам
 POST   /api/projects/{id}/ai/knowledge                 своё знание {title, summary, body} → 200
+GET    /api/projects/{id}/ai/knowledge/tags            метки проекта со счётчиками (автодополнение, 0.153.0)
 GET    /api/projects/{id}/ai/knowledge/{kid}           знание целиком, с телом
 PUT    /api/projects/{id}/ai/knowledge/{kid}            правка знания (редактор+)
 DELETE /api/projects/{id}/ai/knowledge/{kid}            удалить знание → 204
@@ -411,7 +412,7 @@ ai_conversations (id, project_id, user_id, title, model, kept bool, created_at, 
 ai_messages      (id, conversation_id, role user|assistant|tool, content,
                   tool_calls jsonb, tool_results jsonb, model, tokens_in, tokens_out,
                   stopped bool, knowledge jsonb, created_at)      -- knowledge: [{id,title}] вложений
-ai_knowledge     (id, project_id, created_by, author_name, title, summary, body, chars,
+ai_knowledge     (id, project_id, created_by, author_name, title, summary, body, tags text[], chars,
                   source_conversation_id, created_at, updated_at)
 project_ai_settings (…, retention_days int)                      -- 0 — не удалять
 ai_user_keys     (user_id, provider, key_ciphertext bytea, created_at, updated_at)  -- AES-GCM
@@ -935,12 +936,28 @@ requestfailed: POST https://fraze.skynas.ru/api/projects/…/ai/conversations/ne
 **до** бесед и переписывает ссылки на новые идентификаторы: карточка под сообщением открывает
 новое знание, а не «мёртвую» ссылку.
 
-**Не сделано.** (1) Морфология по-прежнему не решается: «драконами» найдётся, только если это
-слово есть в тексте или метке; полноценная лемматизация — отдельная зависимость и язык;
-(2) знание может завести любой редактор — «только автор» не разделяем: ушедший соавтор стал бы
-замком; (3) сообщения общего чата с приложенным знанием видят все участники (заголовок — часть
-сообщения), тело знания читателю по-прежнему недоступно; (4) метки не подсказываются из уже
-существующих: автодополнение — следующий шаг, сейчас их придумывает модель или человек.
+**Морфология и подсказки меток (0.153.0).** Триграммы находят опечатки, но не словоформы:
+«дракон» ↔ «драконы» — да, «драконами» — плохо. Вместо своей лемматизации и внешнего
+поисковика взяли словарь `russian` самого PostgreSQL (snowball-стеммер):
+
+* миграция `0047` создаёт GIN-индекс по ВЫРАЖЕНИЮ
+  `to_tsvector('russian', title || summary || body || sf_tags_text(tags))`. Своя функция
+  `sf_tags_text` объявлена `IMMUTABLE`, потому что `array_to_string` помечена STABLE и в
+  индексе её использовать нельзя;
+* запрос — `plainto_tsquery('russian', q)`: «драконами», «драконы» и «дракон» дают одну
+  основу. Полнотекстовое совпадение весит 10 в общей оценке, триграммы и метки — добавкой;
+* метки проекта подсказываются в форме: `GET /ai/knowledge/tags` отдаёт их со счётчиками
+  (частые сверху), в форме появляется `datalist` — так метки остаются единым словарём, а не
+  тремя написаниями одного слова;
+* у вложения знания в сообщении теперь есть снимок меток (`tags` в `{id,title}`), поэтому
+  карточка под репликой говорит, о чём знание, не открывая его.
+
+**Не сделано.** (1) Знание может завести любой редактор — «только автор» не разделяем:
+ушедший соавтор стал бы замком; (2) сообщения общего чата с приложенным знанием видят все
+участники (заголовок и метки — часть сообщения), тело знания читателю по-прежнему недоступно;
+(3) полнотекстовый словарь `russian` — не морфология имён собственных и неологизмов: имя
+персонажа в необычной форме ищется по триграммам и метке, а не стеммером; (4) в архиве у
+снимков вложений меток нет — они читаются из самого знания после импорта.
 
 ## 5.12. Сторож мёртвого потока (0.151.0)
 

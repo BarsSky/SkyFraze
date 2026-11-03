@@ -120,8 +120,21 @@ async function desktop() {
   await page.waitForTimeout(900)
   const foundByTag = ((await page.locator('[data-knowledge-tab]').innerText()) ?? '').includes(TITLE)
   add(foundByTag ? 'info' : 'error', `поиск по метке «теги»: ${foundByTag ? 'нашёл' : 'не нашёл'}`)
+  // Морфология (0.153.0): словарь «russian» находит словоформу, которой в тексте нет.
+  await search.fill('тезисами')
+  await page.waitForTimeout(900)
+  const foundByStem = ((await page.locator('[data-knowledge-tab]').innerText()) ?? '').includes(TITLE)
+  add(foundByStem ? 'info' : 'error', `поиск словоформы «тезисами»: ${foundByStem ? 'нашёл' : 'не нашёл'}`)
   await search.fill('')
   await page.waitForTimeout(700)
+
+  // Подсказка меток (0.153.0): после первого знания форма должна предлагать его метки.
+  await page.locator('[data-knowledge-create]').click()
+  await page.waitForTimeout(900)
+  const tagOptions = await page.locator('[data-knowledge-tag-options] option').count()
+  add(tagOptions > 0 ? 'info' : 'warning', `подсказка меток: ${tagOptions} вариантов`)
+  await page.locator('[data-knowledge-form] button', { hasText: 'Отмена' }).first().click()
+  await page.waitForTimeout(300)
 
   // Открытие целиком: тело приходит отдельным запросом.
   await item.locator('.knowledge__open').click()

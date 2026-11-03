@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   addAIEndpoint,
   applyAIProposal,
@@ -1670,6 +1670,11 @@ export function AssistantPanel({
                     {message.knowledge?.map((item) => (
                       <span className="ai-msg__knowledge-item" key={item.id} title={item.title}>
                         {item.title}
+                        {(item.tags ?? []).map((tag) => (
+                          <span className="knowledge__tag" key={tag}>
+                            {tag}
+                          </span>
+                        ))}
                       </span>
                     ))}
                   </div>

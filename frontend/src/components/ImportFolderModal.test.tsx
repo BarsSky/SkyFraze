@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+﻿import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import type { MarkdownImportPreview } from '../api/storyFiles'
@@ -54,7 +54,7 @@ const preview: MarkdownImportPreview = {
 /** Портал рендерит окно в body — оборачиваем в роутер: внутри бывает баннер ошибки. */
 function show() {
   return render(
-    <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+    <MemoryRouter>
       <ImportFolderModal onClose={() => {}} onCreated={() => {}} />
     </MemoryRouter>,
   )

@@ -63,10 +63,12 @@ type KnowledgeInput struct {
 	Tags []string
 }
 
-// KnowledgeRef — вложение к сообщению: идентификатор и СНИМОК заголовка.
+// KnowledgeRef — вложение к сообщению: идентификатор, СНИМОК заголовка и метки (0.153.0).
 type KnowledgeRef struct {
 	ID    uuid.UUID `json:"id"`
 	Title string    `json:"title"`
+	// Tags — снимок меток: карточка под сообщением показывает, о чём знание, не открывая его.
+	Tags []string `json:"tags,omitempty"`
 }
 
 // KnowledgeView — созданное знание в ответе помощника: интерфейс показывает карточку
@@ -225,6 +227,33 @@ func (s *Service) requireKnowledge(ctx context.Context, userID, projectID uuid.U
 		return err
 	}
 	return nil
+}
+
+// KnowledgeTag — метка и сколько знаний её используют (0.153.0).
+type KnowledgeTag struct {
+	Tag   string `json:"tag"`
+	Count int    `json:"count"`
+}
+
+// KnowledgeTags — метки проекта для автодополнения в форме.
+//
+// Только соавторам, как и всё чтение знаний: список меток сам по себе выдаёт темы
+// черновых исследований.
+func (s *Service) KnowledgeTags(
+	ctx context.Context, userID, projectID uuid.UUID,
+) ([]KnowledgeTag, error) {
+	if err := s.requireKnowledge(ctx, userID, projectID); err != nil {
+		return nil, err
+	}
+	list, err := s.store.ListAIKnowledgeTags(ctx, projectID, 0)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]KnowledgeTag, 0, len(list))
+	for _, item := range list {
+		out = append(out, KnowledgeTag{Tag: item.Tag, Count: item.Count})
+	}
+	return out, nil
 }
 
 // KnowledgeCreate — знание, написанное человеком руками.
@@ -453,7 +482,7 @@ func (s *Service) knowledgeForAttach(
 			return nil, nil, fmt.Errorf("%w: знание %s не найдено в проекте", store.ErrNotFound, id)
 		}
 		items = append(items, k)
-		refs = append(refs, KnowledgeRef{ID: k.ID, Title: k.Title})
+		refs = append(refs, KnowledgeRef{ID: k.ID, Title: k.Title, Tags: k.Tags})
 	}
 	return items, refs, nil
 }

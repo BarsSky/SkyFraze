@@ -57,6 +57,20 @@ func (h *Handler) GetKnowledge(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, item)
 }
 
+// ListKnowledgeTags — GET .../ai/knowledge/tags: метки проекта для автодополнения (0.153.0).
+func (h *Handler) ListKnowledgeTags(w http.ResponseWriter, r *http.Request) {
+	uid, pid, ok := h.scope(w, r)
+	if !ok {
+		return
+	}
+	list, err := h.svc.KnowledgeTags(r.Context(), uid, pid)
+	if err != nil {
+		h.fail(w, "list knowledge tags", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"tags": list})
+}
+
 // CreateKnowledge — POST .../ai/knowledge: человек написал знание руками.
 func (h *Handler) CreateKnowledge(w http.ResponseWriter, r *http.Request) {
 	uid, pid, ok := h.scope(w, r)

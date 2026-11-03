@@ -13,6 +13,7 @@ import { setLang } from '../../store/lang'
 
 const mocks = vi.hoisted(() => ({
   list: vi.fn(),
+  tags: vi.fn(),
   get: vi.fn(),
   create: vi.fn(),
   update: vi.fn(),
@@ -24,6 +25,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('../../api/assistant', () => ({
   listAIKnowledge: mocks.list,
+  listAIKnowledgeTags: mocks.tags,
   getAIKnowledge: mocks.get,
   createAIKnowledge: mocks.create,
   updateAIKnowledge: mocks.update,
@@ -79,6 +81,7 @@ beforeEach(() => {
   setLang('ru')
   for (const fn of Object.values(mocks)) fn.mockReset()
   mocks.list.mockResolvedValue([ITEM])
+  mocks.tags.mockResolvedValue([{ tag: 'канон', count: 3 }])
   mocks.settings.mockResolvedValue(SETTINGS)
   mocks.error.mockResolvedValue(null)
   mocks.create.mockResolvedValue({ ...ITEM, id: 'k2', title: 'Новое знание' })
@@ -183,6 +186,20 @@ describe('KnowledgeTab', () => {
     expect(await screen.findByText(/только соавторы/)).toBeTruthy()
     expect(mocks.list).not.toHaveBeenCalled()
     expect(document.querySelector('[data-knowledge-retention]')).toBeNull()
+  })
+
+  it('подсказывает метки проекта в форме', async () => {
+    render(<KnowledgeTab projectId='p1' visible />)
+    await screen.findByText('Решения по миру')
+    await waitFor(() => expect(mocks.tags).toHaveBeenCalledWith('p1'))
+    // Подсказка живёт в форме: до её открытия списка меток в разметке нет.
+    fireEvent.click(screen.getByRole('button', { name: 'Новое' }))
+    const options = await waitFor(() => {
+      const found = document.querySelectorAll('[data-knowledge-tag-options] option')
+      expect(found.length).toBeGreaterThan(0)
+      return found
+    })
+    expect(options[0].getAttribute('value')).toBe('канон')
   })
 
   it('предупреждает, сколько бесед удалит автоочистка', async () => {

@@ -32,12 +32,14 @@ import {
   listAIEndpoints,
   listAIEntityProposals,
   listAIKnowledge,
+  listAIKnowledgeTags,
   listAIModels,
   listAIProposals,
   needsConsent,
   parseAIConfig,
   parseAIEndpoints,
   parseAIModels,
+  parseKnowledgeRef,
   parseProposals,
   parseSSEBuffer,
   parseAITurn,
@@ -813,6 +815,23 @@ describe('знания проекта', () => {
     mocks.del.mockReturnValueOnce(reply({}))
     await deleteAIKnowledge('p1', 'k1')
     expect(mocks.del).toHaveBeenCalledWith('projects/p1/ai/knowledge/k1')
+  })
+
+  it('метки проекта читаются для автодополнения', async () => {
+    mocks.get.mockReturnValueOnce(reply({ tags: [{ tag: 'канон', count: 2 }, { tag: 'драконы', count: 1 }] }))
+    const tags = await listAIKnowledgeTags('p1')
+    expect(mocks.get).toHaveBeenCalledWith('projects/p1/ai/knowledge/tags')
+    expect(tags).toEqual([{ tag: 'канон', count: 2 }, { tag: 'драконы', count: 1 }])
+  })
+
+  it('метки вложения разбираются, если они есть', () => {
+    expect(parseKnowledgeRef({ id: 'k1', title: 'Канон', tags: ['канон', 'драконы'] })).toEqual({
+      id: 'k1',
+      title: 'Канон',
+      tags: ['канон', 'драконы'],
+    })
+    // Пустой список не тащим: старые снимки его не содержат.
+    expect(parseKnowledgeRef({ id: 'k1', title: 'Канон' })).toEqual({ id: 'k1', title: 'Канон' })
   })
 
   it('срок хранения и «не удалять беседу» — свои ручки', async () => {
