@@ -97,6 +97,26 @@ async function main() {
     )
     add('info', `история: бесед ${items.length}, текущая ${items.find((i) => i.current)?.title ?? '—'}`)
     if (items.length < 2) add('warning', 'в истории меньше двух бесед — переключение не проверить')
+    // Меню должно помещаться в окно: раньше оно росло вправо и обрезалось (0.147.2).
+    const geometry = await page.evaluate(() => {
+      const menu = document.querySelector('[data-assistant-history]')?.getBoundingClientRect()
+      const panel = document.querySelector('[data-assistant-panel]')?.getBoundingClientRect()
+      if (!menu || !panel) return null
+      return {
+        menu: { left: Math.round(menu.left), right: Math.round(menu.right), width: Math.round(menu.width) },
+        panel: { left: Math.round(panel.left), right: Math.round(panel.right) },
+        clipped: Array.from(document.querySelectorAll('.ai-history__title')).some(
+          (el) => el.scrollWidth > el.clientWidth + 1,
+        ),
+      }
+    })
+    if (!geometry) {
+      add('warning', 'не удалось измерить меню истории')
+    } else if (geometry.menu.right > geometry.panel.right || geometry.menu.left < geometry.panel.left) {
+      add('error', `меню истории вылезает за окно: ${JSON.stringify(geometry)}`)
+    } else {
+      add('info', `меню истории внутри окна: ${JSON.stringify(geometry.menu)}`)
+    }
     await page.screenshot({ path: `${SHOTS}\\restore-3-history.png` })
 
     const other = items.find((item) => !item.current)
