@@ -40,7 +40,7 @@ test('поиск находит кадр по слову из текста, а �
     timeout: 45_000,
   })
   // Помощник закрываем: его окно перекрывает панель редакторов.
-  await page.locator('[data-assistant-close]').click()
+  await page.locator('[data-dock-close]').click()
 
   const search = page.locator('[data-ed-search]')
   await expect(search).toBeVisible({ timeout: 15_000 })

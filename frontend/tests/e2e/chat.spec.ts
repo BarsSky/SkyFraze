@@ -72,15 +72,22 @@ test('чат проекта: сообщение переживает перез�
   // 3. Отметка ставится нажатием и повторным нажатием снимается; состояние переживает перезагрузку
   // (значит, лежит на сервере, а не в памяти вкладки).
   const lastMessage = panel.locator('[data-chat-message]').last()
+  // Действия с сообщением — в меню «⋯» (0.146.0): отметку ставим оттуда.
+  await lastMessage.locator('[data-chat-menu-button]').click()
+  const todoItem = lastMessage.locator('[data-chat-menu-reaction$=":todo"]')
+  await expect(todoItem).toHaveAttribute('aria-checked', 'false')
+  await todoItem.click()
+  // Плашка под сообщением показывает состояние без открытого меню.
   const chip = lastMessage.locator('[data-chat-reaction$=":todo"]')
-  await expect(chip).toHaveAttribute('aria-pressed', 'false')
-  await chip.click()
   await expect(chip).toHaveAttribute('aria-pressed', 'true', { timeout: 15_000 })
+  await page.keyboard.press('Escape')
   await page.reload()
   panel = await openChat()
   const chipAfterReload = panel.locator('[data-chat-message]').last().locator('[data-chat-reaction$=":todo"]')
   await expect(chipAfterReload).toHaveAttribute('aria-pressed', 'true', { timeout: 20_000 })
-  await chipAfterReload.click()
+  // Снимаем отметку тоже из меню.
+  await panel.locator('[data-chat-message]').last().locator('[data-chat-menu-button]').click()
+  await panel.locator('[data-chat-message]').last().locator('[data-chat-menu-reaction$=":todo"]').click()
   await expect(chipAfterReload).toHaveAttribute('aria-pressed', 'false', { timeout: 15_000 })
 
   // Уборка: проект свой, удаляем окончательно (как остальные сценарии с созданными проектами).

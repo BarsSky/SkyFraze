@@ -128,6 +128,8 @@ test('удалённый агентом кадр можно вернуть', asy
   })
 
   // 3. «Вернуть кадр» возвращает его — с прежним заголовком и на прежнее место.
+  // «Вернуть кадр» — карточка применённых свёрнута (0.146.0): раскрываем её.
+  await applied.locator('summary').click()
   await applied.getByRole('button', { name: 'Вернуть кадр' }).click()
   await expect(panel.locator('[data-assistant-proposals]')).toBeVisible({ timeout: 30_000 })
   await expect(panel.locator('[data-assistant-proposal-note]')).toContainText(

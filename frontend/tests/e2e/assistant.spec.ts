@@ -81,7 +81,7 @@ test('помощник создаёт главу по просьбе в чате
 
   // Окно закрывается и снова открывается — переписка на месте: оно прячется, а не
   // размонтируется, иначе человек терял бы историю при каждом сворачивании.
-  await panel.locator('[data-assistant-close]').click()
+  await panel.locator('[data-dock-close]').click()
   await expect(panel).toBeHidden()
   await fab.click()
   await expect(panel).toBeVisible()

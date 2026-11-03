@@ -39,7 +39,7 @@ async function projectWithFrame(page: import('@playwright/test').Page): Promise<
     timeout: 45_000,
   })
   // Окно помощника перекрывает панель редакторов — закрываем, как в comments.spec.ts.
-  await page.locator('[data-assistant-close]').click()
+  await page.locator('[data-dock-close]').click()
 }
 
 /**
@@ -115,6 +115,8 @@ test('правка фрагмента по замечанию: предложе�
   // «Вернуть прежний фрагмент» — кнопка именно про фрагмент, а не про кадр целиком.
   const applied = page.locator('[data-assistant-applied]')
   await expect(applied).toBeVisible({ timeout: 45_000 })
+  // Карточка применённых свёрнута (0.146.0): раскрываем её перед «Вернуть».
+  await applied.locator('summary').click()
   await applied.getByRole('button', { name: 'Вернуть прежний фрагмент' }).click()
   await expect(page.locator('.ed-form textarea').first()).toHaveValue(before, { timeout: 45_000 })
 })

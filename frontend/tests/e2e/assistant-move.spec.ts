@@ -116,6 +116,8 @@ test('агент предлагает перенос кадра, а делает
   // 4. «Вернуть в прежнюю главу» возвращает ровно место: уровень прежний, текст кадра цел.
   //    Кнопка подписана «главу», а не «прежний текст», — правка возвращается в состояние
   //    «ждёт решения», как у остальных видов правок.
+  // «Вернуть в прежнюю главу» — карточка применённых свёрнута (0.146.0): раскрываем её.
+  await applied.locator('summary').click()
   await applied.getByRole('button', { name: 'Вернуть в прежнюю главу' }).click()
   await expect(panel.locator('[data-assistant-proposals]')).toBeVisible({ timeout: 30_000 })
   await expect(frameRow).toHaveAttribute('data-depth', String(depthBefore), { timeout: 30_000 })

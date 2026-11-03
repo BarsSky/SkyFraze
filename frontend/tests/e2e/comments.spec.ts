@@ -38,7 +38,7 @@ test('замечание к кадру пишется, видно в дерев�
     timeout: 45_000,
   })
   // Окно помощника перекрывает панель редакторов — закрываем.
-  await page.locator('[data-assistant-close]').click()
+  await page.locator('[data-dock-close]').click()
 
   // 2. Блок обсуждения под выбранным кадром: сначала пусто.
   const comments = page.locator('[data-frame-comments]')
