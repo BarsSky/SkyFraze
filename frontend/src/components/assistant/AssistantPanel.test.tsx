@@ -332,6 +332,48 @@ describe('AssistantPanel', () => {
     expect(screen.getByText('создана глава «Пролог»')).toBeTruthy()
   })
 
+  it('предложенные правки раскрыты по умолчанию: это решение для человека (0.146.2)', async () => {
+    // Изменения и применённое — информация, их можно свернуть. А предложенная правка ждёт
+    // кнопки «Применить»/«Отклонить», поэтому карточка открыта сразу — иначе человек
+    // увидит счётчик и не поймёт, что от него хотят.
+    mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
+    mocks.stream.mockResolvedValue({
+      ...TURN,
+      changes: [],
+      proposals: [
+        {
+          id: 'p1',
+          kind: 'update_text',
+          status: 'pending',
+          eventId: 'e1',
+          eventTitle: 'Пролог',
+          oldTitle: 'Пролог',
+          oldBody: 'Старый текст главы.',
+          newTitle: 'Пролог',
+          newBody: 'Новый текст главы.',
+          oldSpan: '',
+          oldDate: '',
+          newDate: '',
+        } as AIProposal,
+      ],
+    })
+    renderPanel()
+
+    const input = (await screen.findByLabelText('Сообщение помощнику')) as HTMLTextAreaElement
+    await waitFor(() => expect(input.disabled).toBe(false))
+    fireEvent.change(input, { target: { value: 'Перепиши главу' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Спросить' }))
+
+    const card = (await waitFor(() => {
+      const found = document.querySelector('[data-assistant-proposals]')
+      expect(found).not.toBeNull()
+      return found
+    })) as HTMLDetailsElement
+    expect(card.tagName).toBe('DETAILS')
+    expect(card.open).toBe(true)
+    expect(card.getAttribute('open')).not.toBeNull()
+  })
+
   it('пока ответа нет, в переписке видно, что Нестор печатает (0.146.0)', async () => {
     // Раньше ожидание было серой строчкой между блоками, и понять, ответил ли помощник,
     // было нельзя. Теперь это реплика с подписью автора.

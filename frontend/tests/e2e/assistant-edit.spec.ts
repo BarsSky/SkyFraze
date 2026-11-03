@@ -69,6 +69,8 @@ test('агент предлагает правку, а применяет её �
   await expect(page.getByText('Так начинается история.')).toHaveCount(0)
 
   // 5. «Вернуть» возвращает прежний текст — и это тоже видно в проекте.
+  // Карточка применённых свёрнута (0.146.0): раскрываем её, как это сделает человек.
+  await panel.locator('[data-assistant-applied] summary').click()
   await panel.locator('[data-assistant-applied]').getByRole('button', { name: 'Вернуть прежний текст' }).click()
   await expect(panel.locator('[data-assistant-proposals]')).toBeVisible({ timeout: 30_000 })
   await expect(page.getByText('Так начинается история.').first()).toBeAttached({ timeout: 30_000 })

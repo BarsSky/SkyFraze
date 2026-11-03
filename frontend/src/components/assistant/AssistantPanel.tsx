@@ -1457,7 +1457,7 @@ export function AssistantPanel({
           {/* Предложенные правки существующих кадров. Отдельный блок и отдельные кнопки:
               проект ещё НЕ изменился, и «применить» — решение человека, а не агента. */}
           {proposals.length > 0 && (
-            <details className="ai-card ai-card--attention" data-assistant-proposals>
+            <details className="ai-card ai-card--attention" data-assistant-proposals open>
               <summary className="ai-card__head">
                 {t('as.proposalsTitle')}
                 <span className="ai-card__count">{proposals.length}</span>
