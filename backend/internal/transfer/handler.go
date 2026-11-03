@@ -163,12 +163,18 @@ func (h *Handler) Import(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.logger.Info("project imported",
-		"user", uid, "project", res.Project.ID, "events", res.Events, "assets", res.Assets)
+		"user", uid, "project", res.Project.ID, "events", res.Events, "assets", res.Assets,
+		"entities", res.Entities, "conversations", res.Conversations)
+	// Поля перечислены руками — значит, их легко забыть. Так и вышло: `entities` не отдавался
+	// с 0.69.0, а `conversations` — с 0.148.0, и интерфейс молчал о перенесённых карточках и
+	// беседах (0.148.1).
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"project": res.Project,
-		"events":  res.Events,
-		"assets":  res.Assets,
-		"state":   res.HasState,
+		"project":       res.Project,
+		"events":        res.Events,
+		"assets":        res.Assets,
+		"state":         res.HasState,
+		"entities":      res.Entities,
+		"conversations": res.Conversations,
 	})
 }
 

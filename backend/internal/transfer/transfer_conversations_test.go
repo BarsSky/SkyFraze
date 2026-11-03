@@ -14,10 +14,16 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
+	"mime/multipart"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/skyfraze/backend/internal/auth"
 	"github.com/skyfraze/backend/internal/store"
 	"github.com/skyfraze/backend/internal/transfer"
 )
@@ -184,3 +190,76 @@ func TestImportRestoresConversations(t *testing.T) {
 		t.Errorf("вторая реплика: %+v", messages[1])
 	}
 }
+
+// Ответ импорта — часть контракта интерфейса (0.148.1).
+//
+// Поля собирались руками в карте, и «забыть» их было легко: entities не отдавался с 0.69.0,
+// conversations — с 0.148.0. Интерфейс молчал о перенесённых карточках и беседах, хотя сервер
+// их переносил.
+func TestImportHTTPReportsConversations(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	owner := e.user(t, "owner@example.com")
+	projectID := e.seedStoryProject(t, owner)
+	seedConversation(t, &transferEnv{st: e.st}, ctx, projectID, owner, "Правки главы", "Поправь абзац", "Предлагаю правку.")
+
+	var archive bytes.Buffer
+	if _, err := e.transfer.Export(ctx, owner, projectID, &archive); err != nil {
+		t.Fatalf("экспорт: %v", err)
+	}
+	// Импорт создаёт НОВЫЙ проект, но идентификаторы событий сохраняет — значит, исходный
+	// проект надо убрать, как это делает человек при переносе между стендами (иначе 409).
+	if err := e.st.DeleteProject(ctx, projectID); err != nil {
+		t.Fatalf("удаление источника: %v", err)
+	}
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	part, err := writer.CreateFormFile("file", "project.skyfraze.zip")
+	if err != nil {
+		t.Fatalf("multipart: %v", err)
+	}
+	if _, err := part.Write(archive.Bytes()); err != nil {
+		t.Fatalf("multipart: %v", err)
+	}
+	writer.Close()
+
+	authSvc := auth.New(nil, conversationRoutesSecret)
+	handler := transfer.NewHandler(e.transfer, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	router := chi.NewRouter()
+	router.With(authSvc.WithUser).Post("/api/projects/import", handler.Import)
+
+	token, err := auth.IssueAccess(conversationRoutesSecret, owner)
+	if err != nil {
+		t.Fatalf("token: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/import", body)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("код %d, тело %s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		Conversations int  `json:"conversations"`
+		Entities      *int `json:"entities"`
+		Events        int  `json:"events"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("ответ не разобран: %v (%s)", err, rec.Body.String())
+	}
+	if payload.Conversations != 1 {
+		t.Errorf("conversations в ответе: %d, ожидалось 1 (тело %s)", payload.Conversations, rec.Body.String())
+	}
+	if payload.Entities == nil {
+		t.Errorf("в ответе нет поля entities: %s", rec.Body.String())
+	}
+	if payload.Events < 1 {
+		t.Errorf("events: %d, ожидалось хотя бы одно событие", payload.Events)
+	}
+}
+
+// conversationRoutesSecret — секрет подписи токенов для HTTP-проверки импорта.
+const conversationRoutesSecret = "conversations-test-secret"
