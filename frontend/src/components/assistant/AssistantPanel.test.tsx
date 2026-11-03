@@ -306,6 +306,51 @@ describe('AssistantPanel', () => {
     expect(changed).toHaveBeenCalled()
   })
 
+  it('изменения и правки — свёрнутые карточки, чтобы не поджимать переписку (0.146.0)', async () => {
+    // На телефоне развёрнутые блоки занимали почти весь низ окна, и переписку с Нестором
+    // было не прочитать. Теперь это карточки со счётчиком: свёрнуты по умолчанию.
+    mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
+    mocks.stream.mockResolvedValue(TURN)
+    renderPanel()
+
+    const input = (await screen.findByLabelText('Сообщение помощнику')) as HTMLTextAreaElement
+    await waitFor(() => expect(input.disabled).toBe(false))
+    fireEvent.change(input, { target: { value: 'Добавь главу «Пролог»' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Спросить' }))
+
+    const card = (await waitFor(() => {
+      const found = document.querySelector('[data-assistant-changes]')
+      expect(found).not.toBeNull()
+      return found
+    })) as HTMLDetailsElement
+    expect(card.tagName).toBe('DETAILS')
+    expect(card.open).toBe(false)
+    expect(card.querySelector('.ai-card__count')?.textContent).toBe('1')
+
+    fireEvent.click(card.querySelector('summary') as Element)
+    expect(card.open).toBe(true)
+    expect(screen.getByText('создана глава «Пролог»')).toBeTruthy()
+  })
+
+  it('пока ответа нет, в переписке видно, что Нестор печатает (0.146.0)', async () => {
+    // Раньше ожидание было серой строчкой между блоками, и понять, ответил ли помощник,
+    // было нельзя. Теперь это реплика с подписью автора.
+    mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
+    mocks.stream.mockImplementation(() => new Promise<AITurn>(() => {}))
+    renderPanel()
+
+    const input = (await screen.findByLabelText('Сообщение помощнику')) as HTMLTextAreaElement
+    await waitFor(() => expect(input.disabled).toBe(false))
+    fireEvent.change(input, { target: { value: 'Добавь главу' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Спросить' }))
+
+    await waitFor(() => {
+      const typing = document.querySelector('[data-assistant-thinking]')
+      expect(typing?.textContent).toContain('Нестор')
+      expect(typing?.textContent).toContain('печатает')
+    })
+  })
+
   it('показывает текст ответа по мере генерации, а не после конца', async () => {
     mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
     let finish: (turn: AITurn) => void = () => {}
@@ -1423,7 +1468,6 @@ describe('AssistantPanel', () => {
     expect(screen.getByRole('button', { name: 'Ask' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'New' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Assistant settings' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Close the assistant' })).toBeTruthy()
     // Данные: имя агента приходит с сервера.
     expect(screen.getByText('Нестор')).toBeTruthy()
 

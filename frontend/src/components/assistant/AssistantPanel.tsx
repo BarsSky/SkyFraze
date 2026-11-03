@@ -71,7 +71,6 @@ interface Props {
   projectId: string
   /** Открыто ли окно: нужно, чтобы отличить «ответ на глазах» от «ответ в фоне». */
   open: boolean
-  onClose: () => void
   /** Ответ пришёл, пока окно было закрыто: кнопка показывает маркер. */
   onUnread: () => void
   /** Цитата из показа проекта: заполняет поле вопроса (0.132.0). */
@@ -98,7 +97,6 @@ type View = 'chat' | 'settings'
 export function AssistantPanel({
   projectId,
   open,
-  onClose,
   onUnread,
   prefill,
   onThinkingChange,
@@ -945,16 +943,8 @@ export function AssistantPanel({
           >
             <GearIcon />
           </button>
-          <button
-            type="button"
-            className="ai-icon"
-            aria-label={t('as.closeAria')}
-            title={t('as.closeTitle')}
-            data-assistant-close
-            onClick={onClose}
-          >
-            <CloseIcon />
-          </button>
+          {/* Крестика здесь больше нет (0.146.0): окно закрывает одна общая кнопка в шапке
+              вкладок — она есть и на вкладке «Чат проекта», где своего крестика не было. */}
         </div>
       </header>
 
@@ -1409,9 +1399,20 @@ export function AssistantPanel({
               </div>
             )}
             {sending && streaming === '' && (
-              <p className="ai-thinking" data-assistant-thinking>
-                {coldStart ? t('as.coldStartHint') : t('as.thinking')}
-              </p>
+              // Ответа ещё нет — показываем это как реплику с подписью автора (0.146.0).
+              // Раньше тут была серая строчка между блоками, и понять, ответил ли Нестор,
+              // было нельзя: в переписке не появлялось ничего.
+              <div className="ai-msg ai-msg--assistant ai-msg--typing" data-assistant-thinking>
+                <span className="ai-msg__who">{agentName}</span>
+                <p className="ai-msg__text ai-typing">
+                  <span className="ai-typing__dots" aria-hidden="true">
+                    <i />
+                    <i />
+                    <i />
+                  </span>
+                  {coldStart ? t('as.coldStartHint') : t('as.typing')}
+                </p>
+              </div>
             )}
             {/* Черновик нового текста кадра: модель пишет его для человека, но кадр ещё
                 не изменён и это не реплика помощника. Отдельный блок — потому что
@@ -1430,57 +1431,71 @@ export function AssistantPanel({
             )}
           </div>
 
+          {/* Изменения и правки — сворачиваемые карточки (0.146.0). Развёрнутые списки
+              занимали весь низ окна и выдавливали переписку: на телефоне от сообщений
+              оставалась пара строк. Свёрнутая карточка показывает счётчик, полный список
+              открывается нажатием и прокручивается внутри себя. */}
           {changes.length > 0 && (
-            <div className="ai-changes" data-assistant-changes>
-              <strong>{t('as.changesTitle')}</strong>
-              <ul>
-                {changes.map((change) => (
-                  <li key={`${change.action}-${change.id}`}>{changeLabel(change)}</li>
-                ))}
-              </ul>
-              <button className="secondary" onClick={onOpenEditors}>
-                {t('as.viewInTree')}
-              </button>
-            </div>
+            <details className="ai-card" data-assistant-changes>
+              <summary className="ai-card__head">
+                {t('as.changesTitle')}
+                <span className="ai-card__count">{changes.length}</span>
+              </summary>
+              <div className="ai-card__body">
+                <ul>
+                  {changes.map((change) => (
+                    <li key={`${change.action}-${change.id}`}>{changeLabel(change)}</li>
+                  ))}
+                </ul>
+                <button className="secondary" onClick={onOpenEditors}>
+                  {t('as.viewInTree')}
+                </button>
+              </div>
+            </details>
           )}
 
           {/* Предложенные правки существующих кадров. Отдельный блок и отдельные кнопки:
               проект ещё НЕ изменился, и «применить» — решение человека, а не агента. */}
           {proposals.length > 0 && (
-            <div className="ai-proposals" data-assistant-proposals>
-              <strong>{t('as.proposalsTitle')}</strong>
-              <ul>
-                {proposals.map((proposal) => (
-                  <li key={proposal.id} className="ai-proposals__item" data-proposal-id={proposal.id}>
-                    <span className="ai-proposals__title">{proposalTitle(proposal, 'pending')}</span>
-                    {proposal.kind === 'update_span' ? (
-                      <span className="ai-proposals__diff" data-proposal-span>
-                        <del>{proposal.oldSpan}</del> → <ins>{proposal.newSpan}</ins>
+            <details className="ai-card ai-card--attention" data-assistant-proposals>
+              <summary className="ai-card__head">
+                {t('as.proposalsTitle')}
+                <span className="ai-card__count">{proposals.length}</span>
+              </summary>
+              <div className="ai-card__body">
+                <ul>
+                  {proposals.map((proposal) => (
+                    <li key={proposal.id} className="ai-proposals__item" data-proposal-id={proposal.id}>
+                      <span className="ai-proposals__title">{proposalTitle(proposal, 'pending')}</span>
+                      {proposal.kind === 'update_span' ? (
+                        <span className="ai-proposals__diff" data-proposal-span>
+                          <del>{proposal.oldSpan}</del> → <ins>{proposal.newSpan}</ins>
+                        </span>
+                      ) : (
+                        proposal.kind !== 'delete_event' && (
+                          <span className="ai-proposals__diff">{diffSummary(proposal)}</span>
+                        )
+                      )}
+                      <span className="ai-proposals__actions">
+                        <button
+                          onClick={() => void applyProposal(proposal)}
+                          disabled={proposalBusy !== null}
+                        >
+                          {proposalBusy === proposal.id ? t('as.applying') : t('as.apply')}
+                        </button>
+                        <button
+                          className="secondary"
+                          onClick={() => void discardProposal(proposal)}
+                          disabled={proposalBusy !== null}
+                        >
+                          {t('as.discard')}
+                        </button>
                       </span>
-                    ) : (
-                      proposal.kind !== 'delete_event' && (
-                        <span className="ai-proposals__diff">{diffSummary(proposal)}</span>
-                      )
-                    )}
-                    <span className="ai-proposals__actions">
-                      <button
-                        onClick={() => void applyProposal(proposal)}
-                        disabled={proposalBusy !== null}
-                      >
-                        {proposalBusy === proposal.id ? t('as.applying') : t('as.apply')}
-                      </button>
-                      <button
-                        className="secondary"
-                        onClick={() => void discardProposal(proposal)}
-                        disabled={proposalBusy !== null}
-                      >
-                        {t('as.discard')}
-                      </button>
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </details>
           )}
 
           {/* Предложения карточек мира (0.77.0). Отдельный компонент со своей загрузкой: карточки
@@ -1492,33 +1507,38 @@ export function AssistantPanel({
               человек не закрыл окно. У удаления это возврат кадра по снимку, который
               сервер сохранил в момент удаления (ai_changes.frame). */}
           {appliedProposals.length > 0 && (
-            <div className="ai-proposals ai-proposals--applied" data-assistant-applied>
-              <strong>{t('as.appliedTitle')}</strong>
-              <ul>
-                {appliedProposals.map((proposal) => (
-                  <li key={proposal.id} className="ai-proposals__item" data-proposal-id={proposal.id}>
-                    <span className="ai-proposals__title">{proposalTitle(proposal, 'applied')}</span>
-                    <span className="ai-proposals__actions">
-                      <button
-                        className="secondary"
-                        onClick={() => void revertProposal(proposal)}
-                        disabled={proposalBusy !== null}
-                      >
-                        {proposal.kind === 'delete_event'
-                          ? t('as.revertFrame')
-                            : proposal.kind === 'update_span'
-                            ? t('as.revertSpan')
-                            : proposal.kind === 'update_date'
-                            ? t('as.revertDate')
-                            : proposal.kind === 'move_event'
-                            ? t('as.revertPlace')
-                            : t('as.revertText')}
-                      </button>
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </div>
+            <details className="ai-card" data-assistant-applied>
+              <summary className="ai-card__head">
+                {t('as.appliedTitle')}
+                <span className="ai-card__count">{appliedProposals.length}</span>
+              </summary>
+              <div className="ai-card__body">
+                <ul>
+                  {appliedProposals.map((proposal) => (
+                    <li key={proposal.id} className="ai-proposals__item" data-proposal-id={proposal.id}>
+                      <span className="ai-proposals__title">{proposalTitle(proposal, 'applied')}</span>
+                      <span className="ai-proposals__actions">
+                        <button
+                          className="secondary"
+                          onClick={() => void revertProposal(proposal)}
+                          disabled={proposalBusy !== null}
+                        >
+                          {proposal.kind === 'delete_event'
+                            ? t('as.revertFrame')
+                              : proposal.kind === 'update_span'
+                              ? t('as.revertSpan')
+                              : proposal.kind === 'update_date'
+                              ? t('as.revertDate')
+                              : proposal.kind === 'move_event'
+                              ? t('as.revertPlace')
+                              : t('as.revertText')}
+                        </button>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </details>
           )}
 
           {/* Итог последнего действия с правкой — ОТДЕЛЬНО от блоков: после отклонения
@@ -1823,18 +1843,6 @@ function GearIcon() {
       <path
         fill="currentColor"
         d="m19.6 12.7-.1.9 1.2 1.6-1.4 2.4-2-.5-.8.6-1.5 1v2.1h-2.8v-2.1l-1.5-1-.8-.6-2 .5-1.4-2.4 1.2-1.6-.1-.9.1-.9L6.4 10l1.4-2.4 2 .5.8-.6 1.5-1V4.4h2.8v2.1l1.5 1 .8.6 2-.5 1.4 2.4-1.2 1.6.1.9ZM12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"
-      />
-    </svg>
-  )
-}
-
-/** Крестик: закрыть окно. */
-function CloseIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
-      <path
-        fill="currentColor"
-        d="M18.3 5.7 12 12l6.3 6.3-1.4 1.4L10.6 13.4 4.3 19.7 2.9 18.3 9.2 12 2.9 5.7 4.3 4.3l6.3 6.3 6.3-6.3z"
       />
     </svg>
   )

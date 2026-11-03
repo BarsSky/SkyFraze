@@ -961,6 +961,7 @@ export const en: Record<Key, string> = {
   // Окно помощника и чата (AssistantDock).
   'dock.aria': 'Assistant and project chat',
   'dock.tabsAria': 'What opens the window',
+  'dock.closeWindow': 'Close window',
   'dock.assistant': 'Assistant',
   'dock.chat': 'Project chat',
   'dock.unread': 'AI assistant: {count} unread replies',
@@ -969,6 +970,12 @@ export const en: Record<Key, string> = {
   'dock.collapse': 'Collapse the assistant',
   'dock.openTitle': 'AI assistant: create chapters and sub-events',
   // Чат проекта (ProjectChat, api/chat).
+  'chat.actionsAria': 'Message actions for {author}',
+  'chat.actionsTitle': 'Message actions',
+  'chat.copy': 'copy text',
+  'chat.copyAria': 'copy message text',
+  'chat.copyTitle': 'Copy the message text to the clipboard',
+  'chat.copied': 'copied',
   'chat.title': 'Project chat',
   'chat.hint': 'seen by every member',
   'chat.loadingOlder': 'loading earlier…',
@@ -1175,6 +1182,7 @@ export const en: Record<Key, string> = {
   'as.emptyChanges': 'Changes apply at once and are visible to everyone who has the project open.',
   'as.you': 'You',
   'as.stopped': 'Stopped — whatever the model managed to say went into the history.',
+  'as.typing': 'typing…',
   'as.thinking': 'The assistant is thinking…',
   'as.liveCalls': 'Done so far: {count}',
   'as.draftTitle': 'Draft of the new frame text',

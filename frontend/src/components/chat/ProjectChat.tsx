@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { tStatic, useT, type Key } from '../../i18n'
 import { useLang } from '../../store/lang'
 import {
@@ -14,6 +14,7 @@ import {
 } from '../../api/chat'
 import { listEventRows } from '../../api/events'
 import { serverErrorMessage } from '../../api/client'
+import { copyText } from '../../lib/clipboard'
 import { onChatChanged } from '../../lib/chatEvents'
 import { useAuthStore } from '../../store/auth'
 
@@ -133,6 +134,35 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread, prefill
   const [editBusy, setEditBusy] = useState(false)
   /** Какая плашка отметки сейчас в запросе (`сообщение:вид`) — защита от двойного нажатия. */
   const [reactionBusy, setReactionBusy] = useState<string | null>(null)
+  /**
+   * Какое сообщение открыло меню действий (0.146.0).
+   *
+   * Раньше под каждым сообщением всегда стояли две строки кнопок — «согласен / сделать /
+   * вопрос» и «ответить / изменить». В переписке из десятка сообщений это стена кнопок,
+   * которая и занимала место, и мешала читать. Теперь действия — в меню рядом с сообщением.
+   */
+  const [menuFor, setMenuFor] = useState<string | null>(null)
+  /** Что скопировали — чтобы показать «скопировано» рядом с пунктом меню. */
+  const [copiedId, setCopiedId] = useState<string | null>(null)
+
+  // Меню закрывается кликом мимо и по Esc: это всплывающий элемент, а не режим.
+  useEffect(() => {
+    if (menuFor === null) return undefined
+    const onDown = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null
+      if (target?.closest('[data-chat-menu]') || target?.closest('[data-chat-menu-button]')) return
+      setMenuFor(null)
+    }
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMenuFor(null)
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [menuFor])
 
   // Цитата из показа проекта: заполняем поле и ссылку на кадр, но НЕ отправляем — человек
   // дописывает мысль сам. Автоотправка была бы решением за него.
@@ -448,9 +478,16 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread, prefill
           return (
           <li
             key={message.id}
-            className={message.kind === 'bot' ? 'chat__item chat__item--bot' : 'chat__item'}
+            className={
+              message.kind === 'bot'
+                ? 'chat__item chat__item--bot'
+                : mine
+                  ? 'chat__item chat__item--mine'
+                  : 'chat__item'
+            }
             data-chat-message={message.id}
             data-chat-kind={message.kind}
+            data-chat-mine={mine ? 'true' : undefined}
           >
             <div className="chat__meta">
               <span className="chat__author">{message.author_name}</span>
@@ -463,6 +500,24 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread, prefill
                 >
                   {t('chat.edited')}
                 </span>
+              )}
+              {/* Действия с сообщением — одно меню вместо двух строк кнопок (0.146.0). */}
+              {!isEditing && (
+                <button
+                  type="button"
+                  className="chat__menu-button"
+                  aria-label={t('chat.actionsAria', { author: message.author_name })}
+                  aria-haspopup="menu"
+                  aria-expanded={menuFor === message.id}
+                  title={t('chat.actionsTitle')}
+                  data-chat-menu-button={message.id}
+                  onClick={() => {
+                    setCopiedId(null)
+                    setMenuFor((current) => (current === message.id ? null : message.id))
+                  }}
+                >
+                  <span aria-hidden="true">⋯</span>
+                </button>
               )}
             </div>
             {message.reply_to !== undefined && (
@@ -514,65 +569,117 @@ export function ProjectChat({ projectId, visible, onOpenFrame, onUnread, prefill
                     })}
               </button>
             )}
-            {/* Отметки (0.98.0): три рабочие, как у реакций на замечания. Показываем все три всегда —
-                счётчик у нуля может не быть, а «а что тут можно нажать» человек должен видеть. */}
-            {!isEditing && (
-              <div className="chat__reactions" data-chat-reactions={message.id}>
+            {/* Отметки видны и без меню, но только когда они есть (0.146.0): три кнопки
+                «на всякий случай» под каждым сообщением занимали полстроки и мешали читать.
+                Счётчик на плашке — состояние, нажатие открывает меню с теми же отметками. */}
+            {!isEditing && (message.reactions?.agree || message.reactions?.todo || message.reactions?.question) ? (
+              <div className="chat__chips" data-chat-reactions={message.id}>
                 {REACTIONS.map((reaction) => {
                   const count = message.reactions?.[reaction.kind] ?? 0
+                  if (count === 0) return null
                   const active = message.reactions?.mine?.includes(reaction.kind) === true
-                  const busyThis = reactionBusy === `${message.id}:${reaction.kind}`
                   return (
                     <button
                       key={reaction.kind}
                       type="button"
-                      className={active ? 'chat__reaction is-on' : 'chat__reaction'}
+                      className={active ? 'chat__chip is-on' : 'chat__chip'}
                       aria-pressed={active}
-                      aria-label={
-                        count > 0 ? `${t(reaction.fullKey)}: ${count}` : t(reaction.fullKey)
-                      }
+                      aria-label={`${t(reaction.fullKey)}: ${count}`}
                       title={
                         active
                           ? t('chat.markOff', { label: t(reaction.fullKey) })
-                           : t('chat.markOn', { label: t(reaction.fullKey) })
+                          : t('chat.markOn', { label: t(reaction.fullKey) })
                       }
-                      disabled={busyThis}
+                      disabled={reactionBusy === `${message.id}:${reaction.kind}`}
                       onClick={() => void toggleReaction(message.id, reaction.kind)}
                       data-chat-reaction={`${message.id}:${reaction.kind}`}
                     >
+                      {t(reaction.labelKey)}
+                      <span className="chat__reaction-count">{count}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            ) : null}
+            {/* Меню действий: отметки, ответ, правка своего и копирование текста. */}
+            {!isEditing && menuFor === message.id && (
+              <div className="chat__menu" role="menu" data-chat-menu={message.id}>
+                {REACTIONS.map((reaction) => {
+                  const count = message.reactions?.[reaction.kind] ?? 0
+                  const active = message.reactions?.mine?.includes(reaction.kind) === true
+                  return (
+                    <button
+                      key={reaction.kind}
+                      type="button"
+                      role="menuitemcheckbox"
+                      aria-checked={active}
+                      className={active ? 'chat__menu-item is-on' : 'chat__menu-item'}
+                      aria-label={count > 0 ? `${t(reaction.fullKey)}: ${count}` : t(reaction.fullKey)}
+                      disabled={reactionBusy === `${message.id}:${reaction.kind}`}
+                      onClick={() => void toggleReaction(message.id, reaction.kind)}
+                      data-chat-menu-reaction={`${message.id}:${reaction.kind}`}
+                    >
+                      <span className="chat__menu-mark" aria-hidden="true">
+                        {active ? '✓' : '+'}
+                      </span>
                       {t(reaction.labelKey)}
                       {count > 0 && <span className="chat__reaction-count">{count}</span>}
                     </button>
                   )
                 })}
-              </div>
-            )}
-            {!isEditing && (
-              <div className="chat__item-actions">
+                <span className="chat__menu-sep" aria-hidden="true" />
                 <button
                   type="button"
-                  className="chat__mini"
+                  role="menuitem"
+                  className="chat__menu-item"
                   aria-label={t('chat.replyAria')}
                   title={t('chat.replyTitle', { author: message.author_name })}
-                  onClick={() => setReplyTo(message)}
                   data-chat-reply-button={message.id}
+                  onClick={() => {
+                    setReplyTo(message)
+                    setMenuFor(null)
+                  }}
                 >
-                  <span aria-hidden="true">↩</span> {t('chat.reply')}
+                  <span className="chat__menu-mark" aria-hidden="true">↩</span>
+                  {t('chat.reply')}
                 </button>
                 {mine && message.kind === 'user' && (
                   <button
                     type="button"
-                    className="chat__mini"
+                    role="menuitem"
+                    className="chat__menu-item"
                     // Не «удалить», а «изменить» (0.97.1): правка своего — то, что нужно в
                     // обсуждении, а удаление ломало бы цитаты ответов и смысл разговора.
                     aria-label={t('chat.editAriaShort')}
                     title={t('chat.editTitle')}
-                    onClick={() => setEditing({ id: message.id, text: message.body })}
                     data-chat-edit={message.id}
+                    onClick={() => {
+                      setEditing({ id: message.id, text: message.body })
+                      setMenuFor(null)
+                    }}
                   >
-                    <span aria-hidden="true">✎</span> {t('chat.edit')}
+                    <span className="chat__menu-mark" aria-hidden="true">✎</span>
+                    {t('chat.edit')}
                   </button>
                 )}
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="chat__menu-item"
+                  aria-label={t('chat.copyAria')}
+                  title={t('chat.copyTitle')}
+                  data-chat-copy={message.id}
+                  onClick={() => {
+                    void copyText(message.body).then((ok) => {
+                      if (!ok) return
+                      setCopiedId(message.id)
+                      window.setTimeout(() => setCopiedId((current) => (current === message.id ? null : current)), 1500)
+                    })
+                  }}
+                >
+                  <span className="chat__menu-mark" aria-hidden="true">⧉</span>
+                  {copiedId === message.id ? t('chat.copied') : t('chat.copy')}
+                </button>
               </div>
             )}
           </li>

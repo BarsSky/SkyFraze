@@ -55,12 +55,34 @@
    дешевле, чем второе плавающее окно поверх первого. */
 .ai-window__tabs {
   display: flex;
+  align-items: center;
   gap: 4px;
   padding: 6px 8px 0;
   border-bottom: 1px solid var(--border);
   background: color-mix(in srgb, var(--bg-elev) 92%, var(--accent) 8%);
   flex: 0 0 auto;
 }
+/* Крестик всего окна (0.146.0): один на обе вкладки, всегда справа. Цель нажатия 34px —
+   на телефоне в него нужно попасть пальцем. */
+.ai-window__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  margin: 0 0 0 auto;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+.ai-window__close:hover {
+  color: var(--fg);
+  border-color: var(--border);
+  background: var(--chip-bg);
+}
+.ai-window__close:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .ai-window__tab {
   display: inline-flex;
   align-items: center;
@@ -134,17 +156,137 @@
 .chat__older { display: flex; justify-content: center; padding: 2px 0 4px; }
 .chat__older .chat__mini { color: var(--fg-muted); border-color: var(--border); }
 .chat__older .chat__mini:hover { color: var(--fg); }
-.chat__item { font-size: 13px; }
+/* Сообщения чата — «пузыри» (0.146.0). Раньше у сообщения была только подпись автора, и
+   в длинной переписке ряды текста сливались: не видно, где кончается одна реплика и
+   начинается другая. Свой текст справа и с акцентом, чужой — слева и нейтральный. */
+.chat__item {
+  position: relative;
+  max-width: 92%;
+  justify-self: start;
+  align-self: flex-start;
+  font-size: 13px;
+  padding: 7px 10px 8px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-elev);
+}
 .chat__item--bot {
-  padding: 8px 10px;
-  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border-left: 3px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-elev));
+}
+.chat__item--mine {
+  align-self: flex-end;
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-elev));
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
 }
 .chat__meta { display: flex; align-items: baseline; gap: 8px; }
 .chat__author { font-weight: 600; }
 .chat__time { font-size: 11px; }
 .chat__body { margin: 2px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* Кнопка меню действий у сообщения (0.146.0): одна «⋯» вместо двух строк кнопок под каждым
+   сообщением. Цель нажатия 30px — на телефоне в неё нужно попасть пальцем. */
+.chat__menu-button {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+}
+.chat__menu-button:hover,
+.chat__menu-button[aria-expanded='true'] {
+  color: var(--fg);
+  border-color: var(--border);
+  background: var(--chip-bg);
+}
+.chat__menu-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* Всплывающее меню: растёт от кнопки, но не уезжает за край окна — прижимаем к правому
+   краю сообщения и ограничиваем ширину. */
+.chat__menu {
+  position: absolute;
+  top: 32px;
+  right: 4px;
+  z-index: 5;
+  display: grid;
+  gap: 2px;
+  min-width: 168px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-elev);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+}
+.chat__menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.chat__menu-item:hover { background: var(--chip-bg); }
+.chat__menu-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.chat__menu-item:disabled { cursor: progress; opacity: 0.7; }
+.chat__menu-item.is-on { color: var(--accent); font-weight: 600; }
+.chat__menu-mark {
+  display: inline-flex;
+  justify-content: center;
+  width: 16px;
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+.chat__menu-item.is-on .chat__menu-mark { color: var(--accent); }
+.chat__menu-sep { height: 1px; margin: 2px 4px; background: var(--border); }
+
+/* Отметки, которые уже поставили: компактные плашки под текстом. Пустые не показываем —
+   отметить можно из меню, а строка кнопок на каждое сообщение мешала читать. */
+.chat__chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.chat__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 28px;
+  padding: 2px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--fg-soft);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.chat__chip:hover { color: var(--fg); border-color: var(--accent); }
+.chat__chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.chat__chip:disabled { cursor: progress; opacity: 0.7; }
+.chat__chip.is-on {
+  color: var(--fg);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+/* Число — отдельным узлом: оно меняется при нажатии, и без него не видно, что отметку поставил
+   кто-то ещё, а не только ты. */
+.chat__reaction-count {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: inherit;
+}
 .chat__link {
   margin-top: 4px;
   padding: 2px 8px;
@@ -192,10 +334,8 @@
   color: var(--fg-muted);
   overflow-wrap: anywhere;
 }
-.chat__item-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
-/* «Ответить» и «изменить» (0.97.1). Размер — цель нажатия, а не украшение: до этого кнопки были
-   24 px высотой и 11 px шрифтом, и на телефоне в них было не попасть, а на десктопе их просто не
-   замечали — человек писал «вместо удаления лучше редактирование», хотя правка уже была. */
+.chat__edit { display: grid; gap: 6px; margin-top: 4px; }
+/* Мелкая кнопка окна: осталась для «показать прежние». Цель нажатия 32px — на телефоне. */
 .chat__mini {
   display: inline-flex;
   align-items: center;
@@ -215,41 +355,6 @@
   border-color: var(--border);
 }
 .chat__mini:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-/* Отметки на сообщении (0.98.0): «согласен», «сделать», «вопрос».
-   Плашки стоят одной строкой под текстом, все три видны всегда — включая нулевые: иначе человек не
-   узнает, что отметить сообщение вообще можно. Нажатая залита акцентным цветом и обведена: цвет —
-   единственный признак «моё», поэтому он же дублируется `aria-pressed`. */
-.chat__reactions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
-.chat__reaction {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  min-height: 32px;
-  padding: 3px 10px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--fg-soft);
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-}
-.chat__reaction:hover { color: var(--fg); border-color: var(--accent); }
-.chat__reaction:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.chat__reaction:disabled { cursor: progress; opacity: 0.7; }
-.chat__reaction.is-on {
-  color: var(--fg);
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
-}
-/* Число — отдельным узлом: оно меняется при нажатии, и без него не видно, что отметку поставил
-   кто-то ещё, а не только ты. */
-.chat__reaction-count {
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-  color: inherit;
-}
-.chat__edit { display: grid; gap: 6px; margin-top: 4px; }
 .chat__edit textarea { width: 100%; font-size: 13px; resize: vertical; }
 .chat__reply-chip {
   display: flex;
@@ -432,21 +537,54 @@
 
 /* ── Переписка ────────────────────────────────────────────────────────── */
 
-.ai-msg { display: grid; gap: 4px; }
-.ai-msg__who { font-size: 11px; color: var(--fg-muted); }
+/* Сообщения — «пузыри» (0.146.0). До этого реплики шли подряд одной колонкой с мелкой
+   подписью автора: в переписке из десятка сообщений глаз не за что зацепить, и непонятно,
+   где чей текст. Теперь у каждого сообщения своя плашка, а у помощника — ещё и полоска
+   акцента слева. */
+.ai-msg {
+  display: grid;
+  gap: 4px;
+  max-width: 94%;
+  justify-self: start;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--chip-bg);
+}
+.ai-msg__who { font-size: 11px; font-weight: 600; color: var(--fg-muted); }
+.ai-msg--user {
+  justify-self: end;
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-elev));
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+}
 .ai-msg--user .ai-msg__who { color: var(--accent-soft); }
 .ai-msg--user .ai-msg__text {
   margin: 0;
-  padding: 8px 10px;
-  border-radius: 10px;
-  background: var(--chip-bg);
   white-space: pre-wrap;
 }
+.ai-msg--assistant { border-left: 3px solid var(--accent); }
 .ai-msg__text { margin: 0; font-size: 13px; line-height: 1.5; }
 /* Разметка Markdown внутри ответа: pre-wrap не нужен, блоки и так разложены. */
 .ai-msg--assistant .ai-msg__text { white-space: normal; }
 
-.ai-thinking { margin: 0; font-size: 12px; color: var(--fg-muted); }
+/* «Печатает…» — реплика помощника с подписью, а не серая строка между блоками: человек
+   должен видеть, что ответ уже запрошен и придёт именно сюда (0.146.0). */
+.ai-msg--typing { border-left-color: var(--accent-soft); }
+.ai-typing { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--fg-muted); }
+.ai-typing__dots { display: inline-flex; gap: 3px; }
+.ai-typing__dots i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: ai-typing-blink 1.2s infinite ease-in-out;
+}
+.ai-typing__dots i:nth-child(2) { animation-delay: 0.15s; }
+.ai-typing__dots i:nth-child(3) { animation-delay: 0.3s; }
+@keyframes ai-typing-blink {
+  0%, 80%, 100% { opacity: 0.25; transform: translateY(0); }
+  40% { opacity: 1; transform: translateY(-2px); }
+}
 
 /* Ответ, который модель пишет прямо сейчас. Отличается от готового сообщения только
    мигающей чертой в конце: человек должен видеть, что текст ещё едет, а не готов. */
@@ -562,6 +700,67 @@
 .ai-hints--next {
   margin: 0 12px 10px;
 }
+
+/* Сворачиваемые карточки под перепиской (0.146.0): изменения проекта, предложенные
+   правки, применённые. Развёрнутый список занимал почти весь низ окна и выдавливал
+   сообщения — на телефоне от переписки оставалась пара строк. Свёрнутая карточка
+   показывает только заголовок и счётчик; содержимое открывается нажатием и скроллится
+   внутри себя. */
+.ai-card {
+  flex: 0 0 auto;
+  margin: 0 12px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev);
+  font-size: 13px;
+  overflow: hidden;
+}
+.ai-card[open] { background: color-mix(in srgb, var(--bg-elev) 96%, var(--accent) 4%); }
+.ai-card__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-weight: 600;
+  list-style: none;
+}
+/* Свой маркер вместо треугольника браузера: он мелкий и разъезжается по платформам. */
+.ai-card__head::-webkit-details-marker { display: none; }
+.ai-card__head::after {
+  content: '▾';
+  margin-left: auto;
+  color: var(--fg-muted);
+  font-size: 11px;
+  transition: transform 0.15s ease;
+}
+.ai-card:not([open]) .ai-card__head::after { transform: rotate(-90deg); }
+.ai-card__head:hover { color: var(--accent); }
+.ai-card__head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.ai-card__count {
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--chip-bg);
+  color: var(--fg-muted);
+  font-size: 11px;
+  font-weight: 600;
+  text-align: center;
+}
+.ai-card__body {
+  display: grid;
+  gap: 8px;
+  max-height: 40vh;
+  overflow-y: auto;
+  padding: 0 10px 10px;
+}
+.ai-card__body ul { margin: 0; padding-left: 18px; }
+.ai-card__body button { justify-self: start; }
+/* Правки ждут решения — это единственная карточка, которая зовёт к действию. */
+.ai-card--attention { border-color: var(--accent); }
+.ai-card--attention .ai-card__head { color: var(--accent); }
+.ai-card--attention .ai-card__count { background: var(--accent); color: var(--bg); }
 
 .ai-changes {
   display: grid;

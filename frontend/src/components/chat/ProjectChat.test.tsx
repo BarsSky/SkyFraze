@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { ProjectChat } from './ProjectChat'
 import { notifyChatChanged } from '../../lib/chatEvents'
 import { useAuthStore } from '../../store/auth'
@@ -40,6 +40,12 @@ vi.mock('../../api/events', () => ({
   listEventRows: (...args: unknown[]) => listEventRows(...args),
 }))
 
+// Копирование текста сообщения (0.146.0): пункт меню «копировать текст».
+const copyText = vi.fn().mockResolvedValue(true)
+vi.mock('../../lib/clipboard', () => ({
+  copyText: (text: string) => copyText(text),
+}))
+
 const message = (over: Record<string, unknown> = {}) => ({
   id: 'm1',
   project_id: 'p1',
@@ -59,6 +65,21 @@ afterEach(() => {
 })
 
 const base = { projectId: 'p1', visible: true }
+
+/**
+ * Открыть меню действий у сообщения (0.146.0).
+ *
+ * Действия с сообщением («ответить», «изменить», отметки, «копировать текст») переехали из
+ * строки кнопок под текстом во всплывающее меню «⋯»: две строки кнопок под каждым сообщением
+ * занимали полстроки и мешали читать переписку.
+ */
+async function openMessageMenu(id: string) {
+  await waitFor(() =>
+    expect(document.querySelector(`[data-chat-menu-button="${id}"]`)).not.toBeNull(),
+  )
+  if (document.querySelector(`[data-chat-menu="${id}"]`)) return
+  fireEvent.click(document.querySelector(`[data-chat-menu-button="${id}"]`) as Element)
+}
 
 describe('ProjectChat', () => {
   it('показывает сообщения с автором и ссылкой на кадр', async () => {
@@ -211,7 +232,9 @@ describe('ProjectChat', () => {
     // В ленте видно, на что отвечают.
     await waitFor(() => expect(screen.getByText(/→ Аня: Как вам новая глава\?/)).toBeTruthy())
 
-    fireEvent.click(screen.getAllByRole('button', { name: 'ответить' })[1])
+    // Действия с сообщением — в меню (0.146.0), а не строкой кнопок под текстом.
+    await openMessageMenu('m2')
+    fireEvent.click(screen.getByRole('menuitem', { name: 'ответить' }))
     expect(screen.getByText(/ответ Аня:/)).toBeTruthy()
     fireEvent.change(screen.getByLabelText('Сообщение в чат проекта'), { target: { value: 'И мой ответ.' } })
     fireEvent.click(screen.getByRole('button', { name: 'Отправить' }))
@@ -228,11 +251,14 @@ describe('ProjectChat', () => {
     editChat.mockResolvedValue({ ...me, body: 'Моё, исправленное.', edited_at: '2026-10-28T10:05:00Z' })
     render(<ProjectChat {...base} />)
     await waitFor(() => expect(screen.getByText('Моё сообщение.')).toBeTruthy())
-    // У чужого кнопки правки нет.
-    expect(screen.queryByRole('button', { name: 'изменить' })).toBeTruthy()
-    expect(screen.getAllByRole('button', { name: 'изменить' })).toHaveLength(1)
+    // У чужого сообщения правки нет: в его меню пункт «изменить» не появляется.
+    await openMessageMenu('m2')
+    expect(screen.queryByRole('menuitem', { name: 'изменить' })).toBeNull()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await openMessageMenu('m1')
+    expect(screen.getAllByRole('menuitem', { name: 'изменить' })).toHaveLength(1)
 
-    fireEvent.click(screen.getByRole('button', { name: 'изменить' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'изменить' }))
     fireEvent.change(screen.getByLabelText('Изменить сообщение Я'), { target: { value: 'Моё, исправленное.' } })
     expect(screen.getByRole('button', { name: 'сохранить' })).toBeEnabled()
     fireEvent.click(screen.getByRole('button', { name: 'сохранить' }))
@@ -245,13 +271,13 @@ describe('ProjectChat', () => {
   })
 
   /**
-   * Отметки на сообщении (0.98.0): «согласен», «сделать», «вопрос».
+   * Отметки на сообщении (0.98.0, меню с 0.146.0): «согласен», «сделать», «вопрос».
    *
-   * Проверяем ровно то, что человек видит и нажимает: все три плашки на месте даже при нулях, у
-   * своей отметки видно нажатое состояние и число, нажатие уходит на сервер с видом отметки, а
-   * ответ сервера перерисовывает счётчики без перечитывания ленты.
+   * Проверяем то, что человек видит и нажимает: уже поставленные отметки видны плашками со
+   * счётчиком, а поставить любую — из меню «⋯» рядом с сообщением (там же подписи и нажатое
+   * состояние). Нажатие уходит на сервер, ответ перерисовывает счётчики без перечитывания ленты.
    */
-  it('отметки: три плашки, счётчик и нажатое состояние (0.98.0)', async () => {
+  it('отметки: плашки со счётчиком и меню действий (0.98.0/0.146.0)', async () => {
     listChat.mockResolvedValue({
       messages: [
         message({
@@ -264,15 +290,18 @@ describe('ProjectChat', () => {
     listEventRows.mockResolvedValue([])
     render(<ProjectChat {...base} />)
 
-    const row = await screen.findByLabelText('надо сделать: 1')
-    expect(row.getAttribute('aria-pressed')).toBe('true')
-    // У нулевой отметки числа нет, но подпись есть — иначе не видно, что нажимать можно.
-    const question = screen.getByLabelText('вопрос')
-    expect(question.getAttribute('aria-pressed')).toBe('false')
+    // Поставленные отметки видны сразу, со счётом и нажатым состоянием.
+    const todo = await screen.findByLabelText('надо сделать: 1')
+    expect(todo.getAttribute('aria-pressed')).toBe('true')
     expect(screen.getByLabelText('согласен: 2').textContent).toContain('2')
+    // Нулевые отметки плашками не занимают место — они в меню.
+    expect(screen.queryByLabelText('вопрос: 0')).toBeNull()
+    await openMessageMenu('m1')
+    const question = within(document.querySelector('[data-chat-menu="m1"]') as HTMLElement).getByLabelText('вопрос')
+    expect(question.getAttribute('aria-checked')).toBe('false')
   })
 
-  it('отметку ставят и снимают одним нажатием, ответ сервера перерисовывает счётчик (0.98.0)', async () => {
+  it('отметку ставят и снимают из меню, ответ сервера перерисовывает счётчик (0.98.0)', async () => {
     listChat.mockResolvedValue({
       messages: [message({ id: 'm1', reactions: { agree: 0, todo: 0, question: 0, mine: [] } })],
       bot: { name: 'Нестор', available: false },
@@ -280,12 +309,13 @@ describe('ProjectChat', () => {
     listEventRows.mockResolvedValue([])
     toggleChatReaction.mockResolvedValue({ agree: 1, todo: 0, question: 0, mine: ['agree'] })
     render(<ProjectChat {...base} />)
-
-    fireEvent.click(await screen.findByLabelText('согласен'))
+    await openMessageMenu('m1')
+    fireEvent.click(within(document.querySelector('[data-chat-menu="m1"]') as HTMLElement).getByLabelText('согласен'))
     await waitFor(() => expect(toggleChatReaction).toHaveBeenCalledWith('p1', 'm1', 'agree'))
     // Счётчик и нажатое состояние пришли из ответа — без второго запроса ленты.
-    expect(await screen.findByLabelText('согласен: 1')).toBeTruthy()
-    expect(screen.getByLabelText('согласен: 1').getAttribute('aria-pressed')).toBe('true')
+    await waitFor(() => expect(document.querySelector('[data-chat-reaction="m1:agree"]')).not.toBeNull())
+    const chip = document.querySelector('[data-chat-reaction="m1:agree"]') as HTMLElement
+    expect(chip.getAttribute('aria-pressed')).toBe('true')
     expect(listChat).toHaveBeenCalledTimes(1)
   })
 
@@ -309,10 +339,16 @@ describe('ProjectChat', () => {
     listEventRows.mockResolvedValue([])
     toggleChatReaction.mockRejectedValue(new Error('нужны права участника'))
     render(<ProjectChat {...base} />)
+    await openMessageMenu('m1')
     fireEvent.click(await screen.findByLabelText('вопрос'))
     await waitFor(() => expect(screen.getByText(/нужны права участника/)).toBeTruthy())
     // Счётчик остался нулевым: неудачное нажатие не делает вид, что отметка встала.
-    expect(screen.getByLabelText('вопрос').getAttribute('aria-pressed')).toBe('false')
+    await openMessageMenu('m1')
+    expect(
+      within(document.querySelector('[data-chat-menu="m1"]') as HTMLElement)
+        .getByLabelText('вопрос')
+        .getAttribute('aria-checked'),
+    ).toBe('false')
   })
 
   it('сигнал из сокета перечитывает ленту: чужая отметка появляется без перезагрузки (0.98.0)', async () => {
@@ -322,7 +358,8 @@ describe('ProjectChat', () => {
     })
     listEventRows.mockResolvedValue([])
     render(<ProjectChat {...base} />)
-    await screen.findByLabelText('согласен')
+    // Ждём ленту (кнопка меню есть у каждого сообщения).
+    await waitFor(() => expect(document.querySelector('[data-chat-menu-button="m1"]')).not.toBeNull())
 
     // Кто-то поставил отметку: сервер присылает сигнал, лента перечитывается целиком (не «после
     // последнего» — отметка меняет УЖЕ показанное сообщение).
@@ -332,6 +369,35 @@ describe('ProjectChat', () => {
     })
     notifyChatChanged('p1')
     await waitFor(() => expect(screen.getByLabelText('согласен: 1')).toBeTruthy())
+  })
+
+  it('в меню сообщения есть «копировать текст» (0.146.0)', async () => {
+    listChat.mockResolvedValue({
+      messages: [message({ id: 'm1', body: 'Текст для копирования.' })],
+      bot: { name: 'Нестор', available: false },
+    })
+    listEventRows.mockResolvedValue([])
+    render(<ProjectChat {...base} />)
+    await openMessageMenu('m1')
+
+    fireEvent.click(screen.getByRole('menuitem', { name: 'копировать текст сообщения' }))
+    await waitFor(() => expect(copyText).toHaveBeenCalledWith('Текст для копирования.'))
+    // После копирования пункт говорит об этом — иначе нажатие выглядит как «ничего не произошло».
+    expect(await screen.findByText('скопировано')).toBeTruthy()
+  })
+
+  it('меню закрывается по Esc, не трогая ленту', async () => {
+    listChat.mockResolvedValue({
+      messages: [message({ id: 'm1' })],
+      bot: { name: 'Нестор', available: false },
+    })
+    listEventRows.mockResolvedValue([])
+    render(<ProjectChat {...base} />)
+    await openMessageMenu('m1')
+    expect(document.querySelector('[data-chat-menu="m1"]')).not.toBeNull()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await waitFor(() => expect(document.querySelector('[data-chat-menu="m1"]')).toBeNull())
+    expect(screen.getAllByText('Как вам новая глава?').length).toBe(1)
   })
 
   /**
@@ -481,9 +547,8 @@ describe('ProjectChat', () => {
     expect(screen.getByText('seen by every member')).toBeTruthy()
     expect(screen.getByLabelText('Message to the project chat')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Send' })).toBeTruthy()
-    // Отметки: короткая подпись и доступное имя из словаря.
-    expect(screen.getAllByRole('button', { name: /^agree$/ }).length).toBeGreaterThan(0)
-    expect(screen.getAllByRole('button', { name: /^to do$/ }).length).toBeGreaterThan(0)
+    // Отметки: короткая подпись и доступное имя из словаря — но теперь они в меню сообщения.
+    expect((await screen.findAllByRole('button', { name: /Message actions/ })).length).toBeGreaterThan(0)
   })
 
   /**

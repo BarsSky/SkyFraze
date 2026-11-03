@@ -130,4 +130,40 @@ describe('AssistantDock', () => {
     expect(fab.className).toContain('is-thinking')
     expect(panel.thinking).not.toBeNull()
   })
+
+  it('крестик в шапке закрывает окно на любой вкладке (0.146.0)', () => {
+    // Раньше крестик был только в шапке помощника: на вкладке «Чат проекта» закрыть окно
+    // было нечем. Теперь кнопка одна на всё окно и остаётся на месте при переключении.
+    const onOpenChange = vi.fn()
+    render(
+      <AssistantDock
+        projectId="p1"
+        open
+        onOpenChange={onOpenChange}
+        onProjectChanged={() => {}}
+        onOpenEditors={() => {}}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Чат проекта' }))
+    const close = document.querySelector('[data-dock-close]') as HTMLElement
+    expect(close).not.toBeNull()
+    // Цель нажатия: 34px по стилям — проверяем, что кнопка не «текстовая».
+    expect(close.getAttribute('aria-label')).toBe('Закрыть окно')
+    fireEvent.click(close)
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  it('в панели помощника своего крестика больше нет — один на окно', () => {
+    render(
+      <AssistantDock
+        projectId="p1"
+        open
+        onOpenChange={() => {}}
+        onProjectChanged={() => {}}
+        onOpenEditors={() => {}}
+      />,
+    )
+    expect(document.querySelectorAll('[data-dock-close]').length).toBe(1)
+  })
 })
