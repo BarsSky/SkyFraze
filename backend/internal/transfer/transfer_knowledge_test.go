@@ -102,7 +102,10 @@ func TestImportRestoresKnowledgeWithDateAndAuthor(t *testing.T) {
 		t.Fatalf("проект: %v", err)
 	}
 	original, err := e.st.CreateAIKnowledge(ctx, project.ID, e.user,
-		store.KnowledgeInput{Title: "Решения по миру", Summary: "канон", Body: "драконы спят", Chars: 13}, nil)
+		store.KnowledgeInput{
+			Title: "Решения по миру", Summary: "канон", Body: "драконы спят",
+			Tags: []string{"драконы", "канон"}, Chars: 13,
+		}, nil)
 	if err != nil {
 		t.Fatalf("знание: %v", err)
 	}
@@ -144,6 +147,10 @@ func TestImportRestoresKnowledgeWithDateAndAuthor(t *testing.T) {
 	if restored.Title != "Решения по миру" || restored.Body != "драконы спят" {
 		t.Errorf("содержимое не перенеслось: %+v", restored)
 	}
+	// Метки (0.152.0) — часть знания: без них поиск в новом проекте работал бы хуже.
+	if len(restored.Tags) != 2 || restored.Tags[0] != "драконы" || restored.Tags[1] != "канон" {
+		t.Errorf("метки не перенеслись: %+v", restored.Tags)
+	}
 	// Дата создания — исходная, а не «момент импорта».
 	if diff := restored.CreatedAt.Sub(original.CreatedAt); diff > 5*time.Second || diff < -5*time.Second {
 		t.Errorf("дата создания не сохранилась: было %s, стало %s", original.CreatedAt, restored.CreatedAt)
@@ -153,8 +160,8 @@ func TestImportRestoresKnowledgeWithDateAndAuthor(t *testing.T) {
 	}
 }
 
-// Вложения знаний к репликам переносятся снимком (0.150.0): после импорта у знаний новые
-// идентификаторы, но карточка под сообщением должна остаться читаемой — по заголовку.
+// Вложения знаний к репликам переносятся снимком и переписываются на новые id (0.152.0):
+// после импорта у знаний новые идентификаторы, и ссылка должна вести на новое знание.
 func TestArchiveCarriesMessageKnowledgeRefs(t *testing.T) {
 	e := setupTransfer(t)
 	ctx := context.Background()
@@ -162,14 +169,24 @@ func TestArchiveCarriesMessageKnowledgeRefs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("проект: %v", err)
 	}
+	knowledge, err := e.st.CreateAIKnowledge(ctx, project.ID, e.user,
+		store.KnowledgeInput{
+			Title: "Решения по миру", Body: "крылатые спят",
+			Tags: []string{"драконы"}, Chars: charsOf("крылатые спят"),
+		}, nil)
+	if err != nil {
+		t.Fatalf("знание: %v", err)
+	}
 	conversation, err := e.st.CreateAIConversation(ctx, project.ID, e.user, "Беседа о мире", "stub:1")
 	if err != nil {
 		t.Fatalf("беседа: %v", err)
 	}
-	refs := `[{"id":"11111111-1111-1111-1111-111111111111","title":"Решения по миру"}]`
+	refs, _ := json.Marshal([]map[string]string{
+		{"id": knowledge.ID.String(), "title": knowledge.Title},
+	})
 	if _, err := e.st.AppendAIMessage(ctx, store.AIMessage{
 		ConversationID: conversation.ID, Role: "user", Content: "Что решили?",
-		Knowledge: []byte(refs),
+		Knowledge: refs,
 	}); err != nil {
 		t.Fatalf("сообщение: %v", err)
 	}
@@ -186,6 +203,13 @@ func TestArchiveCarriesMessageKnowledgeRefs(t *testing.T) {
 	if len(message.Knowledge) != 1 || message.Knowledge[0].Title != "Решения по миру" {
 		t.Fatalf("снимок вложения не попал в архив: %+v", message.Knowledge)
 	}
+	var file transfer.KnowledgeFile
+	if err := json.Unmarshal(files["ai-knowledge.json"], &file); err != nil {
+		t.Fatalf("ai-knowledge.json: %v", err)
+	}
+	if len(file.Knowledge) != 1 || file.Knowledge[0].ID != knowledge.ID {
+		t.Fatalf("id знания не попал в архив: %+v", file.Knowledge)
+	}
 
 	archive := mustArchive(t, e, project.ID)
 	bundle, err := transfer.ParseBundle(bytes.NewReader(archive.Bytes()), int64(archive.Len()))
@@ -200,6 +224,13 @@ func TestArchiveCarriesMessageKnowledgeRefs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("импорт: %v", err)
 	}
+	imported, err := e.st.ListAIKnowledge(ctx, result.Project.ID, "", 10)
+	if err != nil || len(imported) != 1 {
+		t.Fatalf("знания нового проекта: %v, %d", err, len(imported))
+	}
+	if imported[0].ID == knowledge.ID {
+		t.Fatal("идентификатор знания не изменился — проверка перепривязки бессмысленна")
+	}
 	list, err := e.st.ListAIConversations(ctx, result.Project.ID, importer.ID)
 	if err != nil || len(list) != 1 {
 		t.Fatalf("беседы нового проекта: %v, %d", err, len(list))
@@ -208,10 +239,17 @@ func TestArchiveCarriesMessageKnowledgeRefs(t *testing.T) {
 	if err != nil || len(messages) == 0 {
 		t.Fatalf("реплики: %v, %d", err, len(messages))
 	}
+	if !strings.Contains(string(messages[0].Knowledge), imported[0].ID.String()) {
+		t.Fatalf("ссылка не переписана на новое знание: %s (новое id %s)",
+			messages[0].Knowledge, imported[0].ID)
+	}
 	if !strings.Contains(string(messages[0].Knowledge), "Решения по миру") {
-		t.Fatalf("вложение не восстановилось: %s", messages[0].Knowledge)
+		t.Fatalf("снимок заголовка пропал: %s", messages[0].Knowledge)
 	}
 }
+
+// charsOf — число знаков для тестового знания (поле нужно схеме).
+func charsOf(text string) int { return len([]rune(text)) }
 
 // mustArchive — тот же экспорт, что в exportArchive, но байтами.
 func mustArchive(t *testing.T, e *transferEnv, projectID uuid.UUID) *bytes.Buffer {

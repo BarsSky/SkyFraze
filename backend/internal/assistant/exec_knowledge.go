@@ -78,10 +78,11 @@ func (s *Service) toolSaveKnowledge(
 	for _, k := range saved {
 		total += k.Chars
 		created = append(created, map[string]any{
-			"id": k.ID.String(), "title": k.Title, "chars": k.Chars,
+			"id": k.ID.String(), "title": k.Title, "chars": k.Chars, "tags": k.Tags,
 		})
 		views = append(views, KnowledgeView{
-			ID: k.ID, Title: k.Title, Summary: k.Summary, Chars: k.Chars, CreatedAt: k.CreatedAt,
+			ID: k.ID, Title: k.Title, Summary: k.Summary, Tags: k.Tags, Chars: k.Chars,
+			CreatedAt: k.CreatedAt,
 		})
 	}
 	detail := fmt.Sprintf("сохранил знаний: %d", len(saved))
@@ -154,6 +155,7 @@ func (s *Service) toolListKnowledge(
 			"id":         k.ID.String(),
 			"title":      k.Title,
 			"summary":    k.Summary,
+			"tags":       k.Tags,
 			"chars":      k.Chars,
 			"created_at": k.CreatedAt.Format("2006-01-02"),
 		})
@@ -189,6 +191,7 @@ func (s *Service) toolReadKnowledge(
 			"id":      k.ID.String(),
 			"title":   k.Title,
 			"summary": k.Summary,
+			"tags":    k.Tags,
 			"chars":   k.Chars,
 			"body_md": body,
 		},

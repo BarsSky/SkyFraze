@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   createAIKnowledge,
   deleteAIKnowledge,
@@ -47,9 +47,19 @@ interface Draft {
   title: string
   summary: string
   body: string
+  /** Метки одной строкой через запятую (0.152.0): пять отдельных полей — это форма, а не ввод. */
+  tags: string
 }
 
-const EMPTY_DRAFT: Draft = { id: null, title: '', summary: '', body: '' }
+const EMPTY_DRAFT: Draft = { id: null, title: '', summary: '', body: '', tags: '' }
+
+/** Метки из строки: по запятой или пробелу. Сервер всё равно нормализует и ограничит пятью. */
+function parseTags(text: string): string[] {
+  return text
+    .split(/[,;\n]+/)
+    .map((tag) => tag.trim())
+    .filter((tag) => tag !== '')
+}
 
 export function KnowledgeTab({ projectId, visible }: Props) {
   const t = useT()
@@ -132,6 +142,7 @@ export function KnowledgeTab({ projectId, visible }: Props) {
       title: item.title,
       summary: item.summary,
       body: item.body,
+      tags: item.tags.join(', '),
     })
   }, [])
 
@@ -151,9 +162,15 @@ export function KnowledgeTab({ projectId, visible }: Props) {
           title,
           summary: draft.summary,
           body,
+          tags: parseTags(draft.tags),
         })
       } else {
-        await createAIKnowledge(projectId, { title, summary: draft.summary, body })
+        await createAIKnowledge(projectId, {
+          title,
+          summary: draft.summary,
+          body,
+          tags: parseTags(draft.tags),
+        })
       }
       setDraft(null)
       await load(query)
@@ -331,6 +348,13 @@ export function KnowledgeTab({ projectId, visible }: Props) {
             maxLength={400}
             data-knowledge-summary
           />
+          <input
+            value={draft.tags}
+            onChange={(e) => setDraft({ ...draft, tags: e.target.value })}
+            placeholder={t('kn.tagsPlaceholder')}
+            aria-label={t('kn.tagsField')}
+            data-knowledge-tags
+          />
           <textarea
             value={draft.body}
             onChange={(e) => setDraft({ ...draft, body: e.target.value })}
@@ -361,6 +385,15 @@ export function KnowledgeTab({ projectId, visible }: Props) {
         <article className="knowledge__view" data-knowledge-view>
           <h3 className="knowledge__view-title">{viewing.title}</h3>
           {viewing.summary !== '' && <p className="knowledge__view-summary">{viewing.summary}</p>}
+          {(viewing.tags ?? []).length > 0 && (
+            <div className="knowledge__tags" data-knowledge-view-tags>
+              {(viewing.tags ?? []).map((tag) => (
+                <span className="knowledge__tag" key={tag}>
+                  {tag}
+                </span>
+              ))}
+            </div>
+          )}
           <MarkdownBlock source={viewing.body} className="knowledge__view-body" />
           <div className="knowledge__view-foot">
             <span className="knowledge__meta">
@@ -407,6 +440,15 @@ export function KnowledgeTab({ projectId, visible }: Props) {
                 {item.title || t('kn.untitled')}
               </button>
               {item.summary !== '' && <p className="knowledge__summary">{item.summary}</p>}
+              {(item.tags ?? []).length > 0 && (
+                <div className="knowledge__tags" data-knowledge-item-tags={item.id}>
+                  {(item.tags ?? []).map((tag) => (
+                    <span className="knowledge__tag" key={tag}>
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+              )}
               <span className="knowledge__meta">
                 {t('kn.metaAuthor', {
                   chars: formatNumber(item.chars, lang),

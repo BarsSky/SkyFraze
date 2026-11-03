@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+﻿import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 /**
  * Разбор ответов помощника и запросы к серверу.
@@ -767,6 +767,7 @@ describe('знания проекта', () => {
     id: 'k1',
     title: 'Решения по миру',
     summary: 'драконы спят',
+    tags: ['канон', 'драконы'],
     chars: 120,
     author_name: 'Нестор',
     created_at: '2026-03-01T10:00:00Z',
@@ -780,6 +781,7 @@ describe('знания проекта', () => {
     expect(list).toHaveLength(1)
     expect(list[0].title).toBe('Решения по миру')
     expect(list[0].chars).toBe(120)
+    expect(list[0].tags).toEqual(['канон', 'драконы'])
     // Тела в списке нет: его читают при открытии.
     expect((list[0] as unknown as { body?: string }).body).toBeUndefined()
   })
@@ -791,9 +793,14 @@ describe('знания проекта', () => {
     expect(item.body).toBe('драконы спят до весны')
 
     mocks.post.mockReturnValueOnce(reply(brief))
-    await createAIKnowledge('p1', { title: 'Решения по миру', summary: 'драконы спят', body: 'текст' })
+    await createAIKnowledge('p1', {
+      title: 'Решения по миру',
+      summary: 'драконы спят',
+      body: 'текст',
+      tags: ['канон'],
+    })
     expect(mocks.post).toHaveBeenCalledWith('projects/p1/ai/knowledge', {
-      json: { title: 'Решения по миру', summary: 'драконы спят', body: 'текст' },
+      json: { title: 'Решения по миру', summary: 'драконы спят', body: 'текст', tags: ['канон'] },
     })
 
     mocks.put.mockReturnValueOnce(reply({ ...brief, title: 'Новое' }))

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+﻿import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { KnowledgeTab } from './KnowledgeTab'
 import { setLang } from '../../store/lang'
@@ -44,6 +44,7 @@ const ITEM = {
   id: 'k1',
   title: 'Решения по миру',
   summary: 'драконы спят, магия уходит',
+  tags: ['канон', 'драконы'],
   chars: 120,
   authorName: 'Нестор',
   createdAt: '2026-03-01T10:00:00Z',
@@ -122,9 +123,17 @@ describe('KnowledgeTab', () => {
     fireEvent.change(document.querySelector('[data-knowledge-body]') as HTMLTextAreaElement, {
       target: { value: 'Тезис' },
     })
+    fireEvent.change(document.querySelector('[data-knowledge-tags]') as HTMLInputElement, {
+      target: { value: 'Драконы, канон' },
+    })
     fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }))
     await waitFor(() =>
-      expect(mocks.create).toHaveBeenCalledWith('p1', { title: 'Канон', summary: '', body: 'Тезис' }),
+      expect(mocks.create).toHaveBeenCalledWith('p1', {
+        title: 'Канон',
+        summary: '',
+        body: 'Тезис',
+        tags: ['Драконы', 'канон'],
+      }),
     )
   })
 

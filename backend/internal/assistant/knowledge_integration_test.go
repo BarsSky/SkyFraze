@@ -362,6 +362,65 @@ func TestRetentionPreviewCountsDue(t *testing.T) {
 	}
 }
 
+// Поиск по знаниям (0.152.0): ранжирование по релевантности и метки.
+func TestKnowledgeSearchRanksAndFindsByTag(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	owner := e.user(t, "owner@example.com")
+	projectID, _, _ := e.seedProject(t, owner)
+
+	// Знание без слова «дракон» в заголовке и теле, но с меткой.
+	if _, err := e.asst.SaveKnowledgeEntries(ctx, owner, projectID, nil, []assistant.KnowledgeInput{{
+		Title: "Решения по миру", Summary: "что закрепили", Body: "Крылатые спят до весны",
+		Tags: []string{"Драконы", "канон"},
+	}}); err != nil {
+		t.Fatalf("знание с меткой: %v", err)
+	}
+
+	// По метке находится то, в тексте чего этого слова нет.
+	byTag, err := e.asst.KnowledgeList(ctx, owner, projectID, "дракон")
+	if err != nil {
+		t.Fatalf("поиск по метке: %v", err)
+	}
+	if len(byTag) != 1 || byTag[0].Title != "Решения по миру" {
+		t.Fatalf("метка не привела к знанию: %+v", byTag)
+	}
+	if len(byTag[0].Tags) == 0 || byTag[0].Tags[0] != "драконы" {
+		t.Fatalf("метки не сохранились в нижнем регистре: %+v", byTag[0].Tags)
+	}
+
+	// Второе знание, где слово в заголовке: при поиске оно выше того, где слово в теле.
+	if _, err := e.asst.SaveKnowledgeEntries(ctx, owner, projectID, nil, []assistant.KnowledgeInput{{
+		Title: "Драконы: канон", Body: "коротко о главном",
+	}}); err != nil {
+		t.Fatalf("второе знание: %v", err)
+	}
+	ranked, err := e.asst.KnowledgeList(ctx, owner, projectID, "драконы")
+	if err != nil {
+		t.Fatalf("ранжирование: %v", err)
+	}
+	if len(ranked) < 2 {
+		t.Fatalf("найдено %d знаний, ожидалось два", len(ranked))
+	}
+	if ranked[0].Title != "Драконы: канон" {
+		t.Fatalf("заголовок не вышел первым: %+v", ranked)
+	}
+
+	// Поиск без «ё» находит знание с «ё» (нормализация с обеих сторон).
+	if _, err := e.asst.SaveKnowledgeEntries(ctx, owner, projectID, nil, []assistant.KnowledgeInput{{
+		Title: "Лёд и пламя", Body: "стихии",
+	}}); err != nil {
+		t.Fatalf("третье знание: %v", err)
+	}
+	eyo, err := e.asst.KnowledgeList(ctx, owner, projectID, "лед")
+	if err != nil {
+		t.Fatalf("поиск ё: %v", err)
+	}
+	if len(eyo) == 0 {
+		t.Fatal("«лед» не нашёл «Лёд и пламя»")
+	}
+}
+
 func TestRetentionOwnerOnlyAndCleanupHonoursKept(t *testing.T) {
 	e := setup(t)
 	ctx := context.Background()

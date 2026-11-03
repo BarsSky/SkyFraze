@@ -1,4 +1,4 @@
-import type { ru } from './ru'
+﻿import type { ru } from './ru'
 
 /**
  * Английский словарь интерфейса (0.115.0).
@@ -978,7 +978,7 @@ export const en: Record<Key, string> = {
   // Знания проекта (KnowledgeTab, KnowledgePicker, 0.149.0).
   'kn.aria': 'Project knowledge',
   'kn.search': 'Search knowledge',
-  'kn.searchPlaceholder': 'Search titles and text',
+  'kn.searchPlaceholder': 'Search titles, text and tags',
   'kn.create': 'New',
   'kn.save': 'Save',
   'kn.saving': 'Saving…',
@@ -1002,6 +1002,8 @@ export const en: Record<Key, string> = {
   'kn.titleField': 'Knowledge title',
   'kn.summaryField': 'Note about the content',
   'kn.bodyField': 'Knowledge text',
+  'kn.tagsField': 'Search tags',
+  'kn.tagsPlaceholder': 'Tags separated by commas: themes, names, arcs',
   'kn.errEmpty': 'Knowledge needs a title and text.',
   'kn.errLoad': 'Could not read the knowledge.',
   'kn.errSave': 'Could not save the knowledge.',

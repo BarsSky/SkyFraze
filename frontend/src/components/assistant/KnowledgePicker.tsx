@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+﻿import { useCallback, useEffect, useState } from 'react'
 import {
   listAIKnowledge,
   type AIKnowledgeBrief,
@@ -136,6 +136,15 @@ export function KnowledgePicker({ projectId, open, onClose, selected, onConfirm 
                     <span className="knowledge-picker__name">{item.title || t('kn.untitled')}</span>
                     {item.summary !== '' && (
                       <span className="knowledge-picker__summary">{item.summary}</span>
+                    )}
+                    {(item.tags ?? []).length > 0 && (
+                      <span className="knowledge-picker__tags">
+                        {(item.tags ?? []).map((tag) => (
+                          <span className="knowledge__tag" key={tag}>
+                            {tag}
+                          </span>
+                        ))}
+                      </span>
                     )}
                     <span className="knowledge__meta">
                       {t('kn.meta', {

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+﻿import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { ProjectChat } from './ProjectChat'
 import { notifyChatChanged } from '../../lib/chatEvents'
@@ -631,6 +631,7 @@ describe('ProjectChat', () => {
         id: 'k1',
         title: 'Решения по миру',
         summary: 'драконы спят',
+        tags: [] as string[],
         chars: 13,
         authorName: 'Нестор',
         createdAt: '2026-03-01T10:00:00Z',

@@ -193,9 +193,14 @@ type KnowledgeFile struct {
 // а не «импортировано вчера». Автора храним именем (снимком), потому что учётной записи
 // из старой базы в новой может не быть.
 type KnowledgeRecord struct {
+	// ID — идентификатор в исходной базе (0.152.0). Нужен, чтобы переписать вложения
+	// сообщений на новые знания: у реплик хранится снимок {id,title}, и без карты id
+	// карточка после импорта осталась бы «мёртвой».
+	ID        uuid.UUID `json:"id,omitempty"`
 	Title     string    `json:"title"`
 	Summary   string    `json:"summary,omitempty"`
 	Body      string    `json:"body"`
+	Tags      []string  `json:"tags,omitempty"`
 	Chars     int       `json:"chars,omitempty"`
 	Author    string    `json:"author,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
@@ -551,6 +556,25 @@ func encodeKnowledgeRefs(refs []KnowledgeRefRecord) json.RawMessage {
 	return raw
 }
 
+// remapKnowledgeRefs переписывает ссылки на знания по карте «старый id → новый» (0.152.0).
+//
+// Зачем: у реплики хранится снимок {id,title}, и после импорта знания получают НОВЫЕ
+// идентификаторы. Не переписать ссылку значит оставить вложение, которое нельзя открыть.
+// Заголовок при этом остаётся снимком — он читается даже если знание потом удалят.
+func remapKnowledgeRefs(refs []KnowledgeRefRecord, remap map[uuid.UUID]uuid.UUID) []KnowledgeRefRecord {
+	if len(refs) == 0 {
+		return nil
+	}
+	out := make([]KnowledgeRefRecord, 0, len(refs))
+	for _, ref := range refs {
+		if newID, ok := remap[ref.ID]; ok {
+			ref.ID = newID
+		}
+		out = append(out, ref)
+	}
+	return out
+}
+
 // buildKnowledge собирает файл знаний проекта для архива (0.149.0).
 //
 // Знания — содержимое проекта, поэтому едут ВСЕ, а не только свои (в отличие от истории
@@ -569,7 +593,8 @@ func (s *Service) buildKnowledge(ctx context.Context, projectID uuid.UUID) ([]by
 			continue
 		}
 		records = append(records, KnowledgeRecord{
-			Title: full.Title, Summary: full.Summary, Body: full.Body, Chars: full.Chars,
+			ID: full.ID, Title: full.Title, Summary: full.Summary, Body: full.Body,
+			Tags: full.Tags, Chars: full.Chars,
 			Author: full.AuthorName, CreatedAt: full.CreatedAt,
 		})
 		if len(records) >= maxKnowledge {
@@ -855,10 +880,48 @@ func (s *Service) Import(ctx context.Context, userID uuid.UUID, b *ParsedBundle)
 		importedEntities++
 	}
 
-	// 9. История бесед с помощником (0.148.0). Ошибка одной беседы не отменяет импорт: это
-	//    вспомогательная часть архива, а не содержимое проекта. Время сообщений — момент
-	//    импорта: сохранять исходный порядок важнее, чем исходные отметки времени, а порядок
-	//    держится вставкой по одному.
+	// 9. Знания проекта (0.149.0, порядок изменён в 0.152.0). Автор и дата сохраняются как в
+	//    архиве: «когда это придумали» — часть содержания. Импортируются ДО бесед, потому что
+	//    вложения сообщений ссылаются на id знания: после вставки мы знаем, какое старое
+	//    знание стало каким новым, и переписываем ссылки. Ошибка записи знаний не отменяет
+	//    импорт: текст проекта уже перенесён, а знания — то, что можно завести заново.
+	importedKnowledge := 0
+	knowledgeRemap := make(map[uuid.UUID]uuid.UUID)
+	if knowledge := b.Knowledge; knowledge != nil {
+		records := make([]store.AIKnowledgeImport, 0, len(knowledge.Knowledge))
+		for _, record := range knowledge.Knowledge {
+			if strings.TrimSpace(record.Title) == "" || strings.TrimSpace(record.Body) == "" {
+				continue
+			}
+			chars := record.Chars
+			if chars <= 0 {
+				chars = len([]rune(record.Body))
+			}
+			records = append(records, store.AIKnowledgeImport{
+				ID: record.ID, Title: record.Title, Summary: record.Summary, Body: record.Body,
+				Tags: record.Tags, Chars: chars,
+				AuthorName: record.Author, CreatedAt: record.CreatedAt,
+			})
+			if len(records) >= maxKnowledge {
+				break
+			}
+		}
+		if len(records) > 0 {
+			if saved, kerr := s.store.ImportAIKnowledge(ctx, p.ID, records); kerr == nil {
+				importedKnowledge = len(saved)
+				for i, item := range saved {
+					if records[i].ID != uuid.Nil {
+						knowledgeRemap[records[i].ID] = item.ID
+					}
+				}
+			}
+		}
+	}
+
+	// 10. История бесед с помощником (0.148.0). Ошибка одной беседы не отменяет импорт: это
+	//     вспомогательная часть архива, а не содержимое проекта. Время сообщений — момент
+	//     импорта: сохранять исходный порядок важнее, чем исходные отметки времени, а порядок
+	//     держится вставкой по одному.
 	importedConversations := 0
 	if history := b.Conversations; history != nil {
 		for _, record := range history.Conversations {
@@ -877,7 +940,7 @@ func (s *Service) Import(ctx context.Context, userID uuid.UUID, b *ParsedBundle)
 				if _, merr := s.store.AppendAIMessage(ctx, store.AIMessage{
 					ConversationID: conversation.ID, Role: message.Role,
 					Content: message.Content, Stopped: message.Stopped,
-					Knowledge: encodeKnowledgeRefs(message.Knowledge),
+					Knowledge: encodeKnowledgeRefs(remapKnowledgeRefs(message.Knowledge, knowledgeRemap)),
 				}); merr != nil {
 					ok = false
 					break
@@ -890,35 +953,6 @@ func (s *Service) Import(ctx context.Context, userID uuid.UUID, b *ParsedBundle)
 				continue
 			}
 			importedConversations++
-		}
-	}
-
-	// 10. Знания проекта (0.149.0). Автор и дата сохраняются как в архиве: «когда это
-	//     придумали» — часть содержания. Ошибка записи знаний не отменяет импорт: текст
-	//     проекта уже перенесён, а знания — то, что можно завести заново.
-	importedKnowledge := 0
-	if knowledge := b.Knowledge; knowledge != nil {
-		records := make([]store.AIKnowledgeImport, 0, len(knowledge.Knowledge))
-		for _, record := range knowledge.Knowledge {
-			if strings.TrimSpace(record.Title) == "" || strings.TrimSpace(record.Body) == "" {
-				continue
-			}
-			chars := record.Chars
-			if chars <= 0 {
-				chars = len([]rune(record.Body))
-			}
-			records = append(records, store.AIKnowledgeImport{
-				Title: record.Title, Summary: record.Summary, Body: record.Body, Chars: chars,
-				AuthorName: record.Author, CreatedAt: record.CreatedAt,
-			})
-			if len(records) >= maxKnowledge {
-				break
-			}
-		}
-		if len(records) > 0 {
-			if done, kerr := s.store.ImportAIKnowledge(ctx, p.ID, records); kerr == nil {
-				importedKnowledge = done
-			}
 		}
 	}
 

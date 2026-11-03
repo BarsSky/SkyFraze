@@ -19,9 +19,10 @@ import (
 
 // knowledgeBody — тело создания и правки знания.
 type knowledgeBody struct {
-	Title   string `json:"title"`
-	Summary string `json:"summary"`
-	Body    string `json:"body"`
+	Title   string   `json:"title"`
+	Summary string   `json:"summary"`
+	Body    string   `json:"body"`
+	Tags    []string `json:"tags"`
 }
 
 // ListKnowledge — GET .../ai/knowledge?q=: знания проекта (без тел).
@@ -67,7 +68,7 @@ func (h *Handler) CreateKnowledge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	item, err := h.svc.KnowledgeCreate(r.Context(), uid, pid, KnowledgeInput{
-		Title: body.Title, Summary: body.Summary, Body: body.Body,
+		Title: body.Title, Summary: body.Summary, Body: body.Body, Tags: body.Tags,
 	})
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -91,7 +92,7 @@ func (h *Handler) UpdateKnowledge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	item, err := h.svc.KnowledgeUpdate(r.Context(), uid, pid, kid, KnowledgeInput{
-		Title: body.Title, Summary: body.Summary, Body: body.Body,
+		Title: body.Title, Summary: body.Summary, Body: body.Body, Tags: body.Tags,
 	})
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {

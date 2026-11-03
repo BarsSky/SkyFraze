@@ -1384,3 +1384,19 @@
 .knowledge-picker__name { font-size: 13px; }
 .knowledge-picker__summary { font-size: 11px; color: var(--fg-muted); }
 .knowledge-picker__foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+/* ── Метки знаний (0.152.0) ────────────────────────────────────────────────
+   Метки — не украшение: по ним поиск находит знание, когда в тексте другое слово. */
+.knowledge__tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+
+.knowledge__tag {
+  padding: 1px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--chip-bg);
+  color: var(--fg-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.knowledge-picker__tags { display: flex; flex-wrap: wrap; gap: 4px; }

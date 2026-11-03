@@ -165,6 +165,8 @@ export interface AIKnowledgeBrief {
   id: string
   title: string
   summary: string
+  /** Метки для поиска (0.152.0): темы, имена, линии. */
+  tags: string[]
   chars: number
   authorName: string
   createdAt: string
@@ -181,6 +183,7 @@ export interface AIKnowledgeView {
   id: string
   title: string
   summary: string
+  tags: string[]
   chars: number
   createdAt: string
 }
@@ -766,7 +769,7 @@ export async function getAIKnowledge(projectId: string, id: string): Promise<AIK
 
 export async function createAIKnowledge(
   projectId: string,
-  input: { title: string; summary: string; body: string },
+  input: { title: string; summary: string; body: string; tags?: string[] },
 ): Promise<AIKnowledge> {
   const raw = await http
     .post(`projects/${encodeURIComponent(projectId)}/ai/knowledge`, { json: input })
@@ -777,7 +780,7 @@ export async function createAIKnowledge(
 export async function updateAIKnowledge(
   projectId: string,
   id: string,
-  input: { title: string; summary: string; body: string },
+  input: { title: string; summary: string; body: string; tags?: string[] },
 ): Promise<AIKnowledge> {
   const raw = await http
     .put(`projects/${encodeURIComponent(projectId)}/ai/knowledge/${encodeURIComponent(id)}`, {
@@ -1292,9 +1295,21 @@ export function parseKnowledgeView(raw: unknown): AIKnowledgeView | null {
     id,
     title: asText(record?.title),
     summary: asText(record?.summary),
+    tags: readTags(record?.tags),
     chars: asWhole(record?.chars),
     createdAt: asText(record?.created_at),
   }
+}
+
+/** Метки знания: только непустые строки. Нормализацию (регистр, ё→е, длина) делает сервер. */
+function readTags(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  const out: string[] = []
+  for (const item of raw) {
+    const tag = asText(item).trim()
+    if (tag !== '') out.push(tag)
+  }
+  return out
 }
 
 /** Разбор списка знаний. */
@@ -1309,6 +1324,7 @@ export function parseAIKnowledgeBriefs(raw: unknown): AIKnowledgeBrief[] {
       id,
       title: asText(record?.title),
       summary: asText(record?.summary),
+      tags: readTags(record?.tags),
       chars: asWhole(record?.chars),
       authorName: asText(record?.author_name),
       createdAt: asText(record?.created_at),
@@ -1325,6 +1341,7 @@ export function parseAIKnowledge(raw: unknown): AIKnowledge {
     id: asText(record?.id),
     title: asText(record?.title),
     summary: asText(record?.summary),
+    tags: readTags(record?.tags),
     chars: asWhole(record?.chars),
     authorName: asText(record?.author_name),
     createdAt: asText(record?.created_at),

@@ -90,6 +90,8 @@ async function desktop() {
   await page.locator('[data-knowledge-body]').fill(
     'Тезис 1. Тезис 2. Это знание создано живой проверкой и будет удалено в конце.',
   )
+  // Метки (0.152.0): по ним поиск должен находить знание, даже если слова нет в тексте.
+  await page.locator('[data-knowledge-tags]').fill('диагностика, теги')
   await page.locator('[data-knowledge-save]').click()
   await page.waitForTimeout(2000)
   const state = await page.evaluate(() => ({
@@ -108,12 +110,26 @@ async function desktop() {
   const item = page.locator(`[data-knowledge-item]`, { hasText: TITLE }).first()
   const meta = (await item.innerText()) ?? ''
   if (!/\d/.test(meta)) add('warning', `в карточке знания нет размера/даты: ${meta.slice(0, 120)}`)
+  const tagsShown = await item.locator('[data-knowledge-item-tags]').count()
+  if (tagsShown === 0) add('error', 'метки знания не показаны в списке')
+  else add('info', 'метки показаны в списке')
+
+  // Поиск по метке: в тексте знания слова «теги» нет, найтись оно должно по метке.
+  const search = page.locator('[data-knowledge-search]')
+  await search.fill('теги')
+  await page.waitForTimeout(900)
+  const foundByTag = ((await page.locator('[data-knowledge-tab]').innerText()) ?? '').includes(TITLE)
+  add(foundByTag ? 'info' : 'error', `поиск по метке «теги»: ${foundByTag ? 'нашёл' : 'не нашёл'}`)
+  await search.fill('')
+  await page.waitForTimeout(700)
 
   // Открытие целиком: тело приходит отдельным запросом.
   await item.locator('.knowledge__open').click()
   await page.locator('[data-knowledge-view]').waitFor({ state: 'visible', timeout: 10_000 })
   const body = (await page.locator('[data-knowledge-view]').innerText()) ?? ''
   if (!body.includes('Тезис 1')) add('error', `тело знания не открылось: ${body.slice(0, 120)}`)
+  const viewTags = await page.locator('[data-knowledge-view-tags]').count()
+  add(viewTags > 0 ? 'info' : 'error', `метки в открытом знании: ${viewTags > 0 ? 'есть' : 'нет'}`)
   await page.screenshot({ path: `${SHOTS}\\knowledge-desktop.png` })
   await page.locator('[data-knowledge-view] button', { hasText: 'Закрыть' }).first().click()
   await page.waitForTimeout(400)

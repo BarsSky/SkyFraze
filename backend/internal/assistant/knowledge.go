@@ -42,6 +42,10 @@ const (
 	// MaxKnowledgeAttach — сколько знаний можно приложить к одному сообщению.
 	// Десять — это уже 40 000 знаков контекста; больше не влезет в окно локальной модели.
 	MaxKnowledgeAttach = 10
+	// MaxKnowledgeTags / MaxKnowledgeTag — метки для поиска (0.152.0): пять коротких
+	// ярлыков на знание. Длиннее пяти — это уже второй текст, а не метка.
+	MaxKnowledgeTags = 5
+	MaxKnowledgeTag  = 32
 	// knowledgePromptChars — сколько знаков знаний уходит в ОДИН запрос к модели.
 	// Ровно это, а не «сколько приложили»: приложить десять знаний по 4 000 знаков и
 	// получить 413 от сервера модели хуже, чем получить первые два целиком и честную
@@ -54,6 +58,9 @@ type KnowledgeInput struct {
 	Title   string
 	Summary string
 	Body    string
+	// Tags — метки для поиска (0.152.0). Не украшение: триграммы не решают морфологию
+	// («драконами» и «драконы» мало похожи), а короткие темы и имена закрывают этот разрыв.
+	Tags []string
 }
 
 // KnowledgeRef — вложение к сообщению: идентификатор и СНИМОК заголовка.
@@ -68,6 +75,7 @@ type KnowledgeView struct {
 	ID        uuid.UUID `json:"id"`
 	Title     string    `json:"title"`
 	Summary   string    `json:"summary"`
+	Tags      []string  `json:"tags"`
 	Chars     int       `json:"chars"`
 	CreatedAt time.Time `json:"created_at"`
 }
@@ -106,7 +114,44 @@ func ValidateKnowledge(in KnowledgeInput, maxChars int) (store.KnowledgeInput, e
 			"знание получилось %d знаков, а предел одного знания — %d: "+
 				"сократите тезисы или разбейте их на несколько знаний по темам", chars, maxChars)
 	}
-	return store.KnowledgeInput{Title: title, Summary: summary, Body: body, Chars: chars}, nil
+	tags, err := normalizeKnowledgeTags(in.Tags)
+	if err != nil {
+		return store.KnowledgeInput{}, err
+	}
+	return store.KnowledgeInput{
+		Title: title, Summary: summary, Body: body, Tags: tags, Chars: chars,
+	}, nil
+}
+
+// normalizeKnowledgeTags приводит метки к пригодному виду (0.152.0).
+//
+// Правила: не больше пяти (это список для поиска, а не второй текст), 2–32 знака, нижний
+// регистр, «ё» → «е», без решётки и кавычек; повторы схлопываются. Пустой список — норма:
+// старые знания пришли без меток, и заставлять человека их придумывать нельзя.
+func normalizeKnowledgeTags(raw []string) ([]string, error) {
+	out := make([]string, 0, len(raw))
+	seen := make(map[string]bool, len(raw))
+	for _, item := range raw {
+		tag := strings.TrimSpace(item)
+		tag = strings.TrimLeft(tag, "#")
+		tag = strings.Trim(tag, " \t\n«»\"'`.,;:")
+		tag = strings.ToLower(strings.ReplaceAll(tag, "ё", "е"))
+		if tag == "" {
+			continue
+		}
+		if len([]rune(tag)) < 2 || len([]rune(tag)) > MaxKnowledgeTag {
+			return nil, fmt.Errorf("метка «%s»: длина должна быть от 2 до %d знаков", tag, MaxKnowledgeTag)
+		}
+		if seen[tag] {
+			continue
+		}
+		seen[tag] = true
+		out = append(out, tag)
+		if len(out) > MaxKnowledgeTags {
+			return nil, fmt.Errorf("меток больше %d — оставьте самые важные", MaxKnowledgeTags)
+		}
+	}
+	return out, nil
 }
 
 // knowledgeTitleTrim — что снимаем с краёв заголовка: кавычки всех видов и markdown-решётки.

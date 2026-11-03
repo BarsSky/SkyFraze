@@ -187,6 +187,10 @@ var schemaSteps = []struct{ probe, file string }{
 	{`SELECT EXISTS (SELECT 1 FROM information_schema.tables
 	                  WHERE table_schema='public' AND table_name='ai_knowledge')`,
 		"0045_ai_knowledge.up.sql"},
+	{`SELECT EXISTS (SELECT 1 FROM information_schema.columns
+	                  WHERE table_schema='public' AND table_name='ai_knowledge'
+	                    AND column_name='tags')`,
+		"0046_ai_knowledge_search.up.sql"},
 }
 
 // Setup открывает отдельную БД для пакета (suffix), применяет миграции и

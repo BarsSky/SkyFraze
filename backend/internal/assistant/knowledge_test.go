@@ -108,7 +108,42 @@ func TestValidateKnowledgeRejectsEmptyFields(t *testing.T) {
 	}
 }
 
-// Заголовок чистится от обрамляющих кавычек (0.150.0): живой прогон дал ««Проверка…«».
+// Метки знаний (0.152.0): нормализуются, ограничены пятью и двумя-тридцатью двумя знаками.
+func TestNormalizeKnowledgeTags(t *testing.T) {
+	ok, err := assistant.ValidateKnowledge(assistant.KnowledgeInput{
+		Title: "Канон", Body: "тезис",
+		Tags: []string{"Драконы", "#анна", "  КАНОН  ", "канон", "ёж"},
+	}, 100)
+	if err != nil {
+		t.Fatalf("метки отклонены: %v", err)
+	}
+	want := []string{"драконы", "анна", "канон", "еж"}
+	if len(ok.Tags) != len(want) {
+		t.Fatalf("метки %v, ожидались %v", ok.Tags, want)
+	}
+	for i, tag := range want {
+		if ok.Tags[i] != tag {
+			t.Fatalf("метка №%d: %q, ожидалась %q", i+1, ok.Tags[i], tag)
+		}
+	}
+
+	// Слишком много меток — отказ, а не молчаливое обрезание: иначе человек не поймёт,
+	// почему часть меток пропала.
+	if _, err := assistant.ValidateKnowledge(assistant.KnowledgeInput{
+		Title: "Канон", Body: "тезис",
+		Tags: []string{"раз", "два", "три", "четыре", "пять", "шесть"},
+	}, 100); err == nil {
+		t.Fatal("шесть меток приняты")
+	}
+	// Слишком короткая метка — отказ.
+	if _, err := assistant.ValidateKnowledge(assistant.KnowledgeInput{
+		Title: "Канон", Body: "тезис", Tags: []string{"я"},
+	}, 100); err == nil {
+		t.Fatal("однобуквенная метка принята")
+	}
+}
+
+// Заголовок чистится от обрамляющих кавычек (0.150.0): живой прогон дал «Проверка инструмента знаний«.
 func TestValidateKnowledgeTrimsTitleQuotes(t *testing.T) {
 	cases := map[string]string{
 		"«Проверка инструмента знаний«": "Проверка инструмента знаний",

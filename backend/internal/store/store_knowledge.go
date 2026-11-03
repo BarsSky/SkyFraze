@@ -16,6 +16,7 @@ import (
 	"errors"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 )
@@ -32,7 +33,11 @@ type AIKnowledgeBrief struct {
 	AuthorName string     `db:"author_name" json:"author_name"`
 	Title      string     `db:"title" json:"title"`
 	Summary    string     `db:"summary" json:"summary"`
-	Chars      int        `db:"chars" json:"chars"`
+	// Tags — метки для поиска (0.152.0): темы, имена, линии. Модель ставит их при
+	// сохранении, человек может поправить. По ним поиск находит знание, даже когда в
+	// тексте другое слово («драконы» ↔ «канон мира»).
+	Tags  []string `db:"tags" json:"tags"`
+	Chars int      `db:"chars" json:"chars"`
 	// SourceConversationID — откуда знание выросло. Может пропасть: беседу удалили (в том
 	// числе автоочисткой). Знание при этом остаётся.
 	SourceConversationID *uuid.UUID `db:"source_conversation_id" json:"source_conversation_id,omitempty"`
@@ -49,6 +54,7 @@ type AIKnowledge struct {
 	Title                string     `db:"title" json:"title"`
 	Summary              string     `db:"summary" json:"summary"`
 	Body                 string     `db:"body" json:"body"`
+	Tags                 []string   `db:"tags" json:"tags"`
 	Chars                int        `db:"chars" json:"chars"`
 	SourceConversationID *uuid.UUID `db:"source_conversation_id" json:"source_conversation_id,omitempty"`
 	CreatedAt            time.Time  `db:"created_at" json:"created_at"`
@@ -59,7 +65,7 @@ type AIKnowledge struct {
 func (k AIKnowledge) Brief() AIKnowledgeBrief {
 	return AIKnowledgeBrief{
 		ID: k.ID, ProjectID: k.ProjectID, CreatedBy: k.CreatedBy, AuthorName: k.AuthorName,
-		Title: k.Title, Summary: k.Summary, Chars: k.Chars,
+		Title: k.Title, Summary: k.Summary, Chars: k.Chars, Tags: k.Tags,
 		SourceConversationID: k.SourceConversationID,
 		CreatedAt:            k.CreatedAt, UpdatedAt: k.UpdatedAt,
 	}
@@ -73,13 +79,14 @@ type KnowledgeInput struct {
 	Title   string
 	Summary string
 	Body    string
+	Tags    []string
 	Chars   int
 }
 
-const aiKnowledgeColumns = `id, project_id, created_by, author_name, title, summary, body, chars,
+const aiKnowledgeColumns = `id, project_id, created_by, author_name, title, summary, body, tags, chars,
 	source_conversation_id, created_at, updated_at`
 
-const aiKnowledgeBriefColumns = `id, project_id, created_by, author_name, title, summary, chars,
+const aiKnowledgeBriefColumns = `id, project_id, created_by, author_name, title, summary, tags, chars,
 	source_conversation_id, created_at, updated_at`
 
 // CreateAIKnowledge записывает одно знание.
@@ -96,12 +103,12 @@ func (s *Store) CreateAIKnowledge(
 	}
 	return qOne[AIKnowledge](ctx, s.Pool,
 		`INSERT INTO ai_knowledge
-		   (project_id, created_by, author_name, title, summary, body, chars, source_conversation_id)
+		   (project_id, created_by, author_name, title, summary, body, tags, chars, source_conversation_id)
 		 VALUES ($1, $2, COALESCE((SELECT display_name FROM users WHERE id = $2), ''),
-		         $3, $4, $5, $6, $7)
+		         $3, $4, $5, COALESCE($6::text[], '{}'), $7, $8)
 		 RETURNING `+aiKnowledgeColumns,
 		projectID, author, strings.TrimSpace(k.Title), strings.TrimSpace(k.Summary),
-		k.Body, k.Chars, source)
+		k.Body, k.Tags, k.Chars, source)
 }
 
 // CreateAIKnowledgeBatch записывает пачку знаний одной транзакцией.
@@ -128,12 +135,12 @@ func (s *Store) CreateAIKnowledgeBatch(
 	for _, k := range entries {
 		row, err := qOne[AIKnowledge](ctx, tx,
 			`INSERT INTO ai_knowledge
-			   (project_id, created_by, author_name, title, summary, body, chars, source_conversation_id)
+			   (project_id, created_by, author_name, title, summary, body, tags, chars, source_conversation_id)
 			 VALUES ($1, $2, COALESCE((SELECT display_name FROM users WHERE id = $2), ''),
-			         $3, $4, $5, $6, $7)
+			         $3, $4, $5, COALESCE($6::text[], '{}'), $7, $8)
 			 RETURNING `+aiKnowledgeColumns,
 			projectID, author, strings.TrimSpace(k.Title), strings.TrimSpace(k.Summary),
-			k.Body, k.Chars, source)
+			k.Body, k.Tags, k.Chars, source)
 		if err != nil {
 			return nil, err
 		}
@@ -145,26 +152,75 @@ func (s *Store) CreateAIKnowledgeBatch(
 	return out, nil
 }
 
-// ListAIKnowledge — знания проекта без тел, свежие сверху.
+// ListAIKnowledge — знания проекта без тел, при поиске — по релевантности (0.152.0).
 //
-// query ищет по заголовку, пометке и телу: человек помнит фразу, а не то, в каком поле
-// она лежала. Пустой запрос — весь список.
+// Ранжирование, а не «где-то встречается»: раньше список при поиске шёл по дате, и самое
+// подходящее знание могло оказаться последним. Теперь score = заголовок (вес 3) + пометка
+// (2) + тело (word_similarity) + тег (1.5); ILIKE остаётся как точное вхождение для
+// коротких запросов, где триграммы почти не работают.
+//
+// Запрос и данные приводим к одному виду (нижний регистр, ё→е) — иначе «Драконы» не
+// находились бы по «драконы».
 func (s *Store) ListAIKnowledge(
 	ctx context.Context, projectID uuid.UUID, query string, limit int,
 ) ([]AIKnowledgeBrief, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 200
 	}
-	q := strings.TrimSpace(query)
+	q := normalizeSearchText(query)
+	if q == "" {
+		return qAll[AIKnowledgeBrief](ctx, s.Pool,
+			`SELECT `+aiKnowledgeBriefColumns+`
+			   FROM ai_knowledge
+			  WHERE project_id = $1
+			  ORDER BY created_at DESC, id DESC
+			  LIMIT $2`, projectID, limit)
+	}
 	return qAll[AIKnowledgeBrief](ctx, s.Pool,
-		`SELECT `+aiKnowledgeBriefColumns+`
-		   FROM ai_knowledge
-		  WHERE project_id = $1
-		    AND ($2 = '' OR title ILIKE '%' || $2 || '%'
-		                 OR summary ILIKE '%' || $2 || '%'
-		                 OR body ILIKE '%' || $2 || '%')
-		  ORDER BY created_at DESC, id DESC
+		`SELECT id, project_id, created_by, author_name, title, summary, tags, chars,
+		        source_conversation_id, created_at, updated_at
+		   FROM (
+		     SELECT id, project_id, created_by, author_name, title, summary, tags, chars,
+		            source_conversation_id, created_at, updated_at,
+		            (3.0 * similarity(replace(lower(title), 'ё', 'е'), $2)
+		             + 2.0 * similarity(replace(lower(summary), 'ё', 'е'), $2)
+		             + word_similarity($2, replace(lower(body), 'ё', 'е'))
+		             + 1.5 * CASE WHEN EXISTS (
+		                 SELECT 1 FROM unnest(tags) AS tag
+		                  WHERE replace(lower(tag), 'ё', 'е') LIKE '%' || $2 || '%'
+		               ) THEN 1 ELSE 0 END) AS score,
+		            replace(lower(body), 'ё', 'е') LIKE '%' || $2 || '%' AS body_hit
+		       FROM ai_knowledge
+		      WHERE project_id = $1
+		   ) ranked
+		  WHERE score > 0.05
+		     OR replace(lower(title), 'ё', 'е') LIKE '%' || $2 || '%'
+		     OR replace(lower(summary), 'ё', 'е') LIKE '%' || $2 || '%'
+		     OR body_hit
+		     OR EXISTS (
+		          SELECT 1 FROM unnest(tags) AS tag
+		           WHERE replace(lower(tag), 'ё', 'е') LIKE '%' || $2 || '%'
+		        )
+		  ORDER BY score DESC, created_at DESC
 		  LIMIT $3`, projectID, q, limit)
+}
+
+// normalizeSearchText приводит запрос к виду хранения: нижний регистр, ё→е, без
+// пунктуации и лишних пробелов. Своя копия, а не вызов из пакета assistant: store не должен
+// зависеть от помощника, а правило короткое и стабильное.
+func normalizeSearchText(text string) string {
+	var b strings.Builder
+	for _, symbol := range strings.ToLower(strings.TrimSpace(text)) {
+		switch {
+		case symbol == 'ё':
+			b.WriteRune('е')
+		case unicode.IsLetter(symbol), unicode.IsDigit(symbol):
+			b.WriteRune(symbol)
+		default:
+			b.WriteRune(' ')
+		}
+	}
+	return strings.Join(strings.Fields(b.String()), " ")
 }
 
 // AIKnowledgeImport — знание из архива: с автором и датой создания.
@@ -173,9 +229,14 @@ func (s *Store) ListAIKnowledge(
 // содержания. Если бы знания импортировались с датой импорта, вся картина работы над
 // историей съехала бы в один день.
 type AIKnowledgeImport struct {
+	// ID — идентификатор в исходной базе (0.152.0). Нужен, чтобы перенести вложения
+	// сообщений: у них снимок {id,title} старого знания, и после импорта ссылку надо
+	// переписать на новое знание, иначе карточка осталась бы «мёртвой».
+	ID         uuid.UUID
 	Title      string
 	Summary    string
 	Body       string
+	Tags       []string
 	Chars      int
 	AuthorName string
 	CreatedAt  time.Time
@@ -186,36 +247,40 @@ type AIKnowledgeImport struct {
 // `created_by` пустой: автора из архива в этой базе может не быть, а привязывать его
 // знание к импортирующему человеку значило бы приписать ему чужие выводы. Имя остаётся
 // снимком — ровно так же, как в общем чате.
+//
+// Возвращает записанные знания: импорт бесед переписывает вложения по id старого знания.
 func (s *Store) ImportAIKnowledge(
 	ctx context.Context, projectID uuid.UUID, records []AIKnowledgeImport,
-) (int, error) {
+) ([]AIKnowledge, error) {
 	if len(records) == 0 {
-		return 0, nil
+		return nil, nil
 	}
 	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	done := 0
+	done := make([]AIKnowledge, 0, len(records))
 	for _, r := range records {
 		createdAt := r.CreatedAt
 		if createdAt.IsZero() {
 			createdAt = time.Now()
 		}
-		if _, err := tx.Exec(ctx,
+		row, err := qOne[AIKnowledge](ctx, tx,
 			`INSERT INTO ai_knowledge
-			   (project_id, created_by, author_name, title, summary, body, chars, created_at, updated_at)
-			 VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $7)`,
+			   (project_id, created_by, author_name, title, summary, body, tags, chars, created_at, updated_at)
+			 VALUES ($1, NULL, $2, $3, $4, $5, COALESCE($6::text[], '{}'), $7, $8, $8)
+			 RETURNING `+aiKnowledgeColumns,
 			projectID, strings.TrimSpace(r.AuthorName), strings.TrimSpace(r.Title),
-			strings.TrimSpace(r.Summary), r.Body, r.Chars, createdAt); err != nil {
-			return 0, err
+			strings.TrimSpace(r.Summary), r.Body, r.Tags, r.Chars, createdAt)
+		if err != nil {
+			return nil, err
 		}
-		done++
+		done = append(done, *row)
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return 0, err
+		return nil, err
 	}
 	return done, nil
 }
@@ -253,10 +318,11 @@ func (s *Store) UpdateAIKnowledge(
 ) (*AIKnowledge, error) {
 	return qOne[AIKnowledge](ctx, s.Pool,
 		`UPDATE ai_knowledge
-		    SET title = $3, summary = $4, body = $5, chars = $6, updated_at = now()
+		    SET title = $3, summary = $4, body = $5, tags = COALESCE($6::text[], '{}'), chars = $7, updated_at = now()
 		  WHERE project_id = $1 AND id = $2
 		  RETURNING `+aiKnowledgeColumns,
-		projectID, id, strings.TrimSpace(k.Title), strings.TrimSpace(k.Summary), k.Body, k.Chars)
+		projectID, id, strings.TrimSpace(k.Title), strings.TrimSpace(k.Summary), k.Body,
+		k.Tags, k.Chars)
 }
 
 // DeleteAIKnowledge удаляет знание. Вложения в сообщениях остаются: у них снимок

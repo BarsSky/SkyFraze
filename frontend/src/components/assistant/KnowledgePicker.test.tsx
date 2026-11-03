@@ -28,6 +28,7 @@ const brief = (index: number) => ({
   id: `k${index}`,
   title: `Знание ${index}`,
   summary: '',
+  tags: [] as string[],
   chars: 10,
   authorName: '',
   createdAt: '2026-03-01T10:00:00Z',

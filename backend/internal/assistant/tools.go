@@ -456,6 +456,11 @@ func ToolDefs(caps Capabilities, editing, world, worldWrite bool, entityKinds []
 									MaxKnowledgeSummary)},
 								"body": map[string]any{"type": "string", "description": fmt.Sprintf(
 									"Тезисы в Markdown, до %d знаков", MaxKnowledgeChars)},
+								"tags": map[string]any{
+									"type":        "array",
+									"items":       map[string]any{"type": "string"},
+									"description": fmt.Sprintf("Метки для поиска, до %d: темы, имена, линии («драконы», «анна», «канон»)", MaxKnowledgeTags),
+								},
 							},
 							"required": []string{"title", "body"},
 						},
@@ -1107,6 +1112,7 @@ func ParseSaveKnowledge(args map[string]any) ([]KnowledgeInput, error) {
 			Title:   argStringAny(item, "title", "name"),
 			Summary: argStringAny(item, "summary", "note"),
 			Body:    argStringAny(item, "body", "text", "content", "body_md", "knowledge"),
+			Tags:    argStrings(item, "tags"),
 		})
 	}
 	raw, has := args["entries"]
