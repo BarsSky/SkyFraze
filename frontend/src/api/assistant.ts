@@ -654,11 +654,32 @@ export async function getAIConversation(
 }
 
 /**
+ * Удаляет беседу с помощником (0.148.0).
+ *
+ * Беседы копятся: у живого проекта их десятки. Удаление — только своей истории; сервер
+ * не отличает чужую беседу от несуществующей и отвечает 404.
+ */
+export async function deleteAIConversation(projectId: string, conversationId: string): Promise<void> {
+  await http.delete(
+    `projects/${encodeURIComponent(projectId)}/ai/conversations/${encodeURIComponent(conversationId)}`,
+  )
+}
+
+/** Очищает всю историю бесед этого человека в проекте (0.148.0). Возвращает число удалённых. */
+export async function clearAIConversations(projectId: string): Promise<number> {
+  const raw = await http
+    .delete(`projects/${encodeURIComponent(projectId)}/ai/conversations`)
+    .json<unknown>()
+  const record = asRecord(raw)
+  const deleted = Number(record?.deleted)
+  return Number.isFinite(deleted) ? deleted : 0
+}
+
+/**
  * Отправляет вопрос помощнику.
  *
- * `conversationId` может быть `new` — тогда беседа заводится этим же запросом:
- * интерфейс новый разговор ничего не создаёт заранее, иначе пустые беседы копились
- * бы от каждого открытия панели.
+ * `conversationId` может быть `new` — тогда беседа заводится этим же запросом: интерфейс новый
+ * разговор ничего не создаёт заранее, иначе пустые беседы копились бы от каждого открытия панели.
  */
 export async function sendAIMessage(
   projectId: string,

@@ -43,6 +43,8 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Get("/ai/conversations", h.ListConversations)
 	r.Post("/ai/conversations", h.CreateConversation)
 	r.Get("/ai/conversations/{cid}", h.GetConversation)
+	r.Delete("/ai/conversations/{cid}", h.DeleteConversation)
+	r.Delete("/ai/conversations", h.ClearConversations)
 	r.Post("/ai/conversations/{cid}/messages", h.SendMessage)
 	// Тот же вопрос, но ответ приходит потоком: текст по кускам и события по ходу дела.
 	r.Post("/ai/conversations/{cid}/stream", h.StreamMessage)
@@ -208,6 +210,47 @@ func (h *Handler) GetConversation(w http.ResponseWriter, r *http.Request) {
 		"messages":     messages,
 		"limits":       h.svc.limits,
 	})
+}
+
+// DeleteConversation — DELETE .../ai/conversations/{cid}: удалить беседу (0.148.0).
+//
+// Удаление своей беседы не меняет проект, поэтому правки проекта не требует: беседы —
+// личная история человека. Чужая беседа неотличима от несуществующей (404).
+func (h *Handler) DeleteConversation(w http.ResponseWriter, r *http.Request) {
+	uid, pid, ok := h.scope(w, r)
+	if !ok {
+		return
+	}
+	cid, ok := h.conversationID(w, r)
+	if !ok {
+		return
+	}
+	if cid == uuid.Nil {
+		writeErr(w, http.StatusBadRequest, "не указана беседа")
+		return
+	}
+	if err := h.svc.DeleteConversation(r.Context(), uid, pid, cid); err != nil {
+		h.fail(w, "delete conversation", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ClearConversations — DELETE .../ai/conversations: очистить историю бесед человека.
+//
+// Ограничение то же: это личная история, а не содержимое проекта. Ответ несёт число
+// удалённых бесед — «очищено 39» честнее молчаливого 204.
+func (h *Handler) ClearConversations(w http.ResponseWriter, r *http.Request) {
+	uid, pid, ok := h.scope(w, r)
+	if !ok {
+		return
+	}
+	deleted, err := h.svc.ClearConversations(r.Context(), uid, pid)
+	if err != nil {
+		h.fail(w, "clear conversations", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": deleted})
 }
 
 // SendMessage — POST .../ai/conversations/{cid}/messages: вопрос помощнику.

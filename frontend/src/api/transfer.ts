@@ -15,6 +15,9 @@ export interface ImportResult {
   events: number
   assets: number
   state: boolean
+  /** Карточки мира и беседы с помощником: сервер считает их с 0.69.0 и 0.148.0. */
+  entities?: number
+  conversations?: number
 }
 
 /** Скачивает архив проекта в браузер. Возвращает имя файла. */

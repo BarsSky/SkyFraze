@@ -431,6 +431,41 @@ func (s *Service) generationOptions(ctx context.Context) []GenerationOption {
 	}
 }
 
+// DeleteConversation удаляет беседу человека в проекте (0.148.0).
+//
+// Почему без права правки проекта. Беседа — личная история вопросов, а не содержимое
+// проекта: удаляя её, человек не меняет текст, кадры или карточки. Требовать за это
+// права редактора значило бы не дать читателю убрать свою же переписку.
+func (s *Service) DeleteConversation(ctx context.Context, userID, projectID, conversationID uuid.UUID) error {
+	if err := s.RequireProject(ctx, userID, projectID, false); err != nil {
+		return err
+	}
+	removed, err := s.store.DeleteAIConversation(ctx, conversationID, userID)
+	if err != nil {
+		return err
+	}
+	if !removed {
+		// Чужая беседа неотличима от несуществующей: по ответу нельзя узнать, что она есть.
+		return store.ErrNotFound
+	}
+	s.logger.Info("ai: беседа удалена", "project", projectID, "user", userID, "conversation", conversationID)
+	return nil
+}
+
+// ClearConversations очищает историю бесед человека в проекте (0.148.0).
+func (s *Service) ClearConversations(ctx context.Context, userID, projectID uuid.UUID) (int64, error) {
+	if err := s.RequireProject(ctx, userID, projectID, false); err != nil {
+		return 0, err
+	}
+	deleted, err := s.store.DeleteAIConversations(ctx, projectID, userID)
+	if err != nil {
+		return 0, err
+	}
+	s.logger.Info("ai: история бесед очищена",
+		"project", projectID, "user", userID, "deleted", deleted)
+	return deleted, nil
+}
+
 // ProjectSettings читает настройки агента и права спрашивающего.
 func (s *Service) ProjectSettings(ctx context.Context, userID, projectID uuid.UUID) (*Settings, error) {
 	if err := s.RequireProject(ctx, userID, projectID, false); err != nil {

@@ -299,7 +299,10 @@ export function ProjectsPage() {
       setList((cur) => [res.project, ...cur])
       setNote(
         t('projects.noteImported', { title: res.project.title, events: res.events, assets: res.assets }) +
-          (res.state ? t('projects.noteImportedState') : ''),
+          (res.state ? t('projects.noteImportedState') : '') +
+          ((res.conversations ?? 0) > 0
+            ? t('projects.noteImportedConversations', { count: res.conversations ?? 0 })
+            : ''),
       )
     } catch (e) {
       const status = (e as { response?: Response })?.response?.status

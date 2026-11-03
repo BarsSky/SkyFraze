@@ -155,6 +155,34 @@ func (s *Store) TouchAIConversation(ctx context.Context, id uuid.UUID, model str
 	return err
 }
 
+// DeleteAIConversation удаляет беседу человека (0.148.0).
+//
+// Сообщения уходят вместе с ней: у ai_messages внешний ключ ON DELETE CASCADE. Условие
+// user_id — не украшение: чужую беседу удалить нельзя, и «не найдено» здесь то же самое,
+// что «не твоя».
+func (s *Store) DeleteAIConversation(ctx context.Context, id, userID uuid.UUID) (bool, error) {
+	tag, err := s.Pool.Exec(ctx, `DELETE FROM ai_conversations WHERE id=$1 AND user_id=$2`, id, userID)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+// DeleteAIConversations очищает всю историю бесед человека в проекте (0.148.0).
+//
+// Возвращает, сколько бесед удалено: интерфейсу нужно сказать «очищено N», а не молча
+// сделать вид, что там ничего и не было.
+func (s *Store) DeleteAIConversations(
+	ctx context.Context, projectID, userID uuid.UUID,
+) (int64, error) {
+	tag, err := s.Pool.Exec(ctx,
+		`DELETE FROM ai_conversations WHERE project_id=$1 AND user_id=$2`, projectID, userID)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
 // RenameAIConversation ставит заголовок беседы (первый вопрос человека, обрезанный).
 func (s *Store) RenameAIConversation(ctx context.Context, id uuid.UUID, title string) error {
 	_, err := s.Pool.Exec(ctx,

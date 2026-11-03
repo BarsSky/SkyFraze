@@ -1,0 +1,186 @@
+package transfer_test
+
+// transfer_conversations_test.go — история бесед с помощником в архиве проекта (0.148.0).
+//
+// Проверяем обе половины обещания: переписка уезжает вместе с проектом и приезжает в новый
+// проект, а чужие беседы в архив НЕ попадают — переписка личная.
+//
+// Ошибка этого файла была бы молчаливой: без файла истории импорт просто создал бы проект без
+// разговоров, и «перенос прошёл» осталось бы правдой лишь наполовину.
+
+import (
+	"archive/zip"
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"testing"
+
+	"github.com/google/uuid"
+
+	"github.com/skyfraze/backend/internal/store"
+	"github.com/skyfraze/backend/internal/transfer"
+)
+
+// seedConversation заводит беседу с репликами и служебной строкой инструмента.
+func seedConversation(
+	t *testing.T, e *transferEnv, ctx context.Context,
+	projectID, userID uuid.UUID, title, question, answer string,
+) *store.AIConversation {
+	t.Helper()
+	conversation, err := e.st.CreateAIConversation(ctx, projectID, userID, title, "stub:1")
+	if err != nil {
+		t.Fatalf("беседа: %v", err)
+	}
+	for _, message := range []store.AIMessage{
+		{ConversationID: conversation.ID, Role: "user", Content: question},
+		// Служебная строка: в архив она попадать не должна.
+		{ConversationID: conversation.ID, Role: "tool", Content: `{"events":[]}`},
+		{ConversationID: conversation.ID, Role: "assistant", Content: answer},
+	} {
+		if _, err := e.st.AppendAIMessage(ctx, message); err != nil {
+			t.Fatalf("сообщение: %v", err)
+		}
+	}
+	return conversation
+}
+
+// exportArchive выгружает проект и возвращает карту «файл → содержимое».
+func exportArchive(t *testing.T, e *transferEnv, projectID uuid.UUID) map[string][]byte {
+	t.Helper()
+	var buf bytes.Buffer
+	if _, err := e.svc.Export(context.Background(), e.user, projectID, &buf); err != nil {
+		t.Fatalf("экспорт: %v", err)
+	}
+	reader, err := zip.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
+	if err != nil {
+		t.Fatalf("zip: %v", err)
+	}
+	files := make(map[string][]byte, len(reader.File))
+	for _, file := range reader.File {
+		rc, err := file.Open()
+		if err != nil {
+			t.Fatalf("файл архива %s: %v", file.Name, err)
+		}
+		data, err := io.ReadAll(rc)
+		rc.Close()
+		if err != nil {
+			t.Fatalf("чтение %s: %v", file.Name, err)
+		}
+		files[file.Name] = data
+	}
+	return files
+}
+
+// Переписка выгружается вместе с проектом — и только своя.
+func TestArchiveCarriesOwnConversationsOnly(t *testing.T) {
+	e := setupTransfer(t)
+	ctx := context.Background()
+	project, err := e.proj.Create(ctx, e.user, "Роман", "")
+	if err != nil {
+		t.Fatalf("проект: %v", err)
+	}
+	// Своя беседа — уезжает.
+	seedConversation(t, e, ctx, project.ID, e.user, "Правки главы", "Поправь абзац", "Предлагаю правку.")
+	// Чужая беседа в том же проекте — не уезжает.
+	other, err := e.st.CreateUser(ctx, "other@example.com", "$2a$10$notarealhash", "Другой")
+	if err != nil {
+		t.Fatalf("второй пользователь: %v", err)
+	}
+	seedConversation(t, e, ctx, project.ID, other.ID, "Чужая беседа", "чужой вопрос", "чужой ответ")
+
+	files := exportArchive(t, e, project.ID)
+	data, ok := files["ai-history.json"]
+	if !ok {
+		t.Fatal("в архиве нет ai-history.json")
+	}
+	var history transfer.ConversationsFile
+	if err := json.Unmarshal(data, &history); err != nil {
+		t.Fatalf("ai-history.json не разобран: %v", err)
+	}
+	if len(history.Conversations) != 1 {
+		t.Fatalf("бесед в архиве %d, ожидалась 1: %+v", len(history.Conversations), history.Conversations)
+	}
+	record := history.Conversations[0]
+	if record.Title != "Правки главы" {
+		t.Errorf("заголовок: %q", record.Title)
+	}
+	if len(record.Messages) != 2 {
+		t.Fatalf("реплик в архиве %d, ожидалось 2 (служебные не переносим): %+v", len(record.Messages), record.Messages)
+	}
+	if record.Messages[0].Role != "user" || record.Messages[1].Role != "assistant" {
+		t.Errorf("порядок ролей: %+v", record.Messages)
+	}
+}
+
+// Проект без бесед не создаёт пустой файл: старый формат остаётся старым.
+func TestArchiveWithoutConversationsHasNoFile(t *testing.T) {
+	e := setupTransfer(t)
+	project, err := e.proj.Create(context.Background(), e.user, "Пустой", "")
+	if err != nil {
+		t.Fatalf("проект: %v", err)
+	}
+	files := exportArchive(t, e, project.ID)
+	if _, ok := files["ai-history.json"]; ok {
+		t.Fatal("файл истории появился без единой беседы")
+	}
+}
+
+// Импорт возвращает переписку в новый проект — реплики по порядку.
+func TestImportRestoresConversations(t *testing.T) {
+	e := setupTransfer(t)
+	ctx := context.Background()
+	project, err := e.proj.Create(ctx, e.user, "Роман", "")
+	if err != nil {
+		t.Fatalf("проект: %v", err)
+	}
+	seedConversation(t, e, ctx, project.ID, e.user, "Правки главы", "Поправь абзац", "Предлагаю правку.")
+
+	var buf bytes.Buffer
+	if _, err := e.svc.Export(ctx, e.user, project.ID, &buf); err != nil {
+		t.Fatalf("экспорт: %v", err)
+	}
+	bundle, err := transfer.ParseBundle(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
+	if err != nil {
+		t.Fatalf("разбор архива: %v", err)
+	}
+	if bundle.Conversations == nil {
+		t.Fatal("архив не принёс историю бесед")
+	}
+
+	importer, err := e.st.CreateUser(ctx, "importer@example.com", "$2a$10$notarealhash", "Импортёр")
+	if err != nil {
+		t.Fatalf("импортёр: %v", err)
+	}
+	result, err := e.svc.Import(ctx, importer.ID, bundle)
+	if err != nil {
+		t.Fatalf("импорт: %v", err)
+	}
+	if result.Conversations != 1 {
+		t.Fatalf("перенесено бесед %d, ожидалась 1", result.Conversations)
+	}
+
+	list, err := e.st.ListAIConversations(ctx, result.Project.ID, importer.ID)
+	if err != nil {
+		t.Fatalf("беседы нового проекта: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("бесед в новом проекте %d, ожидалась 1", len(list))
+	}
+	if list[0].Title != "Правки главы" {
+		t.Errorf("заголовок новой беседы: %q", list[0].Title)
+	}
+	messages, err := e.st.ListAIMessages(ctx, list[0].ID, 10)
+	if err != nil {
+		t.Fatalf("реплики: %v", err)
+	}
+	if len(messages) != 2 {
+		t.Fatalf("реплик %d, ожидалось 2", len(messages))
+	}
+	if messages[0].Role != "user" || messages[0].Content != "Поправь абзац" {
+		t.Errorf("первая реплика: %+v", messages[0])
+	}
+	if messages[1].Role != "assistant" || messages[1].Content != "Предлагаю правку." {
+		t.Errorf("вторая реплика: %+v", messages[1])
+	}
+}

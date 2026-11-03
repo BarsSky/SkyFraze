@@ -47,6 +47,12 @@ const (
 	// поддерживать два парсера одного JSON. Старые сборки этот файл просто не читают: импорт
 	// ходит по манифесту, а лишние файлы в архиве уже есть (story.md).
 	templateFile = "template.json"
+	// conversationsFile — история бесед с помощником (0.148.0).
+	//
+	// Отдельным файлом и только СВОИ беседы выгружающего: переписка — личная, и чужие
+	// разговоры в архив попадать не должны. Старые сборки файл не читают, новые читают
+	// необязательным: архивы до 0.148.0 его не содержат, и это не ошибка.
+	conversationsFile = "ai-history.json"
 
 	// MaxBundleSize — потолок размера архива (nginx пускает столько же).
 	MaxBundleSize = 200 << 20 // 200 MB
@@ -55,6 +61,10 @@ const (
 	// maxEvents / maxAssets защищают от архива-«бомбы» с миллионом записей.
 	maxEvents = 5000
 	maxAssets = 500
+	// maxConversations / maxMessagesPerConversation — те же предохранители для истории
+	// бесед: переписка не должна превращать архив в бомбу.
+	maxConversations           = 200
+	maxMessagesPerConversation = 1000
 )
 
 var (
@@ -130,6 +140,31 @@ type AssetRecord struct {
 	File string `json:"file"`
 }
 
+// ConversationsFile — история бесед с помощником в архиве (0.148.0).
+//
+// Пишем только реплики человека и текст ответов: служебные строки результатов инструментов
+// (`role=tool`) — это внутренний протокол, в новой базе они не переигрываются (history()
+// их и так не берёт), а размер архива увеличивали бы заметно.
+type ConversationsFile struct {
+	Conversations []ConversationRecord `json:"conversations"`
+}
+
+// ConversationRecord — одна беседа в архиве.
+type ConversationRecord struct {
+	Title     string          `json:"title"`
+	Model     string          `json:"model"`
+	CreatedAt time.Time       `json:"created_at"`
+	Messages  []MessageRecord `json:"messages"`
+}
+
+// MessageRecord — реплика беседы в архиве.
+type MessageRecord struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+	// Stopped — ответ оборван человеком: пометка «остановлено» должна пережить перенос.
+	Stopped bool `json:"stopped,omitempty"`
+}
+
 // ExportInfo — что получилось выгрузить (для заголовков ответа и лога).
 type ExportInfo struct {
 	Title    string
@@ -148,6 +183,9 @@ type Result struct {
 	HasState bool           `json:"has_state"`
 	// Entities — сколько карточек мира перенесено (0.69.0).
 	Entities int `json:"entities"`
+	// Conversations — сколько бесед с помощником перенесено (0.148.0). Нет файла в
+	// архиве — ноль и никакой ошибки: старые архивы его не содержат.
+	Conversations int `json:"conversations"`
 	// Template — что принёс шаблон проекта (0.85.0): типы карточек и настройки помощника.
 	// Нет в архиве шаблона — поля нет, и это не ошибка: старые архивы его не содержат.
 	Template *projecttemplate.Report `json:"template,omitempty"`
@@ -318,6 +356,13 @@ func (s *Service) Export(ctx context.Context, userID, projectID uuid.UUID, w io.
 	counter := &countingWriter{w: w}
 	zw := zip.NewWriter(counter)
 
+	// История бесед (0.148.0) — до первой записи в поток, как и шаблон: если она не собралась,
+	// ответ должен быть ошибкой, а не полуархивом.
+	conversationsBytes, err := s.buildConversations(ctx, userID, projectID)
+	if err != nil {
+		return nil, err
+	}
+
 	manifestBytes, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		return nil, err
@@ -327,6 +372,11 @@ func (s *Service) Export(ctx context.Context, userID, projectID uuid.UUID, w io.
 	}
 	if templateBytes != nil {
 		if err := writeZipFile(zw, templateFile, templateBytes); err != nil {
+			return nil, err
+		}
+	}
+	if conversationsBytes != nil {
+		if err := writeZipFile(zw, conversationsFile, conversationsBytes); err != nil {
 			return nil, err
 		}
 	}
@@ -378,6 +428,52 @@ func (s *Service) Export(ctx context.Context, userID, projectID uuid.UUID, w io.
 	}, nil
 }
 
+// buildConversations собирает файл истории бесед для архива (0.148.0).
+//
+// Только беседы САМОГО выгружающего: переписка личная, и разговоры коллег в архив попадать
+// не должны. Пустой набор — nil (файла нет), это нормальный случай: у проекта может не быть
+// ни одной беседы.
+func (s *Service) buildConversations(
+	ctx context.Context, userID, projectID uuid.UUID,
+) ([]byte, error) {
+	list, err := s.store.ListAIConversations(ctx, projectID, userID)
+	if err != nil {
+		return nil, err
+	}
+	records := make([]ConversationRecord, 0, len(list))
+	for _, conversation := range list {
+		messages, merr := s.store.ListAIMessages(ctx, conversation.ID, maxMessagesPerConversation)
+		if merr != nil {
+			return nil, merr
+		}
+		record := ConversationRecord{
+			Title: conversation.Title, Model: conversation.Model, CreatedAt: conversation.CreatedAt,
+		}
+		for _, message := range messages {
+			if message.Role != "user" && message.Role != "assistant" {
+				continue
+			}
+			if strings.TrimSpace(message.Content) == "" {
+				continue
+			}
+			record.Messages = append(record.Messages, MessageRecord{
+				Role: message.Role, Content: message.Content, Stopped: message.Stopped,
+			})
+		}
+		if len(record.Messages) == 0 {
+			continue
+		}
+		records = append(records, record)
+		if len(records) >= maxConversations {
+			break
+		}
+	}
+	if len(records) == 0 {
+		return nil, nil
+	}
+	return json.MarshalIndent(ConversationsFile{Conversations: records}, "", "  ")
+}
+
 // ParsedBundle — разобранный архив, готовый к переносу в базу.
 type ParsedBundle struct {
 	Manifest Manifest
@@ -385,6 +481,9 @@ type ParsedBundle struct {
 	// Template — шаблон проекта из архива (0.85.0). nil означает «файла нет» — так выглядят
 	// архивы, собранные до 0.85.0, и это нормальный случай, а не ошибка.
 	Template *projecttemplate.Template
+	// Conversations — история бесед с помощником (0.148.0). nil — файла нет (архивы до
+	// 0.148.0), и это тоже нормальный случай.
+	Conversations *ConversationsFile
 	// AssetFiles — содержимое вложений по id (читается лениво из zip.Reader).
 	zip *zip.Reader
 }
@@ -437,6 +536,18 @@ func ParseBundle(r io.ReaderAt, size int64) (*ParsedBundle, error) {
 				return nil, err
 			}
 			b.State = data
+		case conversationsFile:
+			// Битый файл истории НЕ отменяет импорт: содержимое проекта от него не зависит,
+			// а потерять из-за переписки весь архив было бы хуже. Файл просто игнорируется.
+			data, err := readZipFile(f, 32<<20)
+			if err != nil {
+				continue
+			}
+			var history ConversationsFile
+			if err := json.Unmarshal(data, &history); err != nil {
+				continue
+			}
+			b.Conversations = &history
 		}
 	}
 
@@ -622,9 +733,46 @@ func (s *Service) Import(ctx context.Context, userID uuid.UUID, b *ParsedBundle)
 		importedEntities++
 	}
 
+	// 9. История бесед с помощником (0.148.0). Ошибка одной беседы не отменяет импорт: это
+	//    вспомогательная часть архива, а не содержимое проекта. Время сообщений — момент
+	//    импорта: сохранять исходный порядок важнее, чем исходные отметки времени, а порядок
+	//    держится вставкой по одному.
+	importedConversations := 0
+	if history := b.Conversations; history != nil {
+		for _, record := range history.Conversations {
+			if len(record.Messages) == 0 {
+				continue
+			}
+			conversation, cerr := s.store.CreateAIConversation(ctx, p.ID, userID, record.Title, record.Model)
+			if cerr != nil {
+				continue
+			}
+			ok := true
+			for _, message := range record.Messages {
+				if message.Role != "user" && message.Role != "assistant" {
+					continue
+				}
+				if _, merr := s.store.AppendAIMessage(ctx, store.AIMessage{
+					ConversationID: conversation.ID, Role: message.Role,
+					Content: message.Content, Stopped: message.Stopped,
+				}); merr != nil {
+					ok = false
+					break
+				}
+			}
+			if !ok {
+				// Наполовину перенесённую беседу не оставляем: она выглядела бы как
+				// оборванный разговор, которого не было.
+				_, _ = s.store.DeleteAIConversation(ctx, conversation.ID, userID)
+				continue
+			}
+			importedConversations++
+		}
+	}
+
 	return &Result{
 		Project: p, Events: len(rows), Assets: len(m.Assets), HasState: hasState,
-		Entities: importedEntities, Template: templateReport,
+		Entities: importedEntities, Conversations: importedConversations, Template: templateReport,
 	}, nil
 }
 

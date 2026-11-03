@@ -39,6 +39,9 @@ const mocks = vi.hoisted(() => ({
   /** Беседы проекта (0.147.0): список для «Истории» и восстановление последней. */
   conversations: vi.fn(),
   conversation: vi.fn(),
+  /** Удаление беседы и очистка истории (0.148.0). */
+  deleteConversation: vi.fn(),
+  clearConversations: vi.fn(),
   discardProposal: vi.fn(),
 }))
 
@@ -64,6 +67,8 @@ vi.mock('../../api/assistant', async () => {
     readAIError: mocks.error,
     listAIConversations: mocks.conversations,
     getAIConversation: mocks.conversation,
+    deleteAIConversation: mocks.deleteConversation,
+    clearAIConversations: mocks.clearConversations,
     listAIEndpoints: mocks.endpoints,
     addAIEndpoint: mocks.addEndpoint,
     deleteAIEndpoint: mocks.deleteEndpoint,
@@ -206,6 +211,8 @@ beforeEach(() => {
   // беседа проекта, подставляют её сами (0.147.0).
   mocks.conversations.mockResolvedValue([])
   mocks.conversation.mockResolvedValue({ conversation: null, messages: [] })
+  mocks.deleteConversation.mockResolvedValue(undefined)
+  mocks.clearConversations.mockResolvedValue(0)
   mocks.applyProposal.mockResolvedValue({ proposal: null, warning: '' })
   mocks.revertProposal.mockResolvedValue({ proposal: null, warning: '' })
   mocks.discardProposal.mockResolvedValue(undefined)
@@ -1664,5 +1671,70 @@ describe('AssistantPanel', () => {
     await waitFor(() => expect(screen.queryByText('Предлагаю правку.')).toBeNull())
     // Подсказки больше нет: следующее открытие проекта начнётся с чистого окна.
     expect(localStorage.getItem('sf-ai-last:p1')).toBeNull()
+  })
+
+  /**
+   * 0.148.0: беседы копятся, и человек должен уметь убрать и одну, и всю историю.
+   *
+   * Проверяем именно то, что видно: крестик удаляет беседу из списка и, если она была
+   * открыта, окно начинает новый разговор; очистка спрашивает второго нажатия и не трогает
+   * сервер до него.
+   */
+  it('крестик удаляет беседу, а открытую — очищает (0.148.0)', async () => {
+    mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
+    savedConversation('p1', 'c2')
+    mocks.conversations.mockResolvedValue([
+      { id: 'c2', title: 'Правки главы', model: 'm', updatedAt: '2026-11-03T10:00:00Z' },
+      { id: 'c1', title: 'Старая беседа', model: 'm', updatedAt: '2026-11-02T10:00:00Z' },
+    ])
+    mocks.conversation.mockResolvedValue({
+      conversation: null,
+      messages: [{ id: 'm2', role: 'assistant', content: 'Предлагаю правку.', createdAt: '' }],
+    })
+    renderPanel()
+    await screen.findByText('Предлагаю правку.')
+
+    fireEvent.click(screen.getByRole('button', { name: /История/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Удалить беседу «Правки главы»' }))
+
+    await waitFor(() => expect(mocks.deleteConversation).toHaveBeenCalledWith('p1', 'c2'))
+    // Открытая беседа удалена — окно начинает новый разговор.
+    await waitFor(() => expect(screen.queryByText('Предлагаю правку.')).toBeNull())
+    expect(localStorage.getItem('sf-ai-last:p1')).toBeNull()
+    // В списке осталась только вторая.
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Удалить беседу «Правки главы»' })).toBeNull(),
+    )
+    expect(screen.getByRole('button', { name: 'Удалить беседу «Старая беседа»' })).toBeTruthy()
+  })
+
+  it('«Очистить историю» удаляет только со второго нажатия (0.148.0)', async () => {
+    mocks.config.mockResolvedValue({ ...REMOTE, consents: ['groq'] })
+    mocks.conversations.mockResolvedValue([
+      { id: 'c2', title: 'Правки главы', model: 'm', updatedAt: '2026-11-03T10:00:00Z' },
+    ])
+    mocks.conversation.mockResolvedValue({
+      conversation: null,
+      messages: [{ id: 'm2', role: 'assistant', content: 'Предлагаю правку.', createdAt: '' }],
+    })
+    mocks.clearConversations.mockResolvedValue(1)
+    renderPanel()
+    await screen.findByText('Предлагаю правку.')
+
+    fireEvent.click(screen.getByRole('button', { name: /История/ }))
+    const clear = await screen.findByRole('menuitem', { name: 'Очистить историю' })
+    fireEvent.click(clear)
+    // Первое нажатие только спрашивает — сервер не тронут.
+    expect(mocks.clearConversations).not.toHaveBeenCalled()
+    const armed = await screen.findByRole('menuitem', { name: 'Точно очистить?' })
+    fireEvent.click(armed)
+
+    await waitFor(() => expect(mocks.clearConversations).toHaveBeenCalledWith('p1'))
+    // История пуста, окно новое, подсказка снята.
+    await waitFor(() => expect(screen.queryByText('Предлагаю правку.')).toBeNull())
+    expect(localStorage.getItem('sf-ai-last:p1')).toBeNull()
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: /История/ })).toBeNull(),
+    )
   })
 })

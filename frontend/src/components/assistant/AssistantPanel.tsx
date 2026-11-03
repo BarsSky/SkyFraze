@@ -6,6 +6,8 @@ import {
   deleteAIConsent,
   deleteAIEndpoint,
   deleteAIKey,
+  clearAIConversations,
+  deleteAIConversation,
   discardAIProposal,
   getAIConfig,
   getAIConversation,
@@ -207,6 +209,11 @@ export function AssistantPanel({
   const [historyOpen, setHistoryOpen] = useState(false)
   const [historyBusy, setHistoryBusy] = useState(false)
   const [historyError, setHistoryError] = useState<string | null>(null)
+  /** Какую беседу удаляем сейчас — чтобы не удалить две по двойному клику (0.148.0). */
+  const [deletingConversation, setDeletingConversation] = useState<string | null>(null)
+  /** Очистка всей истории — в два шага: кнопка сначала спрашивает (0.148.0). */
+  const [confirmClear, setConfirmClear] = useState(false)
+  const [clearBusy, setClearBusy] = useState(false)
   /**
    * Человек уже начал работать в этом окне (отправил вопрос или сам выбрал беседу).
    *
@@ -772,6 +779,63 @@ export function AssistantPanel({
     },
     [projectId],
   )
+
+  /**
+   * Удалить беседу (0.148.0).
+   *
+   * Удаляем только свою историю; если удалили ту, что открыта, окно начинает новый разговор —
+   * оставлять на экране удалённую переписку значило бы показывать то, чего уже нет.
+   */
+  const removeConversation = useCallback(
+    async (id: string) => {
+      setDeletingConversation(id)
+      setHistoryError(null)
+      try {
+        await deleteAIConversation(projectId, id)
+        setConversations((current) => current.filter((item) => item.id !== id))
+        if (id === conversationId || readLastConversation(projectId) === id) {
+          setConversationId('new')
+          setMessages([])
+          setChanges([])
+          writeLastConversation(projectId, 'new')
+        }
+      } catch (e) {
+        setHistoryError((await serverErrorMessage(e)) ?? tStatic('as.deleteConversationError'))
+      } finally {
+        setDeletingConversation(null)
+      }
+    },
+    [projectId, conversationId],
+  )
+
+  /**
+   * Очистить всю историю бесед проекта (0.148.0) — в два шага: одна кнопка сначала
+   * спрашивает, вторая (та же, с другим текстом) удаляет. Случайное нажатие не должно
+   * стирать десятки разговоров.
+   */
+  const clearHistory = useCallback(async () => {
+    if (!confirmClear) {
+      setConfirmClear(true)
+      return
+    }
+    setClearBusy(true)
+    setHistoryError(null)
+    try {
+      const deleted = await clearAIConversations(projectId)
+      setConversations([])
+      setConversationId('new')
+      setMessages([])
+      setChanges([])
+      writeLastConversation(projectId, 'new')
+      setConfirmClear(false)
+      setHistoryOpen(false)
+      setHistoryError(deleted > 0 ? null : tStatic('as.clearHistoryEmpty'))
+    } catch (e) {
+      setHistoryError((await serverErrorMessage(e)) ?? tStatic('as.clearHistoryError'))
+    } finally {
+      setClearBusy(false)
+    }
+  }, [projectId, confirmClear])
 
   /**
    * Восстановление разговора при открытии проекта (0.147.0).
@@ -1867,26 +1931,60 @@ export function AssistantPanel({
                     <div className="ai-history__menu" role="menu" data-assistant-history>
                       {historyError != null && <p className="ai-error ai-error--padded">{historyError}</p>}
                       {conversations.map((conversation) => (
-                        <button
-                          key={conversation.id}
-                          type="button"
-                          role="menuitem"
-                          className={
-                            conversation.id === conversationId
-                              ? 'ai-history__item is-current'
-                              : 'ai-history__item'
-                          }
-                          aria-current={conversation.id === conversationId}
-                          disabled={historyBusy}
-                          data-assistant-conversation={conversation.id}
-                          onClick={() => void loadConversation(conversation.id)}
-                        >
-                          <span className="ai-history__title">
-                            {conversation.title || t('as.historyUntitled')}
-                          </span>
-                          <span className="ai-history__time">{shortTime(conversation.updatedAt)}</span>
-                        </button>
+                        <div key={conversation.id} className="ai-history__row">
+                          <button
+                            type="button"
+                            role="menuitem"
+                            className={
+                              conversation.id === conversationId
+                                ? 'ai-history__item is-current'
+                                : 'ai-history__item'
+                            }
+                            aria-current={conversation.id === conversationId}
+                            disabled={historyBusy}
+                            data-assistant-conversation={conversation.id}
+                            onClick={() => void loadConversation(conversation.id)}
+                          >
+                            <span className="ai-history__title">
+                              {conversation.title || t('as.historyUntitled')}
+                            </span>
+                            <span className="ai-history__time">{shortTime(conversation.updatedAt)}</span>
+                          </button>
+                          {/* Удалить беседу можно прямо здесь (0.148.0): история копится, и
+                              убирать её надо там, где её видно. */}
+                          <button
+                            type="button"
+                            className="ai-history__delete"
+                            aria-label={t('as.deleteConversation', {
+                              title: conversation.title || t('as.historyUntitled'),
+                            })}
+                            title={t('as.deleteConversationShort')}
+                            disabled={deletingConversation !== null || clearBusy}
+                            data-assistant-delete-conversation={conversation.id}
+                            onClick={() => void removeConversation(conversation.id)}
+                          >
+                            <span aria-hidden="true">✕</span>
+                          </button>
+                        </div>
                       ))}
+                      {/* Очистка всей истории — в два шага, чтобы случайное нажатие не стёрло
+                          десятки разговоров. */}
+                      <span className="ai-history__sep" aria-hidden="true" />
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className={confirmClear ? 'ai-history__clear is-armed' : 'ai-history__clear'}
+                        title={t('as.clearHistoryTitle')}
+                        disabled={clearBusy || deletingConversation !== null}
+                        data-assistant-clear-history
+                        onClick={() => void clearHistory()}
+                      >
+                        {clearBusy
+                          ? t('as.clearingHistory')
+                          : confirmClear
+                            ? t('as.clearHistoryConfirm')
+                            : t('as.clearHistory')}
+                      </button>
                     </div>
                   )}
                 </div>
