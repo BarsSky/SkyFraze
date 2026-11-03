@@ -111,11 +111,15 @@ func TestArchiveCarriesOwnConversationsOnly(t *testing.T) {
 	if record.Title != "Правки главы" {
 		t.Errorf("заголовок: %q", record.Title)
 	}
-	if len(record.Messages) != 2 {
-		t.Fatalf("реплик в архиве %d, ожидалось 2 (служебные не переносим): %+v", len(record.Messages), record.Messages)
+	if len(record.Messages) != 3 {
+		t.Fatalf("реплик в архиве %d, ожидалось 3 (включая строку инструмента): %+v", len(record.Messages), record.Messages)
 	}
-	if record.Messages[0].Role != "user" || record.Messages[1].Role != "assistant" {
+	if record.Messages[0].Role != "user" || record.Messages[1].Role != "tool" || record.Messages[2].Role != "assistant" {
 		t.Errorf("порядок ролей: %+v", record.Messages)
+	}
+	// Протокол вызова переносится (0.154.0): по нему видно, что именно читал помощник.
+	if len(record.Messages[1].ToolCalls) == 0 || len(record.Messages[1].ToolResults) == 0 {
+		t.Errorf("протокол инструмента не попал в архив: %+v", record.Messages[1])
 	}
 }
 
@@ -180,14 +184,17 @@ func TestImportRestoresConversations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("реплики: %v", err)
 	}
-	if len(messages) != 2 {
-		t.Fatalf("реплик %d, ожидалось 2", len(messages))
+	if len(messages) != 3 {
+		t.Fatalf("реплик %d, ожидалось 3", len(messages))
 	}
 	if messages[0].Role != "user" || messages[0].Content != "Поправь абзац" {
 		t.Errorf("первая реплика: %+v", messages[0])
 	}
-	if messages[1].Role != "assistant" || messages[1].Content != "Предлагаю правку." {
-		t.Errorf("вторая реплика: %+v", messages[1])
+	if messages[1].Role != "tool" || len(messages[1].ToolCalls) == 0 {
+		t.Errorf("строка инструмента не восстановилась: %+v", messages[1])
+	}
+	if messages[2].Role != "assistant" || messages[2].Content != "Предлагаю правку." {
+		t.Errorf("последняя реплика: %+v", messages[2])
 	}
 }
 

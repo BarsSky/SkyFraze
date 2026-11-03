@@ -174,12 +174,21 @@ type MessageRecord struct {
 	// после импорта у знаний новые идентификаторы, но карточка под сообщением должна
 	// остаться читаемой — по этому снимку она и рисуется.
 	Knowledge []KnowledgeRefRecord `json:"knowledge,omitempty"`
+	// ToolCalls/ToolResults — протокол вызовов (0.154.0). Строки `role=tool` раньше в архив
+	// не попадали: «внутренний протокол, в новой базе не переигрывается». Но по ним видно,
+	// что помощник читал и почему решил так, — это часть истории работы над проектом, и
+	// вторая половина уезжала без неё. Поля необязательные: архивы до этой версии их не
+	// содержат, а история (history()) их и не переигрывает — только показывает.
+	ToolCalls   json.RawMessage `json:"tool_calls,omitempty"`
+	ToolResults json.RawMessage `json:"tool_results,omitempty"`
 }
 
 // KnowledgeRefRecord — вложение к реплике в архиве.
 type KnowledgeRefRecord struct {
 	ID    uuid.UUID `json:"id"`
 	Title string    `json:"title"`
+	// Tags — снимок меток (0.154.0): карточка под сообщением показывает, о чём знание.
+	Tags []string `json:"tags,omitempty"`
 }
 
 // KnowledgeFile — знания проекта в архиве (0.149.0).
@@ -504,15 +513,19 @@ func (s *Service) buildConversations(
 			Title: conversation.Title, Model: conversation.Model, CreatedAt: conversation.CreatedAt,
 		}
 		for _, message := range messages {
-			if message.Role != "user" && message.Role != "assistant" {
+			if message.Role != "user" && message.Role != "assistant" && message.Role != "tool" {
 				continue
 			}
-			if strings.TrimSpace(message.Content) == "" {
+			// Строка инструмента без текста, но с вызовами — тоже след работы: сохраняем её,
+			// если есть что перенести (0.154.0).
+			if strings.TrimSpace(message.Content) == "" && len(message.ToolCalls) == 0 && len(message.ToolResults) == 0 {
 				continue
 			}
 			record.Messages = append(record.Messages, MessageRecord{
 				Role: message.Role, Content: message.Content, Stopped: message.Stopped,
-				Knowledge: decodeKnowledgeRefs(message.Knowledge),
+				Knowledge:   decodeKnowledgeRefs(message.Knowledge),
+				ToolCalls:   capToolPayload(message.ToolCalls),
+				ToolResults: capToolPayload(message.ToolResults),
 			})
 		}
 		if len(record.Messages) == 0 {
@@ -556,11 +569,24 @@ func encodeKnowledgeRefs(refs []KnowledgeRefRecord) json.RawMessage {
 	return raw
 }
 
-// remapKnowledgeRefs переписывает ссылки на знания по карте «старый id → новый» (0.152.0).
+// maxToolPayloadBytes — предел на одно поле протокола инструмента в архиве (0.154.0).
 //
-// Зачем: у реплики хранится снимок {id,title}, и после импорта знания получают НОВЫЕ
-// идентификаторы. Не переписать ссылку значит оставить вложение, которое нельзя открыть.
-// Заголовок при этом остаётся снимком — он читается даже если знание потом удалят.
+// 16 КиБ хватает на обычный вызов (абзацы, карточки), а всё, что больше, — это уже не
+// «след работы», а второй проект: такой вызов не переносим, но строку оставляем с текстом.
+const maxToolPayloadBytes = 16 << 10
+
+// capToolPayload отсеивает отсутствующий, битый и слишком большой JSON протокола.
+func capToolPayload(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 || !json.Valid(raw) {
+		return nil
+	}
+	if len(raw) > maxToolPayloadBytes {
+		return nil
+	}
+	return raw
+}
+
+// remapKnowledgeRefs переписывает ссылки на знания по карте «старый id → новый» (0.152.0).
 func remapKnowledgeRefs(refs []KnowledgeRefRecord, remap map[uuid.UUID]uuid.UUID) []KnowledgeRefRecord {
 	if len(refs) == 0 {
 		return nil
@@ -934,13 +960,15 @@ func (s *Service) Import(ctx context.Context, userID uuid.UUID, b *ParsedBundle)
 			}
 			ok := true
 			for _, message := range record.Messages {
-				if message.Role != "user" && message.Role != "assistant" {
+				if message.Role != "user" && message.Role != "assistant" && message.Role != "tool" {
 					continue
 				}
 				if _, merr := s.store.AppendAIMessage(ctx, store.AIMessage{
 					ConversationID: conversation.ID, Role: message.Role,
 					Content: message.Content, Stopped: message.Stopped,
-					Knowledge: encodeKnowledgeRefs(remapKnowledgeRefs(message.Knowledge, knowledgeRemap)),
+					Knowledge:   encodeKnowledgeRefs(remapKnowledgeRefs(message.Knowledge, knowledgeRemap)),
+					ToolCalls:   message.ToolCalls,
+					ToolResults: message.ToolResults,
 				}); merr != nil {
 					ok = false
 					break

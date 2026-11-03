@@ -212,7 +212,7 @@ func Setup(t *testing.T, suffix string) *pgxpool.Pool {
 		if os.Getenv("CI") != "" {
 			t.Fatalf("test DB unavailable in CI: %v", err)
 		}
-		t.Skipf("test DB unavailable: %v", err)
+		t.Skipf("test DB unavailable: %v`nподсказка: запустите `docker run -d --name skyfraze-test-pg -e POSTGRES_USER=skyfraze -e POSTGRES_PASSWORD=skyfraze_dev -e POSTGRES_DB=skyfraze_test -p 5432:5432 postgres:16-alpine` или задайте TEST_DATABASE_URL (docs/run.md); без базы интеграционные тесты пропускаются молча — это не «зелёный» прогон", err)
 	}
 	t.Cleanup(pool.Close)
 	applySchema(t, ctx, pool)

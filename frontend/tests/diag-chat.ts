@@ -67,7 +67,7 @@ async function main() {
     if (!projected) problems.push('текст кадра не доехал до сервера за 60 с')
     console.log(`проекция: ${Date.now() - started} мс`)
 
-    // 1. Окно помощника: две вкладки, переключаемся на чат.
+    // 1. Окно помощника: три вкладки (помощник, чат, знания), переключаемся на чат.
     await page.locator('[data-assistant-fab]').click()
     const dock = page.locator('[data-assistant-panel]')
     await dock.waitFor({ state: 'visible', timeout: 20_000 })
@@ -85,6 +85,26 @@ async function main() {
         await panel.waitFor({ state: 'visible', timeout: 20_000 })
       }
       await panel.locator('[data-dock-tab="chat"]').click()
+    }
+
+    /**
+     * Открыть меню действий у сообщения с указанным текстом (0.146.0).
+     *
+     * Действия с сообщением («ответить», «изменить», отметки, «копировать текст») с 0.146.0
+     * живут в меню «⋯», а не отдельной строкой кнопок под текстом: строка занимала полстроки
+     * и мешала читать переписку. Скрипт открывает меню так же, как человек.
+     */
+    const openMessageMenu = async (text: string) => {
+      const item = page.locator('[data-chat-message]', { hasText: text }).first()
+      await item.waitFor({ state: 'visible', timeout: 20_000 })
+      // Меню одной строкой: повторное нажатие закрыло бы его, поэтому только если закрыто.
+      const itemID = await item.getAttribute('data-chat-message')
+      const menu = page.locator(`[data-chat-menu="${itemID}"]`)
+      if ((await menu.count()) === 0) {
+        await item.locator('[data-chat-menu-button]').click()
+        await menu.waitFor({ state: 'visible', timeout: 10_000 })
+      }
+      return item
     }
 
     // 2. Сообщение без ссылки и со ссылкой на кадр + фразу.
@@ -123,10 +143,13 @@ async function main() {
     console.log(`после клика по ссылке открыт кадр: «${titleText}»`)
     if (titleText !== 'Пролог') problems.push(`открылся не тот кадр: «${titleText}»`)
 
-    // 4.1. Ответ на сообщение и правка своего (0.96.0).
+    // 4.1. Ответ на сообщение и правка своего (0.96.0) — через меню «⋯» (0.146.0).
     await openChatTab()
-    const replyButton = page.locator('[data-chat-reply-button]').first()
-    await replyButton.waitFor({ state: 'visible', timeout: 20_000 })
+    const firstItem = await openMessageMenu('Коллеги, посмотрите сцену.')
+    const replyButton = firstItem.locator('[data-chat-reply-button]').first()
+    await replyButton.waitFor({ state: 'visible', timeout: 10_000 })
+    const replyBox = await replyButton.boundingBox()
+    if ((replyBox?.height ?? 0) < 30) problems.push(`пункт «ответить» мелкий: ${replyBox?.height} px`)
     await replyButton.click()
     await page.locator('[data-chat-reply-chip]').waitFor({ state: 'visible', timeout: 10_000 })
     await page.getByLabel('Сообщение в чат проекта').fill('Это ответ на первое.')
@@ -140,8 +163,12 @@ async function main() {
       .waitFor({ state: 'visible', timeout: 15_000 })
       .catch(() => problems.push('цитата ответа не появилась в ленте'))
 
-    const editButton = page.locator('[data-chat-edit]').first()
-    await editButton.waitFor({ state: 'visible', timeout: 20_000 })
+    // Правка своего ответа: пункт «изменить» есть только у СВОИХ сообщений.
+    const replyItem = await openMessageMenu('Это ответ на первое.')
+    const editButton = replyItem.locator('[data-chat-edit]').first()
+    await editButton.waitFor({ state: 'visible', timeout: 10_000 })
+    const editBox = await editButton.boundingBox()
+    if ((editBox?.height ?? 0) < 30) problems.push(`пункт «изменить» мелкий: ${editBox?.height} px`)
     await editButton.click()
     const editArea = page.locator('.chat__edit textarea').first()
     await editArea.waitFor({ state: 'visible', timeout: 10_000 })
@@ -149,38 +176,28 @@ async function main() {
     await page.locator('[data-chat-edit-save]').first().click()
     await page.getByText('Это ответ на первое (исправлено).').waitFor({ state: 'visible', timeout: 20_000 })
     await page.locator('[data-chat-edited]').first().waitFor({ state: 'visible', timeout: 10_000 })
-    // Кнопки «ответить» и «изменить» должны быть видны и нажимаемы пальцем (0.97.1): до этого они
-    // были 24 px высотой и 11 px шрифтом, и человек не находил правку вовсе.
-    const actionBox = await page.locator('[data-chat-edit]').first().boundingBox()
-    const replyBox = await page.locator('[data-chat-reply-button]').first().boundingBox()
-    console.log(`кнопки: изменить ${Math.round(actionBox?.height ?? 0)} px, ответить ${Math.round(replyBox?.height ?? 0)} px`)
-    if ((actionBox?.height ?? 0) < 30) problems.push(`кнопка «изменить» мелкая: ${actionBox?.height} px`)
-    if ((replyBox?.height ?? 0) < 30) problems.push(`кнопка «ответить» мелкая: ${replyBox?.height} px`)
     const marker = await page.locator('[data-chat-edited]').first().getAttribute('title')
     if (!/Изменено в \d\d:\d\d/.test(marker ?? '')) problems.push(`нет времени правки: ${marker}`)
     console.log(`ответ и правка: работают, отметка «${marker}»`)
 
-    // 4.3. Отметки на сообщении (0.98.0): три плашки, нажатие ставит и снимает, состояние
-    // переживает перезагрузку (значит, хранится на сервере, а не в памяти вкладки).
+    // 4.3. Отметки на сообщении (0.98.0 → 0.146.0): ставятся из меню, а плашка с счётчиком
+    // появляется только когда отметка есть; повторное нажатие по плашке снимает.
     await openChatTab()
-    const reactionRow = page.locator('[data-chat-reactions]').first()
-    await reactionRow.waitFor({ state: 'visible', timeout: 20_000 })
-    const chips = reactionRow.locator('[data-chat-reaction]')
-    const chipCount = await chips.count()
-    console.log(`плашек отметок у сообщения: ${chipCount}`)
-    if (chipCount !== 3) problems.push(`плашек отметок ${chipCount} вместо 3`)
-
-    const todoChip = reactionRow.locator('[data-chat-reaction$=":todo"]').first()
-    const todoBox = await todoChip.boundingBox()
-    console.log(`плашка «сделать»: ${Math.round(todoBox?.height ?? 0)} px высотой`)
-    if ((todoBox?.height ?? 0) < 28) problems.push(`плашка отметки ${Math.round(todoBox?.height ?? 0)} px — мелкая цель`)
-
-    await todoChip.click()
+    const markItem = await openMessageMenu('Коллеги, посмотрите сцену.')
+    const menuReactions = markItem.locator('[data-chat-menu-reaction]')
+    const menuReactionCount = await menuReactions.count()
+    console.log(`отметок в меню сообщения: ${menuReactionCount}`)
+    if (menuReactionCount !== 3) problems.push(`отметок в меню ${menuReactionCount} вместо 3`)
+    const todoMenuItem = markItem.locator('[data-chat-menu-reaction$=":todo"]').first()
+    const todoMenuBox = await todoMenuItem.boundingBox()
+    if ((todoMenuBox?.height ?? 0) < 30) problems.push(`пункт отметки ${Math.round(todoMenuBox?.height ?? 0)} px — мелкая цель`)
+    await todoMenuItem.click()
     await page.waitForFunction(
       `(() => { const chip = document.querySelector('[data-chat-reaction$=":todo"]'); return chip ? chip.getAttribute('aria-pressed') === 'true' : false })()`,
       undefined,
       { timeout: 10_000 },
     )
+    const todoChip = page.locator('[data-chat-reaction$=":todo"]').first()
     const pressedText = (await todoChip.innerText()).replace(/\s+/g, ' ').trim()
     console.log(`после нажатия «сделать»: «${pressedText}», нажато`)
     if (!/1/.test(pressedText)) problems.push(`счётчик отметки не показал 1: «${pressedText}»`)
@@ -194,13 +211,15 @@ async function main() {
     console.log(`после перезагрузки «сделать» нажато: ${reloadedPressed}`)
     if (reloadedPressed !== 'true') problems.push('отметка не пережила перезагрузку — не сохранена на сервере')
 
-    // Повторное нажатие снимает.
+    // Повторное нажатие по плашке снимает отметку и УБИРАЕТ плашку (0.146.4).
     await reloadedChip.click()
-    await page.waitForFunction(
-      `(() => { const chip = document.querySelector('[data-chat-reaction$=":todo"]'); return chip ? chip.getAttribute('aria-pressed') === 'false' : false })()`,
-      undefined,
-      { timeout: 10_000 },
-    )
+    await page
+      .waitForFunction(
+        `(() => document.querySelectorAll('[data-chat-reaction$=":todo"]').length === 0)()`,
+        undefined,
+        { timeout: 10_000 },
+      )
+      .catch(() => problems.push('плашка отметки не исчезла после снятия'))
     console.log('повторное нажатие сняло отметку')
 
     // 4.2. Мгновенная доставка: вторая открытая вкладка того же проекта получает сообщение по
